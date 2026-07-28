@@ -6,6 +6,7 @@ setup-private-endpoint.ps1
 .env.local
 credentials.json
 secrets.json
+SPN.txt
 
 # Python cache
 __pycache__/
