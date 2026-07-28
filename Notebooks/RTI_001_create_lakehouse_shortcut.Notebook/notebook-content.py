@@ -864,9 +864,13 @@ print(
 # CELL ********************
 
 # --------------------------------------------
-# WRITE SHARED SETTINGS TABLE 
+# WRITE SHARED SETTINGS TABLE
 # --------------------------------------------
-# KNOWN ISSUE - the delta lake table is just created and manually needs to be connected in this notebook
+# Write via the explicit OneLake ABFS path so this cell does NOT depend on a
+# default lakehouse being attached to the notebook session. This avoids the
+# "No default context found, please attach a lakehouse before running spark sql
+# queries with partial namespaces" error when the freshly created lakehouse is
+# not (yet) the notebook's default lakehouse.
 from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql import functions as F
 
@@ -885,17 +889,60 @@ settings_rows = build_rti_demo_settings_rows(
 
 settings_df = spark.createDataFrame(settings_rows, schema=settings_schema)
 
+# Fully-qualified OneLake path to the Delta table inside the new lakehouse.
+settings_table_path = (
+    f"abfss://{workspace_id}@onelake.dfs.fabric.microsoft.com/"
+    f"{lakehouse_id}/Tables/{settings_table_name}"
+)
+
 (
     settings_df
     .withColumn("updated_utc", F.to_timestamp("updated_utc"))
     .write
+    .format("delta")
     .mode("overwrite")
     .option("overwriteSchema", "true")
-    .saveAsTable(settings_table_name)
+    .save(settings_table_path)
 )
 
-print(f"✅ Wrote shared settings table: {settings_table_name}")
-display(spark.read.table(settings_table_name).orderBy("setting_name"))
+print(f"✅ Wrote shared settings table to: {settings_table_path}")
+display(spark.read.format("delta").load(settings_table_path).orderBy("setting_name"))
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# --------------------------------------------
+# SET THE NEW LAKEHOUSE AS THIS NOTEBOOK'S DEFAULT (and drop orphaned attachments)
+# --------------------------------------------
+# updateDefinition() re-points this notebook's lakehouse dependency at the
+# lakehouse we just created, replacing any previously attached (now orphaned or
+# invalid) lakehouses. This makes the new lakehouse show in the Explorer and lets
+# later cells / re-runs use partial-namespace Spark SQL (e.g. spark.read.table).
+#
+# NOTE: This change takes effect the NEXT time the notebook session starts
+# (re-open or restart the session). The current run already wrote the settings
+# table above via the explicit OneLake path, so it is not blocked by the
+# default-lakehouse attachment.
+current_notebook_name = notebookutils.runtime.context["currentNotebookName"]
+
+default_lh_updated = notebookutils.notebook.updateDefinition(
+    name=current_notebook_name,
+    defaultLakehouse=lakehouse_name,
+    defaultLakehouseWorkspace=workspace_id,
+)
+
+print(
+    f"✅ Default lakehouse set to '{lakehouse_name}' for notebook "
+    f"'{current_notebook_name}': {default_lh_updated}\n"
+    "ℹ️  Restart the session (or re-open the notebook) for the new default "
+    "lakehouse to take effect in the Explorer and for partial-namespace SQL."
+)
 
 # METADATA ********************
 
