@@ -927,15 +927,18 @@ display(spark.read.format("delta").load(settings_table_path).orderBy("setting_na
 #
 # NOTE: A notebook's default lakehouse is bound when its Spark session STARTS,
 # so this cannot change the CURRENT running session. It updates the SAVED
-# definition of each notebook, which takes effect the next time that notebook is
-# opened/run. The downstream notebooks have not started yet, so they are already
-# configured by the time you open them.
-current_notebook_name = notebookutils.runtime.context["currentNotebookName"]
+# definition of each DOWNSTREAM notebook, which takes effect the next time that
+# notebook is opened/run. The downstream notebooks have not started yet, so they
+# are already configured by the time you open them.
+#
+# This notebook (RTI_001) is intentionally NOT in the list: Fabric forbids a
+# notebook from updating its own definition ("Cannot update current artifact
+# definition"), and it doesn't need a default lakehouse anyway because it writes
+# via the explicit OneLake path above.
 
 # Notebooks in this demo chain that should default to the new lakehouse.
 # (Adjust this list if you add or rename notebooks.)
 chain_notebooks = [
-    current_notebook_name,
     "RTI_002_Setup_Eventhouse_Only",
     "RTI_003_ingest_transform_medallion",
     "RTI_004_build_ontology_mapping_rti_structured",
@@ -944,20 +947,37 @@ chain_notebooks = [
     "RTI_007_TimeSeriesBinding_RTI_signal",
 ]
 
-for nb_name in chain_notebooks:
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def _set_default_lakehouse(nb_name: str) -> tuple:
+    """Set the default lakehouse for one notebook. Returns (name, ok, detail)."""
     try:
         updated = notebookutils.notebook.updateDefinition(
             name=nb_name,
             defaultLakehouse=lakehouse_name,
             defaultLakehouseWorkspace=workspace_id,
         )
-        print(f"✅ Default lakehouse set for '{nb_name}': {updated}")
+        return (nb_name, True, updated)
     except Exception as exc:
-        print(f"⚠️  Could not set default lakehouse for '{nb_name}': {exc}")
+        return (nb_name, False, exc)
+
+
+# Run the updates concurrently — each call is an independent, I/O-bound REST
+# request, so a small thread pool cuts total wall time to roughly one call
+# instead of the sum of all of them.
+with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
+    futures = [pool.submit(_set_default_lakehouse, nb) for nb in chain_notebooks]
+    for future in as_completed(futures):
+        nb_name, ok, detail = future.result()
+        if ok:
+            print(f"✅ Default lakehouse set for '{nb_name}': {detail}")
+        else:
+            print(f"⚠️  Could not set default lakehouse for '{nb_name}': {detail}")
 
 print(
     f"\nℹ️  Default lakehouse = '{lakehouse_name}'. Downstream notebooks pick this "
-    "up on their next session start; re-open/restart this notebook for it to apply here."
+    "up on their next session start."
 )
 
 # METADATA ********************
