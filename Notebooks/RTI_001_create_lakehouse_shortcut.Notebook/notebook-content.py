@@ -29,7 +29,7 @@
 # 3. Use the new **NotebookUtils** package (former MSSparkUtils) for environment variables and Key Vault access.
 # 4. Avoid any use of `semPy` or user-context tokens.
 # 
-# After this notebook, the PySpark notebook `02_ingest_transform_medallion` can read from:
+# After this notebook, the PySpark notebook `03_ingest_transform_medallion` can read from:
 # 
 # ```text
 # Files/bronze/...
@@ -287,6 +287,7 @@ def get_spn_access_token() -> str:
 #   Workspace settings (gear) → Workspace identity → + Workspace identity.
 # Then grant that identity 'Storage Blob Data Contributor' on the ADLS account.
 # The notebook detects the identity automatically once it exists.
+
 
 # CELL ********************
 
@@ -944,6 +945,7 @@ print(
     "lakehouse to take effect in the Explorer and for partial-namespace SQL."
 )
 
+
 # METADATA ********************
 
 # META {
@@ -957,7 +959,7 @@ print(
 # 
 # 1. In the notebook **Explorer** pane, expand **Lakehouses → your Lakehouse → Files** and verify you see `bronze`.
 # 2. Open `bronze` and confirm you can browse the subfolders for the  mock dataset (STID, SAP, OPC UA, SOLV, P&ID, documents, etc.).
-# 3. Move to `02_ingest_transform_medallion` and build the bronze → silver → gold medallion layers using these files.
+# 3. Move to the next Notebook.
 # 
 # 
 
