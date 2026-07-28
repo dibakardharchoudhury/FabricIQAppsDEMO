@@ -859,9 +859,6 @@ print(
 # META   "language_group": "synapse_pyspark"
 # META }
 
-# MARKDOWN ********************
-
-
 # CELL ********************
 
 # --------------------------------------------
@@ -908,43 +905,6 @@ settings_table_path = (
 
 print(f"✅ Wrote shared settings table to: {settings_table_path}")
 display(spark.read.format("delta").load(settings_table_path).orderBy("setting_name"))
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-# --------------------------------------------
-# SET THE NEW LAKEHOUSE AS THIS NOTEBOOK'S DEFAULT (and drop orphaned attachments)
-# --------------------------------------------
-# updateDefinition() re-points this notebook's lakehouse dependency at the
-# lakehouse we just created, replacing any previously attached (now orphaned or
-# invalid) lakehouses. This makes the new lakehouse show in the Explorer and lets
-# later cells / re-runs use partial-namespace Spark SQL (e.g. spark.read.table).
-#
-# NOTE: This change takes effect the NEXT time the notebook session starts
-# (re-open or restart the session). The current run already wrote the settings
-# table above via the explicit OneLake path, so it is not blocked by the
-# default-lakehouse attachment.
-current_notebook_name = notebookutils.runtime.context["currentNotebookName"]
-
-default_lh_updated = notebookutils.notebook.updateDefinition(
-    name=current_notebook_name,
-    defaultLakehouse=lakehouse_name,
-    defaultLakehouseWorkspace=workspace_id,
-)
-
-print(
-    f"✅ Default lakehouse set to '{lakehouse_name}' for notebook "
-    f"'{current_notebook_name}': {default_lh_updated}\n"
-    "ℹ️  Restart the session (or re-open the notebook) for the new default "
-    "lakehouse to take effect in the Explorer and for partial-namespace SQL."
-)
-
 
 # METADATA ********************
 
