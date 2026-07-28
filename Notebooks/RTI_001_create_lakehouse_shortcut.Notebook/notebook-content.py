@@ -263,7 +263,7 @@ def get_spn_access_token() -> str:
 
 # 🔐 Required: Grant the Service Principal (SPN) access to the Fabric Workspace
 # This notebook authenticates to Fabric using a Service Principal (SPN) whose secrets are stored in Azure Key Vault.
-# To allow the SPN to call the Fabric REST APIs (for example, to list items or create a Lakehouse), the SPN must be granted access to the workspace.
+# To allow the SPN to call the Fabric REST APIs (for example, to list items, create a Lakehouse, or provision the Workspace Identity), the SPN must be granted access to the workspace.
 # 
 # ✔️ Step 1 — Add the SPN to the Workspace
 # 
@@ -271,11 +271,14 @@ def get_spn_access_token() -> str:
 # Click Manage access (top‑right).
 # Click Add → Add user or group.
 # Enter the name of your App Registration (the SPN).
-# Assign one of the following roles:
+# Assign the following role:
 # 
-# Contributor (recommended)
-# or Member
-# (Owner also works, but not required)
+# Admin (required)
+# 
+# The Admin role is required because this notebook provisions a Workspace Identity
+# (POST /workspaces/{id}/provisionIdentity), which only workspace Admins can do.
+# The Workspace Identity is then used as the connection credential to reach the
+# firewall-protected ADLS Gen2 storage account.
 # 
 # Click Add.
 
@@ -286,6 +289,72 @@ def get_spn_access_token() -> str:
 # --------------------------------------------
 
 FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
+
+
+def check_spn_is_workspace_admin(workspace_id: str, access_token: str) -> None:
+    """
+    Verify the calling identity has the *Admin* role on the workspace.
+
+    Provisioning a Workspace Identity requires the workspace Admin role, so this
+    runs as a preflight check and fails fast with actionable guidance.
+
+    - Raises RuntimeError if the caller is definitively NOT an Admin.
+    - If the caller identity or role assignments cannot be determined, it warns
+      and returns, letting provisioning surface the real error.
+    """
+    import base64
+    import json as _json
+
+    # Decode the caller's object ID ('oid') from the access token
+    caller_oid = None
+    try:
+        payload_b64 = access_token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # pad to base64 boundary
+        claims = _json.loads(base64.urlsafe_b64decode(payload_b64))
+        caller_oid = claims.get("oid")
+    except Exception:
+        pass
+
+    if not caller_oid:
+        print(
+            "⚠️  Could not determine caller identity from token; "
+            "skipping the Admin preflight check."
+        )
+        return
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/roleAssignments"
+    assignments = []
+
+    while url:
+        resp = requests.get(url, headers=headers)
+        if resp.status_code != 200:
+            print(
+                f"⚠️  Could not verify workspace role (HTTP {resp.status_code}). "
+                "Skipping preflight check and letting provisioning surface any error."
+            )
+            return
+        body = resp.json()
+        assignments.extend(body.get("value", []))
+        url = body.get("continuationUri")
+
+    is_admin = any(
+        a.get("role") == "Admin"
+        and a.get("principal", {}).get("id") == caller_oid
+        for a in assignments
+    )
+
+    if is_admin:
+        print("✅ Preflight: calling SPN has the workspace 'Admin' role.")
+        return
+
+    raise RuntimeError(
+        "The calling Service Principal does NOT have the 'Admin' role on the "
+        f"workspace ({workspace_id}). Provisioning a Workspace Identity requires "
+        "the workspace Admin role.\n"
+        "Fix: In the Fabric workspace, open 'Manage access' -> add the SPN (your "
+        "App Registration) with the 'Admin' role, then re-run this notebook."
+    )
 
 
 def ensure_workspace_identity(workspace_id: str, access_token: str) -> dict:
@@ -305,6 +374,10 @@ def ensure_workspace_identity(workspace_id: str, access_token: str) -> dict:
     IMPORTANT: The SPN calling this MUST have the *Admin* role on the workspace.
     """
     import time
+
+    # Preflight: provisioning requires the workspace Admin role. Fail fast with
+    # actionable guidance if the SPN is not an Admin.
+    check_spn_is_workspace_admin(workspace_id, access_token)
 
     url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/provisionIdentity"
     headers = {
