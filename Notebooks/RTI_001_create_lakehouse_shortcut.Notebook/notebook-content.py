@@ -916,27 +916,35 @@ display(spark.read.format("delta").load(settings_table_path).orderBy("setting_na
 # CELL ********************
 
 # --------------------------------------------
-# SET THE NEW LAKEHOUSE AS DEFAULT FOR THE WHOLE NOTEBOOK CHAIN
+# BIND EACH DOWNSTREAM NOTEBOOK TO THE (NEW) LAKEHOUSE — AND ONLY THAT ONE
 # --------------------------------------------
-# updateDefinition() re-points each notebook's lakehouse dependency at the
-# lakehouse we just created, replacing any previously attached (now orphaned or
-# invalid) lakehouses. Doing it here — once, from this bootstrap notebook — means
-# every downstream notebook already has the correct default lakehouse attached
-# the first time its session starts, so partial-namespace Spark SQL
-# (e.g. spark.read.table(...)) just works with no per-notebook setup.
+# Goal: every downstream notebook should reference exactly ONE lakehouse in its
+# definition — the one created in THIS run — with no leftover (orphaned)
+# lakehouses from a previous deploy or tenant.
 #
-# NOTE: A notebook's default lakehouse is bound when its Spark session STARTS,
-# so this cannot change the CURRENT running session. It updates the SAVED
-# definition of each DOWNSTREAM notebook, which takes effect the next time that
-# notebook is opened/run. The downstream notebooks have not started yet, so they
-# are already configured by the time you open them.
+# Why not the simple updateDefinition(defaultLakehouse=...) call? That only
+# swaps the *default* pointer; it MERGES, leaving every previously-attached
+# lakehouse behind in `known_lakehouses`. After redeploying into a new
+# workspace/tenant, those old (now non-existent) lakehouse IDs remain and show
+# up as broken "Couldn't load artifact" items in the Explorer.
 #
-# This notebook (RTI_001) is intentionally NOT in the list: Fabric forbids a
-# notebook from updating its own definition ("Cannot update current artifact
+# So instead we rewrite the FULL definition per notebook:
+#   getDefinition -> replace metadata.dependencies.lakehouse -> updateDefinition
+# using the lakehouse_id created earlier in THIS notebook (read at runtime, so
+# there are NO hardcoded IDs — this is fully tenant-portable and self-healing).
+#
+# NOTE: A notebook's default lakehouse binds when its Spark session STARTS, so
+# this can't change an already-running session; it updates each DOWNSTREAM
+# notebook's SAVED definition, taking effect the next time that notebook starts.
+#
+# RTI_001 (this notebook) is intentionally excluded: Fabric forbids a notebook
+# from updating its own definition ("Cannot update current artifact
 # definition"), and it doesn't need a default lakehouse anyway because it writes
 # via the explicit OneLake path above.
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Notebooks in this demo chain that should default to the new lakehouse.
+# Notebooks in this demo chain that should point at the new lakehouse.
 # (Adjust this list if you add or rename notebooks.)
 chain_notebooks = [
     "RTI_002_Setup_Eventhouse_Only",
@@ -947,37 +955,44 @@ chain_notebooks = [
     "RTI_007_TimeSeriesBinding_RTI_signal",
 ]
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-def _set_default_lakehouse(nb_name: str) -> tuple:
-    """Set the default lakehouse for one notebook. Returns (name, ok, detail)."""
+def _rebind_lakehouse(nb_name: str) -> tuple:
+    """Point one notebook at ONLY the current lakehouse, dropping any stale
+    (orphaned) known_lakehouses. Returns (name, ok, detail)."""
     try:
-        updated = notebookutils.notebook.updateDefinition(
+        nb_json = json.loads(notebookutils.notebook.getDefinition(nb_name))
+        deps = nb_json.setdefault("metadata", {}).setdefault("dependencies", {})
+        deps["lakehouse"] = {
+            "default_lakehouse": lakehouse_id,
+            "default_lakehouse_name": lakehouse_name,
+            "default_lakehouse_workspace_id": workspace_id,
+            "known_lakehouses": [{"id": lakehouse_id}],
+        }
+        ok = notebookutils.notebook.updateDefinition(
             name=nb_name,
-            defaultLakehouse=lakehouse_name,
-            defaultLakehouseWorkspace=workspace_id,
+            content=json.dumps(nb_json),
         )
-        return (nb_name, True, updated)
+        return (nb_name, bool(ok), "bound to current lakehouse only")
     except Exception as exc:
         return (nb_name, False, exc)
 
 
-# Run the updates concurrently — each call is an independent, I/O-bound REST
-# request, so a small thread pool cuts total wall time to roughly one call
+# Run concurrently — each notebook's get/update pair is independent I/O, so a
+# small thread pool cuts total wall time to roughly one notebook's round-trip
 # instead of the sum of all of them.
 with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
-    futures = [pool.submit(_set_default_lakehouse, nb) for nb in chain_notebooks]
+    futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]
     for future in as_completed(futures):
         nb_name, ok, detail = future.result()
         if ok:
-            print(f"✅ Default lakehouse set for '{nb_name}': {detail}")
+            print(f"✅ '{nb_name}': {detail}")
         else:
-            print(f"⚠️  Could not set default lakehouse for '{nb_name}': {detail}")
+            print(f"⚠️  Could not rebind '{nb_name}': {detail}")
 
 print(
-    f"\nℹ️  Default lakehouse = '{lakehouse_name}'. Downstream notebooks pick this "
-    "up on their next session start."
+    f"\nℹ️  All downstream notebooks now reference only lakehouse "
+    f"'{lakehouse_name}' ({lakehouse_id}). They pick this up on their next "
+    "session start."
 )
 
 # METADATA ********************
