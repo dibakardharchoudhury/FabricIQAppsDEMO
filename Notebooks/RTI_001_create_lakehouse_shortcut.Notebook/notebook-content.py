@@ -913,6 +913,60 @@ display(spark.read.format("delta").load(settings_table_path).orderBy("setting_na
 # META   "language_group": "synapse_pyspark"
 # META }
 
+# CELL ********************
+
+# --------------------------------------------
+# SET THE NEW LAKEHOUSE AS DEFAULT FOR THE WHOLE NOTEBOOK CHAIN
+# --------------------------------------------
+# updateDefinition() re-points each notebook's lakehouse dependency at the
+# lakehouse we just created, replacing any previously attached (now orphaned or
+# invalid) lakehouses. Doing it here — once, from this bootstrap notebook — means
+# every downstream notebook already has the correct default lakehouse attached
+# the first time its session starts, so partial-namespace Spark SQL
+# (e.g. spark.read.table(...)) just works with no per-notebook setup.
+#
+# NOTE: A notebook's default lakehouse is bound when its Spark session STARTS,
+# so this cannot change the CURRENT running session. It updates the SAVED
+# definition of each notebook, which takes effect the next time that notebook is
+# opened/run. The downstream notebooks have not started yet, so they are already
+# configured by the time you open them.
+current_notebook_name = notebookutils.runtime.context["currentNotebookName"]
+
+# Notebooks in this demo chain that should default to the new lakehouse.
+# (Adjust this list if you add or rename notebooks.)
+chain_notebooks = [
+    current_notebook_name,
+    "RTI_002_Setup_Eventhouse_Only",
+    "RTI_003_ingest_transform_medallion",
+    "RTI_004_build_ontology_mapping_rti_structured",
+    "RTI_005_entity_DataBinding_rti_structured",
+    "RTI_006_generate_and_ingest_OPCUA_Stream",
+    "RTI_007_TimeSeriesBinding_RTI_signal",
+]
+
+for nb_name in chain_notebooks:
+    try:
+        updated = notebookutils.notebook.updateDefinition(
+            name=nb_name,
+            defaultLakehouse=lakehouse_name,
+            defaultLakehouseWorkspace=workspace_id,
+        )
+        print(f"✅ Default lakehouse set for '{nb_name}': {updated}")
+    except Exception as exc:
+        print(f"⚠️  Could not set default lakehouse for '{nb_name}': {exc}")
+
+print(
+    f"\nℹ️  Default lakehouse = '{lakehouse_name}'. Downstream notebooks pick this "
+    "up on their next session start; re-open/restart this notebook for it to apply here."
+)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 # MARKDOWN ********************
 
 # ## ✅ Next Steps
