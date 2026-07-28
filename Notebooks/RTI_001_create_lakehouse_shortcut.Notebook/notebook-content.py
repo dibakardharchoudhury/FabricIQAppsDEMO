@@ -263,7 +263,7 @@ def get_spn_access_token() -> str:
 
 # 🔐 Required: Grant the Service Principal (SPN) access to the Fabric Workspace
 # This notebook authenticates to Fabric using a Service Principal (SPN) whose secrets are stored in Azure Key Vault.
-# To allow the SPN to call the Fabric REST APIs (for example, to list items, create a Lakehouse, or provision the Workspace Identity), the SPN must be granted access to the workspace.
+# To allow the SPN to call the Fabric REST APIs (for example, to list items, create a Lakehouse, a connection, and a shortcut), the SPN must be granted access to the workspace.
 # 
 # ✔️ Step 1 — Add the SPN to the Workspace
 # 
@@ -273,14 +273,20 @@ def get_spn_access_token() -> str:
 # Enter the name of your App Registration (the SPN).
 # Assign the following role:
 # 
-# Admin (required)
-# 
-# The Admin role is required because this notebook provisions a Workspace Identity
-# (POST /workspaces/{id}/provisionIdentity), which only workspace Admins can do.
-# The Workspace Identity is then used as the connection credential to reach the
-# firewall-protected ADLS Gen2 storage account.
+# Contributor (recommended) or Member
 # 
 # Click Add.
+# 
+# ✔️ Step 2 — Ensure the workspace has a Workspace Identity (one-time, admin task)
+# 
+# This notebook uses the Workspace Identity as the credential for the ADLS Gen2
+# connection, so it can reach the firewall-protected storage via trusted access.
+# A Workspace Identity CANNOT be created by a Service Principal — the
+# provisionIdentity API returns 403 InsufficientPrivileges for app-only tokens.
+# A workspace Admin (a user) must create it once:
+#   Workspace settings (gear) → Workspace identity → + Workspace identity.
+# Then grant that identity 'Storage Blob Data Contributor' on the ADLS account.
+# The notebook detects the identity automatically once it exists.
 
 # CELL ********************
 
@@ -291,158 +297,57 @@ def get_spn_access_token() -> str:
 FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
 
 
-def check_spn_is_workspace_admin(workspace_id: str, access_token: str) -> None:
-    """
-    Verify the calling identity has the *Admin* role on the workspace.
-
-    Provisioning a Workspace Identity requires the workspace Admin role, so this
-    runs as a preflight check and fails fast with actionable guidance.
-
-    - Raises RuntimeError if the caller is definitively NOT an Admin.
-    - If the caller identity or role assignments cannot be determined, it warns
-      and returns, letting provisioning surface the real error.
-    """
-    import base64
-    import json as _json
-
-    # Decode the caller's object ID ('oid') from the access token
-    caller_oid = None
-    try:
-        payload_b64 = access_token.split(".")[1]
-        payload_b64 += "=" * (-len(payload_b64) % 4)  # pad to base64 boundary
-        claims = _json.loads(base64.urlsafe_b64decode(payload_b64))
-        caller_oid = claims.get("oid")
-    except Exception:
-        pass
-
-    if not caller_oid:
-        print(
-            "⚠️  Could not determine caller identity from token; "
-            "skipping the Admin preflight check."
-        )
-        return
-
-    headers = {"Authorization": f"Bearer {access_token}"}
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/roleAssignments"
-    assignments = []
-
-    while url:
-        resp = requests.get(url, headers=headers)
-        if resp.status_code != 200:
-            print(
-                f"⚠️  Could not verify workspace role (HTTP {resp.status_code}). "
-                "Skipping preflight check and letting provisioning surface any error."
-            )
-            return
-        body = resp.json()
-        assignments.extend(body.get("value", []))
-        url = body.get("continuationUri")
-
-    is_admin = any(
-        a.get("role") == "Admin"
-        and a.get("principal", {}).get("id") == caller_oid
-        for a in assignments
-    )
-
-    if is_admin:
-        print("✅ Preflight: calling SPN has the workspace 'Admin' role.")
-        return
-
-    raise RuntimeError(
-        "The calling Service Principal does NOT have the 'Admin' role on the "
-        f"workspace ({workspace_id}). Provisioning a Workspace Identity requires "
-        "the workspace Admin role.\n"
-        "Fix: In the Fabric workspace, open 'Manage access' -> add the SPN (your "
-        "App Registration) with the 'Admin' role, then re-run this notebook."
-    )
-
-
 def ensure_workspace_identity(workspace_id: str, access_token: str) -> dict:
     """
-    Ensure the Fabric workspace has a Workspace Identity provisioned.
+    Ensure the Fabric workspace has a Workspace Identity, and return it.
 
     The Workspace Identity is the trusted identity that firewall-protected
     storage accounts recognize (via resource instance rules for
-    Microsoft.Fabric/workspaces). It is required for the ADLS connection
-    below, which uses credentialType "WorkspaceIdentity".
+    Microsoft.Fabric/workspaces). The ADLS connection below uses
+    credentialType "WorkspaceIdentity", so this identity must exist.
 
-    Behavior:
-      - 200 OK  -> provisioned immediately; returns {applicationId, servicePrincipalId}
-      - 202     -> long-running operation; polls until it completes
-      - already provisioned -> treated as success
-
-    IMPORTANT: The SPN calling this MUST have the *Admin* role on the workspace.
+    NOTE ON CREATION:
+    A Workspace Identity can only be *created* by a user/admin (creating it mints
+    an Entra app registration + service principal). Service principal app-only
+    tokens are rejected by the provisionIdentity API with 403
+    InsufficientPrivileges, even when the SPN is a workspace Admin. Therefore
+    this function DETECTS the identity via GET /workspaces/{id} (which an SPN
+    workspace member can read) and, if it is missing, fails with clear
+    instructions to create it once in the Fabric UI.
     """
-    import time
+    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
 
-    # Preflight: provisioning requires the workspace Admin role. Fail fast with
-    # actionable guidance if the SPN is not an Admin.
-    check_spn_is_workspace_admin(workspace_id, access_token)
+    print(f"🔎 GET {url} (check for existing workspace identity)")
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Failed to read workspace {workspace_id} "
+            f"(HTTP {resp.status_code}): {resp.text}"
+        )
 
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/provisionIdentity"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-
-    print(f"🚀 POST {url} (provision workspace identity)")
-    resp = requests.post(url, headers=headers)
-    print(f"   Status: {resp.status_code}")
-
-    # Already provisioned -> success (409, or 400 with an "already exists" message)
-    if resp.status_code == 409 or (
-        resp.status_code == 400 and "already" in resp.text.lower()
-    ):
-        print("ℹ️  Workspace identity already exists — nothing to do.")
-        return {"status": "AlreadyExists"}
-
-    # Immediate success
-    if resp.status_code == 200:
-        identity = resp.json()
+    identity = resp.json().get("workspaceIdentity")
+    if identity:
         print(
-            f"✅ Workspace identity provisioned: "
+            f"✅ Workspace identity present: "
             f"appId={identity.get('applicationId')}, "
             f"servicePrincipalId={identity.get('servicePrincipalId')}"
         )
         return identity
 
-    # Long-running operation -> poll until it finishes
-    if resp.status_code == 202:
-        op_url = resp.headers.get("Location")
-        retry_after = int(resp.headers.get("Retry-After", "5"))
-        print(f"⏳ Provisioning in progress (LRO). Polling {op_url} ...")
-
-        while True:
-            time.sleep(retry_after)
-            poll = requests.get(op_url, headers=headers)
-            if poll.status_code not in (200, 202):
-                raise RuntimeError(
-                    f"Polling provision operation failed "
-                    f"(HTTP {poll.status_code}): {poll.text}"
-                )
-            state = poll.json().get("status")
-            print(f"   Operation status: {state}")
-            if state == "Succeeded":
-                result = requests.get(f"{op_url}/result", headers=headers)
-                if result.status_code == 200:
-                    identity = result.json()
-                    print(
-                        f"✅ Workspace identity provisioned: "
-                        f"appId={identity.get('applicationId')}"
-                    )
-                    return identity
-                print("✅ Workspace identity provisioned.")
-                return {"status": "Succeeded"}
-            if state == "Failed":
-                raise RuntimeError(
-                    f"Workspace identity provisioning failed: {poll.text}"
-                )
-            retry_after = int(poll.headers.get("Retry-After", str(retry_after)))
-
-    # Any other status -> surface the error
     raise RuntimeError(
-        f"Failed to provision workspace identity "
-        f"(HTTP {resp.status_code}): {resp.text}"
+        "This workspace does NOT have a Workspace Identity, and it cannot be "
+        "created with a Service Principal token (the provisionIdentity API "
+        "returns 403 InsufficientPrivileges for app-only tokens).\n\n"
+        "One-time fix (requires a workspace Admin who is a user):\n"
+        "  1. Open the workspace in the Fabric portal.\n"
+        "  2. Workspace settings (gear) -> Workspace identity tab.\n"
+        "  3. Click '+ Workspace identity' to create it.\n"
+        "  4. Grant the new workspace identity 'Storage Blob Data Contributor' "
+        "on the target ADLS Gen2 account.\n"
+        "  5. Re-run this notebook.\n\n"
+        "Once the identity exists, this notebook detects it automatically and "
+        "uses it as the ADLS connection credential."
     )
 
 
@@ -898,7 +803,7 @@ print("=== STEP 1: Get SPN access token via Key Vault (NotebookUtils) ===")
 access_token = get_spn_access_token()
 
 
-print("\n=== STEP 1.5: Ensure Workspace Identity is provisioned ===")
+print("\n=== STEP 1.5: Verify Workspace Identity exists ===")
 ensure_workspace_identity(
     workspace_id=workspace_id,
     access_token=access_token,
