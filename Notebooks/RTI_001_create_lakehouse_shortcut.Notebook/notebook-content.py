@@ -288,6 +288,91 @@ def get_spn_access_token() -> str:
 FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
 
 
+def ensure_workspace_identity(workspace_id: str, access_token: str) -> dict:
+    """
+    Ensure the Fabric workspace has a Workspace Identity provisioned.
+
+    The Workspace Identity is the trusted identity that firewall-protected
+    storage accounts recognize (via resource instance rules for
+    Microsoft.Fabric/workspaces). It is required for the ADLS connection
+    below, which uses credentialType "WorkspaceIdentity".
+
+    Behavior:
+      - 200 OK  -> provisioned immediately; returns {applicationId, servicePrincipalId}
+      - 202     -> long-running operation; polls until it completes
+      - already provisioned -> treated as success
+
+    IMPORTANT: The SPN calling this MUST have the *Admin* role on the workspace.
+    """
+    import time
+
+    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/provisionIdentity"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    print(f"🚀 POST {url} (provision workspace identity)")
+    resp = requests.post(url, headers=headers)
+    print(f"   Status: {resp.status_code}")
+
+    # Already provisioned -> success (409, or 400 with an "already exists" message)
+    if resp.status_code == 409 or (
+        resp.status_code == 400 and "already" in resp.text.lower()
+    ):
+        print("ℹ️  Workspace identity already exists — nothing to do.")
+        return {"status": "AlreadyExists"}
+
+    # Immediate success
+    if resp.status_code == 200:
+        identity = resp.json()
+        print(
+            f"✅ Workspace identity provisioned: "
+            f"appId={identity.get('applicationId')}, "
+            f"servicePrincipalId={identity.get('servicePrincipalId')}"
+        )
+        return identity
+
+    # Long-running operation -> poll until it finishes
+    if resp.status_code == 202:
+        op_url = resp.headers.get("Location")
+        retry_after = int(resp.headers.get("Retry-After", "5"))
+        print(f"⏳ Provisioning in progress (LRO). Polling {op_url} ...")
+
+        while True:
+            time.sleep(retry_after)
+            poll = requests.get(op_url, headers=headers)
+            if poll.status_code not in (200, 202):
+                raise RuntimeError(
+                    f"Polling provision operation failed "
+                    f"(HTTP {poll.status_code}): {poll.text}"
+                )
+            state = poll.json().get("status")
+            print(f"   Operation status: {state}")
+            if state == "Succeeded":
+                result = requests.get(f"{op_url}/result", headers=headers)
+                if result.status_code == 200:
+                    identity = result.json()
+                    print(
+                        f"✅ Workspace identity provisioned: "
+                        f"appId={identity.get('applicationId')}"
+                    )
+                    return identity
+                print("✅ Workspace identity provisioned.")
+                return {"status": "Succeeded"}
+            if state == "Failed":
+                raise RuntimeError(
+                    f"Workspace identity provisioning failed: {poll.text}"
+                )
+            retry_after = int(poll.headers.get("Retry-After", str(retry_after)))
+
+    # Any other status -> surface the error
+    raise RuntimeError(
+        f"Failed to provision workspace identity "
+        f"(HTTP {resp.status_code}): {resp.text}"
+    )
+
+
 def list_workspace_folders(workspace_id: str, access_token: str) -> list:
     """
     List Fabric workspace folders.
@@ -585,10 +670,7 @@ def create_adls_gen2_cloud_connection(
             "connectionEncryption": "NotEncrypted",
             "skipTestConnection": False,
             "credentials": {
-                "credentialType": "ServicePrincipal",
-                "servicePrincipalClientId": client_id,
-                "servicePrincipalSecret": client_secret,
-                "tenantId": tenant_id,
+                "credentialType": "WorkspaceIdentity",
             },
         },
     }
@@ -741,6 +823,13 @@ def create_adls_gen2_shortcut_with_connection(
 
 print("=== STEP 1: Get SPN access token via Key Vault (NotebookUtils) ===")
 access_token = get_spn_access_token()
+
+
+print("\n=== STEP 1.5: Ensure Workspace Identity is provisioned ===")
+ensure_workspace_identity(
+    workspace_id=workspace_id,
+    access_token=access_token,
+)
 
 
 print("\n=== STEP 2: Ensure Fabric workspace folder exists ===")
