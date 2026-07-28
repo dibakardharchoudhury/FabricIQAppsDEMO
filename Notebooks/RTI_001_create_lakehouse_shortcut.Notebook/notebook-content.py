@@ -8,14 +8,9 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "0b04eeff-ee6c-4830-a6f3-b5afd7a822c9",
-# META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V3",
-# META       "default_lakehouse_workspace_id": "6f64157c-cd3d-4ce3-9cca-3e74fb2c367f",
-# META       "known_lakehouses": [
-# META         {
-# META           "id": "0b04eeff-ee6c-4830-a6f3-b5afd7a822c9"
-# META         }
-# META       ]
+# META       "default_lakehouse_name": "",
+# META       "default_lakehouse_workspace_id": "",
+# META       "known_lakehouses": []
 # META     }
 # META   }
 # META }
@@ -77,21 +72,21 @@ lakehouse_name = "Energy_IQ_LakehouseRTI_V3"
 lakehouse_description = "Lakehouse for Fabric IQ mock dataset (STID, SAP, OPC UA, SOLV, P&ID, Documents)."
 
 # Workspace ID that will host the Lakehouse
-workspace_id = "6f64157c-cd3d-4ce3-9cca-3e74fb2c367f"  # from behind /groups/ in Fabric URL
+workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"  # from behind /groups/ in Fabric URL
 
 # Workspace folder where the demo items should be created.
 # This is a Fabric workspace folder path, not a Lakehouse path.
-workspace_folder_path = "joa/RTI_DEMO_V3"
+workspace_folder_path = "RTI_DEMO_V3"
 
 # ADLS G2 URL containing the mock dataset.
 # This should be the root folder containing `bronze/stid`, `bronze/sap`, etc.
-adls_account_url = "https://ontologyjoa.dfs.core.windows.net"
+adls_account_url = "https://didharchadlsg2.dfs.core.windows.net"
 adls_subpath = "/dataiq/bronze"
 
 # Shortcut configuration (we want Lakehouse/Files/bronze -> ADLS G2 dataset)
 shortcut_name = "bronze"
 shortcut_parent_path = "Files"
-connection_name = "ontologyjoa-connection"
+connection_name = "ontologydidharch-connection"
 
 # Standard item names used by later notebooks
 ontology_name = "RTI_Demo_Ontology_V3"
@@ -190,7 +185,7 @@ print("✅ Eventhouse table name:", eventhouse_table_name)
 # --------------------------------------------
 
 # The URI of your Azure Key Vault (DNS name)
-key_vault_uri = "https://keyvaultjoa.vault.azure.net/"
+key_vault_uri = "https://akvfabcapnew.vault.azure.net/"
 
 # Secret names inside Key Vault (not the values themselves).
 # Each of these secrets should store one SPN value as plain text.
