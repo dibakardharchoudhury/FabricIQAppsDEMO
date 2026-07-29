@@ -407,9 +407,8 @@ def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
     ds = dict(existing)
     ds["$schema"] = DATASOURCE_SCHEMA_URL
     ds["artifactId"] = ontology_id
-    # Ontology artifacts are referenced workspace-relative; Fabric uses the
-    # all-zero sentinel for an ontology data source.
-    ds["workspaceId"] = "00000000-0000-0000-0000-000000000000"
+    # Must be the ontology's real workspace GUID (empty/zero GUID is rejected).
+    ds["workspaceId"] = workspace_id
     ds["displayName"] = ontology_name
     ds["type"] = DATASOURCE_TYPE
     ds.setdefault("dataSourceInstructions", None)
