@@ -30,7 +30,7 @@
 # - The reference dashboard grouped by `facility_id` / `equipment_id`, which do
 #   **not** exist in our Eventhouse table. Instead we parse the hierarchy that is
 #   already encoded in `opcua_node_id` (`ns=2;s=T001.inlet_pressure`):
-#   - `Turbine` = `extract(@'s=([^.]+)\.', 1, opcua_node_id)`  → `T001`..`T005`
+#   - `Turbine` = `extract(@';s=([^.]+)\.', 1, opcua_node_id)`  → `T001`..`T005`
 #   - `Signal`  = `extract(@'\.([^.]+)$', 1, opcua_node_id)`   → `inlet_pressure`, ...
 #   So **no Kusto lookup table / shortcut is required** — the facility/equipment
 #   breakdown is achieved purely from the node id.
@@ -139,25 +139,19 @@ FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
 # so no facility_id/equipment_id columns or Kusto lookup are needed.
 # -------------------------------------------------------------------------
 DASHBOARD_TEMPLATE_JSON = r'''{
-  "$schema": "https://pbiadx.powerbi.com/static/d/schema/77/dashboard.json",
-  "id": "d5000000-0000-4000-8000-000000000000",
-  "schema_version": "77",
-  "title": "RTI Demo - OPC UA Telemetry Stats",
-  "autoRefresh": {
-    "enabled": true,
-    "defaultInterval": "5m",
-    "minInterval": "30s"
-  },
+  "schema_version": 77,
+  "flavor": "RTDashboard_Regular",
+  "baseQueries": [],
+  "embeddedApps": [],
   "dataSources": [
     {
       "id": "d5000000-0000-4000-8000-000000000001",
-      "name": "__KQL_DB_NAME__",
       "kind": "kusto-trident",
-      "scopeId": "kusto-trident",
       "clusterUri": "__CLUSTER_QUERY_URI__",
+      "databaseArtifactId": "__KQL_DB_ID__",
       "database": "__KQL_DB_NAME__",
-      "databaseItemId": "__KQL_DB_ID__",
-      "workspace": "__WORKSPACE_ID__"
+      "workspace": "__WORKSPACE_ID__",
+      "name": "__KQL_DB_NAME__"
     }
   ],
   "pages": [
@@ -209,14 +203,14 @@ DASHBOARD_TEMPLATE_JSON = r'''{
     {
       "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000014",
-      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Total'] = count(), ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| sort by Turbine asc",
+      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Total'] = count(), ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| sort by Turbine asc",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
       "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000015",
-      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| render columnchart kind=stacked",
+      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| project Turbine, ['Good'], ['Bad'], ['Uncertain']",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
@@ -230,14 +224,14 @@ DASHBOARD_TEMPLATE_JSON = r'''{
     {
       "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000017",
-      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T001'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
+      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T001'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
       "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000018",
-      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T002'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
+      "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T002'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     }
@@ -294,7 +288,7 @@ DASHBOARD_TEMPLATE_JSON = r'''{
       "pageId": "d5000000-0000-4000-8000-000000000002",
       "layout": { "x": 12, "y": 10, "width": 12, "height": 7 },
       "queryRef": { "kind": "query", "queryId": "d5000000-0000-4000-8000-000000000015" },
-      "visualType": "bar",
+      "visualType": "column",
       "visualOptions": {}
     },
     {
@@ -331,7 +325,6 @@ resolved_json = (
 )
 
 dashboard_def = json.loads(resolved_json)  # raises if invalid
-dashboard_def["title"] = dashboard_name
 resolved_json = json.dumps(dashboard_def, indent=2)
 print(f"✅ Dashboard definition built and validated ({len(dashboard_def['tiles'])} tiles).")
 
