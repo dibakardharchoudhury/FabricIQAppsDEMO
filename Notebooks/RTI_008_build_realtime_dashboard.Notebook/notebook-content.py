@@ -180,56 +180,48 @@ DASHBOARD_TEMPLATE_JSON = r'''{
   ],
   "queries": [
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000011",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| summarize ['Total Events'] = count()",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000012",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| summarize ['Event Count'] = count() by ['Time Window'] = bin(event_time, 30m)\n| sort by ['Time Window'] desc",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000013",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| sort by event_time desc\n| take 1000",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000014",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Total'] = count(), ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| sort by Turbine asc",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000015",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine\n| project Turbine, ['Good'], ['Bad'], ['Uncertain']",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000016",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| summarize ['Event Count'] = count() by bin(event_time, 30m)\n| render timechart",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000017",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T001'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
       "usedVariables": ["_startTime", "_endTime"]
     },
     {
-      "kind": "inline",
       "id": "d5000000-0000-4000-8000-000000000018",
       "text": "OPCUAEvents\n| where event_time between (_startTime .. _endTime)\n| extend Turbine = extract(@';s=([^.]+)\\.', 1, opcua_node_id)\n| where Turbine == 'T002'\n| extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id)\n| summarize AvgValue = avg(value) by Signal, bin(event_time, 1m)\n| render timechart",
       "dataSource": { "kind": "inline", "dataSourceId": "d5000000-0000-4000-8000-000000000001" },
