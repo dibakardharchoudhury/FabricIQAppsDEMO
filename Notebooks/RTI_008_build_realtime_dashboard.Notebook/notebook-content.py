@@ -24,12 +24,9 @@
 # MARKDOWN ********************
 
 # # 08 — Build & Deploy the Real-Time Dashboard (OPC UA Telemetry Stats)
-#
 # Replicates the reference RTI dashboard, adapted to our **slim** `OPCUAEvents`
 # schema (`event_time`, `opcua_node_id`, `value`, `quality`).
-#
 # Key design points:
-#
 # - The reference dashboard grouped by `facility_id` / `equipment_id`, which do
 #   **not** exist in our Eventhouse table. Instead we parse the hierarchy that is
 #   already encoded in `opcua_node_id` (`ns=2;s=T001.inlet_pressure`):
@@ -39,7 +36,6 @@
 #   breakdown is achieved purely from the node id.
 # - Our data is a single facility (`FACILITY_RTI_001`) with 5 turbines, so the two
 #   hardcoded per-facility timecharts become per-turbine timecharts (T001, T002).
-#
 # This notebook:
 # 1. Reads `rti_demo_settings` for the live `cluster_query_uri`, `fabric_kql_db_id`
 #    and KQL DB name (written by RTI_002).
@@ -47,6 +43,7 @@
 # 3. Writes an importable copy to the Lakehouse `Files/dashboards/` folder.
 # 4. Deploys it as a Fabric **KQLDashboard** item via REST (best-effort). If the
 #    deploy call fails, the notebook prints manual-import steps for the file it wrote.
+
 
 # CELL ********************
 
