@@ -49,16 +49,17 @@
 # created in the UI) via `getDefinition`, and re-deploys it to `ops_agent_name` via
 # `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
 # The copied config keeps, exactly: `$schema`, the **Ontology** data source (encoded
-# datasource id + zero workspaceId), a **Teams channel** message destination, and a single
+# datasource id + zero workspaceId), a **Teams channel** message destination, a single
 # **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
-# `Pipe_SendEmailAlert` Data Pipeline. FabricJobAction carries its pipeline `connection`
-# in the definition, so — unlike a PowerAutomateAction — the action is **fully wired via
-# REST** with no UI step: the agent posts a Teams alert and invokes the pipeline to email
-# operations. This notebook overrides **only** `instructions` (with a time-series-aware
-# version that Generate Playbook can compile) and `shouldRun`; `playbook` and `identity`
-# are intentionally omitted (matching the working agent).
+# `Pipe_SendEmailAlert` Data Pipeline, and the **generated `playbook`**
+# (OntologyDefinitions + RuleDefinitions) so the target is immediately playbook-ready.
+# FabricJobAction carries its pipeline `connection` in the definition, so — unlike a
+# PowerAutomateAction — the action is **fully wired via REST** with no UI step: the agent
+# posts a Teams alert and invokes the pipeline to email operations. This notebook sets
+# only `instructions` (kept verbatim from the working agent via the INSTRUCTIONS constant)
+# and `shouldRun`; `identity` is intentionally dropped (delegated token provisions Run-as).
 # This notebook: reads settings → loads the reference agent's config → creates/reuses the
-# target **OperationsAgent** item → pushes the copied definition (with fixed instructions)
+# target **OperationsAgent** item → pushes the copied definition (instructions + playbook)
 # via REST → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
 
 
@@ -334,60 +335,65 @@ def load_reference_configuration() -> dict:
 
 
 # -------------------------------------------------------------------------
-# Operations Agent instructions (schema: operationsAgents/definition/1.0.0)
+# Operations Agent instructions — verbatim from the working New_RTI_Demo_OpsAgent_V3
+# agent that successfully generates a playbook (Goals / Operational / Semantic).
 # -------------------------------------------------------------------------
-INSTRUCTIONS = (
-    "*** Role ***\n"
-    "Monitor industrial turbine OPC UA telemetry in real time through the RTI ontology and\n"
-    "raise an operational alert when a signal's quality degrades or fails.\n\n"
-    "*** Data source ***\n"
-    "Use the 'signal_master' entity of the ontology. Its 'quality', 'value' and 'event_time'\n"
-    "are TIME-SERIES properties (bound to the real-time OPCUAEvents stream); 'equipment_id',\n"
-    "'facility_id', 'system_id', 'unit' and 'tag' are static properties resolved by the\n"
-    "ontology. For each 'equipment_id', evaluate its LATEST 'signal_master' reading by\n"
-    "'event_time'.\n\n"
-    "*** Trigger rules (one explicit condition each) ***\n"
-    "Rule 1 - Failure:     trigger when the latest 'quality' reading equals \"BAD\".\n"
-    "Rule 2 - Degradation: trigger when the latest 'quality' reading equals \"UNCERTAIN\".\n"
-    "Do not alert when the latest 'quality' equals \"GOOD\".\n\n"
-    "*** Enrichment (apply only after a rule triggers; these are derived, not queried) ***\n"
-    "- severity:      BAD -> HIGH ;         UNCERTAIN -> MEDIUM.\n"
-    "- alert_type:    BAD -> SingleFailure ; UNCERTAIN -> SignalDegradation.\n"
-    "- derived_trend: BAD -> Failing ;       UNCERTAIN -> Degrading.\n\n"
-    "*** Alert message (format exactly) ***\n"
-    "   Equipment Alert: {equipment_id}\n"
-    "   Facility: {facility_id}\n"
-    "   Signal Quality: {quality}\n"
-    "   Measured Value: {value} {unit}\n"
-    "   Timestamp: {event_time}\n"
-    "   Severity: {severity}\n"
-    "   Type: {alert_type}\n"
-    "   Trend: {derived_trend}\n"
-    "   Insight: Explain the issue in simple business terms.\n"
-    "   Recommended Action: Provide the next step.\n\n"
-    "*** Action ***\n"
-    "For each triggered alert, invoke the action \"Send Email Alert!\" so operations can act,\n"
-    "passing equipment_id, facility_id, value, unit, quality and event_time (empty string if missing).\n\n"
-    "*** Notes ***\n"
-    "- quality: GOOD = normal, UNCERTAIN = degraded signal, BAD = failure condition.\n"
-    "- unit indicates whether the reading is pressure, temperature, flow, vibration or position.\n"
-    "- Suppress duplicate alerts for the same 'equipment_id' within 10 minutes.\n"
-    "- Use only ontology-provided fields; keep messages short and human-readable."
-)
+INSTRUCTIONS = '''*** Goals ***
+- Monitor OPC UA signal quality for industrial turbine equipment by using the "signal_master" ontology entity.
+- Notify operations when an OPC UA signal has failed or degraded.
+- Recommend an email alert containing the available equipment and signal context.
+
+*** Operational Instructions ***
+1. Monitor the "signal_master" entity, uniquely identified by the "opcua_node_id" property.
+
+2. Create an alert when the current value of "quality" equals "BAD".
+
+3. Create an alert when the current value of "quality" equals "UNCERTAIN".
+
+4. For every alert, identify the affected equipment by using the "equipment_id" property.
+
+5. Include the following available ontology properties in the alert context:
+   - "equipment_id"
+   - "facility_id"
+   - "quality"
+   - "value"
+   - "unit"
+   - "event_time"
+
+6. For every generated alert, recommend the "Send Email Alert!" action.
+
+*** Semantic Instructions ***
+1. The "signal_master" entity represents an OPC UA signal.
+
+2. The "opcua_node_id" property uniquely identifies each "signal_master" entity.
+
+3. The "equipment_id" property identifies the equipment associated with the signal.
+
+4. A "quality" value of "BAD" means that the signal has failed and requires immediate investigation.
+
+5. A "quality" value of "UNCERTAIN" means that the signal is degraded and requires investigation.
+
+6. The "value" property contains the current measured value.
+
+7. The "unit" property describes the measurement unit.
+
+8. The "event_time" property contains the timestamp of the signal event.
+
+9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
 def build_configurations(reference_configuration: dict, should_run: Optional[bool] = None) -> dict:
-    """Configurations.json body — an exact copy of the reference agent's config.
+    """Configurations.json body — an exact copy of the working reference agent's config.
 
-    Deep-copy the working agent's full configuration (its `$schema`, Ontology
-    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, and the Teams
-    `messageDestination`) and override only two things: `instructions` (the
-    time-series-aware text above, which Generate Playbook can compile) and `shouldRun`.
-    `playbook` and `identity` are left absent, exactly like the working agent — the
-    running user's delegated token provisions Run-as automatically.
+    Deep-copy the working agent's full configuration verbatim: `$schema`, the Ontology
+    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, the Teams
+    `messageDestination`, AND the generated `playbook` (OntologyDefinitions +
+    RuleDefinitions) so the deployed agent is immediately playbook-ready. Only
+    `instructions` (kept in sync with the reference via the constant above) and
+    `shouldRun` are set explicitly; `identity` is dropped (the running user's delegated
+    token provisions Run-as automatically).
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     config = deepcopy(reference_configuration)
-    config.pop("playbook", None)                       # match the working agent (no playbook key)
     config.get("configuration", {}).pop("identity", None)
     config["configuration"]["instructions"] = INSTRUCTIONS
     config["shouldRun"] = run_state
@@ -414,7 +420,7 @@ try:
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
     ops_agent_item_id = ops_agent.get("id")
 
-    # 2) Push the copied definition (fixed instructions) via updateDefinition.
+    # 2) Push the copied definition (verbatim instructions + playbook) via updateDefinition.
     #    Runs in User context so the agent's Run-as provisions correctly (Re-authenticate works).
     started = ops_agent_should_run
     try:
@@ -445,13 +451,14 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 
 print()
-print("✅ Set programmatically via REST (User context) — an exact copy of the reference agent:")
-print("   instructions (time-series-aware), Ontology data source, Teams message destination,")
-print("   the 'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and run state.")
+print("✅ Set programmatically via REST (User context) — an exact copy of the working reference agent:")
+print("   instructions (verbatim), Ontology data source, Teams message destination, the")
+print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), the generated")
+print("   playbook (OntologyDefinitions + RuleDefinitions), and run state.")
 print("ℹ️  FabricJobAction carries its pipeline connection in the definition, so no UI wiring is")
 print("   needed — the agent posts the Teams alert and runs the pipeline to email operations.")
-print("ℹ️  To Generate Playbook in the UI: make sure the OPC UA stream (RTI_007) is running so")
-print("   recent BAD/UNCERTAIN readings exist, then open the agent and select 'Generate Playbook'.")
+print("ℹ️  The playbook is copied from the reference; to refresh it against current data, open the")
+print("   agent and select 'Generate Playbook' (works because the instructions compile cleanly).")
 
 
 if ops_agent_item_id:
