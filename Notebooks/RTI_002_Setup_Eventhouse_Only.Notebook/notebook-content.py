@@ -13,9 +13,6 @@
 # META       "default_lakehouse_workspace_id": "19f3d588-1585-4f3b-bb59-5abaf90c193a",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "983f16bc-f041-4dd7-b56d-0f078359e3a6"
-# META         },
-# META         {
 # META           "id": "e1890cfe-2dd7-4446-a97b-537beba97276"
 # META         }
 # META       ]
@@ -30,6 +27,7 @@
 # CELL 0
 # Config settings
 # =========================
+
 # --- End-to-End Fabric Stream Ingestion: Setup and Automation ---
 
 from datetime import datetime, timezone

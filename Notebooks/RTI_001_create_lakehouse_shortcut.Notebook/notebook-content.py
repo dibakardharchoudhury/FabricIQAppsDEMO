@@ -922,16 +922,6 @@ display(spark.read.format("delta").load(settings_table_path).orderBy("setting_na
 # definition — the one created in THIS run — with no leftover (orphaned)
 # lakehouses from a previous deploy or tenant.
 #
-# Why not the simple updateDefinition(defaultLakehouse=...) call? That only
-# swaps the *default* pointer; it MERGES, leaving every previously-attached
-# lakehouse behind in `known_lakehouses`. After redeploying into a new
-# workspace/tenant, those old (now non-existent) lakehouse IDs remain and show
-# up as broken "Couldn't load artifact" items in the Explorer.
-#
-# So instead we rewrite the FULL definition per notebook:
-#   getDefinition -> replace metadata.dependencies.lakehouse -> updateDefinition
-# using the lakehouse_id created earlier in THIS notebook (read at runtime, so
-# there are NO hardcoded IDs — this is fully tenant-portable and self-healing).
 #
 # NOTE: A notebook's default lakehouse binds when its Spark session STARTS, so
 # this can't change an already-running session; it updates each DOWNSTREAM
@@ -972,7 +962,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             name=nb_name,
             content=json.dumps(nb_json),
         )
-        return (nb_name, bool(ok), "bound to current lakehouse only")
+        return (nb_name, bool(ok), "bound to current lakehouse successfully!")
     except Exception as exc:
         return (nb_name, False, exc)
 
@@ -990,7 +980,7 @@ with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
             print(f"⚠️  Could not rebind '{nb_name}': {detail}")
 
 print(
-    f"\nℹ️  All downstream notebooks now reference only lakehouse "
+    f"\nℹ️  All downstream notebooks now reference the lakehouse "
     f"'{lakehouse_name}' ({lakehouse_id}). They pick this up on their next "
     "session start."
 )
