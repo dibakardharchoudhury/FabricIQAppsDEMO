@@ -948,6 +948,7 @@ chain_notebooks = [
     "RTI_005_entity_DataBinding_rti_structured",
     "RTI_006_generate_and_ingest_OPCUA_Stream",
     "RTI_007_TimeSeriesBinding_RTI_signal",
+    "RTI_008_build_realtime_dashboard",
 ]
 
 
