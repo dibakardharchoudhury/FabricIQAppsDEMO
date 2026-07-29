@@ -23,7 +23,7 @@ The scenario is designed to test **Microsoft Fabric** and **Fabric IQ** end-to-e
 
 ## Notebook Execution Order
 
-The complete pipeline is implemented across **8 notebooks (RTI_000–RTI_007)**, with each playing a specific role:
+The complete pipeline is implemented across **9 notebooks (RTI_000–RTI_008)**, with each playing a specific role:
 
 | Notebook | Role |
 |----------|------|
@@ -35,6 +35,7 @@ The complete pipeline is implemented across **8 notebooks (RTI_000–RTI_007)**,
 | **RTI_005** | Adds static Lakehouse DataBindings and relationship contextualizations. |
 | **RTI_006** | Configures Eventstream/Eventhouse and generates OPC UA telemetry. |
 | **RTI_007** | Adds Eventhouse TimeSeries DataBinding to `signal_master`. |
+| **RTI_008** | Builds and deploys the Real-Time Dashboard over `OPCUAEvents` (telemetry stats). |
 | **OntologyAgent** | Uses the finished ontology as the semantic access layer for questions and analysis. |
 
 ---
@@ -364,6 +365,43 @@ From `bronze/documents/` (unstructured):
 
 ---
 
+### RTI_008 – Build & Deploy the Real-Time Dashboard
+**Notebook:** `RTI_008_build_realtime_dashboard`
+
+**Goal:** Replicate the reference RTI dashboard as a Fabric **Real-Time Dashboard** over the Eventhouse `OPCUAEvents` table, adapted to our slim schema.
+
+**Key concept:** The reference dashboard grouped by `facility_id` / `equipment_id`, columns that do **not** exist in our slim `OPCUAEvents` table (`event_time`, `opcua_node_id`, `value`, `quality`). Instead of adding a Kusto lookup table or shortcut, the notebook parses the hierarchy already encoded in `opcua_node_id` (`ns=2;s=T001.inlet_pressure`):
+- `Turbine = extract(@'s=([^.]+)\.', 1, opcua_node_id)` → `T001`..`T005`
+- `Signal  = extract(@'\.([^.]+)$', 1, opcua_node_id)` → `inlet_pressure`, `power_output`, ...
+
+Since the demo data is a single facility (`FACILITY_RTI_001`) with 5 turbines, the two hardcoded per-facility timecharts become per-turbine timecharts (T001, T002).
+
+**Tiles (schema_version 77):**
+1. Total Count of Events (card)
+2. Events per 30 minutes (table)
+3. Sample 1000 Rows (table)
+4. Equipment Health by Turbine (table — Good/Bad/Uncertain counts)
+5. Equipment Health by Turbine (stacked bar)
+6. Events per 30 minutes (timechart)
+7. Turbine T001 – Signal Values (timechart)
+8. Turbine T002 – Signal Values (timechart)
+
+All tiles honor a `Time range` duration parameter (`_startTime`/`_endTime`).
+
+**Key steps:**
+
+1. Reads `rti_demo_settings` for the live `cluster_query_uri`, `fabric_kql_db_id`, and KQL DB name (written by RTI_002).
+2. Injects those values into the dashboard definition so the data source points at this workspace's Eventhouse.
+3. Writes an importable copy to `Files/dashboards/` in the Lakehouse.
+4. Deploys it as a Fabric **KQLDashboard** item via REST (SPN auth from Key Vault). If the deploy call fails, it prints manual-import steps for the file it wrote (New → Real-Time Dashboard → Manage → Replace with file).
+5. Persists `dashboard_name` (and `dashboard_id` when deployed) back to `rti_demo_settings`.
+
+**Static artifact:** A ready-to-import copy is also checked in at `RTI_DEMO_V3/Dashboards/RTI_Demo_OPCUA_TelemetryStats.Dashboard.json` (with `__CLUSTER_QUERY_URI__` / `__KQL_DB_NAME__` / `__KQL_DB_ID__` placeholders resolved by the notebook, or re-pointed to your Eventhouse on manual import).
+
+**Output:** A Real-Time Dashboard in the `RTI_DEMO_V3` folder showing live OPC UA telemetry statistics.
+
+---
+
 ## Dataset Layout in ADLS / OneLake
 
 ```
@@ -522,7 +560,7 @@ The `OPCUAEvents` Eventhouse table is bound to the `signal_master` entity via a 
 - ADLS Gen2 account containing bronze dataset
 
 ### Execution
-1. Run notebooks in order: RTI_001 → RTI_007
+1. Run notebooks in order: RTI_001 → RTI_008
 2. Each notebook reads from `rti_demo_settings` for configuration
 3. All notebooks are idempotent where feasible (safe to rerun)
 
@@ -647,7 +685,7 @@ This architecture enables:
 ## Related Resources
 
 - **RTI_000** – Full dataset and pipeline documentation (comprehensive notebook)
-- **RTI_001–RTI_007** – Detailed implementation notebooks with runnable code
+- **RTI_001–RTI_008** – Detailed implementation notebooks with runnable code
 - **Fabric documentation** – Lakehouse, Eventhouse, Ontology APIs
 - **Eventhouse & KQL** – Time-series data modeling best practices
 - **Fabric IQ Agents** – Operationalization and semantic reasoning
