@@ -6,74 +6,138 @@
   "tiles": [
     {
       "id": "b1000000-0000-4000-8000-000000000001",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000001" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000001"
+      },
       "title": "Total Events",
       "visualType": "table",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 0, "y": 0, "width": 6, "height": 5 },
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 6,
+        "height": 5
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000002",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000002" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000002"
+      },
       "title": "Events per 30 min",
       "visualType": "table",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 6, "y": 0, "width": 6, "height": 5 },
+      "layout": {
+        "x": 6,
+        "y": 0,
+        "width": 6,
+        "height": 5
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000003",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000003" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000003"
+      },
       "title": "Latest 1000 Events",
       "visualType": "table",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 0, "y": 5, "width": 6, "height": 6 },
+      "layout": {
+        "x": 0,
+        "y": 5,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000004",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000004" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000004"
+      },
       "title": "Equipment Health by Turbine",
       "visualType": "table",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 6, "y": 5, "width": 6, "height": 6 },
+      "layout": {
+        "x": 6,
+        "y": 5,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000005",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000005" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000005"
+      },
       "title": "Quality Mix by Turbine",
       "visualType": "columnchart",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 0, "y": 11, "width": 6, "height": 6 },
+      "layout": {
+        "x": 0,
+        "y": 11,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000006",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000006" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000006"
+      },
       "title": "Event Volume Trend",
       "visualType": "timechart",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 6, "y": 11, "width": 6, "height": 6 },
+      "layout": {
+        "x": 6,
+        "y": 11,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000007",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000007" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000007"
+      },
       "title": "Turbine T001 Signals",
       "visualType": "timechart",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 0, "y": 17, "width": 6, "height": 6 },
+      "layout": {
+        "x": 0,
+        "y": 17,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     },
     {
       "id": "b1000000-0000-4000-8000-000000000008",
-      "queryRef": { "kind": "query", "queryId": "a1000000-0000-4000-8000-000000000008" },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1000000-0000-4000-8000-000000000008"
+      },
       "title": "Turbine T002 Signals",
       "visualType": "timechart",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
-      "layout": { "x": 6, "y": 17, "width": 6, "height": 6 },
+      "layout": {
+        "x": 6,
+        "y": 17,
+        "width": 6,
+        "height": 6
+      },
       "visualOptions": {}
     }
   ],
@@ -115,50 +179,98 @@
   "queries": [
     {
       "id": "a1000000-0000-4000-8000-000000000001",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | summarize ['Total Events'] = count()"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000002",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | summarize ['Event Count'] = count() by ['Time Window'] = bin(event_time, 30m) | sort by ['Time Window'] desc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000003",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | sort by event_time desc | take 1000"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000004",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | summarize ['Total'] = count(), ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine | sort by Turbine asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000005",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine | project Turbine, ['Good'], ['Bad'], ['Uncertain'] | sort by Turbine asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000006",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | summarize ['Event Count'] = count() by bin(event_time, 30m) | project event_time, ['Event Count'] | sort by event_time asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000007",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T001' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | project event_time, Signal, AvgValue | sort by event_time asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000008",
-      "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
-      "usedVariables": ["_startTime", "_endTime"],
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ],
       "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T002' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | project event_time, Signal, AvgValue | sort by event_time asc"
     }
   ],
