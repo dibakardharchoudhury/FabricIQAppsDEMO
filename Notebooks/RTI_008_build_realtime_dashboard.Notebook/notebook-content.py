@@ -34,8 +34,7 @@
 #   - `Signal`  = `extract(@'\.([^.]+)$', 1, opcua_node_id)`   → `inlet_pressure`, ...
 #   So **no Kusto lookup table / shortcut is required** — the facility/equipment
 #   breakdown is achieved purely from the node id.
-# - Our data is a single facility (`FACILITY_RTI_001`) with 5 turbines, so the two
-#   hardcoded per-facility timecharts become per-turbine timecharts (T001, T002).
+# - Our data is a single facility (`FACILITY_RTI_001`) with 5 turbines, per-turbine timecharts (T001, T002) are added.
 # This notebook:
 # 1. Reads `rti_demo_settings` for the live `cluster_query_uri`, `fabric_kql_db_id`
 #    and KQL DB name (written by RTI_002).
