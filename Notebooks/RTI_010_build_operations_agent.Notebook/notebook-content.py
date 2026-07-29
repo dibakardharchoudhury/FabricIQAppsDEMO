@@ -96,7 +96,8 @@ key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret",
 
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # UPN that receives the alert notification. Update to a user in your tenant.
-ops_agent_recipient = first_setting("ops_agent_recipient", default="admin@MngEnvMCAP677316.onmicrosoft.com")
+ops_agent_recipient = first_setting("ops_agent_recipient", default="admin@mngenvmcap218279.onmicrosoft.com")
+
 
 print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
@@ -138,7 +139,7 @@ LRO_MAX_WAIT_SECONDS = 300
 
 OPS_AGENT_DESCRIPTION = (
     "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
-    f"'{ontology_name}' ontology. Raises a work order when signal quality "
+    f"'{ontology_name}' ontology. Raises an Alert! in Teams followed by an email when signal quality "
     "degrades (UNCERTAIN) or fails (BAD)."
 )[:256]  # Fabric item description max length is 256 chars
 
