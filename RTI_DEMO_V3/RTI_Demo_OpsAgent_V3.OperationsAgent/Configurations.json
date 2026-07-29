@@ -1,0 +1,51 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
+  "configuration": {
+    "instructions": "*** Goals ***\n- Monitor industrial turbine OPC UA telemetry in real time via the RTI ontology.\n- Detect equipment health issues from signal quality and raise a work order automatically.\n- Escalate degraded (UNCERTAIN) or failed (BAD) signals to operations without manual triage.\n\n*** Operational Instructions ***\n1. Operate on the \u0027signal_master\u0027 entity of the ontology. Each event is complete and independent.\n   - Do NOT invent rowIndex, event_id or synthetic keys, and do NOT reconstruct rows with joins/arg_max.\n   - \u0027signal_master\u0027 already resolves equipment_id, facility_id, system_id and unit from the ontology\n     (real-time OPCUAEvents joined to the lakehouse signal registry on opcua_node_id).\n2. Use \u0027equipment_id\u0027 as the business entity to evaluate alerts; evaluate each incoming event independently.\n3. Trigger an alert when quality = \u0022BAD\u0022 or quality = \u0022UNCERTAIN\u0022.\n4. Suppress duplicate alerts for the same \u0027equipment_id\u0027 for 10 minutes.\n5. Assign severity:  BAD -\u003E HIGH ;  UNCERTAIN -\u003E MEDIUM.\n6. Classify type:    BAD -\u003E SingleFailure ;  UNCERTAIN -\u003E SignalDegradation.\n7. Derive trend from the current signal (no history):  BAD -\u003E Failing ;  UNCERTAIN -\u003E Degrading ;  GOOD -\u003E Stable.\n8. Generate the alert message EXACTLY:\n\n   Equipment Alert: {equipment_id}\n   Facility: {facility_id}\n   Signal Quality: {quality}\n   Measured Value: {value} {unit}\n   Timestamp: {event_time}\n   Severity: {severity}\n   Type: {alert_type}\n   Trend: {derived_trend}\n   Insight: Explain the issue in simple business terms\n   Recommended Action: Provide the next step\n\n9. Invoke the action \u0022New WO to Investigate / Repair\u0022 and pass: equipment_id, facility_id, value, unit,\n   quality, event_time. If any field is missing, pass an empty string.\n\n*** Semantic Notes ***\n- quality: GOOD = normal, UNCERTAIN = degraded signal, BAD = failure condition.\n- unit tells whether the reading is pressure, temperature, flow, vibration or position.\n- Keep alerts short, clear and human-readable; use only ontology-provided fields.",
+    "dataSources": {
+      "signalOntology": {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "type": "Ontology",
+        "workspaceId": "19f3d588-1585-4f3b-bb59-5abaf90c193a"
+      }
+    },
+    "actions": {
+      "00000000-0000-0000-0000-000000000000": {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "displayName": "New WO to Investigate / Repair",
+        "description": "Create a work order to investigate/repair the flagged equipment.",
+        "kind": "PowerAutomateAction",
+        "parameters": [
+          {
+            "name": "equipment_id",
+            "description": "Equipment to investigate"
+          },
+          {
+            "name": "facility_id",
+            "description": "Facility of the equipment"
+          },
+          {
+            "name": "value",
+            "description": "Measured value"
+          },
+          {
+            "name": "unit",
+            "description": "Unit of the measured value"
+          },
+          {
+            "name": "quality",
+            "description": "Signal quality (GOOD/UNCERTAIN/BAD)"
+          },
+          {
+            "name": "event_time",
+            "description": "Event timestamp"
+          }
+        ]
+      }
+    },
+    "identity": {
+      "sponsor": "admin@mngenvmcap218279.onmicrosoft.com"
+    }
+  },
+  "shouldRun": false
+}
