@@ -61,7 +61,9 @@
 #    - `ops_agent_run_as_user` is only a guardrail used for printing a warning if it doesn’t match the signed-in user.
 # 
 # 4. **Run state & persistence**  
-#    - `ops_agent_should_run` controls whether the agent is started or left stopped after deployment.  
+#    - The agent is deployed **fully configured but STOPPED** (`ops_agent_should_run` defaults to
+#      `false`) so you stay in control. **To start monitoring: open the agent in the Fabric portal
+#      and turn it On (Run).** Set `ops_agent_should_run = true` only to start it from the notebook.
 #    - The notebook persists key identifiers (agent id, name, run flag, resolved ontology data
 #      source id, and the `email_pipeline_id`) into the `rti_demo_settings` table for later notebooks.
 # 
@@ -189,8 +191,10 @@ ops_agent_teams_channel_id = first_setting(
     "ops_agent_teams_channel_id", "teams_channel_id",
     default="19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2")
 
-# Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
-ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
+# Deploy the agent STOPPED (definition `shouldRun`) so the user starts it in the portal for full
+# control. Default 'false': the agent is created fully (playbook + Teams) but not started. Set
+# 'true' only if you want the notebook to start monitoring immediately.
+ops_agent_should_run = str(first_setting("ops_agent_should_run", default="false")).lower() in ("true", "1", "yes")
 
 # Attach the embedded `playbook` (OntologyDefinitions + RuleDefinitions) to the pushed
 # definition. Default TRUE: pushing a playbook via updateDefinition works (verified against the
@@ -739,10 +743,13 @@ try:
         started = False
         _push(False)
     playbook_attached = attach_playbook
-    _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
+    _run_state = "started (shouldRun=true)" if started else "deployed STOPPED (shouldRun=false)"
     _pb_state = "with embedded playbook" if playbook_attached else "config-only (generate playbook in UI)"
     print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — encoded Ontology data")
     print(f"   source, Teams destination and Send Email Alert pipeline action embedded (id={ops_agent_item_id}).")
+    if not started:
+        print(f"👉 NEXT STEP — START THE AGENT: open '{ops_agent_name}' in the Fabric portal and turn it")
+        print("   On (Run) to begin monitoring. It is deployed fully (playbook + Teams) but not running.")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -767,6 +774,8 @@ if playbook_attached:
 else:
     print("ℹ️  Deployed config-only. Open the agent and select 'Generate Playbook' in the portal;")
     print("   with the Ontology Knowledge bound (encoded id), generation succeeds.")
+print("👉 The agent is deployed STOPPED so you stay in control. To START monitoring: open the agent")
+print("   in the Fabric portal and turn it On (Run). You can stop it there anytime.")
 
 
 if ops_agent_item_id:
