@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "RTI_010_build_operations_agent",
+    "description": "Deploys a Fabric Operations Agent that monitors the RTI ontology and raises work orders."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "a9010010-0000-4a00-8b00-000000000010"
+  }
+}
