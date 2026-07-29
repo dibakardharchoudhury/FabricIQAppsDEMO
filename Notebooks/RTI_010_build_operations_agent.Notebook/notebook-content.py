@@ -144,7 +144,7 @@ OPS_AGENT_DESCRIPTION = (
     "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
     f"'{ontology_name}' ontology. Raises a work order when signal quality "
     "degrades (UNCERTAIN) or fails (BAD)."
-)
+)[:256]  # Fabric item description max length is 256 chars
 
 
 # -------------------------------------------------------------------------

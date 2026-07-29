@@ -146,10 +146,9 @@ DATASOURCE_SCHEMA_URL = (
 
 DATA_AGENT_DESCRIPTION = (
     "Conversational agent over the RTI turbine telemetry ontology "
-    f"'{ontology_name}'. Joins real-time OPC UA readings (event_time/value/quality) "
-    "with equipment, facility, system and instrument context keyed on "
-    "opcua_node_id — directly through the ontology's entity bindings."
-)
+    f"'{ontology_name}': real-time OPC UA readings joined to equipment, "
+    "facility, system and instrument context."
+)[:256]  # Fabric item description max length is 256 chars
 
 
 # -------------------------------------------------------------------------
