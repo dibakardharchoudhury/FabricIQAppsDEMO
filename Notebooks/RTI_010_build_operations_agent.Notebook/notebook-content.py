@@ -97,6 +97,11 @@ key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret",
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # UPN that receives the alert notification. Update to a user in your tenant.
 ops_agent_recipient = first_setting("ops_agent_recipient", default="admin@mngenvmcap218279.onmicrosoft.com")
+# Sponsor of the agent's Entra Agent Identity (the agent runs OBO as this principal).
+# MUST be a User or Group - never an SPN. Use a DURABLE, non-personal principal (a
+# dedicated service account or security group) so employee offboarding never breaks
+# the agent. Override via the 'ops_agent_sponsor' setting.
+ops_agent_sponsor = first_setting("ops_agent_sponsor", "ops_agent_recipient", default="admin@mngenvmcap218279.onmicrosoft.com")
 
 
 print("✅ Settings loaded")
@@ -105,6 +110,7 @@ print("   Target folder ID  :", target_folder_id)
 print("   Ontology name     :", ontology_name)
 print("   Ops Agent name    :", ops_agent_name)
 print("   Alert recipient   :", ops_agent_recipient)
+print("   Agent sponsor     :", ops_agent_sponsor)
 
 # METADATA ********************
 
@@ -272,6 +278,8 @@ def create_operations_agent(display_name: str, description: str = "") -> dict:
 
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents"
     body = {"displayName": display_name, "description": description}
+    if target_folder_id:
+        body["folderId"] = target_folder_id  # land in the V3 folder like the other items
     response = api_request("POST", url, data=body, timeout=120)
 
     if response.status_code in (200, 201):
@@ -352,18 +360,23 @@ INSTRUCTIONS = (
 )
 
 def build_configurations() -> dict:
-    """Configurations.json body — instructions only (goals folded in).
+    """Configurations.json body — instructions + sponsor identity (goals folded in).
 
     Schema (operationsAgents/definition/1.0.0) requires `configuration`,
     `playbook` and `shouldRun` at the root, with `additionalProperties: false`
     (so no `$schema` here). `dataSources`, `actions` and the real `playbook`
     are bound/generated in the agent UI; `shouldRun` stays false until Start.
+    `identity` names the sponsor: Fabric only supports Delegated (OBO) mode, so a
+    sponsor is mandatory for app-only (SPN) provisioning — and it must be a User or
+    Group (never an SPN). Use a durable service account / group so it survives
+    employee offboarding.
     """
     return {
         "configuration": {
             "instructions": INSTRUCTIONS,
             "dataSources": {},
             "actions": {},
+            "identity": {"mode": "Delegated", "sponsor": ops_agent_sponsor},
         },
         "playbook": {},
         "shouldRun": False,
@@ -415,7 +428,7 @@ print("   5. Select 'Generate Playbook', review, then 'Start' the agent.")
 if ops_agent_item_id:
     from delta.tables import DeltaTable
 
-    persist = {"ops_agent_name": ops_agent_name, "ops_agent_id": ops_agent_item_id}
+    persist = {"ops_agent_name": ops_agent_name, "ops_agent_id": ops_agent_item_id, "ops_agent_sponsor": ops_agent_sponsor}
     persist_df = (
         spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
         .withColumn("updated_utc", F.current_timestamp())
