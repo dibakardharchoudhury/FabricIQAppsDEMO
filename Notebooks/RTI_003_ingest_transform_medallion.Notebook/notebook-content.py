@@ -842,25 +842,9 @@ table_infos = [
     ("silver_systems", "System definitions (collections/groups of equipment, e.g., heating system)", "silver"),
     ("silver_equipment", "Master list of all equipment (pumps, valves, motors, etc.)", "silver"),
     ("silver_instruments", "All instrument tags and analog/digital status", "silver"),
-    ("silver_workorders", "SAP maintenance work order records", "silver"),
-    ("silver_notifications", "SAP event/notification records (alerts, failures, issues)", "silver"),
-    #("silver_opcua_measurements", "Raw time-series telemetry/measurements (OPC UA)", "silver"),
-    ("silver_equipment_limits", "Operational and design limits for equipment (SOLV)", "silver"),
-    ("silver_pid_elements", "Element-level structure extracted from P&ID diagrams", "silver"),
-    ("silver_pid_connections", "Connectivity extracted from P&ID diagrams", "silver"),
-    ("silver_documents", "Loaded document index (engineering/maintenance/docs)", "silver"),
-    ("silver_annotations", "Annotation records for those documents", "silver"),
-    ("silver_3d_model_metadata", "3D model positional/metadata integration", "silver"),
-    ("silver_common_library_classes", "Common library - tag class definitions", "silver"),
-    ("silver_common_library_tag_rules", "Common library - tag rule definitions", "silver"),
+    ("silver_signal_master", "Per-tag signal metadata derived from silver_instruments", "silver"),
     # Gold
-    #("gold_limit_breaches", "Sensor readings exceeding safe/engineered limits", "gold"),
-   # ("gold_equipment_health", "Latest sensor/workorder summary by equipment", "gold"),
-    ("gold_equipment_workorders_summary", "Aggregated work order status counts for each equipment", "gold"),
-    ("gold_equipment_notification_events", "Total/last notification event per equipment", "gold"),
-    #("gold_opcua_quality_stats", "Counts of OPC UA measurement quality per tag/unit", "gold"),
     ("gold_instrument_classification", "Analog vs Digital instrument counts per system", "gold"),
-    ("gold_pid_topology_stats", "Upstream/downstream equipment connectivity stats (from P&ID)", "gold")
 ]
 expected_tables = [t[0] for t in table_infos]
 
