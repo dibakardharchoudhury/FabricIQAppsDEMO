@@ -520,7 +520,8 @@ def create_eventstream(workspace_id: str, name: str, token: str) -> str:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = {
         "displayName": name,
-        "description": "Eventstream for slim OPC UA RTI telemetry"
+        "description": "Eventstream for slim OPC UA RTI telemetry",
+        "folderId": target_folder_id,
     }
 
     resp = requests.post(url, headers=headers, json=body)
