@@ -38,27 +38,28 @@
 # Rules (business intent):
 # - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → alert.
 # - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → alert.
-# **Deployment model — user context, matching an agent created in the Fabric UI:**
+# **Deployment model — exact replica of the working GUI agent, in user context:**
 # The Operations Agent REST APIs support **User context only** (not Service Principal).
 # Running this notebook interactively authenticates with your **delegated** identity, so
 # the agent's *Run as* binds to you and Re-authenticate works — exactly like an agent
 # built in the UI. Under an SPN/app-only token the *Run as* stays an unprovisioned
 # "User" that cannot be saved, re-authenticated, or used to Generate Playbook.
-# The agent is created via `/workspaces/{ws}/OperationsAgents`, then the full definition
-# is pushed via `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json`
-# part): instructions + the Ontology **data source** + a **Teams channel** message
-# destination + a **PowerAutomate action** ("New WO to Investigate / Repair"), and
-# `shouldRun` to START it. The Teams destination is the passive alert; the action drives
-# the approval workflow — Fabric invokes the connected Power Automate flow, which posts an
-# Approve/Reject card to Teams and, on **Approve**, sends an email (see
-# `Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip`). Connecting the action to that flow
-# is a one-time UI step (PowerAutomateAction has no `connection` field in REST). The Teams
-# destination is copied from an existing working agent (`ops_agent_reference_name`) or set
-# via `ops_agent_team_id` / `ops_agent_channel_id`. `playbook` is reserved (Generate
-# Playbook is UI-only); the agent runs from `instructions`.
-# This notebook: reads settings → resolves the live `ontology_id` → resolves the Teams
-# destination → creates the **OperationsAgent** item → pushes the full definition via REST
-# → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
+# Rather than hand-build the definition, this notebook **copies the full configuration of
+# a known-good agent** (`ops_agent_reference_name`, default `New_RTI_Demo_OpsAgent_V3`,
+# created in the UI) via `getDefinition`, and re-deploys it to `ops_agent_name` via
+# `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
+# The copied config keeps, exactly: `$schema`, the **Ontology** data source (encoded
+# datasource id + zero workspaceId), a **Teams channel** message destination, and a single
+# **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
+# `Pipe_SendEmailAlert` Data Pipeline. FabricJobAction carries its pipeline `connection`
+# in the definition, so — unlike a PowerAutomateAction — the action is **fully wired via
+# REST** with no UI step: the agent posts a Teams alert and invokes the pipeline to email
+# operations. This notebook overrides **only** `instructions` (with a time-series-aware
+# version that Generate Playbook can compile) and `shouldRun`; `playbook` and `identity`
+# are intentionally omitted (matching the working agent).
+# This notebook: reads settings → loads the reference agent's config → creates/reuses the
+# target **OperationsAgent** item → pushes the copied definition (with fixed instructions)
+# via REST → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
 
 
 # CELL ********************
@@ -94,18 +95,10 @@ def first_setting(*names, required: bool = False, default: str = None):
 
 workspace_id = first_setting("workspace_id", required=True)
 target_folder_id = first_setting("target_folder_id", required=True)
-ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 
+# Target agent to (re)deploy, and the known-good agent whose full config is copied.
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
-
-# Message delivery = a Teams channel (matches the working GUI agent). Either set the
-# Team (group) id + channel id explicitly, or point ops_agent_reference_name at an
-# existing, working Operations Agent whose Teams destination this notebook copies.
-ops_agent_team_id = first_setting("ops_agent_team_id", default=None)
-ops_agent_channel_id = first_setting("ops_agent_channel_id", default=None)
 ops_agent_reference_name = first_setting("ops_agent_reference_name", default="New_RTI_Demo_OpsAgent_V3")
-# Optional email fallback, only used if no Teams channel is available.
-ops_agent_recipient = first_setting("ops_agent_recipient", default=None)
 # Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
 ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
 
@@ -113,10 +106,7 @@ ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")
 print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
 print("   Target folder ID  :", target_folder_id)
-print("   Ontology name     :", ontology_name)
 print("   Ops Agent name    :", ops_agent_name)
-print("   Teams team id     :", ops_agent_team_id or "(copy from reference agent)")
-print("   Teams channel id  :", ops_agent_channel_id or "(copy from reference agent)")
 print("   Reference agent   :", ops_agent_reference_name)
 print("   Start agent       :", ops_agent_should_run)
 
@@ -137,7 +127,7 @@ print("   Start agent       :", ops_agent_should_run)
 import json
 import time
 import base64
-import uuid
+from copy import deepcopy
 from typing import Optional
 
 import requests
@@ -147,14 +137,6 @@ FABRIC_API_BASE = "https://api.fabric.microsoft.com"
 # Operations Agent uses a type-specific route + a named definition format.
 OPS_AGENT_DEFINITION_FORMAT = "OperationsAgentV1"
 
-# User-chosen alias for the single Ontology data source in the definition.
-OPS_AGENT_DATASOURCE_ALIAS = "signalOntology"
-# Work-order action (approval -> email flow). Its parameters become the Power Automate
-# trigger's inputFields; connect it to Raw/PowerAutomate/NewWOtoInvestigateRepair in the UI.
-OPS_AGENT_ACTION_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ops_agent_name}:createWorkOrder"))
-OPS_AGENT_ACTION_ALIAS = "createWorkOrder"
-OPS_AGENT_ACTION_DISPLAY_NAME = "New WO to Investigate / Repair"
-
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 LRO_POLL_INTERVAL_SECONDS = 5
@@ -162,8 +144,8 @@ LRO_MAX_WAIT_SECONDS = 300
 
 OPS_AGENT_DESCRIPTION = (
     "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
-    f"'{ontology_name}' ontology. Posts a Teams alert and, on approval, raises a Work "
-    "Order via email when signal quality degrades (UNCERTAIN) or fails (BAD)."
+    "RTI ontology. Posts a Teams alert and invokes the Send Email Alert pipeline "
+    "when signal quality degrades (UNCERTAIN) or fails (BAD)."
 )[:256]  # Fabric item description max length is 256 chars
 
 
@@ -253,21 +235,6 @@ def find_operations_agent(display_name: str) -> Optional[dict]:
     return None
 
 
-def resolve_ontology_id() -> str:
-    """Return the id of the ontology named `ontology_name` (for the UI binding step)."""
-    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
-    response = api_request("GET", url)
-    response.raise_for_status()
-    matches = [
-        it for it in response.json().get("value", [])
-        if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
-    ]
-    if not matches:
-        raise RuntimeError(f"Ontology '{ontology_name}' not found. Run 004–006 first.")
-    in_folder = [it for it in matches if it.get("folderId") == target_folder_id]
-    return (in_folder or matches)[0]["id"]
-
-
 def create_operations_agent(display_name: str, description: str = "") -> dict:
     """Create an EMPTY Operations Agent item (reuse if it already exists)."""
     existing = find_operations_agent(display_name)
@@ -321,7 +288,7 @@ def update_operations_agent_definition(agent_id: str, configurations: dict) -> d
 
 
 def get_operations_agent_definition(agent_id: str) -> Optional[dict]:
-    """Return the Configurations.json of an existing agent (to copy its Teams destination)."""
+    """Return the Configurations.json of an existing agent (to copy the full working config)."""
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents/{agent_id}/getDefinition"
     response = api_request("POST", url, params={"format": OPS_AGENT_DEFINITION_FORMAT}, timeout=120)
     body = None
@@ -343,51 +310,51 @@ def get_operations_agent_definition(agent_id: str) -> Optional[dict]:
     return None
 
 
-def resolve_message_destination() -> dict:
-    """Teams channel destination — matches the working GUI agent.
+def load_reference_configuration() -> dict:
+    """Return the full Configurations.json of the known-good reference agent.
 
-    Priority: explicit team/channel ids -> copy from an existing working agent
-    (ops_agent_reference_name) -> email recipient fallback.
+    We replicate the working GUI agent exactly rather than rebuild the definition by
+    hand: its Ontology data source (encoded datasource id + zero workspaceId), its Teams
+    channel destination, and its single FabricJobAction ("Send Email Alert!") wired to the
+    Pipe_SendEmailAlert Data Pipeline are all environment-correct and fully REST-settable.
     """
-    if ops_agent_team_id and ops_agent_channel_id:
-        return {"kind": "TeamsChannel", "teamId": ops_agent_team_id, "channelId": ops_agent_channel_id}
-    if ops_agent_reference_name and ops_agent_reference_name != ops_agent_name:
-        reference = find_operations_agent(ops_agent_reference_name)
-        if reference and reference.get("id"):
-            ref_cfg = get_operations_agent_definition(reference["id"])
-            destination = (ref_cfg or {}).get("configuration", {}).get("messageDestination")
-            if destination:
-                print(f"✅ Copied Teams destination from working agent '{ops_agent_reference_name}'.")
-                return destination
-    if ops_agent_recipient:
-        print("ℹ️  No Teams channel found — falling back to email recipient.")
-        return {"kind": "Recipient", "recipient": ops_agent_recipient}
-    raise RuntimeError(
-        "No message destination. Set ops_agent_team_id + ops_agent_channel_id, or "
-        "ops_agent_reference_name (an existing working agent), or ops_agent_recipient."
-    )
+    reference = find_operations_agent(ops_agent_reference_name)
+    if not reference or not reference.get("id"):
+        raise RuntimeError(
+            f"Reference agent '{ops_agent_reference_name}' not found in the workspace. "
+            "Create it once in the Fabric UI (New → Operations agent), configure its Teams "
+            "channel + Send Email Alert pipeline action, then re-run."
+        )
+    ref_cfg = get_operations_agent_definition(reference["id"])
+    if not ref_cfg or "configuration" not in ref_cfg:
+        raise RuntimeError(
+            f"Could not read a usable definition from reference agent '{ops_agent_reference_name}'."
+        )
+    return ref_cfg
 
 
 # -------------------------------------------------------------------------
 # Operations Agent instructions (schema: operationsAgents/definition/1.0.0)
 # -------------------------------------------------------------------------
 INSTRUCTIONS = (
-    "*** Goals ***\n"
-    "- Monitor industrial turbine OPC UA telemetry in real time via the RTI ontology.\n"
-    "- Detect equipment health issues from signal quality and post a Teams alert automatically.\n"
-    "- Escalate degraded (UNCERTAIN) or failed (BAD) signals to operations without manual triage.\n\n"
-    "*** Operational Instructions ***\n"
-    "1. Operate on the 'signal_master' entity of the ontology. Each event is complete and independent.\n"
-    "   - Do NOT invent rowIndex, event_id or synthetic keys, and do NOT reconstruct rows with joins/arg_max.\n"
-    "   - 'signal_master' already resolves equipment_id, facility_id, system_id and unit from the ontology\n"
-    "     (real-time OPCUAEvents joined to the lakehouse signal registry on opcua_node_id).\n"
-    "2. Use 'equipment_id' as the business entity to evaluate alerts; evaluate each incoming event independently.\n"
-    "3. Trigger an alert when quality = \"BAD\" or quality = \"UNCERTAIN\".\n"
-    "4. Suppress duplicate alerts for the same 'equipment_id' for 10 minutes.\n"
-    "5. Assign severity:  BAD -> HIGH ;  UNCERTAIN -> MEDIUM.\n"
-    "6. Classify type:    BAD -> SingleFailure ;  UNCERTAIN -> SignalDegradation.\n"
-    "7. Derive trend from the current signal (no history):  BAD -> Failing ;  UNCERTAIN -> Degrading ;  GOOD -> Stable.\n"
-    "8. Generate the alert message EXACTLY:\n\n"
+    "*** Role ***\n"
+    "Monitor industrial turbine OPC UA telemetry in real time through the RTI ontology and\n"
+    "raise an operational alert when a signal's quality degrades or fails.\n\n"
+    "*** Data source ***\n"
+    "Use the 'signal_master' entity of the ontology. Its 'quality', 'value' and 'event_time'\n"
+    "are TIME-SERIES properties (bound to the real-time OPCUAEvents stream); 'equipment_id',\n"
+    "'facility_id', 'system_id', 'unit' and 'tag' are static properties resolved by the\n"
+    "ontology. For each 'equipment_id', evaluate its LATEST 'signal_master' reading by\n"
+    "'event_time'.\n\n"
+    "*** Trigger rules (one explicit condition each) ***\n"
+    "Rule 1 - Failure:     trigger when the latest 'quality' reading equals \"BAD\".\n"
+    "Rule 2 - Degradation: trigger when the latest 'quality' reading equals \"UNCERTAIN\".\n"
+    "Do not alert when the latest 'quality' equals \"GOOD\".\n\n"
+    "*** Enrichment (apply only after a rule triggers; these are derived, not queried) ***\n"
+    "- severity:      BAD -> HIGH ;         UNCERTAIN -> MEDIUM.\n"
+    "- alert_type:    BAD -> SingleFailure ; UNCERTAIN -> SignalDegradation.\n"
+    "- derived_trend: BAD -> Failing ;       UNCERTAIN -> Degrading.\n\n"
+    "*** Alert message (format exactly) ***\n"
     "   Equipment Alert: {equipment_id}\n"
     "   Facility: {facility_id}\n"
     "   Signal Quality: {quality}\n"
@@ -396,88 +363,62 @@ INSTRUCTIONS = (
     "   Severity: {severity}\n"
     "   Type: {alert_type}\n"
     "   Trend: {derived_trend}\n"
-    "   Insight: Explain the issue in simple business terms\n"
-    "   Recommended Action: Provide the next step\n\n"
-    "9. Invoke the action \"New WO to Investigate / Repair\" and pass: equipment_id, facility_id, value, unit,\n"
-    "   quality, event_time. If any field is missing, pass an empty string. A supervisor then approves in\n"
-    "   Teams to trigger the work-order email.\n\n"
-    "*** Semantic Notes ***\n"
+    "   Insight: Explain the issue in simple business terms.\n"
+    "   Recommended Action: Provide the next step.\n\n"
+    "*** Action ***\n"
+    "For each triggered alert, invoke the action \"Send Email Alert!\" so operations can act,\n"
+    "passing equipment_id, facility_id, value, unit, quality and event_time (empty string if missing).\n\n"
+    "*** Notes ***\n"
     "- quality: GOOD = normal, UNCERTAIN = degraded signal, BAD = failure condition.\n"
-    "- unit tells whether the reading is pressure, temperature, flow, vibration or position.\n"
-    "- Keep alerts short, clear and human-readable; use only ontology-provided fields."
+    "- unit indicates whether the reading is pressure, temperature, flow, vibration or position.\n"
+    "- Suppress duplicate alerts for the same 'equipment_id' within 10 minutes.\n"
+    "- Use only ontology-provided fields; keep messages short and human-readable."
 )
 
-def build_configurations(ontology_id: str, message_destination: dict, should_run: Optional[bool] = None) -> dict:
-    """Configurations.json body — OperationsAgentV1 format.
+def build_configurations(reference_configuration: dict, should_run: Optional[bool] = None) -> dict:
+    """Configurations.json body — an exact copy of the reference agent's config.
 
-    Root requires `configuration`, `playbook` and `shouldRun`; `configuration`
-    requires `instructions`, `dataSources` and `actions`. The Ontology data source
-    must be present (the API rejects empty `dataSources`). `messageDestination` posts
-    the passive Teams alert; the PowerAutomateAction lets the agent invoke the
-    approval->email work-order flow (its parameters become the flow trigger's
-    inputFields). Connecting the action to the actual flow is a UI-only step
-    (PowerAutomateAction has no `connection` field). `identity` is omitted: the running
-    user's delegated token provisions the agent's Run-as identity automatically.
-    `should_run` sets the run state (True = start the agent now).
+    Deep-copy the working agent's full configuration (its `$schema`, Ontology
+    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, and the Teams
+    `messageDestination`) and override only two things: `instructions` (the
+    time-series-aware text above, which Generate Playbook can compile) and `shouldRun`.
+    `playbook` and `identity` are left absent, exactly like the working agent — the
+    running user's delegated token provisions Run-as automatically.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
-    return {
-        "configuration": {
-            "instructions": INSTRUCTIONS,
-            "dataSources": {
-                OPS_AGENT_DATASOURCE_ALIAS: {
-                    "id": ontology_id,
-                    "type": "Ontology",
-                    "workspaceId": workspace_id,
-                }
-            },
-            "actions": {
-                OPS_AGENT_ACTION_ALIAS: {
-                    "id": OPS_AGENT_ACTION_ID,
-                    "kind": "PowerAutomateAction",
-                    "displayName": OPS_AGENT_ACTION_DISPLAY_NAME,
-                    "description": "Raise a work-order approval: posts an Approve/Reject card to Teams; on approval sends an email.",
-                    "parameters": [
-                        {"name": "equipment_id", "description": "Equipment to investigate"},
-                        {"name": "facility_id", "description": "Facility of the equipment"},
-                        {"name": "value", "description": "Measured value"},
-                        {"name": "unit", "description": "Unit of the measured value"},
-                        {"name": "quality", "description": "Signal quality (GOOD/UNCERTAIN/BAD)"},
-                        {"name": "event_time", "description": "Event timestamp"},
-                    ],
-                }
-            },
-            "messageDestination": message_destination,
-        },
-        "playbook": {},
-        "shouldRun": run_state,
-    }
+    config = deepcopy(reference_configuration)
+    config.pop("playbook", None)                       # match the working agent (no playbook key)
+    config.get("configuration", {}).pop("identity", None)
+    config["configuration"]["instructions"] = INSTRUCTIONS
+    config["shouldRun"] = run_state
+    return config
 
 
 # -------------------------------------------------------------------------
 # Deploy: create (empty) -> push instructions. Best-effort + manual fallback.
 # -------------------------------------------------------------------------
 ops_agent_item_id = None
-ontology_id = None
+reference_configuration = None
 try:
     get_access_token_for_fabric()
     print("✅ Got Fabric access token (delegated user context).")
 
-    ontology_id = resolve_ontology_id()
-    print("✅ Resolved ontology ID:", ontology_id)
+    reference_configuration = load_reference_configuration()
+    _ref_cfg = reference_configuration.get("configuration", {})
+    print(f"✅ Loaded reference config from '{ops_agent_reference_name}':")
+    print("   data sources     :", list(_ref_cfg.get("dataSources", {}).keys()))
+    print("   actions          :", [a.get("kind") for a in _ref_cfg.get("actions", {}).values()])
+    print("   message dest.    :", _ref_cfg.get("messageDestination", {}).get("kind"))
 
-    message_destination = resolve_message_destination()
-    print("✅ Message destination:", message_destination.get("kind"))
-
-    # 1) Create (or reuse) the Operations Agent — empty, no definition.
+    # 1) Create (or reuse) the target Operations Agent — empty, no definition.
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
     ops_agent_item_id = ops_agent.get("id")
 
-    # 2) Push the full definition via updateDefinition (OperationsAgentV1 / Configurations.json).
+    # 2) Push the copied definition (fixed instructions) via updateDefinition.
     #    Runs in User context so the agent's Run-as provisions correctly (Re-authenticate works).
     started = ops_agent_should_run
     try:
-        configurations = build_configurations(ontology_id, message_destination, should_run=started)
+        configurations = build_configurations(reference_configuration, should_run=started)
         json.dumps(configurations)  # validate serializable
         update_operations_agent_definition(ops_agent_item_id, configurations)
     except RuntimeError as update_exc:
@@ -487,11 +428,11 @@ try:
         print("ℹ️  Start (shouldRun=true) was refused — deploying stopped so the definition lands:")
         print("   ", update_exc)
         started = False
-        configurations = build_configurations(ontology_id, message_destination, should_run=False)
+        configurations = build_configurations(reference_configuration, should_run=False)
         update_operations_agent_definition(ops_agent_item_id, configurations)
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
-    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state} — instructions, Ontology data source")
-    print(f"   and Teams message destination all set via REST (id={ops_agent_item_id}).")
+    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state} — copied Ontology data source,")
+    print(f"   Teams destination and Send Email Alert pipeline action from the reference (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -499,18 +440,18 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
     print("Manual fallback:")
     print("   1. In your Fabric workspace: New → Operations agent.")
     print(f"   2. Name it '{ops_agent_name}'.")
-    print("   3. Paste the instructions from INSTRUCTIONS above and set the Teams channel.")
+    print("   3. Paste the instructions from INSTRUCTIONS above, set the Teams channel and")
+    print("      add a Fabric job action pointing at the Pipe_SendEmailAlert pipeline.")
 
 
 print()
-print("✅ Set programmatically via REST (User context): instructions, Ontology data source,")
-print("   Teams message destination, work-order action, and run state (shouldRun).")
-print("ℹ️  One-time UI step: open the agent, Add action → Power Automate → connect")
-print(f"   '{OPS_AGENT_ACTION_DISPLAY_NAME}' to the flow imported from")
-print("   Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip (posts the Teams Approve/Reject")
-print("   card and, on approval, sends the email). PowerAutomateAction has no REST connection field.")
-print("ℹ️  Optionally select 'Generate Playbook' to pre-generate the plan (the `playbook`")
-print("   object is reserved in the API; the agent still runs from its instructions).")
+print("✅ Set programmatically via REST (User context) — an exact copy of the reference agent:")
+print("   instructions (time-series-aware), Ontology data source, Teams message destination,")
+print("   the 'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and run state.")
+print("ℹ️  FabricJobAction carries its pipeline connection in the definition, so no UI wiring is")
+print("   needed — the agent posts the Teams alert and runs the pipeline to email operations.")
+print("ℹ️  To Generate Playbook in the UI: make sure the OPC UA stream (RTI_007) is running so")
+print("   recent BAD/UNCERTAIN readings exist, then open the agent and select 'Generate Playbook'.")
 
 
 if ops_agent_item_id:
