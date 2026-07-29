@@ -24,6 +24,26 @@
           "connection": "4a4d0899-8698-4a20-8229-989ca6562451"
         }
       }
-    ]
+    ],
+    "parameters": {
+      "equipment_id": {
+        "type": "string"
+      },
+      "facility_id": {
+        "type": "string"
+      },
+      "value": {
+        "type": "string"
+      },
+      "unit": {
+        "type": "string"
+      },
+      "quality": {
+        "type": "string"
+      },
+      "event_time": {
+        "type": "string"
+      }
+    }
   }
 }
