@@ -26,7 +26,6 @@
 # # 10 — Build & Deploy the Operations Agent (health monitoring → Work Order)
 # Creates a Fabric **Operations Agent** that watches turbine telemetry and raises a
 # work order (via a Power Automate action) when signal `quality` degrades.
-#
 # **Design — the agent consumes the Ontology, it does not embed a table mapping.**
 # Per the Operations Agent schema, `dataSource.type` may be `KustoDatabase` **or
 # `Ontology`**. We use the **`Ontology`** data source (`RTI_Demo_Ontology_V3`). Its
@@ -34,22 +33,19 @@
 # - **Real-time (KQL)** `OPCUAEvents` → `event_time`, `value`, `quality`
 # - **Static (Lakehouse)** `silver_signal_master` → `equipment_id`, `facility_id`,
 #   `system_id`, `unit`, `tag`, keyed on `opcua_node_id`.
-#
 # So the agent gets `equipment_id` / `facility_id` / `unit` for every live event
 # **from the ontology join** — no OPC UA schema change and no hard-coded
 # `OntologyDefinitions` block in the agent definition. The rules simply reference the
 # `signal_master` entity.
-#
 # Rules:
 # - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → raise WO.
 # - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → raise WO.
-#
 # The Power Automate action ("New WO to Investigate/Repair") is declared here; connect
 # it to the imported flow (`Raw/PowerAutomate/`) in the Operations Agent UI after deploy.
-#
 # This notebook: reads settings → resolves the live `ontology_id` → builds
 # `Configurations.json` → deploys the **OperationsAgent** item via REST (best-effort,
 # manual fallback) → persists identifiers to `rti_demo_settings`.
+
 
 # CELL ********************
 

@@ -27,17 +27,14 @@
 # Creates a Fabric **Data Agent** that answers natural-language questions over the
 # `RTI_Demo_Ontology_V3` ontology. Because the ontology's `signal_master` entity is
 # bound to **both** sources, the agent can join across them with **no schema change**:
-#
-# - **Real-time (KQL)** — `OPCUAEvents` in `RTI_Demo_Eventhouse_V3` provides the
+# # - **Real-time (KQL)** — `OPCUAEvents` in `RTI_Demo_Eventhouse_V3` provides the
 #   time-series `event_time` / `value` / `quality`.
 # - **Static (Lakehouse)** — `silver_signal_master` (and the `equipment`,
 #   `facilities`, `systems`, `instruments` entities) provide `equipment_id`,
 #   `facility_id`, `system_id`, `unit`, `tag`, ... keyed on `opcua_node_id`.
-#
-# The agent's data source is the **ontology item** (`type = ontology`), so the
+# # The agent's data source is the **ontology item** (`type = ontology`), so the
 # real-time↔lakehouse join is handled by the ontology bindings themselves.
-#
-# This notebook:
+# # This notebook:
 # 1. Reads shared settings from `rti_demo_settings` (written by 001/002).
 # 2. Resolves the live `ontology_id` by name in the target folder.
 # 3. Builds the Data Agent item definition (`.platform` + `Files/Config/**`).

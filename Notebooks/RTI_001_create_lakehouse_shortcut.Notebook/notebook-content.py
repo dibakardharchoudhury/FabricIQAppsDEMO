@@ -949,6 +949,8 @@ chain_notebooks = [
     "RTI_006_generate_and_ingest_OPCUA_Stream",
     "RTI_007_TimeSeriesBinding_RTI_signal",
     "RTI_008_build_realtime_dashboard",
+    "RTI_009_build_data_agent",
+    "RTI_010_build_operations_agent",
 ]
 
 
