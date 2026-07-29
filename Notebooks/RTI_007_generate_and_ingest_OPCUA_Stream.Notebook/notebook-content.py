@@ -1820,7 +1820,7 @@ def generate_slim_opcua_event(opcua_node_id: str, signal_type: str) -> dict:
 http_target = build_custom_endpoint_http_target(custom_ep_info)
 
 SIM_DURATION_SECS = 600
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 50
 SLEEP_BETWEEN_ITERATIONS_SEC = 5
 
 simulation_start_utc = datetime.now(timezone.utc)
