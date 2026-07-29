@@ -115,17 +115,54 @@ import json
 import time
 import uuid
 import base64
+from typing import Optional
 
 import requests
 import notebookutils  # Fabric notebook utility
 
-FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
+FABRIC_API_BASE = "https://api.fabric.microsoft.com"
+DATA_AGENT_ITEM_TYPE = "DataAgent"
+
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 5
+LRO_POLL_INTERVAL_SECONDS = 5
+LRO_MAX_WAIT_SECONDS = 300
+
+# The ontology is attached as an "ontology" data source. The draft part folder
+# is `ontology-<ontology_name>` — matching the layout Fabric writes for a
+# published ontology-backed agent.
+DATASOURCE_TYPE = "ontology"
+DRAFT_STAGE_CONFIG_PATH = "Files/Config/draft/stage_config.json"
+DATASOURCE_PATH = f"Files/Config/draft/{DATASOURCE_TYPE}-{ontology_name}/datasource.json"
+
+STAGE_CONFIG_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+    "definition/stageConfiguration/1.0.0/schema.json"
+)
+DATASOURCE_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+    "definition/dataSource/1.0.0/schema.json"
+)
+
+DATA_AGENT_DESCRIPTION = (
+    "Conversational agent over the RTI turbine telemetry ontology "
+    f"'{ontology_name}'. Joins real-time OPC UA readings (event_time/value/quality) "
+    "with equipment, facility, system and instrument context keyed on "
+    "opcua_node_id — directly through the ontology's entity bindings."
+)
 
 
 # -------------------------------------------------------------------------
-# SPN auth + generic Fabric item helpers
+# SPN auth (Key Vault) + retry / LRO helpers
 # -------------------------------------------------------------------------
-def get_spn_access_token_for_fabric():
+_token_cache = {"token": None, "expires_at": 0.0}
+
+
+def get_spn_access_token_for_fabric() -> str:
+    now = time.time()
+    if _token_cache["token"] and now < _token_cache["expires_at"]:
+        return _token_cache["token"]
+
     tenant_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_tenant_id_secret)
     client_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_id_secret)
     client_secret = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_secret_secret)
@@ -139,105 +176,183 @@ def get_spn_access_token_for_fabric():
         "grant_type": "client_credentials",
         "scope": "https://api.fabric.microsoft.com/.default",
     }
-    resp = requests.post(token_url, data=data)
+    resp = requests.post(token_url, data=data, timeout=60)
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    token_json = resp.json()
+    _token_cache["token"] = token_json["access_token"]
+    _token_cache["expires_at"] = now + int(token_json.get("expires_in", 3600)) - 60
+    return _token_cache["token"]
 
 
-def b64(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("utf-8")
+def get_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {get_spn_access_token_for_fabric()}",
+        "Content-Type": "application/json",
+    }
 
 
-def find_existing_item(access_token, display_name, item_type):
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    for item in resp.json().get("value", []):
-        if item.get("displayName") == display_name and item.get("type", "").lower() == item_type.lower():
+def api_request(method: str, url: str, data=None, params=None, timeout=60):
+    """Retry wrapper for Fabric REST calls (429 + 5xx)."""
+    last_response = None
+    for _ in range(MAX_RETRIES):
+        response = requests.request(
+            method=method, url=url, headers=get_headers(),
+            json=data, params=params, timeout=timeout,
+        )
+        last_response = response
+        if response.status_code == 429:
+            wait = int(response.headers.get("Retry-After", RETRY_DELAY_SECONDS))
+            print(f"Rate limited. Retrying in {wait}s.")
+            time.sleep(wait)
+            continue
+        if response.status_code >= 500:
+            print(f"Server error {response.status_code}. Retrying.")
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        return response
+    return last_response
+
+
+def wait_for_lro(operation_url: str) -> dict:
+    """Poll a Fabric long-running-operation URL until terminal."""
+    start = time.time()
+    while time.time() - start < LRO_MAX_WAIT_SECONDS:
+        response = api_request("GET", operation_url, timeout=60)
+        if response.status_code not in (200, 202):
+            raise RuntimeError(f"LRO polling failed: {response.status_code} {response.text}")
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"status": "Unknown"}
+        status = result.get("status", "Unknown")
+        if status in ("Succeeded", "Completed"):
+            return result
+        if status in ("Failed", "Cancelled"):
+            raise RuntimeError(json.dumps(result, indent=2))
+        print(f"⏳ LRO status: {status}")
+        time.sleep(LRO_POLL_INTERVAL_SECONDS)
+    raise TimeoutError("LRO polling timed out.")
+
+
+def encode_payload(obj: dict) -> str:
+    return base64.b64encode(json.dumps(obj, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def decode_payload(payload: str) -> dict:
+    try:
+        padded = payload + "=" * (-len(payload) % 4)
+        return json.loads(base64.b64decode(padded).decode("utf-8"))
+    except Exception:
+        return {}
+
+
+# -------------------------------------------------------------------------
+# Item discovery + Data Agent REST operations
+# -------------------------------------------------------------------------
+def find_item_by_name(display_name: str, item_type: Optional[str] = None) -> Optional[dict]:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    params = {"type": item_type} if item_type else None
+    response = api_request("GET", url, params=params)
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    for item in (data or {}).get("value", []) or []:
+        if item.get("displayName") == display_name:
             return item
     return None
 
 
-def resolve_ontology_id(access_token):
+def resolve_ontology_id() -> str:
     """Return the id of the ontology item named `ontology_name` in the target folder."""
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    response = api_request("GET", url)
+    response.raise_for_status()
     matches = [
-        it for it in resp.json().get("value", [])
+        it for it in response.json().get("value", [])
         if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
     ]
     if not matches:
         raise RuntimeError(f"Ontology '{ontology_name}' not found. Run 004–006 first.")
     in_folder = [it for it in matches if it.get("folderId") == target_folder_id]
-    chosen = (in_folder or matches)[0]
-    return chosen["id"]
+    return (in_folder or matches)[0]["id"]
 
 
-def wait_for_lro(resp, access_token, max_tries=30, delay_sec=5):
-    """Follow a Fabric long-running-operation (202) until it completes."""
-    location = resp.headers.get("Location")
-    if not location:
-        return resp
-    headers = {"Authorization": f"Bearer {access_token}"}
-    for attempt in range(1, max_tries + 1):
-        poll = requests.get(location, headers=headers)
-        status = poll.json().get("status") if poll.content else None
-        if status in ("Succeeded", "Completed"):
-            print(f"✅ Operation succeeded (attempt {attempt}).")
-            return poll
-        if status == "Failed":
-            raise Exception(f"Operation failed: {poll.text}")
-        print(f"⏳ In progress (attempt {attempt}/{max_tries}, status={status})...")
-        time.sleep(delay_sec)
-    raise Exception("Operation did not complete in the allotted time.")
-
-
-def deploy_item_with_parts(access_token, display_name, item_type, parts):
-    """Create or updateDefinition a Fabric item from (path, text) definition parts."""
-    definition = {
-        "parts": [
-            {"path": path, "payload": b64(text), "payloadType": "InlineBase64"}
-            for path, text in parts
-        ]
-    }
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
-    existing = find_existing_item(access_token, display_name, item_type)
+def create_data_agent(display_name: str, description: str = "") -> dict:
+    """Create an EMPTY Data Agent item (reuse if it already exists)."""
+    existing = find_item_by_name(display_name, item_type=DATA_AGENT_ITEM_TYPE)
     if existing:
-        item_id = existing["id"]
-        url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items/{item_id}/updateDefinition"
-        resp = requests.post(url, headers=headers, json={"definition": definition})
-        if resp.status_code not in (200, 202):
-            raise Exception(f"updateDefinition failed: {resp.status_code} | {resp.text}")
-        wait_for_lro(resp, access_token)
-        print(f"♻️ Updated existing {item_type} '{display_name}' (ID: {item_id}).")
-        return item_id
+        print(f"✅ Reusing existing Data Agent: {display_name} (id={existing.get('id')})")
+        return existing
 
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    payload = {
-        "displayName": display_name,
-        "type": item_type,
-        "folderId": target_folder_id,
-        "definition": definition,
-    }
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code not in (200, 201, 202):
-        raise Exception(f"create {item_type} failed: {resp.status_code} | {resp.text}")
-    if resp.status_code == 202:
-        poll = wait_for_lro(resp, access_token)
-        body = poll.json() if poll.content else {}
-        item_id = body.get("id") or (body.get("resourceLocation") or "").rsplit("/", 1)[-1]
-    else:
-        item_id = resp.json().get("id")
-    print(f"✅ Created {item_type} '{display_name}' (ID: {item_id}).")
-    return item_id
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    body = {"displayName": display_name, "description": description, "type": DATA_AGENT_ITEM_TYPE}
+    if target_folder_id:
+        body["folderId"] = target_folder_id
+    response = api_request("POST", url, data=body, timeout=120)
+
+    if response.status_code in (200, 201):
+        created = response.json() if response.content else {}
+        print(f"✅ Created Data Agent: {display_name} (id={created.get('id')})")
+        return created
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Create Data Agent returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        created = find_item_by_name(display_name, item_type=DATA_AGENT_ITEM_TYPE) or {}
+        print(f"✅ Created Data Agent (via LRO): {display_name} (id={created.get('id')})")
+        return created
+    raise RuntimeError(f"Failed to create Data Agent: {response.status_code} {response.text}")
+
+
+def get_item_definition(item_id: str) -> dict:
+    """Read an item's definition (InlineBase64 parts) via getDefinition."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/getDefinition"
+    response = api_request("POST", url, timeout=120)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("getDefinition returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        result_response = api_request("GET", f"{operation_url}/result", timeout=120)
+        if result_response.status_code == 200:
+            return result_response.json() if result_response.content else {}
+        raise RuntimeError(f"getDefinition result failed: {result_response.status_code} {result_response.text}")
+    raise RuntimeError(f"Failed to get item definition: {response.status_code} {response.text}")
+
+
+def update_item_definition(item_id: str, definition: dict) -> dict:
+    """Write an item's full definition via updateDefinition."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/updateDefinition"
+    response = api_request("POST", url, data={"definition": definition}, timeout=300)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("updateDefinition returned 202 without Location header.")
+        return wait_for_lro(operation_url)
+    raise RuntimeError(f"Failed to update item definition: {response.status_code} {response.text}")
+
+
+def upsert_part(parts: list, path: str, obj: dict) -> list:
+    """Replace (or append) an InlineBase64 part at `path` with `obj`."""
+    encoded = {"path": path, "payload": encode_payload(obj), "payloadType": "InlineBase64"}
+    for i, part in enumerate(parts):
+        if part.get("path") == path:
+            parts[i] = encoded
+            return parts
+    parts.append(encoded)
+    return parts
 
 
 # -------------------------------------------------------------------------
-# Data Agent definition parts
+# Agent instructions + ontology data source
 # -------------------------------------------------------------------------
 AI_INSTRUCTIONS = (
     "You are an expert on industrial turbine telemetry modelled as a Fabric Ontology.\n"
@@ -274,83 +389,84 @@ ONTOLOGY_ELEMENTS = [
 ]
 
 
-def build_data_agent_parts(ontology_id: str):
-    platform = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
-        "metadata": {"type": "DataAgent", "displayName": data_agent_name},
-        "config": {"version": "2.0", "logicalId": str(uuid.uuid4())},
-    }
+def build_stage_obj(existing: dict) -> dict:
+    """Draft stage_config carrying the agent-level aiInstructions."""
+    stage = dict(existing)
+    stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
+    stage["aiInstructions"] = AI_INSTRUCTIONS
+    return stage
 
-    data_agent = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/dataAgent/2.1.0/schema.json"
-    }
 
-    publish_info = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/publishInfo/1.0.0/schema.json",
-        "description": "",
-    }
-
-    stage_config = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/stageConfiguration/1.0.0/schema.json",
-        "aiInstructions": AI_INSTRUCTIONS,
-    }
-
-    datasource = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/dataSource/1.0.0/schema.json",
-        "artifactId": ontology_id,
-        "workspaceId": "00000000-0000-0000-0000-000000000000",
-        "dataSourceInstructions": None,
-        "displayName": ontology_name,
-        "type": "ontology",
-        "userDescription": None,
-        "metadata": {},
-        "elements": [
-            {
-                "id": name,
-                "is_selected": True,
-                "display_name": name,
-                "type": "ontology.entity",
-                "description": cols,
-                "children": [],
-            }
-            for name, cols in ONTOLOGY_ELEMENTS
-        ],
-    }
-
-    ontology_dir = f"ontology-{ontology_name}"
-    stage_config_text = json.dumps(stage_config, indent=2)
-    datasource_text = json.dumps(datasource, indent=2)
-
-    parts = [
-        (".platform", json.dumps(platform, indent=2)),
-        ("Files/Config/data_agent.json", json.dumps(data_agent, indent=2)),
-        ("Files/Config/publish_info.json", json.dumps(publish_info, indent=2)),
+def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
+    """Ontology data source in the Fabric Data Agent shape (entity `elements`)."""
+    ds = dict(existing)
+    ds["$schema"] = DATASOURCE_SCHEMA_URL
+    ds["artifactId"] = ontology_id
+    # Ontology artifacts are referenced workspace-relative; Fabric uses the
+    # all-zero sentinel for an ontology data source.
+    ds["workspaceId"] = "00000000-0000-0000-0000-000000000000"
+    ds["displayName"] = ontology_name
+    ds["type"] = DATASOURCE_TYPE
+    ds.setdefault("dataSourceInstructions", None)
+    ds.setdefault("userDescription", None)
+    ds.setdefault("metadata", {})
+    ds["elements"] = [
+        {
+            "id": name,
+            "is_selected": True,
+            "display_name": name,
+            "type": "ontology.entity",
+            "description": cols,
+            "children": [],
+        }
+        for name, cols in ONTOLOGY_ELEMENTS
     ]
-    # A Data Agent definition carries two mirrored stages: `draft` and `published`.
-    for stage in ("draft", "published"):
-        parts.append((f"Files/Config/{stage}/stage_config.json", stage_config_text))
-        parts.append((f"Files/Config/{stage}/{ontology_dir}/datasource.json", datasource_text))
-    return parts
+    return ds
 
 
 # -------------------------------------------------------------------------
-# Deploy (best-effort) + persist identifiers
+# Deploy: create (empty) -> discover -> patch draft parts. Best-effort.
 # -------------------------------------------------------------------------
 data_agent_item_id = None
 try:
-    access_token = get_spn_access_token_for_fabric()
+    get_spn_access_token_for_fabric()
     print("✅ Got Fabric access token (SPN).")
 
-    ontology_id = resolve_ontology_id(access_token)
+    ontology_id = resolve_ontology_id()
     print("✅ Resolved ontology ID:", ontology_id)
 
-    parts = build_data_agent_parts(ontology_id)
-    # Validate every JSON part before deploying.
-    for path, text in parts:
-        json.loads(text)
-    print(f"✅ Data Agent definition built and validated ({len(parts)} parts).")
+    # 1) Create (or reuse) the Data Agent item — empty, no definition.
+    data_agent_item = create_data_agent(data_agent_name, DATA_AGENT_DESCRIPTION)
+    data_agent_item_id = data_agent_item.get("id")
 
-    data_agent_item_id = deploy_item_with_parts(access_token, data_agent_name, "DataAgent", parts)
+    # 2) DISCOVERY — read the live definition Fabric generated.
+    definition = get_item_definition(data_agent_item_id)
+    parts = definition.get("definition", {}).get("parts", []) or []
+    print(f"🔎 Live definition has {len(parts)} part(s):")
+    for part in parts:
+        print("   •", part.get("path", ""))
+
+    # 3) PATCH — upsert the draft aiInstructions + ontology data source.
+    existing_stage = next(
+        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
+        {},
+    )
+    parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, build_stage_obj(existing_stage))
+
+    existing_ds = next(
+        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DATASOURCE_PATH),
+        {},
+    )
+    parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
+
+    print(f"Applying definition: {len(parts)} part(s)")
+    print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
+    print("   • ontology data source  ->", DATASOURCE_PATH)
+    print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
+
+    update_item_definition(data_agent_item_id, {"parts": parts})
+    print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
+    print("ℹ️ Draft only — open the Data Agent in Fabric and PUBLISH to go live.")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Data Agent deployment did not complete:")
     print("   ", exc)
