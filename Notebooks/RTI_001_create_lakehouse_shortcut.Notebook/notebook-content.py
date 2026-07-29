@@ -882,6 +882,11 @@ settings_rows = build_rti_demo_settings_rows(
     extra_settings={
         "lakehouse_id": lakehouse_id,
         "target_folder_id": target_folder_id,
+        # Key Vault names/URIs (not secret values) so notebooks 002–007 read them from here.
+        "key_vault_uri": key_vault_uri,
+        "key_vault_tenant_id_secret": key_vault_tenant_id_secret_name,
+        "key_vault_client_id_secret": key_vault_client_id_secret_name,
+        "key_vault_client_secret_secret": key_vault_client_secret_name,
     }
 )
 

@@ -30,60 +30,17 @@
 
 # --- End-to-End Fabric Stream Ingestion: Setup and Automation ---
 
-from datetime import datetime, timezone
-from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql import functions as F
 
 settings_table_name = "rti_demo_settings"
 
-# Load shared settings written by RTI_001
+# Load shared settings written by RTI_001 (single source of truth, incl. Key Vault names/URIs).
 settings_df = spark.read.table(settings_table_name)
 
 settings = {
     row["setting_name"]: row["setting_value"]
     for row in settings_df.collect()
 }
-
-# Settings that first appear in RTI_002 and are useful in later notebooks.
-# These are names/URIs only, not secret values.
-new_settings = {
-    "key_vault_uri": "https://keyvaultjoa.vault.azure.net/",
-    "key_vault_tenant_id_secret": "tenantid",
-    "key_vault_client_id_secret": "clientid",
-    "key_vault_client_secret_secret": "clientsecret",
-}
-
-# Merge new settings into the shared settings dictionary.
-settings.update(new_settings)
-
-# Rewrite the shared settings table so later notebooks can use the new settings.
-updated_utc = datetime.now(timezone.utc).isoformat()
-
-settings_schema = StructType([
-    StructField("setting_name", StringType(), False),
-    StructField("setting_value", StringType(), True),
-    StructField("updated_utc", StringType(), False),
-])
-
-settings_rows = [
-    {
-        "setting_name": setting_name,
-        "setting_value": "" if setting_value is None else str(setting_value),
-        "updated_utc": updated_utc,
-    }
-    for setting_name, setting_value in settings.items()
-]
-
-settings_out_df = spark.createDataFrame(settings_rows, schema=settings_schema)
-
-(
-    settings_out_df
-    .withColumn("updated_utc", F.to_timestamp("updated_utc"))
-    .write
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(settings_table_name)
-)
 
 # Apply settings using the variable names already used by this notebook.
 workspace_id = settings["workspace_id"]
