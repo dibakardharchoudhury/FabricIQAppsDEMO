@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
   "metadata": {
     "type": "Notebook",
-    "displayName": "RTI_007_generate_and_ingest_OPCUA_Stream",
+    "displayName": "RTI_007_TimeSeriesBinding_RTI_signal",
     "description": "New notebook"
   },
   "config": {
     "version": "2.0",
-    "logicalId": "e905ca87-8e28-83ee-4097-9670dd4b882d"
+    "logicalId": "7a87ee79-bde8-8cfd-41cb-997e7d0c6311"
   }
 }
