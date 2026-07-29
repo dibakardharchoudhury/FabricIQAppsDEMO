@@ -1,0 +1,74 @@
+{
+  "autoRefresh": {
+    "enabled": false
+  },
+  "baseQueries": [],
+  "tiles": [
+    {
+      "id": "30e00e41-5eb0-49ed-9291-997a4330352d",
+      "queryRef": {
+        "kind": "query",
+        "queryId": "e919afd6-ee96-4a7b-b19f-1e203a12e907"
+      },
+      "title": "OPCUAEvents Table Preview",
+      "visualType": "table",
+      "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 6,
+        "height": 6
+      },
+      "visualOptions": {}
+    }
+  ],
+  "dataSources": [
+    {
+      "id": "b0b2067e-2479-438f-96ae-31079b244504",
+      "kind": "kusto-trident",
+      "clusterUri": "",
+      "databaseArtifactId": "0ee2d1d7-7ff6-4261-85fc-06c03d48a584",
+      "database": "3d48a584-06c0-85fc-4261-7ff60ee2d1d7",
+      "workspace": "00000000-0000-0000-0000-000000000000",
+      "name": "RTI_Demo_Eventhouse_V3"
+    }
+  ],
+  "pages": [
+    {
+      "name": "Page 1",
+      "id": "86830aeb-4cd3-4855-ad3d-f78212da80bd"
+    }
+  ],
+  "parameters": [
+    {
+      "kind": "duration",
+      "id": "441a972d-7a43-42d2-b17f-c0304e3d1ba2",
+      "displayName": "Time range",
+      "description": "",
+      "beginVariableName": "_startTime",
+      "endVariableName": "_endTime",
+      "defaultValue": {
+        "kind": "dynamic",
+        "count": 1,
+        "unit": "hours"
+      },
+      "showOnPages": {
+        "kind": "all"
+      }
+    }
+  ],
+  "queries": [
+    {
+      "id": "e919afd6-ee96-4a7b-b19f-1e203a12e907",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504"
+      },
+      "usedVariables": [],
+      "text": "['OPCUAEvents'] | take 10"
+    }
+  ],
+  "embeddedApps": [],
+  "flavor": "RTDashboard_Regular",
+  "schema_version": 80
+}
