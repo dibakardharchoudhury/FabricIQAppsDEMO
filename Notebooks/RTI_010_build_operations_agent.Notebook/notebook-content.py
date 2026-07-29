@@ -136,10 +136,6 @@ RETRY_DELAY_SECONDS = 5
 LRO_POLL_INTERVAL_SECONDS = 5
 LRO_MAX_WAIT_SECONDS = 300
 
-OPS_AGENT_SCHEMA_URL = (
-    "https://developer.microsoft.com/json-schemas/fabric/item/"
-    "operationsAgents/definition/1.0.0/schema.json"
-)
 OPS_AGENT_DESCRIPTION = (
     "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
     f"'{ontology_name}' ontology. Raises a work order when signal quality "
@@ -357,17 +353,18 @@ INSTRUCTIONS = (
 def build_configurations() -> dict:
     """Configurations.json body — instructions only (goals folded in).
 
-    Per the Fabric REST surface, `dataSources`, `actions` and the generated
-    `playbook` are not settable via updateDefinition yet, so they are left empty
-    and bound in the agent UI. `shouldRun` stays false until you Start it there.
+    Schema (operationsAgents/definition/1.0.0) requires `configuration`,
+    `playbook` and `shouldRun` at the root, with `additionalProperties: false`
+    (so no `$schema` here). `dataSources`, `actions` and the real `playbook`
+    are bound/generated in the agent UI; `shouldRun` stays false until Start.
     """
     return {
-        "$schema": OPS_AGENT_SCHEMA_URL,
         "configuration": {
             "instructions": INSTRUCTIONS,
             "dataSources": {},
             "actions": {},
         },
+        "playbook": {},
         "shouldRun": False,
     }
 
