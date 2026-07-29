@@ -38,25 +38,26 @@
 # Rules (business intent):
 # - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → alert.
 # - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → alert.
-# **Deployment model — exact replica of the working GUI agent, in user context:**
+# **Deployment model — self-contained known-good definition, in user context:**
 # The Operations Agent REST APIs support **User context only** (not Service Principal).
 # Running this notebook interactively authenticates with your **delegated** identity, so
 # the agent's *Run as* binds to you and Re-authenticate works — exactly like an agent
 # built in the UI. Under an SPN/app-only token the *Run as* stays an unprovisioned
 # "User" that cannot be saved, re-authenticated, or used to Generate Playbook.
-# Rather than hand-build the definition, this notebook **copies the full configuration of
-# a known-good agent** (`ops_agent_reference_name`, default `New_RTI_Demo_OpsAgent_V3`,
-# created in the UI) via `getDefinition`, and re-deploys it to `ops_agent_name` via
-# `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
-# The copied config keeps, exactly: `$schema`, the **Ontology** data source (encoded
-# datasource id + zero workspaceId), a **Teams channel** message destination, and a single
-# **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
-# `Pipe_SendEmailAlert` Data Pipeline. FabricJobAction carries its pipeline `connection`
-# in the definition, so — unlike a PowerAutomateAction — the action is **fully wired via
-# REST** with no UI step: the agent posts a Teams alert and invokes the pipeline to email
-# operations. This notebook sets only `instructions` (kept verbatim from the working agent
-# via the INSTRUCTIONS constant) and `shouldRun`; `identity` is intentionally dropped
-# (delegated token provisions Run-as).
+# The full agent definition is **embedded in this notebook** (CELL 1: `EMBEDDED_CONFIGURATION`
+# + `EMBEDDED_PLAYBOOK`) — it does **not** depend on any pre-existing UI agent. The notebook
+# creates/reuses `ops_agent_name` and deploys the embedded definition via `updateDefinition`
+# (format `OperationsAgentV1`, single `Configurations.json` part).
+# The embedded config contains: `$schema`, the **Ontology** data source (datasource-key byte
+# order of the ontology item id + zero workspaceId), a **Teams channel** message destination,
+# and a single **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
+# `Pipe_SendEmailAlert` Data Pipeline. Environment-specific ids (ontology, pipeline, Teams)
+# are CELL-0 settings with RTI-demo defaults, so another environment overrides them without
+# editing code. FabricJobAction carries its pipeline `connection` in the definition, so —
+# unlike a PowerAutomateAction — the action is **fully wired via REST** with no UI step: the
+# agent posts a Teams alert and invokes the pipeline to email operations. `instructions` come
+# from the INSTRUCTIONS constant and `shouldRun` from settings; `identity` is intentionally
+# omitted (delegated token provisions Run-as).
 # **Playbook:** the `playbook` key (OntologyDefinitions + RuleDefinitions) is a serialized
 # part of the definition — `getDefinition` returns it and `updateDefinition` sends it back,
 # so an *already-generated* playbook CAN be pushed. What the API canNOT do is *trigger*
@@ -65,9 +66,9 @@
 # the target is playbook-ready; set it to `false` to deploy config-only and click Generate
 # Playbook in the portal. If a pushed playbook doesn't show as live, opening the agent once
 # and selecting Generate Playbook re-binds/refreshes it.
-# This notebook: reads settings → loads the reference agent's config → creates/reuses the
-# target **OperationsAgent** item → pushes the copied definition (instructions + playbook)
-# via REST → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
+# This notebook: reads settings → creates/reuses the target **OperationsAgent** item →
+# pushes the embedded definition (instructions + playbook) via REST → optionally starts it
+# (`shouldRun`) → persists identifiers to `rti_demo_settings`.
 
 
 # CELL ********************
@@ -104,15 +105,25 @@ def first_setting(*names, required: bool = False, default: str = None):
 workspace_id = first_setting("workspace_id", required=True)
 target_folder_id = first_setting("target_folder_id", required=True)
 
-# Target agent to (re)deploy, and the known-good agent whose full config is copied.
+# Target agent to (re)deploy. The full definition is embedded in CELL 1 (no external agent).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
-ops_agent_reference_name = first_setting("ops_agent_reference_name", default="New_RTI_Demo_OpsAgent_V3")
+# Environment resources the embedded definition binds to (defaults = RTI demo; override per env).
+# The Ontology data source key is Fabric's datasource-key byte order of the ontology item id.
+ops_agent_ontology_datasource_id = first_setting(
+    "ops_agent_ontology_datasource_id", default="4cdeb9b3-801f-a9db-46c6-d2db30f512c4")
+ops_agent_email_pipeline_id = first_setting(
+    "ops_agent_email_pipeline_id", "email_pipeline_id", default="ca6f0002-f791-4d1a-9c48-ff3c1d131150")
+ops_agent_teams_team_id = first_setting(
+    "ops_agent_teams_team_id", "teams_team_id", default="c480320e-9204-474b-9b2c-54a53e94f220")
+ops_agent_teams_channel_id = first_setting(
+    "ops_agent_teams_channel_id", "teams_channel_id",
+    default="19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2")
 # Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
 ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
-# Copy the reference agent's already-generated `playbook` verbatim so the target deploys
-# playbook-ready. The playbook is part of the pushable definition (getDefinition returns it,
-# updateDefinition sends it back) — what the API CANNOT do is *trigger* generation. Set to
-# 'false' to deploy config-only and click Generate Playbook in the portal instead.
+# Include the embedded known-good `playbook` (OntologyDefinitions + RuleDefinitions) so the
+# target deploys playbook-ready. The playbook is part of the pushable definition — what the
+# API CANNOT do is *trigger* generation. Set 'false' to deploy config-only and click Generate
+# Playbook in the portal instead.
 ops_agent_copy_playbook = str(first_setting("ops_agent_copy_playbook", default="true")).lower() in ("true", "1", "yes")
 
 
@@ -120,7 +131,9 @@ print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
 print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
-print("   Reference agent   :", ops_agent_reference_name)
+print("   Ontology dsrc     :", ops_agent_ontology_datasource_id)
+print("   Email pipeline    :", ops_agent_email_pipeline_id)
+print("   Teams team/chan   :", ops_agent_teams_team_id, "/", ops_agent_teams_channel_id)
 print("   Start agent       :", ops_agent_should_run)
 print("   Copy playbook     :", ops_agent_copy_playbook)
 
@@ -301,52 +314,6 @@ def update_operations_agent_definition(agent_id: str, configurations: dict) -> d
     raise RuntimeError(f"Failed to update agent definition: {response.status_code} {response.text}")
 
 
-def get_operations_agent_definition(agent_id: str) -> Optional[dict]:
-    """Return the Configurations.json of an existing agent (to copy the full working config)."""
-    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents/{agent_id}/getDefinition"
-    response = api_request("POST", url, params={"format": OPS_AGENT_DEFINITION_FORMAT}, timeout=120)
-    body = None
-    if response.status_code == 200:
-        body = response.json() if response.content else None
-    elif response.status_code == 202:
-        operation_url = response.headers.get("Location")
-        if operation_url:
-            wait_for_lro(operation_url)
-            result = api_request("GET", operation_url + "/result", timeout=120)
-            if result.status_code == 200 and result.content:
-                body = result.json()
-    if not body:
-        return None
-    for part in body.get("definition", {}).get("parts", []):
-        if part.get("path") == "Configurations.json":
-            raw = base64.b64decode(part["payload"]).decode("utf-8")
-            return json.loads(raw)
-    return None
-
-
-def load_reference_configuration() -> dict:
-    """Return the full Configurations.json of the known-good reference agent.
-
-    We replicate the working GUI agent exactly rather than rebuild the definition by
-    hand: its Ontology data source (encoded datasource id + zero workspaceId), its Teams
-    channel destination, and its single FabricJobAction ("Send Email Alert!") wired to the
-    Pipe_SendEmailAlert Data Pipeline are all environment-correct and fully REST-settable.
-    """
-    reference = find_operations_agent(ops_agent_reference_name)
-    if not reference or not reference.get("id"):
-        raise RuntimeError(
-            f"Reference agent '{ops_agent_reference_name}' not found in the workspace. "
-            "Create it once in the Fabric UI (New → Operations agent), configure its Teams "
-            "channel + Send Email Alert pipeline action, then re-run."
-        )
-    ref_cfg = get_operations_agent_definition(reference["id"])
-    if not ref_cfg or "configuration" not in ref_cfg:
-        raise RuntimeError(
-            f"Could not read a usable definition from reference agent '{ops_agent_reference_name}'."
-        )
-    return ref_cfg
-
-
 # -------------------------------------------------------------------------
 # Operations Agent instructions — verbatim from the working New_RTI_Demo_OpsAgent_V3
 # agent that successfully generates a playbook (Goals / Operational / Semantic).
@@ -394,27 +361,70 @@ INSTRUCTIONS = '''*** Goals ***
 
 9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
-def build_configurations(reference_configuration: dict, should_run: Optional[bool] = None,
-                         copy_playbook: Optional[bool] = None) -> dict:
-    """Configurations.json body — an exact copy of the working reference agent's config.
+# -------------------------------------------------------------------------
+# Embedded known-good agent definition — no dependency on any external agent.
+# Environment-specific ids come from CELL-0 settings (RTI demo defaults); the
+# generated playbook is a byte-exact base64 of the OntologyDefinitions + RuleDefinitions.
+# -------------------------------------------------------------------------
+EMBEDDED_CONFIGURATION = {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
+    "configuration": {
+        "instructions": INSTRUCTIONS,
+        "dataSources": {
+            ops_agent_ontology_datasource_id: {
+                "id": ops_agent_ontology_datasource_id,
+                "type": "Ontology",
+                "workspaceId": "00000000-0000-0000-0000-000000000000",
+            }
+        },
+        "actions": {
+            "94ef718d-6bdb-46f3-9a15-661af4fabb39": {
+                "connection": {
+                    "jobArtifactId": ops_agent_email_pipeline_id,
+                    "jobWorkspaceId": workspace_id,
+                    "itemType": "Pipeline",
+                    "jobType": "Pipeline",
+                    "subItemId": "",
+                },
+                "id": "94ef718d-6bdb-46f3-9a15-661af4fabb39",
+                "displayName": "Send Email Alert!",
+                "description": "Send Email Alert so that appropriate Action can be taken! Replace this with any Pipeline or Power Automate Flow based Action!",
+                "kind": "FabricJobAction",
+                "parameters": [],
+            }
+        },
+        "messageDestination": {
+            "kind": "TeamsChannel",
+            "teamId": ops_agent_teams_team_id,
+            "channelId": ops_agent_teams_channel_id,
+        },
+    },
+    "shouldRun": True,
+}
 
-    Deep-copy the working agent's full configuration verbatim: `$schema`, the Ontology
-    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, and the Teams
-    `messageDestination`. When `copy_playbook` is true, the reference's generated
-    `playbook` (OntologyDefinitions + RuleDefinitions) is kept too, so the deployed agent
-    is immediately playbook-ready; when false it is dropped so the playbook is generated
-    from the portal instead. `instructions` (kept in sync with the reference via the
-    constant above) and `shouldRun` are set explicitly; `identity` is dropped (the running
-    user's delegated token provisions Run-as automatically).
+# Base64 of the generated playbook (2 RuleDefinitions: BAD / UNCERTAIN signal quality →
+# "Send Email Alert!"). Only used when ops_agent_copy_playbook is true. Regenerate from the
+# exported Configurations.json if the rules change.
+EMBEDDED_PLAYBOOK_B64 = "eyJPbnRvbG9neURlZmluaXRpb25zIjp7InNpZ25hbF9tYXN0ZXIiOnsiJHR5cGUiOiJjbGFzcyIsIklSSSI6InNpZ25hbF9tYXN0ZXIiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InNpZ25hbF9tYXN0ZXIiLCJEZXNjcmlwdGlvbiI6IkFuIE9QQyBVQSBzaWduYWwgcmVjb3JkIHByb3ZpZGluZyBlcXVpcG1lbnQsIGZhY2lsaXR5LCBhbmQgbWVhc3VyZW1lbnQgY29udGV4dC4ifSwidW5pdCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJ1bml0IiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJ1bml0IiwiRGVzY3JpcHRpb24iOiJNZWFzdXJlbWVudCB1bml0IGZvciB2YWx1ZSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwiZmFjaWxpdHlfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZmFjaWxpdHlfaWQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImZhY2lsaXR5X2lkIiwiRGVzY3JpcHRpb24iOiJJZGVudGlmaWVyIG9mIGZhY2lsaXR5IHdoZXJlIGVxdWlwbWVudCByZXNpZGVzIiwiRG9tYWluQ2xhc3NJUkkiOiJzaWduYWxfbWFzdGVyIiwiUmFuZ2VEYXRhVHlwZSI6InN0cmluZyIsIktpbmQiOjF9LCJ2YWx1ZSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJ2YWx1ZSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoidmFsdWUiLCJEZXNjcmlwdGlvbiI6IkN1cnJlbnQgbWVhc3VyZWQgc2lnbmFsIHZhbHVlIiwiRG9tYWluQ2xhc3NJUkkiOiJzaWduYWxfbWFzdGVyIiwiUmFuZ2VEYXRhVHlwZSI6ImRlY2ltYWwiLCJLaW5kIjoxfSwiZXF1aXBtZW50X2lkIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImVxdWlwbWVudF9pZCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoiZXF1aXBtZW50X2lkIiwiRGVzY3JpcHRpb24iOiJJZGVudGlmaWVyIG9mIGFmZmVjdGVkIGVxdWlwbWVudCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwicXVhbGl0eSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJxdWFsaXR5IiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJxdWFsaXR5IiwiRGVzY3JpcHRpb24iOiJDdXJyZW50IE9QQyBVQSBzaWduYWwgcXVhbGl0eSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwiZXZlbnRfdGltZSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJldmVudF90aW1lIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJldmVudF90aW1lIiwiRGVzY3JpcHRpb24iOiJUaW1lc3RhbXAgb2YgdGhlIHNpZ25hbCBldmVudCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwib3BjdWFfbm9kZV9pZCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJvcGN1YV9ub2RlX2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJvcGN1YV9ub2RlX2lkIiwiRGVzY3JpcHRpb24iOiJPUEMgVUEgbm9kZSBpZGVudGlmaWVyIGZvciB0aGUgc2lnbmFsIiwiRG9tYWluQ2xhc3NJUkkiOiJzaWduYWxfbWFzdGVyIiwiUmFuZ2VEYXRhVHlwZSI6InN0cmluZyIsIktpbmQiOjB9fSwiUnVsZURlZmluaXRpb25zIjp7IjMyNjBhZjA3LWEwNGQtNGVmNS05YTA5LTI5ODBmOWFmMzQ1OCI6eyJJZCI6IjMyNjBhZjA3LWEwNGQtNGVmNS05YTA5LTI5ODBmOWFmMzQ1OCIsIk5hbWUiOiJTZW5kIEVtYWlsIEFsZXJ0IGZvciBCQUQgT1BDIFVBIFNpZ25hbCBRdWFsaXR5IiwiRGVzY3JpcHRpb24iOiJTZW5kIGFuIGVtYWlsIGFsZXJ0IHdoZW5ldmVyIGFuIE9QQyBVQSBzaWduYWwgaW4gc2lnbmFsX21hc3RlciBoYXMgcXVhbGl0eSBlcXVhbCB0byBCQUQsIGluY2x1ZGluZyBlcXVpcG1lbnQgYW5kIHNpZ25hbCBjb250ZXh0LiIsIkNsYXNzRXhwcmVzc2lvbiI6eyIkdHlwZSI6Im9udG9sb2d5cXVlcnlleHByZXNzaW9uIiwiRXhwcmVzc2lvbiI6IntcIkVudGl0eVNlbGVjdG9yXCI6e1wicXVlcnlUeXBlXCI6XCJHUUxcIixcIlF1ZXJ5XCI6XCJNQVRDSCAobm9kZV9zaWduYWxfbWFzdGVyOlxcdTAwNjBzaWduYWxfbWFzdGVyXFx1MDA2MCkgUkVUVVJOIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwb3BjdWFfbm9kZV9pZFxcdTAwNjAgQVMgXFx1MDA2MG9wY3VhX25vZGVfaWRcXHUwMDYwLCBub2RlX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MGVxdWlwbWVudF9pZFxcdTAwNjAgQVMgXFx1MDA2MGVxdWlwbWVudF9pZFxcdTAwNjAsIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwZmFjaWxpdHlfaWRcXHUwMDYwIEFTIFxcdTAwNjBmYWNpbGl0eV9pZFxcdTAwNjAsIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwdW5pdFxcdTAwNjAgQVMgXFx1MDA2MHVuaXRcXHUwMDYwXCJ9LFwiVGltZVNlcmllc1NlbGVjdG9yXCI6e1wiRW50aXR5VHlwZVwiOntcIk5hbWVcIjpcInNpZ25hbF9tYXN0ZXJcIn0sXCJLZXlDb2x1bW5zXCI6e1wib3BjdWFfbm9kZV9pZFwiOlwib3BjdWFfbm9kZV9pZFwifSxcIk1ldHJpY3NcIjpbe1wiRmllbGRcIjpcImV2ZW50X3RpbWVcIixcIkFnZ3JlZ2F0aW9uXCI6XCJMYXN0S25vd25WYWx1ZVwiLFwiQWxpYXNcIjpcImV2ZW50X3RpbWVcIn0se1wiRmllbGRcIjpcInF1YWxpdHlcIixcIkFnZ3JlZ2F0aW9uXCI6XCJMYXN0S25vd25WYWx1ZVwiLFwiQWxpYXNcIjpcInF1YWxpdHlcIn0se1wiRmllbGRcIjpcInZhbHVlXCIsXCJBZ2dyZWdhdGlvblwiOlwiTGFzdEtub3duVmFsdWVcIixcIkFsaWFzXCI6XCJ2YWx1ZVwifV0sXCJUaW1lUmFuZ2VcIjp7XCJTdGFydFwiOlwiMjAyNC0wNy0yOVQwMDowMDowMFpcIixcIkVuZFwiOlwiMjAyNi0wNy0yOVQyMDozNjowNVpcIn0sXCJHcm91cEJ5XCI6W1wib3BjdWFfbm9kZV9pZFwiXX19IiwiRGVzY3JpcHRpb24iOiJTZW5kIGFuIGVtYWlsIGFsZXJ0IHdoZW5ldmVyIGFuIE9QQyBVQSBzaWduYWwgaW4gc2lnbmFsX21hc3RlciBoYXMgcXVhbGl0eSBlcXVhbCB0byBCQUQsIGluY2x1ZGluZyBlcXVpcG1lbnQgYW5kIHNpZ25hbCBjb250ZXh0LiJ9LCJSdWxlQ29uZGl0aW9uIjp7IiR0eXBlIjoidGV4dHdoZW5pc2VxdWFsIiwiRGF0YVByb3BlcnR5TmFtZSI6InF1YWxpdHkiLCJWYWx1ZSI6IkJBRCJ9LCJBY3Rpb25CaW5kaW5nIjp7IiR0eXBlIjoibXVsdGlhY3Rpb25iaW5kaW5nIiwiRGVzY3JpcHRpb24iOiJBY3Rpb24gYmluZGluZ3MgZm9yIHRoaXMgcnVsZSIsIkFjdGlvbkJpbmRpbmdzIjpbeyJOYW1lIjoiU2VuZCBFbWFpbCBBbGVydCEiLCJEZXNjcmlwdGlvbiI6IlNlbmQgRW1haWwgQWxlcnQgc28gdGhhdCBhcHByb3ByaWF0ZSBBY3Rpb24gY2FuIGJlIHRha2VuISBSZXBsYWNlIHRoaXMgd2l0aCBhbnkgUGlwZWxpbmUgb3IgUG93ZXIgQXV0b21hdGUgRmxvdyBiYXNlZCBBY3Rpb24hIiwiQWN0aW9uSWQiOiI5NGVmNzE4ZC02YmRiLTQ2ZjMtOWExNS02NjFhZjRmYWJiMzkiLCJQYXJhbWV0ZXJCaW5kaW5ncyI6W3siJHR5cGUiOiJwYXJhbWV0ZXJiaW5kaW5nY29udGV4dGtleSIsIk5hbWUiOiJpZCIsIktleSI6ImFnZW50Om9wZXJhdGlvbmFsU2V0OnNpZ25hbF9tYXN0ZXI6b3BjdWFfbm9kZV9pZCIsIkRlc2NyaXB0aW9uIjoiVGhlIHVuaXF1ZSBpZGVudGlmaWVyIG9mIHRoZSBzaWduYWxfbWFzdGVyIGVudGl0eSJ9XX1dfSwiTG9jYWxPbnRvbG9neSI6eyJzaWduYWxfbWFzdGVyIjp7IiR0eXBlIjoiY2xhc3MiLCJJUkkiOiJzaWduYWxfbWFzdGVyIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJzaWduYWxfbWFzdGVyIiwiRGVzY3JpcHRpb24iOiJBbiBPUEMgVUEgc2lnbmFsIHJlY29yZCBwcm92aWRpbmcgZXF1aXBtZW50LCBmYWNpbGl0eSwgYW5kIG1lYXN1cmVtZW50IGNvbnRleHQuIn0sInVuaXQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidW5pdCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoidW5pdCIsIkRlc2NyaXB0aW9uIjoiTWVhc3VyZW1lbnQgdW5pdCBmb3IgdmFsdWUiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImZhY2lsaXR5X2lkIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImZhY2lsaXR5X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJmYWNpbGl0eV9pZCIsIkRlc2NyaXB0aW9uIjoiSWRlbnRpZmllciBvZiBmYWNpbGl0eSB3aGVyZSBlcXVpcG1lbnQgcmVzaWRlcyIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwidmFsdWUiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidmFsdWUiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InZhbHVlIiwiRGVzY3JpcHRpb24iOiJDdXJyZW50IG1lYXN1cmVkIHNpZ25hbCB2YWx1ZSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJkZWNpbWFsIiwiS2luZCI6MX0sImVxdWlwbWVudF9pZCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJlcXVpcG1lbnRfaWQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImVxdWlwbWVudF9pZCIsIkRlc2NyaXB0aW9uIjoiSWRlbnRpZmllciBvZiBhZmZlY3RlZCBlcXVpcG1lbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInF1YWxpdHkiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoicXVhbGl0eSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoicXVhbGl0eSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBPUEMgVUEgc2lnbmFsIHF1YWxpdHkiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImV2ZW50X3RpbWUiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZXZlbnRfdGltZSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoiZXZlbnRfdGltZSIsIkRlc2NyaXB0aW9uIjoiVGltZXN0YW1wIG9mIHRoZSBzaWduYWwgZXZlbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sIm9wY3VhX25vZGVfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoib3BjdWFfbm9kZV9pZCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoib3BjdWFfbm9kZV9pZCIsIkRlc2NyaXB0aW9uIjoiT1BDIFVBIG5vZGUgaWRlbnRpZmllciBmb3IgdGhlIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjowfX19LCJhOGJlOWU5Mi1iYzYzLTQyOTYtODlmZC0yZDEwZDU5YjkzZjQiOnsiSWQiOiJhOGJlOWU5Mi1iYzYzLTQyOTYtODlmZC0yZDEwZDU5YjkzZjQiLCJOYW1lIjoiT1BDIFVBIFNpZ25hbCBRdWFsaXR5IFVOQ0VSVEFJTiBBbGVydCIsIkRlc2NyaXB0aW9uIjoiU2VuZCBhbiBlbWFpbCBhbGVydCB3aGVuZXZlciBhbiBPUEMgVUEgc2lnbmFsIGluIHNpZ25hbF9tYXN0ZXIgaGFzIHF1YWxpdHkgZXF1YWwgdG8gVU5DRVJUQUlOLCBpbmNsdWRpbmcgZXF1aXBtZW50IGFuZCBzaWduYWwgY29udGV4dC4iLCJDbGFzc0V4cHJlc3Npb24iOnsiJHR5cGUiOiJvbnRvbG9neXF1ZXJ5ZXhwcmVzc2lvbiIsIkV4cHJlc3Npb24iOiJ7XCJFbnRpdHlTZWxlY3RvclwiOntcInF1ZXJ5VHlwZVwiOlwiR1FMXCIsXCJRdWVyeVwiOlwiTUFUQ0ggKG5fc2lnbmFsX21hc3RlcjpcXHUwMDYwc2lnbmFsX21hc3RlclxcdTAwNjApIFJFVFVSTiBuX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MG9wY3VhX25vZGVfaWRcXHUwMDYwIEFTIFxcdTAwNjBvcGN1YV9ub2RlX2lkXFx1MDA2MCwgbl9zaWduYWxfbWFzdGVyLlxcdTAwNjBlcXVpcG1lbnRfaWRcXHUwMDYwIEFTIFxcdTAwNjBlcXVpcG1lbnRfaWRcXHUwMDYwLCBuX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MGZhY2lsaXR5X2lkXFx1MDA2MCBBUyBcXHUwMDYwZmFjaWxpdHlfaWRcXHUwMDYwLCBuX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MHVuaXRcXHUwMDYwIEFTIFxcdTAwNjB1bml0XFx1MDA2MFwifSxcIlRpbWVTZXJpZXNTZWxlY3RvclwiOntcIkVudGl0eVR5cGVcIjp7XCJOYW1lXCI6XCJzaWduYWxfbWFzdGVyXCJ9LFwiS2V5Q29sdW1uc1wiOntcIm9wY3VhX25vZGVfaWRcIjpcIm9wY3VhX25vZGVfaWRcIn0sXCJNZXRyaWNzXCI6W3tcIkZpZWxkXCI6XCJxdWFsaXR5XCIsXCJBZ2dyZWdhdGlvblwiOlwiTGFzdEtub3duVmFsdWVcIixcIkFsaWFzXCI6XCJxdWFsaXR5XCJ9LHtcIkZpZWxkXCI6XCJ2YWx1ZVwiLFwiQWdncmVnYXRpb25cIjpcIkxhc3RLbm93blZhbHVlXCIsXCJBbGlhc1wiOlwidmFsdWVcIn0se1wiRmllbGRcIjpcImV2ZW50X3RpbWVcIixcIkFnZ3JlZ2F0aW9uXCI6XCJMYXN0S25vd25WYWx1ZVwiLFwiQWxpYXNcIjpcImV2ZW50X3RpbWVcIn1dLFwiVGltZVJhbmdlXCI6e1wiU3RhcnRcIjpcIjIwMjQtMDctMjlUMDA6MDA6MDBaXCIsXCJFbmRcIjpcIjIwMjYtMDctMjlUMjA6MzY6MjIuMzY3ODg5NFpcIn0sXCJHcm91cEJ5XCI6W1wib3BjdWFfbm9kZV9pZFwiXX19IiwiRGVzY3JpcHRpb24iOiJTZW5kIGFuIGVtYWlsIGFsZXJ0IHdoZW5ldmVyIGFuIE9QQyBVQSBzaWduYWwgaW4gc2lnbmFsX21hc3RlciBoYXMgcXVhbGl0eSBlcXVhbCB0byBVTkNFUlRBSU4sIGluY2x1ZGluZyBlcXVpcG1lbnQgYW5kIHNpZ25hbCBjb250ZXh0LiJ9LCJSdWxlQ29uZGl0aW9uIjp7IiR0eXBlIjoidGV4dHdoZW5pc2VxdWFsIiwiRGF0YVByb3BlcnR5TmFtZSI6InF1YWxpdHkiLCJWYWx1ZSI6IlVOQ0VSVEFJTiJ9LCJBY3Rpb25CaW5kaW5nIjp7IiR0eXBlIjoibXVsdGlhY3Rpb25iaW5kaW5nIiwiRGVzY3JpcHRpb24iOiJBY3Rpb24gYmluZGluZ3MgZm9yIHRoaXMgcnVsZSIsIkFjdGlvbkJpbmRpbmdzIjpbeyJOYW1lIjoiU2VuZCBFbWFpbCBBbGVydCEiLCJEZXNjcmlwdGlvbiI6IlNlbmQgRW1haWwgQWxlcnQgc28gdGhhdCBhcHByb3ByaWF0ZSBBY3Rpb24gY2FuIGJlIHRha2VuISBSZXBsYWNlIHRoaXMgd2l0aCBhbnkgUGlwZWxpbmUgb3IgUG93ZXIgQXV0b21hdGUgRmxvdyBiYXNlZCBBY3Rpb24hIiwiQWN0aW9uSWQiOiI5NGVmNzE4ZC02YmRiLTQ2ZjMtOWExNS02NjFhZjRmYWJiMzkiLCJQYXJhbWV0ZXJCaW5kaW5ncyI6W3siJHR5cGUiOiJwYXJhbWV0ZXJiaW5kaW5nY29udGV4dGtleSIsIk5hbWUiOiJvcGN1YV9ub2RlX2lkIiwiS2V5IjoiYWdlbnQ6b3BlcmF0aW9uYWxTZXQ6c2lnbmFsX21hc3RlcjpvcGN1YV9ub2RlX2lkIiwiRGVzY3JpcHRpb24iOiJUaGUgdW5pcXVlIGlkZW50aWZpZXIgb2YgdGhlIE9QQyBVQSBzaWduYWwgaW4gc2lnbmFsX21hc3RlciJ9XX1dfSwiTG9jYWxPbnRvbG9neSI6eyJzaWduYWxfbWFzdGVyIjp7IiR0eXBlIjoiY2xhc3MiLCJJUkkiOiJzaWduYWxfbWFzdGVyIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJzaWduYWxfbWFzdGVyIiwiRGVzY3JpcHRpb24iOiJBbiBPUEMgVUEgc2lnbmFsIHJlY29yZCBwcm92aWRpbmcgZXF1aXBtZW50LCBmYWNpbGl0eSwgYW5kIG1lYXN1cmVtZW50IGNvbnRleHQuIn0sInVuaXQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidW5pdCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoidW5pdCIsIkRlc2NyaXB0aW9uIjoiTWVhc3VyZW1lbnQgdW5pdCBmb3IgdmFsdWUiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImZhY2lsaXR5X2lkIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImZhY2lsaXR5X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJmYWNpbGl0eV9pZCIsIkRlc2NyaXB0aW9uIjoiSWRlbnRpZmllciBvZiBmYWNpbGl0eSB3aGVyZSBlcXVpcG1lbnQgcmVzaWRlcyIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwidmFsdWUiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidmFsdWUiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InZhbHVlIiwiRGVzY3JpcHRpb24iOiJDdXJyZW50IG1lYXN1cmVkIHNpZ25hbCB2YWx1ZSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJkZWNpbWFsIiwiS2luZCI6MX0sImVxdWlwbWVudF9pZCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJlcXVpcG1lbnRfaWQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImVxdWlwbWVudF9pZCIsIkRlc2NyaXB0aW9uIjoiSWRlbnRpZmllciBvZiBhZmZlY3RlZCBlcXVpcG1lbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInF1YWxpdHkiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoicXVhbGl0eSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoicXVhbGl0eSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBPUEMgVUEgc2lnbmFsIHF1YWxpdHkiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImV2ZW50X3RpbWUiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZXZlbnRfdGltZSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoiZXZlbnRfdGltZSIsIkRlc2NyaXB0aW9uIjoiVGltZXN0YW1wIG9mIHRoZSBzaWduYWwgZXZlbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sIm9wY3VhX25vZGVfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoib3BjdWFfbm9kZV9pZCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoib3BjdWFfbm9kZV9pZCIsIkRlc2NyaXB0aW9uIjoiT1BDIFVBIG5vZGUgaWRlbnRpZmllciBmb3IgdGhlIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjowfX19fX0="
+
+
+def build_configurations(should_run: Optional[bool] = None,
+                         copy_playbook: Optional[bool] = None) -> dict:
+    """Configurations.json body, built from the embedded known-good definition.
+
+    No external agent is read. `$schema`, the Ontology `dataSources`, the FabricJobAction
+    wired to the Send Email Alert pipeline, the Teams `messageDestination`, `instructions`
+    and `shouldRun` come from `EMBEDDED_CONFIGURATION` (env ids from CELL-0 settings). When
+    `copy_playbook` is true the byte-exact embedded playbook is attached so the agent is
+    immediately playbook-ready; when false it is omitted and generated in the portal.
+    `identity` is never set — the running user's delegated token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
-    config = deepcopy(reference_configuration)
-    if not keep_playbook:
-        config.pop("playbook", None)
-    config.get("configuration", {}).pop("identity", None)
-    config["configuration"]["instructions"] = INSTRUCTIONS
+    config = deepcopy(EMBEDDED_CONFIGURATION)
     config["shouldRun"] = run_state
+    if keep_playbook:
+        config["playbook"] = json.loads(base64.b64decode(EMBEDDED_PLAYBOOK_B64))
     return config
 
 
@@ -422,17 +432,14 @@ def build_configurations(reference_configuration: dict, should_run: Optional[boo
 # Deploy: create (empty) -> push instructions. Best-effort + manual fallback.
 # -------------------------------------------------------------------------
 ops_agent_item_id = None
-reference_configuration = None
 try:
     get_access_token_for_fabric()
     print("✅ Got Fabric access token (delegated user context).")
 
-    reference_configuration = load_reference_configuration()
-    _ref_cfg = reference_configuration.get("configuration", {})
-    print(f"✅ Loaded reference config from '{ops_agent_reference_name}':")
-    print("   data sources     :", list(_ref_cfg.get("dataSources", {}).keys()))
-    print("   actions          :", [a.get("kind") for a in _ref_cfg.get("actions", {}).values()])
-    print("   message dest.    :", _ref_cfg.get("messageDestination", {}).get("kind"))
+    print("✅ Using embedded known-good definition (no external reference agent):")
+    print("   data source (Ontology)  :", ops_agent_ontology_datasource_id)
+    print("   action (FabricJobAction): Send Email Alert! ->", ops_agent_email_pipeline_id)
+    print("   message dest.           : TeamsChannel", ops_agent_teams_team_id)
 
     # 1) Create (or reuse) the target Operations Agent — empty, no definition.
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
@@ -442,7 +449,7 @@ try:
     #    Runs in User context so the agent's Run-as provisions correctly (Re-authenticate works).
     started = ops_agent_should_run
     try:
-        configurations = build_configurations(reference_configuration, should_run=started)
+        configurations = build_configurations(should_run=started)
         json.dumps(configurations)  # validate serializable
         update_operations_agent_definition(ops_agent_item_id, configurations)
     except RuntimeError as update_exc:
@@ -452,12 +459,12 @@ try:
         print("ℹ️  Start (shouldRun=true) was refused — deploying stopped so the definition lands:")
         print("   ", update_exc)
         started = False
-        configurations = build_configurations(reference_configuration, should_run=False)
+        configurations = build_configurations(should_run=False)
         update_operations_agent_definition(ops_agent_item_id, configurations)
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
-    _pb_state = "with generated playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
-    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — copied Ontology data source,")
-    print(f"   Teams destination and Send Email Alert pipeline action from the reference (id={ops_agent_item_id}).")
+    _pb_state = "with embedded playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
+    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — Ontology data source,")
+    print(f"   Teams destination and Send Email Alert pipeline action from the embedded definition (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -470,16 +477,16 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 
 print()
-print("✅ Set programmatically via REST (User context) — an exact copy of the working reference agent:")
+print("✅ Set programmatically via REST (User context) from the embedded known-good definition:")
 print("   instructions (verbatim), Ontology data source, Teams message destination, the")
 print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and run state.")
 print("ℹ️  FabricJobAction carries its pipeline connection in the definition, so no UI wiring is")
 print("   needed — the agent posts the Teams alert and runs the pipeline to email operations.")
 if ops_agent_copy_playbook:
-    print("ℹ️  The generated playbook (OntologyDefinitions + RuleDefinitions) is copied verbatim from")
-    print("   the reference. The playbook is part of the pushable definition — the API can send it,")
-    print("   but it CANNOT trigger generation. If the target doesn't show it as live, open the")
-    print("   agent once and select 'Generate Playbook' to (re)bind/refresh it against current data.")
+    print("ℹ️  The embedded playbook (OntologyDefinitions + RuleDefinitions) is attached byte-exact.")
+    print("   The playbook is part of the pushable definition — the API can send it, but it CANNOT")
+    print("   trigger generation. If the target doesn't show it as live, open the agent once and")
+    print("   select 'Generate Playbook' to (re)bind/refresh it against current data.")
 else:
     print("ℹ️  Deployed config-only (ops_agent_copy_playbook=false). Open the agent and select")
     print("   'Generate Playbook' in the portal; the instructions compile cleanly so it succeeds.")
