@@ -150,8 +150,8 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (no external agent).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
-# `ontology_name` (already in the settings table). CELL 1 resolves its live id by name — no
-# id is hard-coded. Set ops_agent_ontology_datasource_id only to FORCE a specific source id.
+# `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name —
+# no id is hard-coded. Set ops_agent_ontology_datasource_id only to FORCE a specific source id.
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
 
@@ -671,6 +671,7 @@ try:
     check_run_as(ops_agent_run_as_user)
 
     # Ontology data source: resolve the live id from the ontology name (unless one was forced).
+    # Runtime binds by the live (plain) item id — the byte-swapped form is git-only (logicalId).
     resolved_datasource_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
 
     # Email pipeline: create/reuse Pipe_SendEmailAlert (unless an id was provided).
