@@ -321,13 +321,19 @@ def build_data_agent_parts(ontology_id: str):
     }
 
     ontology_dir = f"ontology-{ontology_name}"
-    return [
+    stage_config_text = json.dumps(stage_config, indent=2)
+    datasource_text = json.dumps(datasource, indent=2)
+
+    parts = [
         (".platform", json.dumps(platform, indent=2)),
         ("Files/Config/data_agent.json", json.dumps(data_agent, indent=2)),
         ("Files/Config/publish_info.json", json.dumps(publish_info, indent=2)),
-        ("Files/Config/draft/stage_config.json", json.dumps(stage_config, indent=2)),
-        (f"Files/Config/draft/{ontology_dir}/datasource.json", json.dumps(datasource, indent=2)),
     ]
+    # A Data Agent definition carries two mirrored stages: `draft` and `published`.
+    for stage in ("draft", "published"):
+        parts.append((f"Files/Config/{stage}/stage_config.json", stage_config_text))
+        parts.append((f"Files/Config/{stage}/{ontology_dir}/datasource.json", datasource_text))
+    return parts
 
 
 # -------------------------------------------------------------------------
