@@ -79,7 +79,7 @@
         "queryId": "a1000000-0000-4000-8000-000000000005"
       },
       "title": "Quality Mix by Turbine",
-      "visualType": "columnchart",
+      "visualType": "barchart",
       "pageId": "86830aeb-4cd3-4855-ad3d-f78212da80bd",
       "layout": {
         "x": 0,
