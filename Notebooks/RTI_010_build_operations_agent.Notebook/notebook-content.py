@@ -23,59 +23,90 @@
 
 # MARKDOWN ********************
 
-# # 10 — Build & Deploy the Operations Agent (health monitoring → Teams alert)
-# Creates a Fabric **Operations Agent** that watches turbine telemetry and posts an
-# **alert to a Teams channel** when signal `quality` degrades.
-# **Design — the agent consumes the Ontology, it does not embed a table mapping.**
-# Per the Operations Agent schema, `dataSource.type` may be `KustoDatabase` **or
-# `Ontology`**. We use the **`Ontology`** data source (`RTI_Demo_Ontology_V3`). Its
-# `signal_master` entity already joins:
-# - **Real-time (KQL)** `OPCUAEvents` → `event_time`, `value`, `quality`
-# - **Static (Lakehouse)** `silver_signal_master` → `equipment_id`, `facility_id`,
-#   `system_id`, `unit`, `tag`, keyed on `opcua_node_id`.
-# So the agent gets `equipment_id` / `facility_id` / `unit` for every live event
-# **from the ontology join** — no OPC UA schema change and no hard-coded mapping.
-# Rules (business intent):
-# - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → alert.
-# - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → alert.
-# **Deployment model — self-contained known-good definition, in user context:**
-# The Operations Agent REST APIs support **User context only** (not Service Principal).
-# Running this notebook interactively authenticates with your **delegated** identity, so
-# the agent's *Run as* binds to you and Re-authenticate works — exactly like an agent
-# built in the UI. Under an SPN/app-only token the *Run as* stays an unprovisioned
-# "User" that cannot be saved, re-authenticated, or used to Generate Playbook.
-# The full agent definition is **embedded in this notebook** (CELL 1: `EMBEDDED_CONFIGURATION`
-# + `EMBEDDED_PLAYBOOK`) — it does **not** depend on any pre-existing UI agent. The notebook
-# creates/reuses `ops_agent_name` and deploys the embedded definition via `updateDefinition`
-# (format `OperationsAgentV1`, single `Configurations.json` part).
-# The embedded config contains: `$schema`, the **Ontology** data source (datasource-key byte
-# order of the ontology item id + zero workspaceId), a **Teams channel** message destination,
-# and a single **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
-# `Pipe_SendEmailAlert` Data Pipeline. Environment-specific ids (ontology, pipeline, Teams)
-# are CELL-0 settings with RTI-demo defaults, so another environment overrides them without
-# editing code. FabricJobAction carries its pipeline `connection` in the definition, so —
-# unlike a PowerAutomateAction — the action is **fully wired via REST** with no UI step: the
-# agent posts a Teams alert and invokes the pipeline to email operations. `instructions` come
-# from the INSTRUCTIONS constant and `shouldRun` from settings; `identity` is intentionally
-# omitted (delegated token provisions Run-as).
-# **Run-as + Teams destination as inputs:** `ops_agent_run_as_user` (UPN) is a guardrail —
-# the agent Run-as always binds to whoever runs this notebook, so the notebook prints the
-# effective (signed-in) identity and warns if it differs from the input. `ops_agent_teams_team_id`
-# and `ops_agent_teams_channel_id` are the destination the agent posts to. The definition stores
-# *ids*, not the display names the portal shows: the Team id is a GUID and the Channel id looks
-# like `19:...@thread.tacv2`. Defaults are the RTI-demo destination (Team
-# "FacilitiesRealTimeMonitoring" / Channel "Alerts"); override the two ids for another channel.
-# **Playbook:** the `playbook` key (OntologyDefinitions + RuleDefinitions) is a serialized
-# part of the definition — `getDefinition` returns it and `updateDefinition` sends it back,
-# so an *already-generated* playbook CAN be pushed. What the API canNOT do is *trigger*
-# generation (the "Generate Playbook" computation is UI-only). By default
-# (`ops_agent_copy_playbook=true`) the reference's generated playbook is copied verbatim so
-# the target is playbook-ready; set it to `false` to deploy config-only and click Generate
-# Playbook in the portal. If a pushed playbook doesn't show as live, opening the agent once
-# and selecting Generate Playbook re-binds/refreshes it.
-# This notebook: reads settings → creates/reuses the target **OperationsAgent** item →
-# pushes the embedded definition (instructions + playbook) via REST → optionally starts it
-# (`shouldRun`) → persists identifiers to `rti_demo_settings`.
+# # RTI Operations Agent – Turbine Health Alerts to Teams
+# 
+# This notebook builds and deploys a **Fabric Operations Agent** that:
+# - Monitors OPC UA signal quality for RTI turbines via the **RTI_Demo_Ontology_V3** ontology (entity `signal_master`).
+# - Raises an alert when signal **`quality` is `BAD` or `UNCERTAIN`**.
+# - Posts the alert to a **Teams channel** and triggers the **`Pipe_SendEmailAlert`** pipeline.
+# 
+# ---
+# ## How the Operations Agent is created
+# 
+# The agent is created and configured **entirely from this notebook**:
+# 
+# 1. **Ontology data source**  
+#    - Uses the ontology data source type (`"type": "Ontology"`) pointing at `RTI_Demo_Ontology_V3`.
+#    - The `signal_master` entity joins:
+#      - Real-time KQL signals (`OPCUAEvents`) → `event_time`, `value`, `quality`.
+#      - Static Lakehouse master data (`silver_signal_master`) → `equipment_id`, `facility_id`, `system_id`, `unit`, `tag`.
+#    - The agent therefore receives rich equipment context without any hard-coded table joins in the agent.
+# 
+# 2. **Embedded known-good definition**  
+#    - The **full agent definition** is embedded in this notebook (see `EMBEDDED_CONFIGURATION` + `EMBEDDED_PLAYBOOK` in Cell 2).  
+#    - The notebook uses Fabric REST APIs (`updateDefinition` with format `OperationsAgentV1`) to:
+#      - Create or reuse the Operations Agent item with name from `ops_agent_name`.
+#      - Push the embedded configuration, which includes:
+#        - `$schema` and the ontology data source.
+#        - A **Teams channel message destination**.
+#        - A **FabricJobAction** named **"Send Email Alert!"** wired to the `Pipe_SendEmailAlert` pipeline.
+#        - The **playbook** (OntologyDefinitions + RuleDefinitions) so the agent is playbook-ready.
+# 
+# 3. **Run-as identity**  
+#    - The REST calls run under **your delegated user identity** (whoever runs this notebook).  
+#    - The agent’s **Run as** is automatically bound to this user (no service principal required).  
+#    - `ops_agent_run_as_user` is only a guardrail used for printing a warning if it doesn’t match the signed-in user.
+# 
+# 4. **Run state & persistence**  
+#    - `ops_agent_should_run` controls whether the agent is started or left stopped after deployment.  
+#    - The notebook persists key identifiers (agent id, name, run flag) into the `rti_demo_settings` table for later notebooks.
+# 
+# ---
+# ## Alert logic (business rules)
+# 
+# The agent uses the ontology to apply these rules:
+# 
+# - **`quality = "BAD"`**  
+#   - Severity: **HIGH**  
+#   - Type: **SingleFailure**  
+#   - Trend: **Failing**  
+#   - Action: recommend **"Send Email Alert!"**.
+# 
+# - **`quality = "UNCERTAIN"`**  
+#   - Severity: **MEDIUM**  
+#   - Type: **SignalDegradation**  
+#   - Trend: **Degrading**  
+#   - Action: recommend **"Send Email Alert!"**.
+# 
+# The alert context includes: `equipment_id`, `facility_id`, `quality`, `value`, `unit`, and `event_time`.
+# 
+# ---
+# ## How to provide the Teams Team and Channel
+# 
+# The agent sends messages to the Teams channel defined by these **IDs** (not display names):
+# - `ops_agent_teams_team_id`  → the **Team ID** (a GUID).  
+# - `ops_agent_teams_channel_id` → the **Channel ID** (looks like `19:...@thread.tacv2`).
+# 
+# To get these IDs from the Teams client (no admin rights required):
+# 
+# 1. In Microsoft Teams, hover over the **target channel**.  
+# 2. Select **`…` → Get link to channel`** (sometimes labeled **Copy link**).  
+# 3. You will get a URL similar to:
+# 
+#    ```text
+#    https://teams.microsoft.com/l/channel/19%3A...%40thread.tacv2/Alerts?groupId=<TEAM_GUID>&tenantId=<TENANT_GUID>
+#    ```
+# 
+# 4. Interpret the URL as follows:
+#    - **Team ID** (`ops_agent_teams_team_id`):  
+#      - The value after `groupId=` up to the next `&`.  
+#      - Example: `c480320e-9204-474b-9b2c-54a53e94f220`.
+#    - **Channel ID** (`ops_agent_teams_channel_id`):  
+#      - The part between `/channel/` and `/<ChannelName>`, URL-decoded.  
+#      - Replace `%3A` with `:` and `%40` with `@`.  
+#      - Example: `19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2`.
+# 
+# 5. Paste these IDs into the `rti_demo_settings` table (or override them in Cell 1 settings) so the notebook uses your Team and Channel instead of the RTI demo defaults.
 
 
 # CELL ********************
