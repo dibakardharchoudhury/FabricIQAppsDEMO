@@ -58,6 +58,13 @@
 # agent posts a Teams alert and invokes the pipeline to email operations. `instructions` come
 # from the INSTRUCTIONS constant and `shouldRun` from settings; `identity` is intentionally
 # omitted (delegated token provisions Run-as).
+# **Run-as + Teams destination as inputs:** `ops_agent_run_as_user` (UPN) is a guardrail —
+# the agent Run-as always binds to whoever runs this notebook, so the notebook prints the
+# effective (signed-in) identity and warns if it differs from the input. `ops_agent_teams_team_id`
+# and `ops_agent_teams_channel_id` are the destination the agent posts to. The definition stores
+# *ids*, not the display names the portal shows: the Team id is a GUID and the Channel id looks
+# like `19:...@thread.tacv2`. Defaults are the RTI-demo destination (Team
+# "FacilitiesRealTimeMonitoring" / Channel "Alerts"); override the two ids for another channel.
 # **Playbook:** the `playbook` key (OntologyDefinitions + RuleDefinitions) is a serialized
 # part of the definition — `getDefinition` returns it and `updateDefinition` sends it back,
 # so an *already-generated* playbook CAN be pushed. What the API canNOT do is *trigger*
@@ -113,6 +120,16 @@ ops_agent_ontology_datasource_id = first_setting(
     "ops_agent_ontology_datasource_id", default="4cdeb9b3-801f-a9db-46c6-d2db30f512c4")
 ops_agent_email_pipeline_id = first_setting(
     "ops_agent_email_pipeline_id", "email_pipeline_id", default="ca6f0002-f791-4d1a-9c48-ff3c1d131150")
+# --- User inputs: Run-as identity + Teams destination -------------------
+# Run-as: the agent runs autonomously under the delegated identity that DEPLOYS it (whoever
+# runs this notebook). Set this to that account's UPN; the notebook warns if the signed-in
+# user differs. Run-as cannot be pointed at an arbitrary other user via REST.
+ops_agent_run_as_user = first_setting("ops_agent_run_as_user", "run_as_user", default="")
+# Teams Team + Channel the agent posts alerts to. The Operations Agent definition stores the
+# *ids*, not the display names the portal shows: the Team id is a GUID and the Channel id looks
+# like "19:...@thread.tacv2". Defaults are the RTI demo destination:
+#   Team "FacilitiesRealTimeMonitoring"  ->  c480320e-9204-474b-9b2c-54a53e94f220
+#   Channel "Alerts"                     ->  19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2
 ops_agent_teams_team_id = first_setting(
     "ops_agent_teams_team_id", "teams_team_id", default="c480320e-9204-474b-9b2c-54a53e94f220")
 ops_agent_teams_channel_id = first_setting(
@@ -133,7 +150,9 @@ print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
 print("   Ontology dsrc     :", ops_agent_ontology_datasource_id)
 print("   Email pipeline    :", ops_agent_email_pipeline_id)
-print("   Teams team/chan   :", ops_agent_teams_team_id, "/", ops_agent_teams_channel_id)
+print("   Run as (expected) :", ops_agent_run_as_user or "(the user running this notebook)")
+print("   Teams team id     :", ops_agent_teams_team_id)
+print("   Teams channel id  :", ops_agent_teams_channel_id)
 print("   Start agent       :", ops_agent_should_run)
 print("   Copy playbook     :", ops_agent_copy_playbook)
 
@@ -242,6 +261,30 @@ def wait_for_lro(operation_url: str) -> dict:
 
 def encode_payload(obj: dict) -> str:
     return base64.b64encode(json.dumps(obj, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+# -------------------------------------------------------------------------
+# User-input helper: Run-as guardrail (no Graph — decodes the pbi token only)
+# -------------------------------------------------------------------------
+def _decode_jwt_claims(token: str) -> dict:
+    """Best-effort decode of a JWT payload (no signature check) to read the user claim."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def check_run_as(expected_upn: str) -> None:
+    """Print the effective Run-as (the deploying user) and warn if it differs from the input."""
+    claims = _decode_jwt_claims(get_access_token_for_fabric())
+    signed_in = (claims.get("upn") or claims.get("unique_name")
+                 or claims.get("preferred_username") or claims.get("email") or "")
+    print(f"ℹ️  Agent will Run as the deploying user: {signed_in or '(unknown)'}")
+    if expected_upn and signed_in and expected_upn.strip().lower() != signed_in.strip().lower():
+        print(f"⚠️  Run-as input '{expected_upn}' != signed-in '{signed_in}'. Run-as binds to the")
+        print("    account running THIS notebook — re-run as that user to change the agent Run-as.")
 
 
 # -------------------------------------------------------------------------
@@ -395,8 +438,8 @@ EMBEDDED_CONFIGURATION = {
         },
         "messageDestination": {
             "kind": "TeamsChannel",
-            "teamId": ops_agent_teams_team_id,
-            "channelId": ops_agent_teams_channel_id,
+            "teamId": "c480320e-9204-474b-9b2c-54a53e94f220",
+            "channelId": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
         },
     },
     "shouldRun": True,
@@ -409,20 +452,28 @@ EMBEDDED_PLAYBOOK_B64 = "eyJPbnRvbG9neURlZmluaXRpb25zIjp7InNpZ25hbF9tYXN0ZXIiOns
 
 
 def build_configurations(should_run: Optional[bool] = None,
-                         copy_playbook: Optional[bool] = None) -> dict:
+                         copy_playbook: Optional[bool] = None,
+                         team_id: Optional[str] = None,
+                         channel_id: Optional[str] = None) -> dict:
     """Configurations.json body, built from the embedded known-good definition.
 
     No external agent is read. `$schema`, the Ontology `dataSources`, the FabricJobAction
-    wired to the Send Email Alert pipeline, the Teams `messageDestination`, `instructions`
-    and `shouldRun` come from `EMBEDDED_CONFIGURATION` (env ids from CELL-0 settings). When
-    `copy_playbook` is true the byte-exact embedded playbook is attached so the agent is
-    immediately playbook-ready; when false it is omitted and generated in the portal.
-    `identity` is never set — the running user's delegated token provisions Run-as.
+    wired to the Send Email Alert pipeline, `instructions` and `shouldRun` come from
+    `EMBEDDED_CONFIGURATION` (env ids from CELL-0 settings). The Teams `messageDestination`
+    is set from the resolved `team_id`/`channel_id` user inputs. When `copy_playbook` is true
+    the byte-exact embedded playbook is attached so the agent is immediately playbook-ready;
+    when false it is omitted and generated in the portal. `identity` is never set — the
+    running user's delegated token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
     config = deepcopy(EMBEDDED_CONFIGURATION)
     config["shouldRun"] = run_state
+    message_destination = config["configuration"]["messageDestination"]
+    if team_id:
+        message_destination["teamId"] = team_id
+    if channel_id:
+        message_destination["channelId"] = channel_id
     if keep_playbook:
         config["playbook"] = json.loads(base64.b64decode(EMBEDDED_PLAYBOOK_B64))
     return config
@@ -436,10 +487,13 @@ try:
     get_access_token_for_fabric()
     print("✅ Got Fabric access token (delegated user context).")
 
+    # Run-as guardrail: confirm the agent will Run as the intended (signed-in) user.
+    check_run_as(ops_agent_run_as_user)
+
     print("✅ Using embedded known-good definition (no external reference agent):")
     print("   data source (Ontology)  :", ops_agent_ontology_datasource_id)
     print("   action (FabricJobAction): Send Email Alert! ->", ops_agent_email_pipeline_id)
-    print("   message dest.           : TeamsChannel", ops_agent_teams_team_id)
+    print("   message dest.           : TeamsChannel", ops_agent_teams_team_id, "/", ops_agent_teams_channel_id)
 
     # 1) Create (or reuse) the target Operations Agent — empty, no definition.
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
@@ -449,7 +503,8 @@ try:
     #    Runs in User context so the agent's Run-as provisions correctly (Re-authenticate works).
     started = ops_agent_should_run
     try:
-        configurations = build_configurations(should_run=started)
+        configurations = build_configurations(
+            should_run=started, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id)
         json.dumps(configurations)  # validate serializable
         update_operations_agent_definition(ops_agent_item_id, configurations)
     except RuntimeError as update_exc:
@@ -459,7 +514,8 @@ try:
         print("ℹ️  Start (shouldRun=true) was refused — deploying stopped so the definition lands:")
         print("   ", update_exc)
         started = False
-        configurations = build_configurations(should_run=False)
+        configurations = build_configurations(
+            should_run=False, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id)
         update_operations_agent_definition(ops_agent_item_id, configurations)
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
     _pb_state = "with embedded playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
