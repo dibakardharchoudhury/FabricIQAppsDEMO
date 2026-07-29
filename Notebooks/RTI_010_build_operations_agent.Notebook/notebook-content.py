@@ -47,9 +47,12 @@
 #    - The notebook uses Fabric REST APIs (`updateDefinition` with format `OperationsAgentV1`) to:
 #      - Create or reuse the Operations Agent item with name from `ops_agent_name`.
 #      - Push the embedded configuration, which includes:
-#        - `$schema` and the ontology data source.
+#        - `$schema` and the **ontology data source**, whose id is resolved live from `ontology_name`
+#          (the id already produced by 004–006 — no id is hard-coded).
 #        - A **Teams channel message destination**.
-#        - A **FabricJobAction** named **"Send Email Alert!"** wired to the `Pipe_SendEmailAlert` pipeline.
+#        - A **FabricJobAction** named **"Send Email Alert!"** wired to the `Pipe_SendEmailAlert`
+#          pipeline. The notebook **creates/reuses that Data Pipeline** from its git-synced
+#          definition and saves the id to `rti_demo_settings` as `email_pipeline_id`.
 #        - The **playbook** (OntologyDefinitions + RuleDefinitions) so the agent is playbook-ready.
 # 
 # 3. **Run-as identity**  
@@ -59,7 +62,8 @@
 # 
 # 4. **Run state & persistence**  
 #    - `ops_agent_should_run` controls whether the agent is started or left stopped after deployment.  
-#    - The notebook persists key identifiers (agent id, name, run flag) into the `rti_demo_settings` table for later notebooks.
+#    - The notebook persists key identifiers (agent id, name, run flag, resolved ontology data
+#      source id, and the `email_pipeline_id`) into the `rti_demo_settings` table for later notebooks.
 # 
 # ---
 # ## Alert logic (business rules)
@@ -145,12 +149,15 @@ target_folder_id = first_setting("target_folder_id", required=True)
 
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (no external agent).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
-# Environment resources the embedded definition binds to (defaults = RTI demo; override per env).
-# The Ontology data source key is Fabric's datasource-key byte order of the ontology item id.
-ops_agent_ontology_datasource_id = first_setting(
-    "ops_agent_ontology_datasource_id", default="4cdeb9b3-801f-a9db-46c6-d2db30f512c4")
-ops_agent_email_pipeline_id = first_setting(
-    "ops_agent_email_pipeline_id", "email_pipeline_id", default="ca6f0002-f791-4d1a-9c48-ff3c1d131150")
+# Ontology data source: the agent binds to the ontology built in 004-006, identified by
+# `ontology_name` (already in the settings table). CELL 1 resolves its live id by name — no
+# id is hard-coded. Set ops_agent_ontology_datasource_id only to FORCE a specific source id.
+ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
+ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
+# Email pipeline: by default CELL 1 creates/reuses the `Pipe_SendEmailAlert` Data Pipeline
+# (embedded from the git-synced definition) and persists its id to the settings table as
+# `email_pipeline_id`. Set ops_agent_email_pipeline_id to reuse an existing pipeline id.
+ops_agent_email_pipeline_id = first_setting("ops_agent_email_pipeline_id", "email_pipeline_id", default="")
 # --- User inputs: Run-as identity + Teams destination -------------------
 # Run-as: the agent runs autonomously under the delegated identity that DEPLOYS it (whoever
 # runs this notebook). Set this to that account's UPN; the notebook warns if the signed-in
@@ -186,8 +193,9 @@ print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
 print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
-print("   Ontology dsrc     :", ops_agent_ontology_datasource_id)
-print("   Email pipeline    :", ops_agent_email_pipeline_id)
+print("   Ontology name     :", ontology_name)
+print("   Ontology dsrc     :", ops_agent_ontology_datasource_id or "(resolve from ontology by name)")
+print("   Email pipeline    :", ops_agent_email_pipeline_id or "(create/reuse Pipe_SendEmailAlert)")
 print("   Run as (expected) :", ops_agent_run_as_user or "(the user running this notebook)")
 print("   Teams team id     :", ops_agent_teams_team_id)
 print("   Teams channel id  :", ops_agent_teams_channel_id)
@@ -326,6 +334,118 @@ def check_run_as(expected_upn: str) -> None:
 
 
 # -------------------------------------------------------------------------
+# Workspace item helpers: resolve the ontology id + create the email pipeline
+# -------------------------------------------------------------------------
+def find_item_by_name(display_name: str, item_type: str) -> Optional[dict]:
+    """Return the first workspace item matching display_name + type (case-insensitive), else None."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    response = api_request("GET", url)
+    if response.status_code != 200:
+        return None
+    for item in response.json().get("value", []):
+        if (item.get("displayName") == display_name
+                and item.get("type", "").lower() == item_type.lower()):
+            return item
+    return None
+
+
+def resolve_ontology_id() -> str:
+    """Return the live id of the ontology named `ontology_name` (prefer the target folder)."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    response = api_request("GET", url)
+    response.raise_for_status()
+    matches = [
+        it for it in response.json().get("value", [])
+        if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
+    ]
+    if not matches:
+        raise RuntimeError(f"Ontology '{ontology_name}' not found. Run 004–006 first.")
+    in_folder = [it for it in matches if it.get("folderId") == target_folder_id]
+    return (in_folder or matches)[0]["id"]
+
+
+# Name + definition of the git-synced Data Pipeline (RTI_DEMO_V3/Pipe_SendEmailAlert.DataPipeline).
+# Parameters equipment_id/facility_id/value/unit/quality/event_time mirror the alert context the
+# agent passes. The Office365 connection id + recipients are the RTI-demo values (override per env).
+PIPELINE_NAME = "Pipe_SendEmailAlert"
+PIPELINE_DESCRIPTION = "This will be triggered from Ops Agent!"
+EMBEDDED_PIPELINE_CONTENT = {
+    "properties": {
+        "activities": [
+            {
+                "name": "SendEmailAlert",
+                "type": "Office365Email",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 5,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": False,
+                    "secureInput": False,
+                },
+                "typeProperties": {
+                    "to": "admin@mngenvmcap218279.onmicrosoft.com",
+                    "subject": "ALERT!!",
+                    "body": "<p>Alert for something!!</p>",
+                    "cc": "didharch@mngenvmcap218279.onmicrosoft.com",
+                    "importance": "High",
+                },
+                "externalReferences": {"connection": "4a4d0899-8698-4a20-8229-989ca6562451"},
+            }
+        ],
+        "parameters": {
+            "equipment_id": {"type": "string"},
+            "facility_id": {"type": "string"},
+            "value": {"type": "string"},
+            "unit": {"type": "string"},
+            "quality": {"type": "string"},
+            "event_time": {"type": "string"},
+        },
+    }
+}
+
+
+def create_data_pipeline(display_name: str, definition_obj: dict, description: str = "") -> dict:
+    """Create the Data Pipeline from the embedded definition (reuse if it already exists)."""
+    existing = find_item_by_name(display_name, "DataPipeline")
+    if existing:
+        print(f"✅ Reusing existing Data Pipeline: {display_name} (id={existing.get('id')})")
+        return existing
+
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    body = {
+        "displayName": display_name,
+        "description": description,
+        "type": "DataPipeline",
+        "definition": {
+            "parts": [
+                {
+                    "path": "pipeline-content.json",
+                    "payload": encode_payload(definition_obj),
+                    "payloadType": "InlineBase64",
+                }
+            ]
+        },
+    }
+    if target_folder_id:
+        body["folderId"] = target_folder_id
+    response = api_request("POST", url, data=body, timeout=180)
+    if response.status_code in (200, 201):
+        created = response.json() if response.content else {}
+        print(f"✅ Created Data Pipeline: {display_name} (id={created.get('id')})")
+        return created
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Create Data Pipeline returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        created = find_item_by_name(display_name, "DataPipeline") or {}
+        print(f"✅ Created Data Pipeline (via LRO): {display_name} (id={created.get('id')})")
+        return created
+    raise RuntimeError(f"Failed to create Data Pipeline: {response.status_code} {response.text}")
+
+
+# -------------------------------------------------------------------------
 # Operations Agent REST operations (type-specific /OperationsAgents route)
 # -------------------------------------------------------------------------
 def find_operations_agent(display_name: str) -> Optional[dict]:
@@ -444,16 +564,18 @@ INSTRUCTIONS = '''*** Goals ***
 
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
-# Environment-specific ids come from CELL-0 settings (RTI demo defaults); the
-# generated playbook is a byte-exact base64 of the OntologyDefinitions + RuleDefinitions.
+# The ontology data source id and the pipeline jobArtifactId below are literal RTI-demo
+# fallbacks; at deploy time they are overridden by the resolved ontology id (by name) and the
+# created/reused Pipe_SendEmailAlert id. The playbook is a byte-exact base64 of the
+# OntologyDefinitions + RuleDefinitions.
 # -------------------------------------------------------------------------
 EMBEDDED_CONFIGURATION = {
     "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
     "configuration": {
         "instructions": INSTRUCTIONS,
         "dataSources": {
-            ops_agent_ontology_datasource_id: {
-                "id": ops_agent_ontology_datasource_id,
+            "4cdeb9b3-801f-a9db-46c6-d2db30f512c4": {
+                "id": "4cdeb9b3-801f-a9db-46c6-d2db30f512c4",
                 "type": "Ontology",
                 "workspaceId": "00000000-0000-0000-0000-000000000000",
             }
@@ -461,7 +583,7 @@ EMBEDDED_CONFIGURATION = {
         "actions": {
             "94ef718d-6bdb-46f3-9a15-661af4fabb39": {
                 "connection": {
-                    "jobArtifactId": ops_agent_email_pipeline_id,
+                    "jobArtifactId": "ca6f0002-f791-4d1a-9c48-ff3c1d131150",
                     "jobWorkspaceId": workspace_id,
                     "itemType": "Pipeline",
                     "jobType": "Pipeline",
@@ -492,21 +614,31 @@ EMBEDDED_PLAYBOOK_B64 = "eyJPbnRvbG9neURlZmluaXRpb25zIjp7InNpZ25hbF9tYXN0ZXIiOns
 def build_configurations(should_run: Optional[bool] = None,
                          copy_playbook: Optional[bool] = None,
                          team_id: Optional[str] = None,
-                         channel_id: Optional[str] = None) -> dict:
+                         channel_id: Optional[str] = None,
+                         datasource_id: Optional[str] = None,
+                         pipeline_id: Optional[str] = None) -> dict:
     """Configurations.json body, built from the embedded known-good definition.
 
-    No external agent is read. `$schema`, the Ontology `dataSources`, the FabricJobAction
-    wired to the Send Email Alert pipeline, `instructions` and `shouldRun` come from
-    `EMBEDDED_CONFIGURATION` (env ids from CELL-0 settings). The Teams `messageDestination`
-    is set from the resolved `team_id`/`channel_id` user inputs. When `copy_playbook` is true
-    the byte-exact embedded playbook is attached so the agent is immediately playbook-ready;
-    when false it is omitted and generated in the portal. `identity` is never set — the
-    running user's delegated token provisions Run-as.
+    No external agent is read. `$schema`, `instructions`, the FabricJobAction shape and
+    `shouldRun` come from `EMBEDDED_CONFIGURATION`. The Ontology `dataSources` id (resolved
+    from the ontology by name), the action's pipeline `jobArtifactId` (the created/reused
+    Pipe_SendEmailAlert) and the Teams `messageDestination` are injected from the resolved
+    values. When `copy_playbook` is true the byte-exact embedded playbook is attached so the
+    agent is immediately playbook-ready; when false it is omitted and generated in the portal.
+    `identity` is never set — the running user's delegated token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
     config = deepcopy(EMBEDDED_CONFIGURATION)
     config["shouldRun"] = run_state
+    if datasource_id:
+        # Single ontology data source — re-key it to the resolved live ontology id.
+        inner = next(iter(config["configuration"]["dataSources"].values()))
+        inner["id"] = datasource_id
+        config["configuration"]["dataSources"] = {datasource_id: inner}
+    if pipeline_id:
+        action = config["configuration"]["actions"]["94ef718d-6bdb-46f3-9a15-661af4fabb39"]
+        action["connection"]["jobArtifactId"] = pipeline_id
     message_destination = config["configuration"]["messageDestination"]
     if team_id:
         message_destination["teamId"] = team_id
@@ -521,6 +653,8 @@ def build_configurations(should_run: Optional[bool] = None,
 # Deploy: create (empty) -> push instructions. Best-effort + manual fallback.
 # -------------------------------------------------------------------------
 ops_agent_item_id = None
+resolved_datasource_id = None
+resolved_pipeline_id = None
 try:
     get_access_token_for_fabric()
     print("✅ Got Fabric access token (delegated user context).")
@@ -528,9 +662,19 @@ try:
     # Run-as guardrail: confirm the agent will Run as the intended (signed-in) user.
     check_run_as(ops_agent_run_as_user)
 
+    # Ontology data source: resolve the live id from the ontology name (unless one was forced).
+    resolved_datasource_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
+
+    # Email pipeline: create/reuse Pipe_SendEmailAlert (unless an id was provided).
+    if ops_agent_email_pipeline_id:
+        resolved_pipeline_id = ops_agent_email_pipeline_id
+    else:
+        resolved_pipeline_id = create_data_pipeline(
+            PIPELINE_NAME, EMBEDDED_PIPELINE_CONTENT, PIPELINE_DESCRIPTION).get("id")
+
     print("✅ Using embedded known-good definition (no external reference agent):")
-    print("   data source (Ontology)  :", ops_agent_ontology_datasource_id)
-    print("   action (FabricJobAction): Send Email Alert! ->", ops_agent_email_pipeline_id)
+    print("   data source (Ontology)  :", resolved_datasource_id, f"({ontology_name})")
+    print("   action (FabricJobAction): Send Email Alert! ->", resolved_pipeline_id, f"({PIPELINE_NAME})")
     print("   message dest.           : TeamsChannel", ops_agent_teams_team_id, "/", ops_agent_teams_channel_id)
 
     # 1) Create (or reuse) the target Operations Agent — empty, no definition.
@@ -542,7 +686,8 @@ try:
     started = ops_agent_should_run
     try:
         configurations = build_configurations(
-            should_run=started, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id)
+            should_run=started, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
+            datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)
         json.dumps(configurations)  # validate serializable
         update_operations_agent_definition(ops_agent_item_id, configurations)
     except RuntimeError as update_exc:
@@ -553,7 +698,8 @@ try:
         print("   ", update_exc)
         started = False
         configurations = build_configurations(
-            should_run=False, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id)
+            should_run=False, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
+            datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)
         update_operations_agent_definition(ops_agent_item_id, configurations)
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
     _pb_state = "with embedded playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
@@ -594,6 +740,11 @@ if ops_agent_item_id:
         "ops_agent_id": ops_agent_item_id,
         "ops_agent_should_run": str(ops_agent_should_run).lower(),
     }
+    if resolved_pipeline_id:
+        # Save the pipeline id so downstream notebooks/runs reuse it (parameter: email_pipeline_id).
+        persist["email_pipeline_id"] = resolved_pipeline_id
+    if resolved_datasource_id:
+        persist["ops_agent_ontology_datasource_id"] = resolved_datasource_id
     persist_df = (
         spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
         .withColumn("updated_utc", F.current_timestamp())
