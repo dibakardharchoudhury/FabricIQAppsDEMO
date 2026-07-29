@@ -8,12 +8,12 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "e1890cfe-2dd7-4446-a97b-537beba97276",
+# META       "default_lakehouse": "789fb22a-cc44-4776-9e02-5344aaa89724",
 # META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V3",
 # META       "default_lakehouse_workspace_id": "19f3d588-1585-4f3b-bb59-5abaf90c193a",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "e1890cfe-2dd7-4446-a97b-537beba97276"
+# META           "id": "789fb22a-cc44-4776-9e02-5344aaa89724"
 # META         }
 # META       ]
 # META     },
@@ -41,13 +41,13 @@
 
 # MARKDOWN ********************
 
-# ## Notebook Setup – Attach the Lakehouse
+# ## Notebook Setup – Attach the Lakehouse (this should be auto applied if you run the last cell in Notebook 001)
 # 
 # Before running this:
 # 
 # 1. In the left pane → **Add item**
 # 2. Choose **Lakehouse**
-# 3. Select **OilGas_IQ_LakehouseRTI**
+# 3. Select **Energy_IQ_LakehouseRTI_V3**
 # 4. Click **Add**
 # 
 # This makes `Files/` and `Tables/` available in this notebook.
@@ -117,7 +117,7 @@ print("✅ Silver signal master table:", silver_signal_master_table)
 
 # 
 # ---------------------
-# INGEST & TRANSFORM — SILVER LAYER
+# ## **INGEST & TRANSFORM — SILVER LAYER**
 # 
 # ---------------------------------------------
 
@@ -293,30 +293,6 @@ print("✅ SAP Silver Tables created.")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-#OPC UA Telemetry
-
-opcua_df = spark.read.json(f"{bronze_root}/opcua/opcua_telemetry_2h.jsonl")
-
-silver_opcua_df = (
-    opcua_df
-        .withColumn("event_time", F.to_timestamp("event_time"))
-        .withColumn("value", F.col("value").cast("double"))
-)
-
-silver_opcua_df.write.mode("overwrite").saveAsTable("silver_opcua_measurements")
-
-print("✅ OPC UA Silver Tables created.")
-
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
 # META   "language_group": "synapse_pyspark",
 # META   "frozen": true,
 # META   "editable": false
@@ -339,7 +315,9 @@ print("✅ Common Library Silver Tables created.")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
@@ -467,7 +445,9 @@ print(f"✅ Rows: {silver_solv_df.count()}")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
@@ -487,7 +467,9 @@ print("✅ P&ID Silver Tables created.")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
@@ -594,15 +576,17 @@ print("✅ Documents Silver created (documents, annotations, 3D metadata).")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # MARKDOWN ********************
 
-# ---------------------------------------------
-# GOLD LAYER
+# ------------------
+# ## **GOLD LAYER**
 # 
-# ---------------------------------------------
+# ------------------
 
 
 # CELL ********************
@@ -715,7 +699,9 @@ print("✅Gold table: equipment work order summary created.")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
@@ -739,7 +725,9 @@ print("✅Gold table: equipment notification events created.")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
@@ -836,7 +824,9 @@ print("✅Gold table: pid topology stats created (equipment_id join fix).")
 
 # META {
 # META   "language": "python",
-# META   "language_group": "synapse_pyspark"
+# META   "language_group": "synapse_pyspark",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # CELL ********************
