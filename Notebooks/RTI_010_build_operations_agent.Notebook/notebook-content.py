@@ -49,15 +49,22 @@
 # created in the UI) via `getDefinition`, and re-deploys it to `ops_agent_name` via
 # `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
 # The copied config keeps, exactly: `$schema`, the **Ontology** data source (encoded
-# datasource id + zero workspaceId), a **Teams channel** message destination, a single
+# datasource id + zero workspaceId), a **Teams channel** message destination, and a single
 # **FabricJobAction** ("Send Email Alert!") whose `connection` points at the
-# `Pipe_SendEmailAlert` Data Pipeline, and the **generated `playbook`**
-# (OntologyDefinitions + RuleDefinitions) so the target is immediately playbook-ready.
-# FabricJobAction carries its pipeline `connection` in the definition, so — unlike a
-# PowerAutomateAction — the action is **fully wired via REST** with no UI step: the agent
-# posts a Teams alert and invokes the pipeline to email operations. This notebook sets
-# only `instructions` (kept verbatim from the working agent via the INSTRUCTIONS constant)
-# and `shouldRun`; `identity` is intentionally dropped (delegated token provisions Run-as).
+# `Pipe_SendEmailAlert` Data Pipeline. FabricJobAction carries its pipeline `connection`
+# in the definition, so — unlike a PowerAutomateAction — the action is **fully wired via
+# REST** with no UI step: the agent posts a Teams alert and invokes the pipeline to email
+# operations. This notebook sets only `instructions` (kept verbatim from the working agent
+# via the INSTRUCTIONS constant) and `shouldRun`; `identity` is intentionally dropped
+# (delegated token provisions Run-as).
+# **Playbook:** the `playbook` key (OntologyDefinitions + RuleDefinitions) is a serialized
+# part of the definition — `getDefinition` returns it and `updateDefinition` sends it back,
+# so an *already-generated* playbook CAN be pushed. What the API canNOT do is *trigger*
+# generation (the "Generate Playbook" computation is UI-only). By default
+# (`ops_agent_copy_playbook=true`) the reference's generated playbook is copied verbatim so
+# the target is playbook-ready; set it to `false` to deploy config-only and click Generate
+# Playbook in the portal. If a pushed playbook doesn't show as live, opening the agent once
+# and selecting Generate Playbook re-binds/refreshes it.
 # This notebook: reads settings → loads the reference agent's config → creates/reuses the
 # target **OperationsAgent** item → pushes the copied definition (instructions + playbook)
 # via REST → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
@@ -102,6 +109,11 @@ ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 ops_agent_reference_name = first_setting("ops_agent_reference_name", default="New_RTI_Demo_OpsAgent_V3")
 # Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
 ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
+# Copy the reference agent's already-generated `playbook` verbatim so the target deploys
+# playbook-ready. The playbook is part of the pushable definition (getDefinition returns it,
+# updateDefinition sends it back) — what the API CANNOT do is *trigger* generation. Set to
+# 'false' to deploy config-only and click Generate Playbook in the portal instead.
+ops_agent_copy_playbook = str(first_setting("ops_agent_copy_playbook", default="true")).lower() in ("true", "1", "yes")
 
 
 print("✅ Settings loaded")
@@ -110,6 +122,7 @@ print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
 print("   Reference agent   :", ops_agent_reference_name)
 print("   Start agent       :", ops_agent_should_run)
+print("   Copy playbook     :", ops_agent_copy_playbook)
 
 # METADATA ********************
 
@@ -381,19 +394,24 @@ INSTRUCTIONS = '''*** Goals ***
 
 9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
-def build_configurations(reference_configuration: dict, should_run: Optional[bool] = None) -> dict:
+def build_configurations(reference_configuration: dict, should_run: Optional[bool] = None,
+                         copy_playbook: Optional[bool] = None) -> dict:
     """Configurations.json body — an exact copy of the working reference agent's config.
 
     Deep-copy the working agent's full configuration verbatim: `$schema`, the Ontology
-    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, the Teams
-    `messageDestination`, AND the generated `playbook` (OntologyDefinitions +
-    RuleDefinitions) so the deployed agent is immediately playbook-ready. Only
-    `instructions` (kept in sync with the reference via the constant above) and
-    `shouldRun` are set explicitly; `identity` is dropped (the running user's delegated
-    token provisions Run-as automatically).
+    `dataSources`, the FabricJobAction wired to Pipe_SendEmailAlert, and the Teams
+    `messageDestination`. When `copy_playbook` is true, the reference's generated
+    `playbook` (OntologyDefinitions + RuleDefinitions) is kept too, so the deployed agent
+    is immediately playbook-ready; when false it is dropped so the playbook is generated
+    from the portal instead. `instructions` (kept in sync with the reference via the
+    constant above) and `shouldRun` are set explicitly; `identity` is dropped (the running
+    user's delegated token provisions Run-as automatically).
     """
     run_state = ops_agent_should_run if should_run is None else should_run
+    keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
     config = deepcopy(reference_configuration)
+    if not keep_playbook:
+        config.pop("playbook", None)
     config.get("configuration", {}).pop("identity", None)
     config["configuration"]["instructions"] = INSTRUCTIONS
     config["shouldRun"] = run_state
@@ -437,7 +455,8 @@ try:
         configurations = build_configurations(reference_configuration, should_run=False)
         update_operations_agent_definition(ops_agent_item_id, configurations)
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
-    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state} — copied Ontology data source,")
+    _pb_state = "with generated playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
+    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — copied Ontology data source,")
     print(f"   Teams destination and Send Email Alert pipeline action from the reference (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
@@ -453,12 +472,17 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 print()
 print("✅ Set programmatically via REST (User context) — an exact copy of the working reference agent:")
 print("   instructions (verbatim), Ontology data source, Teams message destination, the")
-print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), the generated")
-print("   playbook (OntologyDefinitions + RuleDefinitions), and run state.")
+print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and run state.")
 print("ℹ️  FabricJobAction carries its pipeline connection in the definition, so no UI wiring is")
 print("   needed — the agent posts the Teams alert and runs the pipeline to email operations.")
-print("ℹ️  The playbook is copied from the reference; to refresh it against current data, open the")
-print("   agent and select 'Generate Playbook' (works because the instructions compile cleanly).")
+if ops_agent_copy_playbook:
+    print("ℹ️  The generated playbook (OntologyDefinitions + RuleDefinitions) is copied verbatim from")
+    print("   the reference. The playbook is part of the pushable definition — the API can send it,")
+    print("   but it CANNOT trigger generation. If the target doesn't show it as live, open the")
+    print("   agent once and select 'Generate Playbook' to (re)bind/refresh it against current data.")
+else:
+    print("ℹ️  Deployed config-only (ops_agent_copy_playbook=false). Open the agent and select")
+    print("   'Generate Playbook' in the portal; the instructions compile cleanly so it succeeds.")
 
 
 if ops_agent_item_id:
