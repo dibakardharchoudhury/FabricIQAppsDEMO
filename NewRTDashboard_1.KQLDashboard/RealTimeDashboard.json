@@ -141,25 +141,25 @@
       "id": "a1000000-0000-4000-8000-000000000005",
       "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
       "usedVariables": ["_startTime", "_endTime"],
-      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine | sort by Turbine asc"
+      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | summarize ['Good'] = countif(quality == 'GOOD'), ['Bad'] = countif(quality == 'BAD'), ['Uncertain'] = countif(quality == 'UNCERTAIN') by Turbine | project Turbine, ['Good'], ['Bad'], ['Uncertain'] | sort by Turbine asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000006",
       "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
       "usedVariables": ["_startTime", "_endTime"],
-      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | summarize ['Event Count'] = count() by bin(event_time, 30m) | sort by event_time asc"
+      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | summarize ['Event Count'] = count() by bin(event_time, 30m) | project event_time, ['Event Count'] | sort by event_time asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000007",
       "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
       "usedVariables": ["_startTime", "_endTime"],
-      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T001' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | sort by event_time asc"
+      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T001' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | project event_time, Signal, AvgValue | sort by event_time asc"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000008",
       "dataSource": { "kind": "inline", "dataSourceId": "b0b2067e-2479-438f-96ae-31079b244504" },
       "usedVariables": ["_startTime", "_endTime"],
-      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T002' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | sort by event_time asc"
+      "text": "['OPCUAEvents'] | where event_time between (_startTime .. _endTime) | extend Turbine = extract(@'s=([^.]+)\\.', 1, opcua_node_id) | where Turbine == 'T002' | extend Signal = extract(@'\\.([^.]+)$', 1, opcua_node_id) | summarize AvgValue = avg(value) by Signal, bin(event_time, 1m) | project event_time, Signal, AvgValue | sort by event_time asc"
     }
   ],
   "embeddedApps": [],
