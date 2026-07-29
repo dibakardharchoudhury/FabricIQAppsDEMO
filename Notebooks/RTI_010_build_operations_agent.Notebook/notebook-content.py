@@ -40,17 +40,20 @@
 # Rules (business intent — configured in the agent UI):
 # - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → raise WO.
 # - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → raise WO.
-# **Deployment model (verified against the Fabric REST + the OilGas RTI reference):**
+# **Deployment model (verified against the Fabric REST OperationsAgentV1 contract):**
 # The Operations Agent is created EMPTY via its type-specific endpoint
-# (`/workspaces/{ws}/OperationsAgents`), then its instructions are pushed via
-# `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
-# The **data source (Ontology), actions (Power Automate) and the generated playbook**
-# are NOT publicly settable via REST yet — you bind the data source, add the Power
-# Automate action (connect it to the flow in `Raw/PowerAutomate/`), select **Generate
-# Playbook**, then **Start** the agent in the Fabric UI.
-# This notebook: reads settings → resolves the live `ontology_id` (for the UI step) →
-# creates the **OperationsAgent** item → pushes instructions via REST (best-effort,
-# manual fallback) → persists identifiers to `rti_demo_settings`.
+# (`/workspaces/{ws}/OperationsAgents`), then the FULL definition is pushed via
+# `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part):
+# instructions + the Ontology **data source** + a PowerAutomate **action** skeleton +
+# **messageDestination** (recipient) + **identity.sponsor**, and `shouldRun` to START it.
+# Two things have NO public REST surface and stay UI-only: (1) connecting the
+# PowerAutomate action to the actual flow in `Raw/PowerAutomate/` (the schema has no
+# connection field for PowerAutomateAction), and (2) **Generate Playbook** (the
+# `playbook` object is reserved; the API only accepts `{}`). The agent still runs from
+# `instructions` without a pre-generated playbook.
+# This notebook: reads settings → resolves the live `ontology_id` → creates the
+# **OperationsAgent** item → pushes the full definition via REST (best-effort, manual
+# fallback) → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
 
 
 # CELL ********************
@@ -102,6 +105,9 @@ ops_agent_recipient = first_setting("ops_agent_recipient", default="admin@mngenv
 # dedicated service account or security group) so employee offboarding never breaks
 # the agent. Override via the 'ops_agent_sponsor' setting.
 ops_agent_sponsor = first_setting("ops_agent_sponsor", "ops_agent_recipient", default="admin@mngenvmcap218279.onmicrosoft.com")
+# Start the agent programmatically (definition `shouldRun`). Set to 'false' to deploy
+# the definition but keep the agent stopped until the Power Automate flow is connected.
+ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
 
 
 print("✅ Settings loaded")
@@ -111,6 +117,7 @@ print("   Ontology name     :", ontology_name)
 print("   Ops Agent name    :", ops_agent_name)
 print("   Alert recipient   :", ops_agent_recipient)
 print("   Agent sponsor     :", ops_agent_sponsor)
+print("   Start agent       :", ops_agent_should_run)
 
 # METADATA ********************
 
@@ -129,6 +136,7 @@ print("   Agent sponsor     :", ops_agent_sponsor)
 import json
 import time
 import base64
+import uuid
 from typing import Optional
 
 import requests
@@ -137,6 +145,13 @@ import notebookutils  # Fabric notebook utility
 FABRIC_API_BASE = "https://api.fabric.microsoft.com"
 # Operations Agent uses a type-specific route + a named definition format.
 OPS_AGENT_DEFINITION_FORMAT = "OperationsAgentV1"
+
+# Stable action id (valid UUID, deterministic per agent) for the work-order action.
+OPS_AGENT_ACTION_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ops_agent_name}:createWorkOrder"))
+# User-chosen aliases for the dataSources / actions maps in the definition.
+OPS_AGENT_DATASOURCE_ALIAS = "signalOntology"
+OPS_AGENT_ACTION_ALIAS = "createWorkOrder"
+OPS_AGENT_ACTION_DISPLAY_NAME = "New WO to Investigate / Repair"
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
@@ -359,27 +374,55 @@ INSTRUCTIONS = (
     "- Keep alerts short, clear and human-readable; use only ontology-provided fields."
 )
 
-def build_configurations() -> dict:
-    """Configurations.json body — instructions + sponsor identity (goals folded in).
+def build_configurations(ontology_id: str, should_run: Optional[bool] = None) -> dict:
+    """Configurations.json body — OperationsAgentV1 format.
 
-    Schema (operationsAgents/definition/1.0.0) requires `configuration`,
-    `playbook` and `shouldRun` at the root, with `additionalProperties: false`
-    (so no `$schema` here). `dataSources`, `actions` and the real `playbook`
-    are bound/generated in the agent UI; `shouldRun` stays false until Start.
-    `identity` names the sponsor: Fabric only supports Delegated (OBO) mode, so a
-    sponsor is mandatory for app-only (SPN) provisioning — and it must be a User or
-    Group (never an SPN). Use a durable service account / group so it survives
-    employee offboarding.
+    Per the official contract the root requires `configuration`, `playbook`
+    and `shouldRun`, and `configuration` requires `instructions`, `dataSources`
+    and `actions`. `dataSources` and `actions` must each hold at least one entry
+    (the API rejects empty maps with "No data sources available"), so we seed:
+      - one Ontology data source pointing at the resolved ontology, and
+      - one PowerAutomateAction skeleton for the work order.
+    The one binding the API can't set is the real Power Automate flow connection
+    (PowerAutomateAction has no connection field) — that's completed in the UI.
+    `messageDestination` is the current field for the alert recipient (the old
+    root `recipient` is deprecated). In a definition payload `identity` supports
+    only `sponsor` — it must be a User or Group (never an SPN); use a durable
+    service account / group so employee offboarding never breaks the agent.
+    `should_run` sets the run state (True = start the agent now).
     """
+    run_state = ops_agent_should_run if should_run is None else should_run
     return {
         "configuration": {
             "instructions": INSTRUCTIONS,
-            "dataSources": {},
-            "actions": {},
-            "identity": {"mode": "Delegated", "sponsor": ops_agent_sponsor},
+            "dataSources": {
+                OPS_AGENT_DATASOURCE_ALIAS: {
+                    "id": ontology_id,
+                    "type": "Ontology",
+                    "workspaceId": workspace_id,
+                }
+            },
+            "actions": {
+                OPS_AGENT_ACTION_ALIAS: {
+                    "id": OPS_AGENT_ACTION_ID,
+                    "kind": "PowerAutomateAction",
+                    "displayName": OPS_AGENT_ACTION_DISPLAY_NAME,
+                    "description": "Create a work order to investigate/repair the flagged equipment.",
+                    "parameters": [
+                        {"name": "equipment_id", "description": "Equipment to investigate"},
+                        {"name": "facility_id", "description": "Facility of the equipment"},
+                        {"name": "value", "description": "Measured value"},
+                        {"name": "unit", "description": "Unit of the measured value"},
+                        {"name": "quality", "description": "Signal quality (GOOD/UNCERTAIN/BAD)"},
+                        {"name": "event_time", "description": "Event timestamp"},
+                    ],
+                }
+            },
+            "messageDestination": {"kind": "Recipient", "recipient": ops_agent_recipient},
+            "identity": {"sponsor": ops_agent_sponsor},
         },
         "playbook": {},
-        "shouldRun": False,
+        "shouldRun": run_state,
     }
 
 
@@ -399,11 +442,29 @@ try:
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
     ops_agent_item_id = ops_agent.get("id")
 
-    # 2) Push instructions via updateDefinition (OperationsAgentV1 / Configurations.json).
-    configurations = build_configurations()
-    json.dumps(configurations)  # validate serializable
-    update_operations_agent_definition(ops_agent_item_id, configurations)
-    print(f"✅ Operations Agent '{ops_agent_name}' created + instructions set (id={ops_agent_item_id}).")
+    # 2) Push the full definition via updateDefinition (OperationsAgentV1 / Configurations.json).
+    #    NOTE: per Fabric docs + the microsoft/terraform-provider-fabric provider, the
+    #    Operations Agent REST APIs officially support *User* context only (no SPN). The
+    #    app-only path here works because `identity.sponsor` enables app-only/ALM import;
+    #    if a 401/403 ever appears, run this notebook interactively under a user instead.
+    started = ops_agent_should_run
+    try:
+        configurations = build_configurations(ontology_id, should_run=started)
+        json.dumps(configurations)  # validate serializable
+        update_operations_agent_definition(ops_agent_item_id, configurations)
+    except RuntimeError as update_exc:
+        # If starting was refused (e.g. the Power Automate flow isn't connected yet),
+        # still deploy the definition in a stopped state so nothing is left half-done.
+        if not started:
+            raise
+        print("ℹ️  Start (shouldRun=true) was refused — deploying stopped so the definition lands:")
+        print("   ", update_exc)
+        started = False
+        configurations = build_configurations(ontology_id, should_run=False)
+        update_operations_agent_definition(ops_agent_item_id, configurations)
+    _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
+    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state} — instructions, Ontology data source,")
+    print(f"   work-order action, recipient and sponsor all set via REST (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -415,20 +476,26 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 
 print()
-print("ℹ️ Finish in the Fabric UI (data source, actions, playbook and Start are UI steps):")
-print(f"   1. Open the Operations Agent '{ops_agent_name}'.")
-print(f"   2. Knowledge source → Ontology → '{ontology_name}'" + (f" (id {ontology_id})." if ontology_id else "."))
-print("   3. Add a Power Automate action ('New WO to Investigate/Repair') and connect it")
-print("      to the flow imported from Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip.")
-print("      Pass: equipment_id, facility_id, value, unit, quality, event_time.")
-print("   4. Add rules on signal_master.quality = 'BAD' (HIGH) and = 'UNCERTAIN' (MEDIUM).")
-print("   5. Select 'Generate Playbook', review, then 'Start' the agent.")
+print("✅ Set programmatically via REST: instructions, Ontology data source, work-order action,")
+print("   alert recipient, identity sponsor, and run state (shouldRun).")
+print("ℹ️  Two steps have no public REST surface and remain UI-only:")
+print(f"   1. Open the Operations Agent '{ops_agent_name}' and connect the action")
+print("      'New WO to Investigate/Repair' to the flow imported from")
+print("      Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip (PowerAutomateAction has no")
+print("      connection field in the definition schema).")
+print("   2. Optionally select 'Generate Playbook' to pre-generate the plan (the `playbook`")
+print("      object is reserved in the API; the agent still runs from its instructions).")
 
 
 if ops_agent_item_id:
     from delta.tables import DeltaTable
 
-    persist = {"ops_agent_name": ops_agent_name, "ops_agent_id": ops_agent_item_id, "ops_agent_sponsor": ops_agent_sponsor}
+    persist = {
+        "ops_agent_name": ops_agent_name,
+        "ops_agent_id": ops_agent_item_id,
+        "ops_agent_sponsor": ops_agent_sponsor,
+        "ops_agent_should_run": str(ops_agent_should_run).lower(),
+    }
     persist_df = (
         spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
         .withColumn("updated_utc", F.current_timestamp())
