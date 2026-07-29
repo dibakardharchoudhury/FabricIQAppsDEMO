@@ -1,0 +1,51 @@
+{
+  "sources": [
+    {
+      "id": "b492caca-e05e-4aa7-9c51-ea332471baf0",
+      "name": "OPCUA_CustomEndpoint",
+      "type": "CustomEndpoint",
+      "properties": {}
+    }
+  ],
+  "destinations": [
+    {
+      "id": "2aca44b7-03ca-4f37-a706-a6c7bb23d8ef",
+      "name": "Eventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "ProcessedIngestion",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "itemId": "3d48a584-06c0-85fc-4261-7ff60ee2d1d7",
+        "databaseName": "RTI_Demo_Eventhouse_V3",
+        "tableName": "OPCUAEvents",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "OPCUA_DefaultStream"
+        }
+      ],
+      "inputSchemas": []
+    }
+  ],
+  "streams": [
+    {
+      "id": "0f69b524-3002-4fa8-892a-f9d9b83fcce9",
+      "name": "OPCUA_DefaultStream",
+      "type": "DefaultStream",
+      "properties": {},
+      "inputNodes": [
+        {
+          "name": "OPCUA_CustomEndpoint"
+        }
+      ]
+    }
+  ],
+  "operators": [],
+  "compatibilityLevel": "1.1"
+}

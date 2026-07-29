@@ -1,0 +1,13 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/relationshipType/1.0.0/schema.json",
+  "namespace": "usertypes",
+  "id": "5478555947815753401",
+  "name": "equipment_in_systems",
+  "namespaceType": "Custom",
+  "source": {
+    "entityTypeId": "5905493154414412463"
+  },
+  "target": {
+    "entityTypeId": "8267488422946824795"
+  }
+}

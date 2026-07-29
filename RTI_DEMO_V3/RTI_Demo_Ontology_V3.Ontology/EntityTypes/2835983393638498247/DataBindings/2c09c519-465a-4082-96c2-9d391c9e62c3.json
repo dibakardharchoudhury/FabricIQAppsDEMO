@@ -1,0 +1,34 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/dataBinding/1.0.0/schema.json",
+  "id": "2c09c519-465a-4082-96c2-9d391c9e62c3",
+  "dataBindingConfiguration": {
+    "dataBindingType": "TimeSeries",
+    "timestampColumnName": "event_time",
+    "propertyBindings": [
+      {
+        "sourceColumnName": "opcua_node_id",
+        "targetPropertyId": "4918691961319372906"
+      },
+      {
+        "sourceColumnName": "event_time",
+        "targetPropertyId": "2971777976268160860"
+      },
+      {
+        "sourceColumnName": "value",
+        "targetPropertyId": "1120506812787298698"
+      },
+      {
+        "sourceColumnName": "quality",
+        "targetPropertyId": "3312352762181545469"
+      }
+    ],
+    "sourceTableProperties": {
+      "sourceType": "KustoTable",
+      "workspaceId": "00000000-0000-0000-0000-000000000000",
+      "itemId": "248e442a-a4bb-8321-49d1-a9a5b7595a3f",
+      "clusterUri": "https://trd-73ghx3uvgexxzsfhwj.z4.kusto.fabric.microsoft.com",
+      "databaseName": "RTI_Demo_Eventhouse_V3",
+      "sourceTableName": "OPCUAEvents"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventhouse",
+    "displayName": "RTI_Demo_Eventhouse_V3",
+    "description": "Eventhouse for OPC UA streaming data"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "248e442a-a4bb-8321-49d1-a9a5b7595a3f"
+  }
+}
