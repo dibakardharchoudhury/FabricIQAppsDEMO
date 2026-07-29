@@ -150,9 +150,10 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (no external agent).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
-# `ontology_name` (already in the settings table). CELL 1 resolves its live id by name and maps
-# it to the Knowledge data-source id the working agent uses — no id is hard-coded. Set
-# ops_agent_ontology_datasource_id only to FORCE a specific data-source id.
+# `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name
+# and maps it to the Knowledge data-source id the working agent uses — no id is hard-coded. Set
+# ops_agent_ontology_datasource_id only to FORCE a specific PLAIN ontology item id (it is encoded
+# to the Knowledge id at deploy).
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
 
@@ -191,10 +192,10 @@ ops_agent_teams_channel_id = first_setting(
 # Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
 ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
 
-# Include the embedded known-good `playbook` (OntologyDefinitions + RuleDefinitions) so the
-# target deploys playbook-ready. The playbook is part of the pushable definition — what the
-# API CANNOT do is *trigger* generation. Set 'false' to deploy config-only and click Generate
-# Playbook in the portal instead.
+# Attach the embedded `playbook` (OntologyDefinitions + RuleDefinitions) to the pushed
+# definition. Default TRUE: pushing a playbook via updateDefinition works (verified against the
+# working reference agent that generated it), so the deployed agent is immediately playbook-ready.
+# Set 'false' to deploy config-only and click 'Generate Playbook' in the portal instead.
 ops_agent_copy_playbook = str(first_setting("ops_agent_copy_playbook", default="true")).lower() in ("true", "1", "yes")
 
 
@@ -641,23 +642,25 @@ def build_configurations(should_run: Optional[bool] = None,
                          channel_id: Optional[str] = None,
                          datasource_id: Optional[str] = None,
                          pipeline_id: Optional[str] = None) -> dict:
-    """Configurations.json body, built from the embedded known-good definition.
+    """Configurations.json body — an exact copy of the working reference agent's definition.
 
-    No external agent is read. `$schema`, `instructions`, the FabricJobAction shape and
-    `shouldRun` come from `EMBEDDED_CONFIGURATION`. The Ontology `dataSources` id (resolved
-    from the ontology by name), the action's pipeline `jobArtifactId` (the created/reused
-    Pipe_SendEmailAlert) and the Teams `messageDestination` are injected from the resolved
-    values. When `copy_playbook` is true the byte-exact embedded playbook is attached so the
-    agent is immediately playbook-ready; when false it is omitted and generated in the portal.
-    `identity` is never set — the running user's delegated token provisions Run-as.
+    No external agent is read: the embedded bytes reproduce the definition the reference agent
+    (New_RTI_Demo_OpsAgent_V3 / RTI_Demo_OpsAgent_V3) had when 'Generate Playbook' succeeded and
+    Teams delivery was set. The ONE binding that must be right is the Ontology `dataSources`
+    entry: the *encoded* Knowledge id is used as BOTH the dict key and `id`, with `workspaceId`
+    = zeros. The failing shape (id=zeros + real workspaceId) is exactly what makes 'Generate
+    Playbook' return 400. The action's pipeline `jobArtifactId` and the Teams `messageDestination`
+    (teamId/channelId) are injected from the resolved settings. When `copy_playbook` is true the
+    byte-exact embedded playbook is attached (pushing it via updateDefinition works). `identity`
+    is never set — the running user's delegated token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
     config = deepcopy(EMBEDDED_CONFIGURATION)
     config["shouldRun"] = run_state
     if datasource_id:
-        # Single ontology data source — bind it by the Knowledge id; workspaceId is the
-        # same-workspace zero placeholder (matches the working RTI_Demo_OpsAgent_V3 export).
+        # Single ontology data source — key AND id are the encoded Knowledge id, workspaceId is
+        # zeros (the working shape; id=zeros + real workspaceId is what 400s Generate Playbook).
         inner = next(iter(config["configuration"]["dataSources"].values()))
         inner["id"] = datasource_id
         inner["workspaceId"] = "00000000-0000-0000-0000-000000000000"
@@ -681,6 +684,8 @@ def build_configurations(should_run: Optional[bool] = None,
 ops_agent_item_id = None
 resolved_datasource_id = None
 resolved_pipeline_id = None
+ontology_live_id = None
+playbook_attached = False
 try:
     get_access_token_for_fabric()
     print("✅ Got Fabric access token (delegated user context).")
@@ -688,13 +693,15 @@ try:
     # Run-as guardrail: confirm the agent will Run as the intended (signed-in) user.
     check_run_as(ops_agent_run_as_user)
 
-    # Ontology data source: resolve the live id from the ontology name in the settings table
-    # (unless one was forced), then map it to the Knowledge id the working agent uses.
-    resolved_datasource_id = ops_agent_ontology_datasource_id or fabric_encode_guid(resolve_ontology_id())
+    # Ontology data source: resolve the ontology's live (plain) id from the settings table (by
+    # ontology_name, unless one is forced), then map it to the Knowledge id the working agent uses.
+    ontology_live_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
+    resolved_datasource_id = fabric_encode_guid(ontology_live_id)
 
     # Email pipeline: create/reuse Pipe_SendEmailAlert (unless an id was provided).
     if ops_agent_email_pipeline_id:
         resolved_pipeline_id = ops_agent_email_pipeline_id
+        print(f"✅ Reusing Data Pipeline id from settings: {resolved_pipeline_id} ({PIPELINE_NAME})")
     else:
         resolved_pipeline_id = create_data_pipeline(
             PIPELINE_NAME, EMBEDDED_PIPELINE_CONTENT, PIPELINE_DESCRIPTION).get("id")
@@ -708,30 +715,34 @@ try:
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
     ops_agent_item_id = ops_agent.get("id")
 
-    # 2) Push the copied definition (verbatim instructions + playbook) via updateDefinition.
-    #    Runs in User context so the agent's Run-as provisions correctly (Re-authenticate works).
+    # 2) Push the definition (instructions + encoded Ontology + action + Teams + playbook) via
+    #    updateDefinition. Runs in User context so the agent's Run-as provisions correctly.
     started = ops_agent_should_run
-    try:
-        configurations = build_configurations(
-            should_run=started, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
+    attach_playbook = ops_agent_copy_playbook
+
+    def _push(run_flag: bool) -> None:
+        cfg = build_configurations(
+            should_run=run_flag, copy_playbook=attach_playbook,
+            team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
             datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)
-        json.dumps(configurations)  # validate serializable
-        update_operations_agent_definition(ops_agent_item_id, configurations)
+        json.dumps(cfg)  # validate serializable
+        update_operations_agent_definition(ops_agent_item_id, cfg)
+
+    try:
+        _push(started)
     except RuntimeError as update_exc:
-        # If starting was refused, still deploy the definition stopped so nothing is half-done.
+        # Only a start (shouldRun=true) can be refused — deploy stopped so the definition lands.
         if not started:
             raise
         print("ℹ️  Start (shouldRun=true) was refused — deploying stopped so the definition lands:")
         print("   ", update_exc)
         started = False
-        configurations = build_configurations(
-            should_run=False, team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
-            datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)
-        update_operations_agent_definition(ops_agent_item_id, configurations)
+        _push(False)
+    playbook_attached = attach_playbook
     _run_state = "started (shouldRun=true)" if started else "deployed, stopped (shouldRun=false)"
-    _pb_state = "with embedded playbook" if ops_agent_copy_playbook else "config-only (generate playbook in UI)"
-    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — Ontology data source,")
-    print(f"   Teams destination and Send Email Alert pipeline action from the embedded definition (id={ops_agent_item_id}).")
+    _pb_state = "with embedded playbook" if playbook_attached else "config-only (generate playbook in UI)"
+    print(f"✅ Operations Agent '{ops_agent_name}' {_run_state}, {_pb_state} — encoded Ontology data")
+    print(f"   source, Teams destination and Send Email Alert pipeline action embedded (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -745,18 +756,17 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 print()
 print("✅ Set programmatically via REST (User context) from the embedded known-good definition:")
-print("   instructions (verbatim), Ontology data source, Teams message destination, the")
-print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and run state.")
-print("ℹ️  FabricJobAction carries its pipeline connection in the definition, so no UI wiring is")
-print("   needed — the agent posts the Teams alert and runs the pipeline to email operations.")
-if ops_agent_copy_playbook:
-    print("ℹ️  The embedded playbook (OntologyDefinitions + RuleDefinitions) is attached byte-exact.")
-    print("   The playbook is part of the pushable definition — the API can send it, but it CANNOT")
-    print("   trigger generation. If the target doesn't show it as live, open the agent once and")
-    print("   select 'Generate Playbook' to (re)bind/refresh it against current data.")
+print("   instructions (verbatim), the encoded Ontology data source, the Teams message")
+print("   destination, the 'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert),")
+print("   the embedded playbook (OntologyDefinitions + RuleDefinitions), and run state.")
+print("ℹ️  The Ontology data source uses the encoded Knowledge id + zero workspaceId (the working")
+print("   shape); the failing shape (id=zeros, real workspaceId) is what 400s Generate Playbook.")
+if playbook_attached:
+    print("ℹ️  The embedded playbook (OntologyDefinitions + RuleDefinitions) was attached byte-exact.")
+    print("   If the portal doesn't show it as live, open the agent and select 'Generate Playbook'.")
 else:
-    print("ℹ️  Deployed config-only (ops_agent_copy_playbook=false). Open the agent and select")
-    print("   'Generate Playbook' in the portal; the instructions compile cleanly so it succeeds.")
+    print("ℹ️  Deployed config-only. Open the agent and select 'Generate Playbook' in the portal;")
+    print("   with the Ontology Knowledge bound (encoded id), generation succeeds.")
 
 
 if ops_agent_item_id:
@@ -770,8 +780,9 @@ if ops_agent_item_id:
     if resolved_pipeline_id:
         # Save the pipeline id so downstream notebooks/runs reuse it (parameter: email_pipeline_id).
         persist["email_pipeline_id"] = resolved_pipeline_id
-    if resolved_datasource_id:
-        persist["ops_agent_ontology_datasource_id"] = resolved_datasource_id
+    if ontology_live_id:
+        # Persist the PLAIN ontology id; it is encoded to the Knowledge id at deploy time.
+        persist["ops_agent_ontology_datasource_id"] = ontology_live_id
     persist_df = (
         spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
         .withColumn("updated_utc", F.current_timestamp())
