@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "KQLDashboard",
+    "displayName": "RTI_Demo_OPCUA_TelemetryStats"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "26394327-c6ba-b6a4-4064-86ee406ed4f4"
+  }
+}
