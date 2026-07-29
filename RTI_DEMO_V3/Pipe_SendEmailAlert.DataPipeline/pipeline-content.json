@@ -1,0 +1,29 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "name": "SendEmailAlert",
+        "type": "Office365Email",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 5,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "to": "admin@mngenvmcap218279.onmicrosoft.com",
+          "subject": "ALERT!!",
+          "body": "<p>Alert for something!!</p>",
+          "from": "didharch@mngenvmcap218279.onmicrosoft.com",
+          "cc": "didharch@mngenvmcap218279.onmicrosoft.com",
+          "importance": "High"
+        },
+        "externalReferences": {
+          "connection": "4a4d0899-8698-4a20-8229-989ca6562451"
+        }
+      }
+    ]
+  }
+}
