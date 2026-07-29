@@ -16,7 +16,6 @@
           "to": "admin@mngenvmcap218279.onmicrosoft.com",
           "subject": "ALERT!!",
           "body": "<p>Alert for something!!</p>",
-          "from": "didharch@mngenvmcap218279.onmicrosoft.com",
           "cc": "didharch@mngenvmcap218279.onmicrosoft.com",
           "importance": "High"
         },
