@@ -127,7 +127,13 @@ ops_agent_email_pipeline_id = first_setting(
 ops_agent_run_as_user = first_setting("ops_agent_run_as_user", "run_as_user", default="")
 # Teams Team + Channel the agent posts alerts to. The Operations Agent definition stores the
 # *ids*, not the display names the portal shows: the Team id is a GUID and the Channel id looks
-# like "19:...@thread.tacv2". Defaults are the RTI demo destination:
+# like "19:...@thread.tacv2". No Microsoft Graph / SPN permission is used — paste the ids here.
+# HOW TO GET THE IDs (from the Teams app, no admin needed): hover the channel -> "..." ->
+# "Get link to channel". The URL is
+#   .../channel/19%3A...%40thread.tacv2/Alerts?groupId=<TEAM-GUID>&tenantId=...
+#   Team id    = the groupId=<GUID> value.
+#   Channel id = the "19%3A...%40thread.tacv2" segment, URL-decoded (%3A->':', %40->'@').
+# Defaults are the RTI demo destination:
 #   Team "FacilitiesRealTimeMonitoring"  ->  c480320e-9204-474b-9b2c-54a53e94f220
 #   Channel "Alerts"                     ->  19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2
 ops_agent_teams_team_id = first_setting(
