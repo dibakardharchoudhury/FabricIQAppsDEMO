@@ -37,13 +37,19 @@
 # **from the ontology join** — no OPC UA schema change and no hard-coded
 # `OntologyDefinitions` block in the agent definition. The rules simply reference the
 # `signal_master` entity.
-# Rules:
+# Rules (business intent — configured in the agent UI):
 # - `quality = "BAD"` → severity HIGH, type SingleFailure, trend Failing → raise WO.
 # - `quality = "UNCERTAIN"` → severity MEDIUM, type SignalDegradation, trend Degrading → raise WO.
-# The Power Automate action ("New WO to Investigate/Repair") is declared here; connect
-# it to the imported flow (`Raw/PowerAutomate/`) in the Operations Agent UI after deploy.
-# This notebook: reads settings → resolves the live `ontology_id` → builds
-# `Configurations.json` → deploys the **OperationsAgent** item via REST (best-effort,
+# **Deployment model (verified against the Fabric REST + the OilGas RTI reference):**
+# The Operations Agent is created EMPTY via its type-specific endpoint
+# (`/workspaces/{ws}/OperationsAgents`), then its instructions are pushed via
+# `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json` part).
+# The **data source (Ontology), actions (Power Automate) and the generated playbook**
+# are NOT publicly settable via REST yet — you bind the data source, add the Power
+# Automate action (connect it to the flow in `Raw/PowerAutomate/`), select **Generate
+# Playbook**, then **Start** the agent in the Fabric UI.
+# This notebook: reads settings → resolves the live `ontology_id` (for the UI step) →
+# creates the **OperationsAgent** item → pushes instructions via REST (best-effort,
 # manual fallback) → persists identifiers to `rti_demo_settings`.
 
 
@@ -115,23 +121,43 @@ print("   Alert recipient   :", ops_agent_recipient)
 
 import json
 import time
-import uuid
 import base64
+from typing import Optional
 
 import requests
 import notebookutils  # Fabric notebook utility
 
-FABRIC_BASE_URL = "https://api.fabric.microsoft.com/v1"
+FABRIC_API_BASE = "https://api.fabric.microsoft.com"
+# Operations Agent uses a type-specific route + a named definition format.
+OPS_AGENT_DEFINITION_FORMAT = "OperationsAgentV1"
 
-# Stable id for the Power Automate action (connect to the imported flow after deploy).
-WO_ACTION_ID = "72c769c8-3260-4c10-9413-3548ca3a3e2e"
-WO_ACTION_ALIAS = "Action: New WO and notify"
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 5
+LRO_POLL_INTERVAL_SECONDS = 5
+LRO_MAX_WAIT_SECONDS = 300
+
+OPS_AGENT_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/"
+    "operationsAgents/definition/1.0.0/schema.json"
+)
+OPS_AGENT_DESCRIPTION = (
+    "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
+    f"'{ontology_name}' ontology. Raises a work order when signal quality "
+    "degrades (UNCERTAIN) or fails (BAD)."
+)
 
 
 # -------------------------------------------------------------------------
-# SPN auth + generic Fabric item helpers
+# SPN auth (Key Vault) + retry / LRO helpers
 # -------------------------------------------------------------------------
-def get_spn_access_token_for_fabric():
+_token_cache = {"token": None, "expires_at": 0.0}
+
+
+def get_spn_access_token_for_fabric() -> str:
+    now = time.time()
+    if _token_cache["token"] and now < _token_cache["expires_at"]:
+        return _token_cache["token"]
+
     tenant_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_tenant_id_secret)
     client_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_id_secret)
     client_secret = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_secret_secret)
@@ -145,34 +171,93 @@ def get_spn_access_token_for_fabric():
         "grant_type": "client_credentials",
         "scope": "https://api.fabric.microsoft.com/.default",
     }
-    resp = requests.post(token_url, data=data)
+    resp = requests.post(token_url, data=data, timeout=60)
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    token_json = resp.json()
+    _token_cache["token"] = token_json["access_token"]
+    _token_cache["expires_at"] = now + int(token_json.get("expires_in", 3600)) - 60
+    return _token_cache["token"]
 
 
-def b64(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("utf-8")
+def get_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {get_spn_access_token_for_fabric()}",
+        "Content-Type": "application/json",
+    }
 
 
-def find_existing_item(access_token, display_name, item_type):
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    for item in resp.json().get("value", []):
-        if item.get("displayName") == display_name and item.get("type", "").lower() == item_type.lower():
+def api_request(method: str, url: str, data=None, params=None, timeout=60):
+    """Retry wrapper for Fabric REST calls (429 + 5xx)."""
+    last_response = None
+    for _ in range(MAX_RETRIES):
+        response = requests.request(
+            method=method, url=url, headers=get_headers(),
+            json=data, params=params, timeout=timeout,
+        )
+        last_response = response
+        if response.status_code == 429:
+            wait = int(response.headers.get("Retry-After", RETRY_DELAY_SECONDS))
+            print(f"Rate limited. Retrying in {wait}s.")
+            time.sleep(wait)
+            continue
+        if response.status_code >= 500:
+            print(f"Server error {response.status_code}. Retrying.")
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        return response
+    return last_response
+
+
+def wait_for_lro(operation_url: str) -> dict:
+    """Poll a Fabric long-running-operation URL until terminal."""
+    start = time.time()
+    while time.time() - start < LRO_MAX_WAIT_SECONDS:
+        response = api_request("GET", operation_url, timeout=60)
+        if response.status_code not in (200, 202):
+            raise RuntimeError(f"LRO polling failed: {response.status_code} {response.text}")
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"status": "Unknown"}
+        status = result.get("status", "Unknown")
+        if status in ("Succeeded", "Completed"):
+            return result
+        if status in ("Failed", "Cancelled"):
+            raise RuntimeError(json.dumps(result, indent=2))
+        print(f"⏳ LRO status: {status}")
+        time.sleep(LRO_POLL_INTERVAL_SECONDS)
+    raise TimeoutError("LRO polling timed out.")
+
+
+def encode_payload(obj: dict) -> str:
+    return base64.b64encode(json.dumps(obj, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+# -------------------------------------------------------------------------
+# Operations Agent REST operations (type-specific /OperationsAgents route)
+# -------------------------------------------------------------------------
+def find_operations_agent(display_name: str) -> Optional[dict]:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents"
+    response = api_request("GET", url)
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    for item in (data or {}).get("value", []) or []:
+        if item.get("displayName") == display_name:
             return item
     return None
 
 
-def resolve_ontology_id(access_token):
-    """Return the id of the ontology item named `ontology_name` in the target folder."""
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
+def resolve_ontology_id() -> str:
+    """Return the id of the ontology named `ontology_name` (for the UI binding step)."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    response = api_request("GET", url)
+    response.raise_for_status()
     matches = [
-        it for it in resp.json().get("value", [])
+        it for it in response.json().get("value", [])
         if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
     ]
     if not matches:
@@ -181,68 +266,58 @@ def resolve_ontology_id(access_token):
     return (in_folder or matches)[0]["id"]
 
 
-def wait_for_lro(resp, access_token, max_tries=30, delay_sec=5):
-    """Follow a Fabric long-running-operation (202) until it completes."""
-    location = resp.headers.get("Location")
-    if not location:
-        return resp
-    headers = {"Authorization": f"Bearer {access_token}"}
-    for attempt in range(1, max_tries + 1):
-        poll = requests.get(location, headers=headers)
-        status = poll.json().get("status") if poll.content else None
-        if status in ("Succeeded", "Completed"):
-            print(f"✅ Operation succeeded (attempt {attempt}).")
-            return poll
-        if status == "Failed":
-            raise Exception(f"Operation failed: {poll.text}")
-        print(f"⏳ In progress (attempt {attempt}/{max_tries}, status={status})...")
-        time.sleep(delay_sec)
-    raise Exception("Operation did not complete in the allotted time.")
-
-
-def deploy_item_with_parts(access_token, display_name, item_type, parts):
-    """Create or updateDefinition a Fabric item from (path, text) definition parts."""
-    definition = {
-        "parts": [
-            {"path": path, "payload": b64(text), "payloadType": "InlineBase64"}
-            for path, text in parts
-        ]
-    }
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
-    existing = find_existing_item(access_token, display_name, item_type)
+def create_operations_agent(display_name: str, description: str = "") -> dict:
+    """Create an EMPTY Operations Agent item (reuse if it already exists)."""
+    existing = find_operations_agent(display_name)
     if existing:
-        item_id = existing["id"]
-        url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items/{item_id}/updateDefinition"
-        resp = requests.post(url, headers=headers, json={"definition": definition})
-        if resp.status_code not in (200, 202):
-            raise Exception(f"updateDefinition failed: {resp.status_code} | {resp.text}")
-        wait_for_lro(resp, access_token)
-        print(f"♻️ Updated existing {item_type} '{display_name}' (ID: {item_id}).")
-        return item_id
+        print(f"✅ Reusing existing Operations Agent: {display_name} (id={existing.get('id')})")
+        return existing
 
-    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
-    payload = {
-        "displayName": display_name,
-        "type": item_type,
-        "folderId": target_folder_id,
-        "definition": definition,
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents"
+    body = {"displayName": display_name, "description": description}
+    response = api_request("POST", url, data=body, timeout=120)
+
+    if response.status_code in (200, 201):
+        created = response.json() if response.content else {}
+        print(f"✅ Created Operations Agent: {display_name} (id={created.get('id')})")
+        return created
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Create Operations Agent returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        created = find_operations_agent(display_name) or {}
+        print(f"✅ Created Operations Agent (via LRO): {display_name} (id={created.get('id')})")
+        return created
+    raise RuntimeError(f"Failed to create Operations Agent: {response.status_code} {response.text}")
+
+
+def update_operations_agent_definition(agent_id: str, configurations: dict) -> dict:
+    """Push Configurations.json via updateDefinition (OperationsAgentV1 format)."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents/{agent_id}/updateDefinition"
+    definition = {
+        "format": OPS_AGENT_DEFINITION_FORMAT,
+        "parts": [
+            {
+                "path": "Configurations.json",
+                "payload": encode_payload(configurations),
+                "payloadType": "InlineBase64",
+            }
+        ],
     }
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code not in (200, 201, 202):
-        raise Exception(f"create {item_type} failed: {resp.status_code} | {resp.text}")
-    if resp.status_code == 202:
-        poll = wait_for_lro(resp, access_token)
-        body = poll.json() if poll.content else {}
-        item_id = body.get("id") or (body.get("resourceLocation") or "").rsplit("/", 1)[-1]
-    else:
-        item_id = resp.json().get("id")
-    print(f"✅ Created {item_type} '{display_name}' (ID: {item_id}).")
-    return item_id
+    response = api_request("POST", url, data={"definition": definition}, timeout=300)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("updateDefinition returned 202 without Location header.")
+        return wait_for_lro(operation_url)
+    raise RuntimeError(f"Failed to update agent definition: {response.status_code} {response.text}")
 
 
 # -------------------------------------------------------------------------
-# Operations Agent definition (schema: operationsAgents/definition/1.0.0)
+# Operations Agent instructions (schema: operationsAgents/definition/1.0.0)
 # -------------------------------------------------------------------------
 INSTRUCTIONS = (
     "*** Goals ***\n"
@@ -279,136 +354,45 @@ INSTRUCTIONS = (
     "- Keep alerts short, clear and human-readable; use only ontology-provided fields."
 )
 
-# The 6 parameters passed to the Power Automate flow.
-ACTION_PARAMETERS = [
-    ("equipment_id", "ID of the equipment"),
-    ("facility_id", "ID of the facility"),
-    ("value", "Measured value"),
-    ("unit", "Unit of measurement"),
-    ("quality", "Signal quality"),
-    ("event_time", "Time of the event"),
-]
+def build_configurations() -> dict:
+    """Configurations.json body — instructions only (goals folded in).
 
-
-def _parameter_bindings():
-    """Bind each action parameter to a signal_master property (via the ontology)."""
-    descriptions = dict(ACTION_PARAMETERS)
-    return [
-        {
-            "$type": "parameterbindingcontextkey",
-            "Name": name,
-            "Key": f"agent:operationalSet:signal_master:{name}",
-            "Description": descriptions[name],
-        }
-        for name, _ in ACTION_PARAMETERS
-    ]
-
-
-def _rule(rule_id, name, quality_value, description):
+    Per the Fabric REST surface, `dataSources`, `actions` and the generated
+    `playbook` are not settable via updateDefinition yet, so they are left empty
+    and bound in the agent UI. `shouldRun` stays false until you Start it there.
+    """
     return {
-        "Id": rule_id,
-        "Name": name,
-        "Description": description,
-        "ClassExpression": {
-            "$type": "manchesterclassexp",
-            "Expression": (
-                "ClassExpression: AllSignals ``` signal_master ``` "
-                "Annotations: metadata:description \"All telemetry signals monitored for quality.\""
-            ),
-            "Description": "All telemetry signals monitored for quality.",
-        },
-        "RuleCondition": {
-            "$type": "textwhenisequal",
-            "DataPropertyName": "quality",
-            "Value": quality_value,
-        },
-        "ActionBinding": {
-            "$type": "actionbinding",
-            "Name": WO_ACTION_ALIAS,
-            "Description": "New WO and notify",
-            "ActionId": WO_ACTION_ID,
-            "ParameterBindings": _parameter_bindings(),
-        },
-    }
-
-
-def build_ops_agent_parts(ontology_id: str):
-    platform = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
-        "metadata": {"type": "OperationsAgent", "displayName": ops_agent_name},
-        "config": {"version": "2.0", "logicalId": str(uuid.uuid4())},
-    }
-
-    configurations = {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
+        "$schema": OPS_AGENT_SCHEMA_URL,
         "configuration": {
             "instructions": INSTRUCTIONS,
-            "dataSources": {
-                ontology_name: {
-                    "id": ontology_id,
-                    "type": "Ontology",
-                    "workspaceId": workspace_id,
-                }
-            },
-            "actions": {
-                WO_ACTION_ALIAS: {
-                    "id": WO_ACTION_ID,
-                    "displayName": WO_ACTION_ALIAS,
-                    "description": "New WO and notify",
-                    "kind": "PowerAutomateAction",
-                    "parameters": [
-                        {"name": name, "description": desc}
-                        for name, desc in ACTION_PARAMETERS
-                    ],
-                }
-            },
-            "messageDestination": {
-                "kind": "Recipient",
-                "recipient": ops_agent_recipient,
-            },
-        },
-        "playbook": {
-            "RuleDefinitions": {
-                "f3e7c7d2-8b6e-4e2a-9c1c-7e8b2f4c1e9a": _rule(
-                    "f3e7c7d2-8b6e-4e2a-9c1c-7e8b2f4c1e9a",
-                    "Uncertain Signal Quality",
-                    "UNCERTAIN",
-                    "Monitor signal_master entities where quality = 'UNCERTAIN' and raise a work order.",
-                ),
-                "b7c8e2e1-3e6c-4a8e-9c2d-4e2b9e8a1f2b": _rule(
-                    "b7c8e2e1-3e6c-4a8e-9c2d-4e2b9e8a1f2b",
-                    "Bad Signal Quality",
-                    "BAD",
-                    "Monitor signal_master entities where quality = 'BAD' and raise a work order.",
-                ),
-            }
+            "dataSources": {},
+            "actions": {},
         },
         "shouldRun": False,
     }
 
-    return [
-        (".platform", json.dumps(platform, indent=2)),
-        ("Configurations.json", json.dumps(configurations, indent=2)),
-    ]
-
 
 # -------------------------------------------------------------------------
-# Deploy (best-effort) + persist identifiers
+# Deploy: create (empty) -> push instructions. Best-effort + manual fallback.
 # -------------------------------------------------------------------------
 ops_agent_item_id = None
+ontology_id = None
 try:
-    access_token = get_spn_access_token_for_fabric()
+    get_spn_access_token_for_fabric()
     print("✅ Got Fabric access token (SPN).")
 
-    ontology_id = resolve_ontology_id(access_token)
-    print("✅ Resolved ontology ID:", ontology_id)
+    ontology_id = resolve_ontology_id()
+    print("✅ Resolved ontology ID (bind this in the UI):", ontology_id)
 
-    parts = build_ops_agent_parts(ontology_id)
-    for path, text in parts:
-        json.loads(text)  # validate every JSON part before deploying
-    print(f"✅ Operations Agent definition built and validated ({len(parts)} parts).")
+    # 1) Create (or reuse) the Operations Agent — empty, no definition.
+    ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
+    ops_agent_item_id = ops_agent.get("id")
 
-    ops_agent_item_id = deploy_item_with_parts(access_token, ops_agent_name, "OperationsAgent", parts)
+    # 2) Push instructions via updateDefinition (OperationsAgentV1 / Configurations.json).
+    configurations = build_configurations()
+    json.dumps(configurations)  # validate serializable
+    update_operations_agent_definition(ops_agent_item_id, configurations)
+    print(f"✅ Operations Agent '{ops_agent_name}' created + instructions set (id={ops_agent_item_id}).")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Operations Agent deployment did not complete:")
     print("   ", exc)
@@ -416,17 +400,18 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
     print("Manual fallback:")
     print("   1. In your Fabric workspace: New → Operations agent.")
     print(f"   2. Name it '{ops_agent_name}'.")
-    print(f"   3. Add data source → Ontology → '{ontology_name}'.")
-    print("   4. Paste the instructions from INSTRUCTIONS above.")
-    print("   5. Add rules on signal_master.quality = BAD and = UNCERTAIN.")
-    print("   6. Add a Power Automate action and connect it to the imported flow")
-    print("      (Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip).")
+    print("   3. Paste the instructions from INSTRUCTIONS above.")
 
 
 print()
-print("ℹ️ Next step (manual): open the Operations Agent → the 'New WO to Investigate/Repair'")
-print("   action → connect it to the Power Automate flow imported from Raw/PowerAutomate/.")
-print("   Then set the agent to run (shouldRun is deployed as false).")
+print("ℹ️ Finish in the Fabric UI (data source, actions, playbook and Start are UI steps):")
+print(f"   1. Open the Operations Agent '{ops_agent_name}'.")
+print(f"   2. Knowledge source → Ontology → '{ontology_name}'" + (f" (id {ontology_id})." if ontology_id else "."))
+print("   3. Add a Power Automate action ('New WO to Investigate/Repair') and connect it")
+print("      to the flow imported from Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip.")
+print("      Pass: equipment_id, facility_id, value, unit, quality, event_time.")
+print("   4. Add rules on signal_master.quality = 'BAD' (HIGH) and = 'UNCERTAIN' (MEDIUM).")
+print("   5. Select 'Generate Playbook', review, then 'Start' the agent.")
 
 
 if ops_agent_item_id:
