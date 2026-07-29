@@ -150,9 +150,9 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (no external agent).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
-# `ontology_name` (already in the settings table). CELL 1 resolves its live id by name and
-# encodes it to the Knowledge data-source id the agent expects — no id is hard-coded. Set
-# ops_agent_ontology_datasource_id only to FORCE a specific (already-encoded) data-source id.
+# `ontology_name` (already in the settings table). CELL 1 resolves its live id by name and uses
+# that id + this workspace as the Knowledge data source — no id is hard-coded. Set
+# ops_agent_ontology_datasource_id only to FORCE a specific data-source id.
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
 
@@ -373,22 +373,6 @@ def resolve_ontology_id() -> str:
     return (in_folder or matches)[0]["id"]
 
 
-def fabric_encode_guid(guid: str) -> str:
-    """Return the Ops Agent Knowledge data-source id for an ontology item id.
-
-    The agent binds the ontology by an ENCODED id (self-inverse hex regroup), NOT the plain
-    item id — verified against the working export and confirmed empirically: pushing the plain
-    id made "Generate playbook" fail with 400, and re-adding the ontology in the UI (which
-    writes the encoded id) fixed it. Same transform maps the pipeline id ⇄ its .platform
-    logicalId; applying it twice returns the original.
-    """
-    h = guid.replace("-", "")
-    if len(h) != 32:
-        return guid
-    enc = h[24:32] + h[20:24] + h[16:20] + h[12:16] + h[8:12] + h[0:8]
-    return f"{enc[0:8]}-{enc[8:12]}-{enc[12:16]}-{enc[16:20]}-{enc[20:32]}"
-
-
 # Name + definition of the git-synced Data Pipeline (RTI_DEMO_V3/Pipe_SendEmailAlert.DataPipeline).
 # Parameters equipment_id/facility_id/value/unit/quality/event_time mirror the alert context the
 # agent passes. The Office365 connection id + recipients are the RTI-demo values (override per env).
@@ -589,20 +573,20 @@ INSTRUCTIONS = '''*** Goals ***
 
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
-# The ontology data source id and the pipeline jobArtifactId below are literal RTI-demo
-# fallbacks; at deploy time they are overridden by the resolved ontology id (by name) and the
-# created/reused Pipe_SendEmailAlert id. The playbook is a byte-exact base64 of the
-# OntologyDefinitions + RuleDefinitions.
+# The ontology data source below is a placeholder; at deploy time it is replaced by the ontology
+# resolved from the settings table (by `ontology_name`) bound by its live id in this workspace,
+# and the pipeline jobArtifactId is replaced by the created/reused Pipe_SendEmailAlert id. The
+# playbook is a byte-exact base64 of the OntologyDefinitions + RuleDefinitions.
 # -------------------------------------------------------------------------
 EMBEDDED_CONFIGURATION = {
     "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
     "configuration": {
         "instructions": INSTRUCTIONS,
         "dataSources": {
-            "4cdeb9b3-801f-a9db-46c6-d2db30f512c4": {
-                "id": "4cdeb9b3-801f-a9db-46c6-d2db30f512c4",
+            "30f512c4-d2db-46c6-a9db-801f4cdeb9b3": {
+                "id": "30f512c4-d2db-46c6-a9db-801f4cdeb9b3",
                 "type": "Ontology",
-                "workspaceId": "00000000-0000-0000-0000-000000000000",
+                "workspaceId": workspace_id,
             }
         },
         "actions": {
@@ -657,9 +641,10 @@ def build_configurations(should_run: Optional[bool] = None,
     config = deepcopy(EMBEDDED_CONFIGURATION)
     config["shouldRun"] = run_state
     if datasource_id:
-        # Single ontology data source — re-key it to the resolved live ontology id.
+        # Single ontology data source — bind it by its live id in this workspace.
         inner = next(iter(config["configuration"]["dataSources"].values()))
         inner["id"] = datasource_id
+        inner["workspaceId"] = workspace_id
         config["configuration"]["dataSources"] = {datasource_id: inner}
     if pipeline_id:
         action = config["configuration"]["actions"]["94ef718d-6bdb-46f3-9a15-661af4fabb39"]
@@ -687,10 +672,9 @@ try:
     # Run-as guardrail: confirm the agent will Run as the intended (signed-in) user.
     check_run_as(ops_agent_run_as_user)
 
-    # Ontology data source: resolve the live id from the ontology name (unless one was forced),
-    # then ENCODE it to the id the agent's Knowledge binding uses (plain id makes Generate
-    # playbook 400; the encoded form is what the UI writes and what generation needs).
-    resolved_datasource_id = ops_agent_ontology_datasource_id or fabric_encode_guid(resolve_ontology_id())
+    # Ontology data source: resolve the live id from the ontology name in the settings table
+    # (unless one was forced) and bind it by that id in this workspace — nothing hard-coded.
+    resolved_datasource_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
 
     # Email pipeline: create/reuse Pipe_SendEmailAlert (unless an id was provided).
     if ops_agent_email_pipeline_id:
