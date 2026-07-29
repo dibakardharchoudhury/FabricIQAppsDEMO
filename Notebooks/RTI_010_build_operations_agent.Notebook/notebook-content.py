@@ -47,11 +47,15 @@
 # The agent is created via `/workspaces/{ws}/OperationsAgents`, then the full definition
 # is pushed via `updateDefinition` (format `OperationsAgentV1`, single `Configurations.json`
 # part): instructions + the Ontology **data source** + a **Teams channel** message
-# destination, and `shouldRun` to START it. No Power Automate action is configured — the
-# **Teams alert** is the notification (matching the working GUI agent). The Teams
-# destination is copied from an existing working agent (`ops_agent_reference_name`) or
-# set explicitly via `ops_agent_team_id` / `ops_agent_channel_id`. `playbook` is reserved
-# (Generate Playbook is UI-only); the agent runs from `instructions`.
+# destination + a **PowerAutomate action** ("New WO to Investigate / Repair"), and
+# `shouldRun` to START it. The Teams destination is the passive alert; the action drives
+# the approval workflow — Fabric invokes the connected Power Automate flow, which posts an
+# Approve/Reject card to Teams and, on **Approve**, sends an email (see
+# `Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip`). Connecting the action to that flow
+# is a one-time UI step (PowerAutomateAction has no `connection` field in REST). The Teams
+# destination is copied from an existing working agent (`ops_agent_reference_name`) or set
+# via `ops_agent_team_id` / `ops_agent_channel_id`. `playbook` is reserved (Generate
+# Playbook is UI-only); the agent runs from `instructions`.
 # This notebook: reads settings → resolves the live `ontology_id` → resolves the Teams
 # destination → creates the **OperationsAgent** item → pushes the full definition via REST
 # → optionally starts it (`shouldRun`) → persists identifiers to `rti_demo_settings`.
@@ -133,6 +137,7 @@ print("   Start agent       :", ops_agent_should_run)
 import json
 import time
 import base64
+import uuid
 from typing import Optional
 
 import requests
@@ -144,6 +149,11 @@ OPS_AGENT_DEFINITION_FORMAT = "OperationsAgentV1"
 
 # User-chosen alias for the single Ontology data source in the definition.
 OPS_AGENT_DATASOURCE_ALIAS = "signalOntology"
+# Work-order action (approval -> email flow). Its parameters become the Power Automate
+# trigger's inputFields; connect it to Raw/PowerAutomate/NewWOtoInvestigateRepair in the UI.
+OPS_AGENT_ACTION_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ops_agent_name}:createWorkOrder"))
+OPS_AGENT_ACTION_ALIAS = "createWorkOrder"
+OPS_AGENT_ACTION_DISPLAY_NAME = "New WO to Investigate / Repair"
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
@@ -152,8 +162,8 @@ LRO_MAX_WAIT_SECONDS = 300
 
 OPS_AGENT_DESCRIPTION = (
     "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the "
-    f"'{ontology_name}' ontology. Posts an Alert to a Teams channel when signal quality "
-    "degrades (UNCERTAIN) or fails (BAD)."
+    f"'{ontology_name}' ontology. Posts a Teams alert and, on approval, raises a Work "
+    "Order via email when signal quality degrades (UNCERTAIN) or fails (BAD)."
 )[:256]  # Fabric item description max length is 256 chars
 
 
@@ -388,7 +398,9 @@ INSTRUCTIONS = (
     "   Trend: {derived_trend}\n"
     "   Insight: Explain the issue in simple business terms\n"
     "   Recommended Action: Provide the next step\n\n"
-    "9. Post the alert message to the configured Teams channel. Do not call any external action.\n\n"
+    "9. Invoke the action \"New WO to Investigate / Repair\" and pass: equipment_id, facility_id, value, unit,\n"
+    "   quality, event_time. If any field is missing, pass an empty string. A supervisor then approves in\n"
+    "   Teams to trigger the work-order email.\n\n"
     "*** Semantic Notes ***\n"
     "- quality: GOOD = normal, UNCERTAIN = degraded signal, BAD = failure condition.\n"
     "- unit tells whether the reading is pressure, temperature, flow, vibration or position.\n"
@@ -400,9 +412,11 @@ def build_configurations(ontology_id: str, message_destination: dict, should_run
 
     Root requires `configuration`, `playbook` and `shouldRun`; `configuration`
     requires `instructions`, `dataSources` and `actions`. The Ontology data source
-    must be present (the API rejects empty `dataSources`); `actions` is left empty
-    because notification is handled by the Teams `messageDestination` (matching the
-    working GUI agent — no Power Automate action). `identity` is omitted: the running
+    must be present (the API rejects empty `dataSources`). `messageDestination` posts
+    the passive Teams alert; the PowerAutomateAction lets the agent invoke the
+    approval->email work-order flow (its parameters become the flow trigger's
+    inputFields). Connecting the action to the actual flow is a UI-only step
+    (PowerAutomateAction has no `connection` field). `identity` is omitted: the running
     user's delegated token provisions the agent's Run-as identity automatically.
     `should_run` sets the run state (True = start the agent now).
     """
@@ -417,7 +431,22 @@ def build_configurations(ontology_id: str, message_destination: dict, should_run
                     "workspaceId": workspace_id,
                 }
             },
-            "actions": {},
+            "actions": {
+                OPS_AGENT_ACTION_ALIAS: {
+                    "id": OPS_AGENT_ACTION_ID,
+                    "kind": "PowerAutomateAction",
+                    "displayName": OPS_AGENT_ACTION_DISPLAY_NAME,
+                    "description": "Raise a work-order approval: posts an Approve/Reject card to Teams; on approval sends an email.",
+                    "parameters": [
+                        {"name": "equipment_id", "description": "Equipment to investigate"},
+                        {"name": "facility_id", "description": "Facility of the equipment"},
+                        {"name": "value", "description": "Measured value"},
+                        {"name": "unit", "description": "Unit of the measured value"},
+                        {"name": "quality", "description": "Signal quality (GOOD/UNCERTAIN/BAD)"},
+                        {"name": "event_time", "description": "Event timestamp"},
+                    ],
+                }
+            },
             "messageDestination": message_destination,
         },
         "playbook": {},
@@ -475,8 +504,12 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 print()
 print("✅ Set programmatically via REST (User context): instructions, Ontology data source,")
-print("   Teams message destination, and run state (shouldRun).")
-print("ℹ️  Optional UI step: select 'Generate Playbook' to pre-generate the plan (the `playbook`")
+print("   Teams message destination, work-order action, and run state (shouldRun).")
+print("ℹ️  One-time UI step: open the agent, Add action → Power Automate → connect")
+print(f"   '{OPS_AGENT_ACTION_DISPLAY_NAME}' to the flow imported from")
+print("   Raw/PowerAutomate/NewWOtoInvestigateRepair_*.zip (posts the Teams Approve/Reject")
+print("   card and, on approval, sends the email). PowerAutomateAction has no REST connection field.")
+print("ℹ️  Optionally select 'Generate Playbook' to pre-generate the plan (the `playbook`")
 print("   object is reserved in the API; the agent still runs from its instructions).")
 
 
