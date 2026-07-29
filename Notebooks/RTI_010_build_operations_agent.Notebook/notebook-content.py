@@ -154,15 +154,19 @@ ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 # id is hard-coded. Set ops_agent_ontology_datasource_id only to FORCE a specific source id.
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
+
 # Email pipeline: by default CELL 1 creates/reuses the `Pipe_SendEmailAlert` Data Pipeline
 # (embedded from the git-synced definition) and persists its id to the settings table as
 # `email_pipeline_id`. Set ops_agent_email_pipeline_id to reuse an existing pipeline id.
 ops_agent_email_pipeline_id = first_setting("ops_agent_email_pipeline_id", "email_pipeline_id", default="")
+
 # --- User inputs: Run-as identity + Teams destination -------------------
 # Run-as: the agent runs autonomously under the delegated identity that DEPLOYS it (whoever
 # runs this notebook). Set this to that account's UPN; the notebook warns if the signed-in
 # user differs. Run-as cannot be pointed at an arbitrary other user via REST.
 ops_agent_run_as_user = first_setting("ops_agent_run_as_user", "run_as_user", default="")
+
+
 # Teams Team + Channel the agent posts alerts to. The Operations Agent definition stores the
 # *ids*, not the display names the portal shows: the Team id is a GUID and the Channel id looks
 # like "19:...@thread.tacv2". No Microsoft Graph / SPN permission is used — paste the ids here.
@@ -175,13 +179,17 @@ ops_agent_run_as_user = first_setting("ops_agent_run_as_user", "run_as_user", de
 # Defaults are the RTI demo destination:
 #   Team "FacilitiesRealTimeMonitoring"  ->  c480320e-9204-474b-9b2c-54a53e94f220
 #   Channel "Alerts"                     ->  19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2
+
 ops_agent_teams_team_id = first_setting(
     "ops_agent_teams_team_id", "teams_team_id", default="c480320e-9204-474b-9b2c-54a53e94f220")
+
 ops_agent_teams_channel_id = first_setting(
     "ops_agent_teams_channel_id", "teams_channel_id",
     default="19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2")
+
 # Start the agent programmatically (definition `shouldRun`); 'false' deploys it stopped.
 ops_agent_should_run = str(first_setting("ops_agent_should_run", default="true")).lower() in ("true", "1", "yes")
+
 # Include the embedded known-good `playbook` (OntologyDefinitions + RuleDefinitions) so the
 # target deploys playbook-ready. The playbook is part of the pushable definition — what the
 # API CANNOT do is *trigger* generation. Set 'false' to deploy config-only and click Generate
