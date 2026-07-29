@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/operationsAgents/definition/1.0.0/schema.json",
   "configuration": {
-    "instructions": "*** Goals ***\n- Monitor industrial turbine OPC UA telemetry in real time via the RTI ontology.\n- Detect equipment health issues from signal quality and raise a work order automatically.\n- Escalate degraded (UNCERTAIN) or failed (BAD) signals to operations without manual triage.\n\n*** Operational Instructions ***\n1. Operate on the \u0027signal_master\u0027 entity of the ontology. Each event is complete and independent.\n   - Do NOT invent rowIndex, event_id or synthetic keys, and do NOT reconstruct rows with joins/arg_max.\n   - \u0027signal_master\u0027 already resolves equipment_id, facility_id, system_id and unit from the ontology\n     (real-time OPCUAEvents joined to the lakehouse signal registry on opcua_node_id).\n2. Use \u0027equipment_id\u0027 as the business entity to evaluate alerts; evaluate each incoming event independently.\n3a. For each equipment_id, trigger an alert when the current signal_master event has quality equal to \u0022BAD\u0022.\n3b. For each equipment_id, trigger an alert when the current signal_master event has quality equal to \u0022UNCERTAIN\u0022.\n4. Suppress duplicate alerts for the same \u0027equipment_id\u0027 for 10 minutes.\n5. Assign severity:  BAD -\u003E HIGH ;  UNCERTAIN -\u003E MEDIUM.\n6. Classify type:    BAD -\u003E SingleFailure ;  UNCERTAIN -\u003E SignalDegradation.\n7. Derive trend from the current signal (no history):  BAD -\u003E Failing ;  UNCERTAIN -\u003E Degrading ;  GOOD -\u003E Stable.\n8. Generate the alert message EXACTLY:\n\n   Equipment Alert: {equipment_id}\n   Facility: {facility_id}\n   Signal Quality: {quality}\n   Measured Value: {value} {unit}\n   Timestamp: {event_time}\n   Severity: {severity}\n   Type: {alert_type}\n   Trend: {derived_trend}\n   Insight: Explain the issue in simple business terms\n   Recommended Action: Provide the next step\n\n9. Invoke the action \u0022Send Email Alert!\u0022 and pass: equipment_id, facility_id, value, unit, quality, event_time. If any field is missing, pass an empty string.\n\n*** Semantic Notes ***\n- quality: GOOD = normal, UNCERTAIN = degraded signal, BAD = failure condition.\n- unit tells whether the reading is pressure, temperature, flow, vibration or position.\n- Keep alerts short, clear and human-readable; use only ontology-provided fields.",
+    "instructions": "*** Goals ***\n- Monitor OPC UA signal quality for industrial turbine equipment by using the \u0022signal_master\u0022 ontology entity.\n- Notify operations when an OPC UA signal has failed or degraded.\n- Recommend an email alert containing the available equipment and signal context.\n\n*** Operational Instructions ***\n1. Monitor the \u0022signal_master\u0022 entity, uniquely identified by the \u0022opcua_node_id\u0022 property.\n\n2. Create an alert when the current value of \u0022quality\u0022 equals \u0022BAD\u0022.\n\n3. Create an alert when the current value of \u0022quality\u0022 equals \u0022UNCERTAIN\u0022.\n\n4. For every alert, identify the affected equipment by using the \u0022equipment_id\u0022 property.\n\n5. Include the following available ontology properties in the alert context:\n   - \u0022equipment_id\u0022\n   - \u0022facility_id\u0022\n   - \u0022quality\u0022\n   - \u0022value\u0022\n   - \u0022unit\u0022\n   - \u0022event_time\u0022\n\n6. For every generated alert, recommend the \u0022Send Email Alert!\u0022 action.\n\n*** Semantic Instructions ***\n1. The \u0022signal_master\u0022 entity represents an OPC UA signal.\n\n2. The \u0022opcua_node_id\u0022 property uniquely identifies each \u0022signal_master\u0022 entity.\n\n3. The \u0022equipment_id\u0022 property identifies the equipment associated with the signal.\n\n4. A \u0022quality\u0022 value of \u0022BAD\u0022 means that the signal has failed and requires immediate investigation.\n\n5. A \u0022quality\u0022 value of \u0022UNCERTAIN\u0022 means that the signal is degraded and requires investigation.\n\n6. The \u0022value\u0022 property contains the current measured value.\n\n7. The \u0022unit\u0022 property describes the measurement unit.\n\n8. The \u0022event_time\u0022 property contains the timestamp of the signal event.\n\n9. Use only properties available from the ontology when creating the alert context or recommending an action.",
     "dataSources": {
       "4cdeb9b3-801f-a9db-46c6-d2db30f512c4": {
         "id": "4cdeb9b3-801f-a9db-46c6-d2db30f512c4",
@@ -32,5 +32,314 @@
       "channelId": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
     }
   },
-  "shouldRun": false
+  "playbook": {
+    "OntologyDefinitions": {
+      "signal_master": {
+        "$type": "class",
+        "IRI": "signal_master",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "signal_master",
+        "Description": "An OPC UA signal record providing equipment, facility, and measurement context."
+      },
+      "unit": {
+        "$type": "data",
+        "IRI": "unit",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "unit",
+        "Description": "Measurement unit for value",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 1
+      },
+      "facility_id": {
+        "$type": "data",
+        "IRI": "facility_id",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "facility_id",
+        "Description": "Identifier of facility where equipment resides",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 1
+      },
+      "value": {
+        "$type": "data",
+        "IRI": "value",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "value",
+        "Description": "Current measured signal value",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "decimal",
+        "Kind": 1
+      },
+      "equipment_id": {
+        "$type": "data",
+        "IRI": "equipment_id",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "equipment_id",
+        "Description": "Identifier of affected equipment",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 1
+      },
+      "quality": {
+        "$type": "data",
+        "IRI": "quality",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "quality",
+        "Description": "Current OPC UA signal quality",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 1
+      },
+      "event_time": {
+        "$type": "data",
+        "IRI": "event_time",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "event_time",
+        "Description": "Timestamp of the signal event",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 1
+      },
+      "opcua_node_id": {
+        "$type": "data",
+        "IRI": "opcua_node_id",
+        "DocumentId": "00000000-0000-0000-0000-000000000000",
+        "Name": "opcua_node_id",
+        "Description": "OPC UA node identifier for the signal",
+        "DomainClassIRI": "signal_master",
+        "RangeDataType": "string",
+        "Kind": 0
+      }
+    },
+    "RuleDefinitions": {
+      "3260af07-a04d-4ef5-9a09-2980f9af3458": {
+        "Id": "3260af07-a04d-4ef5-9a09-2980f9af3458",
+        "Name": "Send Email Alert for BAD OPC UA Signal Quality",
+        "Description": "Send an email alert whenever an OPC UA signal in signal_master has quality equal to BAD, including equipment and signal context.",
+        "ClassExpression": {
+          "$type": "ontologyqueryexpression",
+          "Expression": "{\u0022EntitySelector\u0022:{\u0022queryType\u0022:\u0022GQL\u0022,\u0022Query\u0022:\u0022MATCH (node_signal_master:\\u0060signal_master\\u0060) RETURN node_signal_master.\\u0060opcua_node_id\\u0060 AS \\u0060opcua_node_id\\u0060, node_signal_master.\\u0060equipment_id\\u0060 AS \\u0060equipment_id\\u0060, node_signal_master.\\u0060facility_id\\u0060 AS \\u0060facility_id\\u0060, node_signal_master.\\u0060unit\\u0060 AS \\u0060unit\\u0060\u0022},\u0022TimeSeriesSelector\u0022:{\u0022EntityType\u0022:{\u0022Name\u0022:\u0022signal_master\u0022},\u0022KeyColumns\u0022:{\u0022opcua_node_id\u0022:\u0022opcua_node_id\u0022},\u0022Metrics\u0022:[{\u0022Field\u0022:\u0022event_time\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022event_time\u0022},{\u0022Field\u0022:\u0022quality\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022quality\u0022},{\u0022Field\u0022:\u0022value\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022value\u0022}],\u0022TimeRange\u0022:{\u0022Start\u0022:\u00222024-07-29T00:00:00Z\u0022,\u0022End\u0022:\u00222026-07-29T20:36:05Z\u0022},\u0022GroupBy\u0022:[\u0022opcua_node_id\u0022]}}",
+          "Description": "Send an email alert whenever an OPC UA signal in signal_master has quality equal to BAD, including equipment and signal context."
+        },
+        "RuleCondition": {
+          "$type": "textwhenisequal",
+          "DataPropertyName": "quality",
+          "Value": "BAD"
+        },
+        "ActionBinding": {
+          "$type": "multiactionbinding",
+          "Description": "Action bindings for this rule",
+          "ActionBindings": [
+            {
+              "Name": "Send Email Alert!",
+              "Description": "Send Email Alert so that appropriate Action can be taken! Replace this with any Pipeline or Power Automate Flow based Action!",
+              "ActionId": "94ef718d-6bdb-46f3-9a15-661af4fabb39",
+              "ParameterBindings": [
+                {
+                  "$type": "parameterbindingcontextkey",
+                  "Name": "id",
+                  "Key": "agent:operationalSet:signal_master:opcua_node_id",
+                  "Description": "The unique identifier of the signal_master entity"
+                }
+              ]
+            }
+          ]
+        },
+        "LocalOntology": {
+          "signal_master": {
+            "$type": "class",
+            "IRI": "signal_master",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "signal_master",
+            "Description": "An OPC UA signal record providing equipment, facility, and measurement context."
+          },
+          "unit": {
+            "$type": "data",
+            "IRI": "unit",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "unit",
+            "Description": "Measurement unit for value",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "facility_id": {
+            "$type": "data",
+            "IRI": "facility_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "facility_id",
+            "Description": "Identifier of facility where equipment resides",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "value": {
+            "$type": "data",
+            "IRI": "value",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "value",
+            "Description": "Current measured signal value",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "decimal",
+            "Kind": 1
+          },
+          "equipment_id": {
+            "$type": "data",
+            "IRI": "equipment_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "equipment_id",
+            "Description": "Identifier of affected equipment",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "quality": {
+            "$type": "data",
+            "IRI": "quality",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "quality",
+            "Description": "Current OPC UA signal quality",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "event_time": {
+            "$type": "data",
+            "IRI": "event_time",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "event_time",
+            "Description": "Timestamp of the signal event",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "opcua_node_id": {
+            "$type": "data",
+            "IRI": "opcua_node_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "opcua_node_id",
+            "Description": "OPC UA node identifier for the signal",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 0
+          }
+        }
+      },
+      "a8be9e92-bc63-4296-89fd-2d10d59b93f4": {
+        "Id": "a8be9e92-bc63-4296-89fd-2d10d59b93f4",
+        "Name": "OPC UA Signal Quality UNCERTAIN Alert",
+        "Description": "Send an email alert whenever an OPC UA signal in signal_master has quality equal to UNCERTAIN, including equipment and signal context.",
+        "ClassExpression": {
+          "$type": "ontologyqueryexpression",
+          "Expression": "{\u0022EntitySelector\u0022:{\u0022queryType\u0022:\u0022GQL\u0022,\u0022Query\u0022:\u0022MATCH (n_signal_master:\\u0060signal_master\\u0060) RETURN n_signal_master.\\u0060opcua_node_id\\u0060 AS \\u0060opcua_node_id\\u0060, n_signal_master.\\u0060equipment_id\\u0060 AS \\u0060equipment_id\\u0060, n_signal_master.\\u0060facility_id\\u0060 AS \\u0060facility_id\\u0060, n_signal_master.\\u0060unit\\u0060 AS \\u0060unit\\u0060\u0022},\u0022TimeSeriesSelector\u0022:{\u0022EntityType\u0022:{\u0022Name\u0022:\u0022signal_master\u0022},\u0022KeyColumns\u0022:{\u0022opcua_node_id\u0022:\u0022opcua_node_id\u0022},\u0022Metrics\u0022:[{\u0022Field\u0022:\u0022quality\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022quality\u0022},{\u0022Field\u0022:\u0022value\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022value\u0022},{\u0022Field\u0022:\u0022event_time\u0022,\u0022Aggregation\u0022:\u0022LastKnownValue\u0022,\u0022Alias\u0022:\u0022event_time\u0022}],\u0022TimeRange\u0022:{\u0022Start\u0022:\u00222024-07-29T00:00:00Z\u0022,\u0022End\u0022:\u00222026-07-29T20:36:22.3678894Z\u0022},\u0022GroupBy\u0022:[\u0022opcua_node_id\u0022]}}",
+          "Description": "Send an email alert whenever an OPC UA signal in signal_master has quality equal to UNCERTAIN, including equipment and signal context."
+        },
+        "RuleCondition": {
+          "$type": "textwhenisequal",
+          "DataPropertyName": "quality",
+          "Value": "UNCERTAIN"
+        },
+        "ActionBinding": {
+          "$type": "multiactionbinding",
+          "Description": "Action bindings for this rule",
+          "ActionBindings": [
+            {
+              "Name": "Send Email Alert!",
+              "Description": "Send Email Alert so that appropriate Action can be taken! Replace this with any Pipeline or Power Automate Flow based Action!",
+              "ActionId": "94ef718d-6bdb-46f3-9a15-661af4fabb39",
+              "ParameterBindings": [
+                {
+                  "$type": "parameterbindingcontextkey",
+                  "Name": "opcua_node_id",
+                  "Key": "agent:operationalSet:signal_master:opcua_node_id",
+                  "Description": "The unique identifier of the OPC UA signal in signal_master"
+                }
+              ]
+            }
+          ]
+        },
+        "LocalOntology": {
+          "signal_master": {
+            "$type": "class",
+            "IRI": "signal_master",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "signal_master",
+            "Description": "An OPC UA signal record providing equipment, facility, and measurement context."
+          },
+          "unit": {
+            "$type": "data",
+            "IRI": "unit",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "unit",
+            "Description": "Measurement unit for value",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "facility_id": {
+            "$type": "data",
+            "IRI": "facility_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "facility_id",
+            "Description": "Identifier of facility where equipment resides",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "value": {
+            "$type": "data",
+            "IRI": "value",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "value",
+            "Description": "Current measured signal value",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "decimal",
+            "Kind": 1
+          },
+          "equipment_id": {
+            "$type": "data",
+            "IRI": "equipment_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "equipment_id",
+            "Description": "Identifier of affected equipment",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "quality": {
+            "$type": "data",
+            "IRI": "quality",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "quality",
+            "Description": "Current OPC UA signal quality",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "event_time": {
+            "$type": "data",
+            "IRI": "event_time",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "event_time",
+            "Description": "Timestamp of the signal event",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 1
+          },
+          "opcua_node_id": {
+            "$type": "data",
+            "IRI": "opcua_node_id",
+            "DocumentId": "00000000-0000-0000-0000-000000000000",
+            "Name": "opcua_node_id",
+            "Description": "OPC UA node identifier for the signal",
+            "DomainClassIRI": "signal_master",
+            "RangeDataType": "string",
+            "Kind": 0
+          }
+        }
+      }
+    }
+  },
+  "shouldRun": true
 }
