@@ -942,6 +942,7 @@ chain_notebooks = [
     "RTI_008_build_realtime_dashboard",
     "RTI_009_build_data_agent",
     "RTI_010_build_operations_agent",
+    "RTI_011_seed_sql_wire_graphql_agent",
 ]
 
 

@@ -20,7 +20,7 @@ services:
   staticHosting:
     enabled: true
     folder: dist
-    buildCommand: npm run build:rayfin
+    buildCommand: npm run build
     indexDocument: index.html
   data:
     enabled: true

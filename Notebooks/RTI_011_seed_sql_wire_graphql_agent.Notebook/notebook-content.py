@@ -8,12 +8,12 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "1915afbd-36aa-40f9-bd7e-18a03c4a28b2",
+# META       "default_lakehouse": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf",
 # META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V6",
 # META       "default_lakehouse_workspace_id": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "1915afbd-36aa-40f9-bd7e-18a03c4a28b2"
+# META           "id": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf"
 # META         }
 # META       ]
 # META     },
@@ -635,7 +635,7 @@ try:
     print(
         "ℹ️ Bind its data source in the portal (GraphQL editor → Get data → Lakehouse SQL "
         f"analytics endpoint of '{lakehouse_name}' → expose silver_facilities / "
-        "silver_equipments / silver_instruments). The exact endpoint URL is shown on the "
+        "silver_equipment / silver_instruments). The exact endpoint URL is shown on the "
         "GraphQL item's page and is what the web app needs in VITE_RAYFIN_STID_GRAPHQL_URL."
     )
 except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the fallback

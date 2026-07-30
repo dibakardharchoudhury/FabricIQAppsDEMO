@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
-import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, queryLatestTelemetry, queryStid, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
   createWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
@@ -12,6 +12,7 @@ import {
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unknown error'
+const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
 
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null)
@@ -28,6 +29,12 @@ export default function App() {
   const [telemetryState, setTelemetryState] = useState('Connect telemetry')
   const [streamState, setStreamState] = useState<'idle' | 'starting' | 'started' | 'error'>('idle')
   const [notice, setNotice] = useState<string>()
+  const [progress, setProgress] = useState<{ label: string; status: string } | null>(null)
+  const [progressPct, setProgressPct] = useState(0)
+  const jobStartRef = useRef(0)
+  const jobEtaRef = useRef(1)
+  const [provisioned, setProvisioned] = useState(false)
+  const [setupHidden, setSetupHidden] = useState(false)
   const [copilotOpen, setCopilotOpen] = useState(false)
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
@@ -74,6 +81,27 @@ export default function App() {
     }
     void initialize()
   }, [])
+
+  // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
+  // one from elapsed time — eases monotonically toward ~95% over the expected duration.
+  useEffect(() => {
+    if (!progress) { setProgressPct(0); return }
+    const tick = () => {
+      const elapsed = Date.now() - jobStartRef.current
+      const frac = 1 - Math.exp((-2.5 * elapsed) / Math.max(1, jobEtaRef.current))
+      setProgressPct(prev => Math.max(prev, Math.min(95, Math.round(frac * 100))))
+    }
+    tick()
+    const id = window.setInterval(tick, 500)
+    return () => window.clearInterval(id)
+  }, [progress])
+
+  function beginProgress(label: string, etaMs: number) {
+    jobStartRef.current = Date.now()
+    jobEtaRef.current = etaMs
+    setProgressPct(3)
+    setProgress({ label, status: 'Starting' })
+  }
 
   function applyStid(data: StidData) {
     setStid(data)
@@ -133,19 +161,33 @@ export default function App() {
     try {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setNotice('Sign in with Fabric to seed operational data.'); return }
-      const result = await seedOperationalDataIfEmpty(activeUser)
-      const created = result.filter(item => !item.skipped)
-      await loadOperationalData()
-      let note = created.length
-        ? `Seeded ${created.map(item => `${item.created} ${item.entity}`).join(', ')}.`
-        : 'Operational data already present — nothing to seed.'
       if (isPostSeedConfigured()) {
+        // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
+        // every run, so skip the client-side insert-if-empty pre-seed.
+        const label = 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)…'
+        beginProgress(label, 5 * 60_000)
         try {
-          await runPostSeedNotebook()
-          note += ' Provisioning SQL, GraphQL and the Data Agent source in Fabric…'
-        } catch (error) { note += ` (Fabric provisioning not triggered: ${errorMessage(error)})` }
+          const status = await runPostSeedNotebook(s => setProgress({ label, status: humanStatus(s) }))
+          if (status === 'Completed') {
+            setProgressPct(100)
+            setProvisioned(true)
+            await loadOperationalData()
+            setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
+            await connectStid()
+          } else {
+            setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
+          }
+        } catch (error) { setNotice(`Fabric provisioning failed: ${errorMessage(error)}`) }
+        finally { setProgress(null) }
+      } else {
+        // Fallback when RTI_011 isn't configured: client-side insert-if-empty seed.
+        const result = await seedOperationalDataIfEmpty(activeUser)
+        const created = result.filter(item => !item.skipped)
+        await loadOperationalData()
+        setNotice(created.length
+          ? `Seeded ${created.map(item => `${item.created} ${item.entity}`).join(', ')}.`
+          : 'Operational data already present.')
       }
-      setNotice(note)
     } catch (error) { setNotice(errorMessage(error)) }
     finally { setSeeding(false) }
   }
@@ -163,8 +205,14 @@ export default function App() {
 
   async function startStream() {
     setStreamState('starting'); setNotice(undefined)
-    try { await startStreamingPipeline(); setStreamState('started'); await connectTelemetry() }
+    const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
+    beginProgress(label, 90_000)
+    try {
+      await startStreamingPipeline(s => setProgress({ label, status: humanStatus(s) }))
+      setStreamState('started'); await connectTelemetry()
+    }
     catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
+    finally { setProgress(null) }
   }
 
   async function sendQuestion() {
@@ -178,18 +226,37 @@ export default function App() {
     setBusy(false)
   }
 
+  // Ordered first-run setup. Each step explains why it exists and unlocks the next.
+  const steps = [
+    { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
+    { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
+    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
+    { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
+    { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
+  ]
+  const setupComplete = steps.every(step => step.done)
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
-        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()}><Database size={14} />{sourceState}</button>
-        <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()}><Radio size={14} />{telemetryState}</button>
+        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
+        <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
       </div>
-      <div className="top-actions"><button className="stream-button" onClick={() => void startStream()} disabled={streamState === 'starting'}><Play size={14} fill="currentColor" />{streamState === 'starting' ? 'Starting' : streamState === 'started' ? 'Stream started' : 'Start stream'}</button><button className="seed-button" onClick={() => void seedDemo()} disabled={seeding} title="Populate the SQL database with demo operational data (only when empty)"><Database size={14} />{seeding ? 'Seeding…' : 'Seed demo data'}</button><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Connect operational data'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
+      <div className="top-actions"><button className="stream-button" onClick={() => void startStream()} disabled={streamState === 'starting'} title="Step 3 · Start the OPC UA telemetry pipeline (02_Pipe_Stream) so live signals flow into the Eventhouse."><Play size={14} fill="currentColor" />{streamState === 'starting' ? 'Starting' : streamState === 'started' ? 'Stream started' : '3 · Start stream'}</button><button className="seed-button" onClick={() => void seedDemo()} disabled={seeding} title="Step 2 · Seed demo SQL data and publish the STID GraphQL API + Data Agent (runs the RTI_011 notebook)."><Database size={14} />{seeding ? 'Seeding…' : '2 · Seed & provision'}</button><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
     </header>
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
+      {progress && <div className="progress"><div className="progress-head"><span>{progress.label}</span><em>{progress.status} · {progressPct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${progressPct}%`, marginLeft: 0, animation: 'none' }} /></div></div>}
+      {!setupHidden && !setupComplete && <section className="setup">
+        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Run these steps in order — each one unlocks the next.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
+        <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
+          <span className="step-num">{step.done ? <Check size={14} /> : step.n}</span>
+          <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
+          <button className="step-action" onClick={step.run} disabled={step.busy || step.done}>{step.done ? 'Done' : step.busy ? 'Working…' : step.action}</button>
+        </li>)}</ol>
+      </section>}
       <section className="page-head"><div><span className="eyebrow">FACILITY OPERATIONS</span><h1>{facility?.facility_name ?? 'Hydropower operations'}</h1><p>{facility ? `${facility.facility_id} · ${facility.type ?? 'Facility'} · ${facility.country ?? 'Location unavailable'}` : 'Connect STID to load governed facility and asset metadata.'}</p></div><button className="copilot-button" onClick={() => setCopilotOpen(true)}><Bot size={16} /> Copilot</button></section>
 
       {facilities.length > 1 && <section className="facility-strip">{facilities.map(item => <button key={item.facility_id} className={item.facility_id === facility?.facility_id ? 'facility-chip active' : 'facility-chip'} onClick={() => selectFacility(item.facility_id)}><Factory size={14} /><span><strong>{item.facility_name}</strong><small>{item.facility_id}</small></span></button>)}</section>}

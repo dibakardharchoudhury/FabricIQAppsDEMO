@@ -9,13 +9,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "rayfin env --framework vite",
     "build": "tsc -b && vite build",
-    "build:rayfin": "rayfin env --framework vite && npm run build",
+    "prebuild": "rayfin env --framework vite",
+    "env": "rayfin env --framework vite",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "up": "rayfin up",
     "rayfin:db": "rayfin up db apply",
-    "rayfin:up": "rayfin up"
+    "rayfin:up": "rayfin up",
+    "deploy": "rayfin up staticapp deploy",
+    "setup-live-auth": "node ./scripts/setup-live-auth.mjs",
+    "setup-live-auth:dry": "node ./scripts/setup-live-auth.mjs --dry-run"
   },
   "dependencies": {
     "@azure/msal-browser": "^3.30.0",

@@ -4,9 +4,12 @@ A React + Leaflet + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli
 application that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 screen that composes **three independent Fabric data stores**:
 
+> **New here? For step-by-step deployment, follow [DEPLOY.md](DEPLOY.md).** This README explains
+> the architecture, the data model, and the demo-data generators.
+
 | Store | Owns | Surfaced in the app as | Accessed via |
 |---|---|---|---|
-| **Lakehouse (STID)** | Engineering master data — facilities, systems, equipment, instruments | Facility map, asset registry, signal labels | `Hydro_STID_API` GraphQL item over the Lakehouse SQL endpoint |
+| **Lakehouse (STID)** | Engineering master data — facilities, systems, equipment, instruments | Facility map, asset registry, signal labels | The workspace **GraphQL API** item over the Lakehouse SQL endpoint (created by `RTI_011`, bound in the portal, then **discovered at runtime**) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | Live asset signals / "Recent signals" | KQL query against the Eventhouse cluster |
 | **Rayfin SQL (operational)** | Mutable operational records — work orders, notifications, inspections, spare parts, 3D models | Work orders, digital twin, inspections, spare-part inventory, maintenance notifications | Rayfin `data` client (Data API Builder) |
 
@@ -48,15 +51,20 @@ explicit (every panel shows its source: *Lakehouse STID*, *Eventhouse*, or *Rayf
 
 ## Prerequisites
 
-1. **Node 24.** All CLI/build commands below are wrapped in `npx -y -p node@24 -c "…"` so they run on
-   Node 24 regardless of the machine default. (Windows note: `npm run typecheck` chains with `;` which
-   breaks in PowerShell — call `tsc` directly as shown in *Local preview*.)
-2. **A deployed RTI Fabric environment** (Lakehouse `Energy_IQ_LakehouseRTI_*`, Eventhouse
-   `RTI_Demo_Eventhouse_*`, and the `Hydro_STID_API` GraphQL item). Build it from the
-   [root README](../README.md) by running `Pipe_Setup`.
-3. **A Fabric workspace where you can create a Rayfin AppBackend** and an Entra SPA app
-   registration (delegated `GraphQLApi.Execute.All`, Azure Data Explorer, and Fabric API access;
-   no client secret — interactive sign-in only).
+1. **Node 24.** The pinned Rayfin CLI requires Node 24. `npm install` installs it locally, so
+   `npm run up` / `npm run dev` / `npm run build` "just work" when your active Node is 24. On a
+   machine with a different default, prefix any command with `npx -y -p node@24 -c "…"`.
+2. **A deployed RTI Fabric environment** — Lakehouse `Energy_IQ_LakehouseRTI_*` and Eventhouse
+   `RTI_Demo_Eventhouse_*`, built from the [root README](../README.md) by running `Pipe_Setup`.
+   The STID **GraphQL API** item is *not* part of `Pipe_Setup`: it is created by `RTI_011` (the
+   app's **Seed & provision** button runs it) and its data source is bound once in the portal
+   — see [DEPLOY.md](DEPLOY.md).
+3. **A Fabric workspace where you can create a Rayfin AppBackend** and an Entra **SPA** app
+   registration (no client secret — interactive sign-in only). Delegated permissions:
+   `GraphQLApi.Execute.All` (Power BI Service, STID), Azure Data Explorer `user_impersonation`
+   (telemetry), and Fabric `Workspace.Read.All` + `Item.Execute.All` (runtime discovery + job
+   triggering). `npm run setup-live-auth` registers the SPA redirect URIs and grants the first two
+   (the Fabric scopes are consented interactively on first use).
 
 Install dependencies once:
 
@@ -79,10 +87,9 @@ Table names are PascalCase-pluralized (`WorkOrder` → `dbo.WorkOrders`).
 | `Inspection` | `dbo.Inspections` | Condition inspection results (VISUAL / THERMOGRAPHIC / VIBRATION / LUBRICATION) | `equipmentId`, `opcuaNodeId` |
 | `SparePart` | `dbo.SpareParts` | Spare-part inventory with reorder levels (`partNumber` unique, max 255) | `equipmentType` |
 | `Asset3DModel` | `dbo.Asset3DModels` | Digital-twin GLB model registry | `equipmentId` |
-| `OperatorNote` | `dbo.OperatorNotes` | Free-text operator notes | `equipmentId`, `opcuaNodeId` |
-| `ShiftHandover` | `dbo.ShiftHandovers` | Shift handover log | — |
-| `AlarmAcknowledgement` | `dbo.AlarmAcknowledgements` | Alarm acknowledgements | `opcuaNodeId` |
-| `StreamRun` | `dbo.StreamRuns` | `Pipe_Stream` run audit | `pipelineItemId` |
+
+These five entities are the exact set in [`rayfin/data/schema.ts`](rayfin/data/schema.ts) and the
+exact set seeded by `RTI_011` — the app, the schema, and the seed stay in lockstep.
 
 Every `equipmentId` (`EQUIP_RTI_T###`) and `opcuaNodeId` (`ns=2;s=T###.<signal>`) resolves to a real
 STID Lakehouse row, so the cross-store joins in the UI always land.
@@ -157,43 +164,46 @@ generated automatically by `rayfin env` during the build.
 ### 2. Provision / update the Rayfin backend and DB schema
 
 ```powershell
-# Creates the AppBackend + auth + data services (first time), or updates them.
-npx -y -p node@24 -c "node node_modules/@microsoft/rayfin-cli/scripts/main up"
-
-# Applies rayfin/data/schema.ts to the live SQL database (creates/updates all tables).
-npx -y -p node@24 -c "node node_modules/@microsoft/rayfin-cli/scripts/main up db apply --yes"
+npm run up          # create/update AppBackend + auth + data services (uses your cached Fabric login)
+npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (creates/updates tables)
 ```
 
-> `db apply` generates a Data API Builder config from `schema.ts` and pushes it to the remote Rayfin
-> item — it uses your cached Fabric login. It **creates the tables but does not insert rows**.
-> (`npm run rayfin:up` / `npm run rayfin:db` are shortcuts for these two commands.)
+> `rayfin:db` generates a Data API Builder config from `schema.ts` and pushes it to the remote Rayfin
+> item. It **creates the tables but does not insert rows** — seeding happens in step 4 via RTI_011.
 
 ### 3. Build and deploy the static app
 
 ```powershell
-npx -y -p node@24 -c "npm run build:rayfin && node node_modules/@microsoft/rayfin-cli/scripts/main up staticapp deploy --yes"
+npm run deploy      # builds (tsc + vite, with rayfin env auto-injected) and deploys the static app
 ```
 
-`build:rayfin` runs `rayfin env --framework vite` (injects `VITE_*` from the deployment) then
+The `prebuild` hook runs `rayfin env --framework vite` to inject `VITE_*` from the deployment before
 `vite build`. The deploy prints the hosting URL and a deployment ID.
 
-### 4. Seed the operational data (supported path)
+### 4. Seed the operational data + provision GraphQL / Data Agent (RTI_011)
 
-Rayfin exposes **no direct SQL host** — its documented pattern is to seed through the authenticated
-data client. The app ships an **idempotent self-seeder**:
+The **authoritative seeder is the `RTI_011_seed_sql_wire_graphql_agent` notebook**. Its `SEED_SQL`
+step is a T-SQL `MERGE` (upsert) that **re-seeds and updates** all five operational tables every run,
+so it is safe to run repeatedly.
 
 1. Open the deployed app and sign in (avatar button).
-2. Click **"Seed demo data"** in the header.
+2. Click **"Seed & provision"** in the header.
 
-The seeder ([`seedOperationalDataIfEmpty`](src/services/rayfin.ts)) is safe to re-run:
-- `WorkOrder` and `MaintenanceNotification` are seeded **per record** (by `workOrderNumber` /
-  `equipmentId+summary`), so only missing rows are added.
-- `Inspection`, `SparePart`, and `Asset3DModel` are seeded **only when their table is empty**.
+When `POSTSEED_NOTEBOOK_NAME` is configured (default), the app runs RTI_011 in your workspace, which:
+- MERGE-upserts the WorkOrders / MaintenanceNotifications / Inspections / SpareParts / Asset3DModels
+  tables (re-seeding/updating — no "already present" no-op),
+- creates the STID **GraphQL API** item, and
+- adds the hydro-operations SQL database as a source on the Data Agent.
 
-Re-clicking reports either what was added or *"Operational data already present — nothing to seed."*
+> **One manual step:** RTI_011 creates an *empty* GraphQL API item. Open it in the Fabric portal and
+> bind the STID lakehouse tables (Facilities, Systems, Equipment, Instruments) once. The app then
+> discovers the endpoint at runtime.
 
-> If you have direct SQL access instead, run [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql)
-> with `sqlcmd` (pass `-v ActorOid=<your-oid>`), then verify with
+> **Fallback (no RTI_011 configured):** if `POSTSEED_NOTEBOOK_NAME` is blank, the app falls back to an
+> idempotent client-side self-seeder ([`seedOperationalDataIfEmpty`](src/services/rayfin.ts)) that
+> inserts demo rows through the authenticated data client only when a table is empty. If you have
+> direct SQL access instead, run [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql)
+> with `sqlcmd` (`-v ActorOid=<your-oid>`) and verify with
 > [`sql/validate-seed.sql`](sql/validate-seed.sql).
 
 ---
@@ -212,7 +222,8 @@ To reproduce everything since the app was created:
 3. **Run `Pipe_Stream`** (`RTI_007`) to push a telemetry burst into the Eventhouse.
 4. **Regenerate the operational seed** (optional): `python _gen_seed.py`.
 5. **Deploy the app**: steps 1–3 in *Deploying the app end to end* above.
-6. **Seed operational data**: click **Seed demo data** (step 4 above).
+6. **Seed operational data + provision**: click **Seed & provision** (step 4 above), then bind the
+   STID GraphQL API item once in the Fabric portal.
 7. **Verify** in the browser: 3 facilities on the map, asset signals from Eventhouse, and the
    Digital twin / Inspections / Spare parts / Maintenance notifications / Work orders panels populated.
 
@@ -222,11 +233,14 @@ To reproduce everything since the app was created:
 
 ```powershell
 cd HydroOperationsApp
-npx -y -p node@24 -c "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json"   # typecheck
-npx -y -p node@24 -c "node ./node_modules/eslint/bin/eslint.js ."                              # lint
-npx -y -p node@24 -c "node ./node_modules/vite/bin/vite.js build"                             # production build
-npx -y -p node@24 -c "node ./node_modules/vite/bin/vite.js"                                   # dev server
+npm run typecheck   # tsc --noEmit -p tsconfig.app.json
+npm run lint        # eslint .
+npm run build       # production build (rayfin env auto-injected via prebuild)
+npm run dev         # dev server
 ```
+
+> On a machine whose default Node is not 24, prefix any command with
+> `npx -y -p node@24 -c "…"` (for example `npx -y -p node@24 -c "npm run build"`).
 
 Without Fabric environment values the app shows explicit disconnected states — it does not fabricate
 source values or Data Agent answers.
