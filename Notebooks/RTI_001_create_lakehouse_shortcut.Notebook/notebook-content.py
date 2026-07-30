@@ -149,10 +149,10 @@ data_agent_name = f"RTI_Demo_Agent_{env_suffix}"
 dashboard_name = f"RTI_Demo_OPCUA_TelemetryStats_{env_suffix}"
 ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
 
-# Data Pipeline names — all versioned by env_suffix.
-alert_pipeline_name = f"Pipe_SendEmailAlert_{env_suffix}"   # NB10 alert pipeline
-setup_pipeline_name = f"Pipe_Setup_{env_suffix}"            # orchestrated setup (NB01–06, 08–10)
-stream_pipeline_name = f"Pipe_Stream_{env_suffix}"          # on-demand OPC UA stream (NB07)
+# Data Pipeline names — NOT versioned (one pipeline per workspace, no env_suffix).
+alert_pipeline_name = "Pipe_SendEmailAlert"   # NB10 alert pipeline
+setup_pipeline_name = "Pipe_Setup"            # orchestrated setup (NB01–06, 08–10)
+stream_pipeline_name = "Pipe_Stream"          # on-demand OPC UA stream (NB07)
 
 
 def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
