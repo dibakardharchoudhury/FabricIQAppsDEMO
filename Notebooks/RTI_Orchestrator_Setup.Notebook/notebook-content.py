@@ -30,29 +30,30 @@
 
 # PARAMETERS CELL ********************
 
-# The ONLY inputs. Pipe_Setup injects these; this notebook forwards them to NB01.
-# Everything else derives from env_suffix inside NB01.
+# The ONLY inputs — supplied by the Pipe_Setup pipeline (Base parameters) at runtime.
+# Defaults are intentionally BLANK so the pipeline is the single source of truth; the
+# guard in the next cell fails fast if any required value is missing (e.g. a standalone run).
 
-env_suffix = "V5"
-workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"
+env_suffix = ""
+workspace_id = ""
 
 # Azure Key Vault (URI + secret NAMES only — never secret values).
-key_vault_uri = "https://akvfabcapnew.vault.azure.net/"
-key_vault_tenant_id_secret_name = "tenantid"
-key_vault_client_id_secret_name = "clientid"
-key_vault_client_secret_name = "clientsecret"
+key_vault_uri = ""
+key_vault_tenant_id_secret_name = ""
+key_vault_client_id_secret_name = ""
+key_vault_client_secret_name = ""
 
 # Seed dataset location + the connection feeding the bronze shortcut.
-adls_account_url = "https://didharchadlsg2.dfs.core.windows.net"
-adls_subpath = "/dataiq/bronze"
-connection_name = "ontologydidharch-connection"
+adls_account_url = ""
+adls_subpath = ""
+connection_name = ""
 
 # Operations Agent (Teams) targets.
-ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"
-ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
-ops_agent_run_as_user = "admin@mngenvmcap218279.onmicrosoft.com"
+ops_agent_teams_team_id = ""
+ops_agent_teams_channel_id = ""
+ops_agent_run_as_user = ""
 
-# Max seconds any single child notebook may run before it is timed out.
+# Max seconds any single child notebook may run before it is timed out (operational default).
 per_notebook_timeout_secs = 3600
 
 # METADATA ********************
@@ -81,6 +82,18 @@ nb01_args = {
     "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
     "ops_agent_run_as_user": ops_agent_run_as_user,
 }
+
+# Fail fast if the pipeline did not supply the required inputs (blank defaults above).
+_missing = [name for name, value in nb01_args.items() if not str(value).strip()]
+if _missing:
+    raise ValueError(
+        "Missing required parameter(s): " + ", ".join(_missing) +
+        ". Launch this notebook from the Pipe_Setup pipeline (or set the values in the "
+        "parameters cell) before running."
+    )
+print("✅ Received parameters from Pipe_Setup:")
+for _name, _value in nb01_args.items():
+    print(f"   {_name:<34} = {_value}")
 
 # Setup DAG — one Spark session for all activities (VNet cold start paid once).
 # Edges are DATA dependencies resolved through rti_demo_settings; independent branches run in parallel.
