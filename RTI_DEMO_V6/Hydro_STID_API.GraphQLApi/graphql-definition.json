@@ -1,0 +1,85 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/definition/1.0.0/schema.json",
+  "datasources": [
+    {
+      "objects": [
+        {
+          "actions": {
+            "Query": "Enabled",
+            "Query_by_pk": "Enabled",
+            "Create": "Enabled",
+            "Update": "Enabled",
+            "Delete": "Enabled"
+          },
+          "fieldMappings": {
+            "criticality": "criticality",
+            "equipment_id": "equipment_id",
+            "equipment_type_code": "equipment_type_code",
+            "equipment_type_name": "equipment_type_name",
+            "facility_id": "facility_id",
+            "install_date": "install_date",
+            "is_active": "is_active",
+            "manufacturer": "manufacturer",
+            "model": "model",
+            "status": "status",
+            "system_id": "system_id",
+            "tag": "tag"
+          },
+          "graphqlType": "silver_equipment",
+          "relationships": [],
+          "sourceObject": "dbo.silver_equipment",
+          "sourceObjectType": "Table"
+        },
+        {
+          "actions": {
+            "Query": "Enabled",
+            "Query_by_pk": "Enabled",
+            "Create": "Enabled",
+            "Update": "Enabled",
+            "Delete": "Enabled"
+          },
+          "fieldMappings": {
+            "commissioned_date": "commissioned_date",
+            "country": "country",
+            "facility_id": "facility_id",
+            "facility_name": "facility_name",
+            "lat": "lat",
+            "lon": "lon",
+            "type": "type"
+          },
+          "graphqlType": "silver_facilities",
+          "relationships": [],
+          "sourceObject": "dbo.silver_facilities",
+          "sourceObjectType": "Table"
+        },
+        {
+          "actions": {
+            "Query": "Enabled",
+            "Query_by_pk": "Enabled",
+            "Create": "Enabled",
+            "Update": "Enabled",
+            "Delete": "Enabled"
+          },
+          "fieldMappings": {
+            "equipment_id": "equipment_id",
+            "facility_id": "facility_id",
+            "instrument_id": "instrument_id",
+            "instrument_type": "instrument_type",
+            "is_active": "is_active",
+            "opcua_node_id": "opcua_node_id",
+            "system_id": "system_id",
+            "tag": "tag",
+            "unit": "unit"
+          },
+          "graphqlType": "silver_instruments",
+          "relationships": [],
+          "sourceObject": "dbo.silver_instruments",
+          "sourceObjectType": "Table"
+        }
+      ],
+      "sourceItemId": "7017b47d-de85-42bb-9e27-48bf2dba07a1",
+      "sourceType": "SqlAnalyticsEndpoint",
+      "sourceWorkspaceId": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34"
+    }
+  ]
+}
