@@ -1,0 +1,76 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "f7c3a2e1-8b4d-4e6a-9c1f-2d3e4f5a6b7c",
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "env_suffix": {
+              "value": "V5",
+              "type": "string"
+            },
+            "workspace_id": {
+              "value": "19f3d588-1585-4f3b-bb59-5abaf90c193a",
+              "type": "string"
+            },
+            "key_vault_uri": {
+              "value": "https://akvfabcapnew.vault.azure.net/",
+              "type": "string"
+            },
+            "key_vault_tenant_id_secret_name": {
+              "value": "tenantid",
+              "type": "string"
+            },
+            "key_vault_client_id_secret_name": {
+              "value": "clientid",
+              "type": "string"
+            },
+            "key_vault_client_secret_name": {
+              "value": "clientsecret",
+              "type": "string"
+            },
+            "adls_account_url": {
+              "value": "https://didharchadlsg2.dfs.core.windows.net",
+              "type": "string"
+            },
+            "adls_subpath": {
+              "value": "/dataiq/bronze",
+              "type": "string"
+            },
+            "connection_name": {
+              "value": "ontologydidharch-connection",
+              "type": "string"
+            },
+            "ops_agent_teams_team_id": {
+              "value": "c480320e-9204-474b-9b2c-54a53e94f220",
+              "type": "string"
+            },
+            "ops_agent_teams_channel_id": {
+              "value": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+              "type": "string"
+            },
+            "ops_agent_run_as_user": {
+              "value": "admin@mngenvmcap218279.onmicrosoft.com",
+              "type": "string"
+            },
+            "per_notebook_timeout_secs": {
+              "value": "3600",
+              "type": "int"
+            }
+          }
+        },
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "name": "RTI_Orchestrator_Setup",
+        "dependsOn": []
+      }
+    ]
+  }
+}
