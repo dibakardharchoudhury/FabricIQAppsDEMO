@@ -57,7 +57,8 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | **RTI_001_create_lakehouse_SelfContained** | Foundation (self-contained): resolves workspace/Lakehouse, **seeds the STID CSVs into `Files/bronze/stid/`** (no ADLS/shortcut/connection), derives all names, writes `rti_demo_settings` (**single source of truth**), and **exits with the lakehouse name**. Runs as **Stage 1** of `Pipe_Setup`. | Stage 1 |
 | **RTI_001_create_lakehouse_shortcut** | Legacy foundation variant that creates an ADLS Gen2 shortcut at `Files/bronze` instead of seeding. Kept for reference; **not** wired into `Pipe_Setup`. | — |
 | **RTI_002_Setup_Eventhouse_Only** | Creates Eventhouse + KQL DB + `OPCUAEvents` table + Eventstream (Custom Endpoint → Eventhouse); seeds signal metadata into silver. | ✅ |
-| **RTI_003_ingest_transform_medallion** | Bronze → Silver → Gold transforms; produces `silver_signal_master` and the structured silver/gold tables. | ✅ |
+| **RTI_003_ingest_transform_medallion_SelfContained** | Bronze → Silver → Gold transforms; reads the seeded STID files from `Files/bronze` via `bronze_root`; produces `silver_signal_master` and the structured silver/gold tables. Wired into the setup DAG. | ✅ |
+| **RTI_003_ingest_transform_medallion** | Legacy medallion variant that reads bronze via the ADLS Gen2 shortcut (`shortcut_parent_path`/`shortcut_name`). Kept for reference; **not** wired into the setup DAG. | — |
 | **RTI_004_build_ontology_mapping_rti_structured** | Builds & deploys the ontology (5 entity types, 4 relationship types); adds time-series *properties* on `signal_master`. | ✅ |
 | **RTI_005_entity_DataBinding_rti_structured** | Static Lakehouse DataBindings + relationship contextualizations. | ✅ |
 | **RTI_006_TimeSeriesBinding_RTI_signal** | Adds the **Eventhouse TimeSeries DataBinding** from `OPCUAEvents` to `signal_master`. | ✅ |

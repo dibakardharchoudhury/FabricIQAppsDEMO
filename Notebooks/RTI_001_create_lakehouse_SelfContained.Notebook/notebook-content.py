@@ -841,7 +841,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # (Adjust this list if you add or rename notebooks.)
 chain_notebooks = [
     "RTI_002_Setup_Eventhouse_Only",
-    "RTI_003_ingest_transform_medallion",
+    "RTI_003_ingest_transform_medallion_SelfContained",
     "RTI_004_build_ontology_mapping_rti_structured",
     "RTI_005_entity_DataBinding_rti_structured",
     "RTI_006_TimeSeriesBinding_RTI_signal",
