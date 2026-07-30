@@ -66,7 +66,7 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | **RTI_008_build_realtime_dashboard** | Builds & deploys the Real-Time Dashboard over `OPCUAEvents`. | ✅ |
 | **RTI_009_build_data_agent** | Builds & deploys the Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Builds the Operations Agent + `Pipe_SendEmailAlert` pipeline for Teams/email alerts. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | **On-demand post-seed** run by the Hydro app's *Seed & provision* button (not part of the setup DAG). MERGE-upserts the five operational SQL tables, creates the STID **GraphQL API** item (bind once in the portal), and adds the hydro-operations SQL DB as a Data Agent source. | ❌ |
+| **RTI_011_seed_sql_wire_graphql_agent** | **On-demand post-seed** run by the Hydro app's *Seed & provision* button (not part of the setup DAG). MERGE-upserts the five operational SQL tables, creates the STID **GraphQL API** item **and auto-binds it** to the lakehouse SQL analytics endpoint, and adds the hydro-operations SQL DB's **SQL analytics endpoint** as a Data Agent source. | ❌ |
 | **RTI_Orchestrator_Setup** | **Stage 2** driver: a `%%configure` first cell attaches the lakehouse (name received from NB01's exit value), then runs the setup DAG (NB02–06, 08–10) in **one Spark session** via `notebookutils.notebook.runMultiple`. | Stage 2 |
 
 ### Data Pipelines (`Orchestrator_Pipelines/`)

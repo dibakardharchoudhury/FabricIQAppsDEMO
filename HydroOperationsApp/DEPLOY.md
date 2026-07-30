@@ -7,13 +7,13 @@ a copy-paste command with a one-line note. For how it all fits together, see [RE
 and the [root README](../README.md).
 
 **The path:** build the RTI environment → install → configure env → provision the backend → deploy →
-seed & provision (RTI_011) → bind the STID GraphQL API → switch on live auth → start the stream.
+seed & provision (RTI_011, which auto-binds the STID GraphQL API) → switch on live auth → start the stream.
 
 The app composes **three Fabric data stores** on one screen:
 
 | Store | Source | Auth path |
 | --- | --- | --- |
-| **STID** (facilities/equipment/instruments) | Lakehouse **GraphQL API** item (created by `RTI_011`, bound in the portal) | Power BI Service — `GraphQLApi.Execute.All` |
+| **STID** (facilities/equipment/instruments) | Lakehouse **GraphQL API** item (created **and auto-bound** by `RTI_011`) | Power BI Service — `GraphQLApi.Execute.All` |
 | **Telemetry** (live signals) | Eventhouse `OPCUAEvents` (KQL) | Azure Data Explorer — `user_impersonation` |
 | **Operational** (work orders, inspections, spare parts, 3D models) | Rayfin-managed SQL database | Rayfin data client (delegated) |
 
@@ -99,7 +99,7 @@ The `prebuild` hook runs `rayfin env --framework vite` to inject `VITE_*` from t
 `vite build`. When it finishes your app is **live** — with empty operational tables and no STID
 GraphQL binding yet. The next steps add data and wire the live stores.
 
-## 7. Seed & provision (RTI_011) + bind the STID GraphQL API
+## 7. Seed & provision (RTI_011) — seeds SQL and auto-binds the STID GraphQL API
 
 `RTI_011_seed_sql_wire_graphql_agent` is the **authoritative seeder**. Its `SEED_SQL` step is a T-SQL
 `MERGE` (upsert) that **re-seeds and updates** all five operational tables every run.
@@ -110,14 +110,17 @@ GraphQL binding yet. The next steps add data and wire the live stores.
 The app runs `RTI_011` in your workspace, which:
 
 - MERGE-upserts WorkOrders / MaintenanceNotifications / Inspections / SpareParts / Asset3DModels,
-- creates the STID **GraphQL API** item, and
-- adds the hydro-operations SQL database as a source on the Data Agent.
+- creates the STID **GraphQL API** item **and auto-binds it** to the Lakehouse SQL analytics endpoint
+  (exposing `silver_facilities`, `silver_equipment`, `silver_instruments`), and
+- adds the hydro-operations SQL database's **SQL analytics endpoint** as a source on the Data Agent.
 
-### Bind the STID GraphQL API (one manual step)
+The app then discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
 
-`RTI_011` creates an **empty** GraphQL API item. Open it in the Fabric portal once and add the STID
-Lakehouse tables (`Facilities`, `Systems`, `Equipment`, `Instruments`) as its data source. The app
-then discovers the endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
+### If the auto-bind fails (fallback only)
+
+RTI_011 prints the bind result in its STEP B output. Only if it reports a failure, open the GraphQL
+API item in the Fabric portal once and add the STID Lakehouse tables (`Facilities`, `Systems`,
+`Equipment`, `Instruments`) as its data source.
 
 > **Fallback (no RTI_011):** if `RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME` is blank, the app runs an
 > idempotent client-side self-seeder that inserts demo rows only when a table is empty. For direct
@@ -157,7 +160,7 @@ the same pipeline. Live asset gauges populate once telemetry lands and Step 8 au
 | Problem | Fix |
 | --- | --- |
 | **"System cancelled the Spark session"** when running RTI_011 | RTI_011's lakehouse binding is stale. The repo binds it to the correct lakehouse and NB01 re-binds it at setup time — re-import RTI_011 (Fabric **source control → Update**) or re-run Stage 1 (`RTI_001`) so the binding refreshes, then retry. |
-| **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7) so `RTI_011` creates the GraphQL API item, then **bind** the STID tables to it in the portal. |
+| **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7) so `RTI_011` creates and auto-binds the GraphQL API item. If the notebook's STEP B output reports the auto-bind failed, bind the STID tables to it manually in the portal. |
 | Live asset signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live-auth must be in place. |
 | **"Connect"** / sign-in popup fails with an `AADSTS` error | Run `npm run setup-live-auth` (after `az login`). **AADSTS50011** = origin not a registered SPA redirect URI (step 1). **AADSTS650057** = app lacks the ADX or Power BI delegated permission (step 2). **AADSTS65001** = no admin consent (step 2 grants it). Entra edge-caches config — hard-refresh (Ctrl+F5) after. |
 | Telemetry in KQL but app shows "no live readings" | Browser reaches KQL but the query fails. Open **F12 → Console** and look for `[kql]` / `[fabricToken]`. `HTTP 401` = wrong token audience — re-connect so the popup consents to the cluster scope. `HTTP 403` = grant the user **KQL Database Viewer** on the Eventhouse. A network/`catch` error with no HTTP status = **CORS** isn't allowing the app origin on the Eventhouse cluster. |
