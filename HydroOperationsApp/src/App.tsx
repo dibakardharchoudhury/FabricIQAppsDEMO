@@ -13,6 +13,9 @@ import {
 } from './services/rayfin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
+// OPC UA node ids encode the equipment tag (ns=2;s=T004.inlet_pressure -> T004) so a work order
+// can be raised even before STID metadata maps the signal to an asset.
+const equipmentTagFromNode = (nodeId: string) => nodeId.split('s=')[1]?.split(/[.;]/)[0]?.trim() || undefined
 // model-viewer only renders glTF/GLB; other formats keep the thumbnail/link fallback.
 const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].includes(format.toUpperCase()))
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unknown error'
@@ -368,8 +371,12 @@ export default function App() {
 
   // Raise a work order straight from a Bad/Uncertain telemetry signal.
   async function raiseWorkOrderForSignal(flagged: FlaggedSignal) {
-    const equipmentId = flagged.instrument?.equipment_id ?? flagged.asset?.equipment_id
-    if (!equipmentId) { setNotice(`No asset is mapped to ${flagged.reading.opcuaNodeId}; cannot raise a work order.`); return }
+    // Prefer the STID-mapped asset; otherwise derive the equipment from the OPC UA node id so the
+    // button always works, even before STID metadata is connected.
+    const tag = equipmentTagFromNode(flagged.reading.opcuaNodeId)
+    const matched = tag ? stid?.equipment.find(item => item.equipment_id.includes(tag) || (item.tag ?? '').includes(tag)) : undefined
+    const equipmentId = flagged.instrument?.equipment_id ?? flagged.asset?.equipment_id ?? matched?.equipment_id ?? (tag ? `EQUIP_RTI_${tag}` : undefined)
+    if (!equipmentId) { setNotice(`Could not identify an asset for ${flagged.reading.opcuaNodeId}; cannot raise a work order.`); return }
     const activeUser = user ?? await authenticate()
     if (!activeUser) { setNotice('Sign in with Fabric to create a work order.'); return }
     setRaising(flagged.reading.opcuaNodeId)
@@ -462,9 +469,10 @@ export default function App() {
         <ul className="quality-alert-list">{flaggedSignals.slice(0, 6).map(flagged => {
           const hasOrder = nodesWithOpenOrder.has(flagged.reading.opcuaNodeId)
           const quality = (flagged.reading.quality ?? '').toLowerCase()
+          const derivedTag = equipmentTagFromNode(flagged.reading.opcuaNodeId)
           return <li key={flagged.reading.opcuaNodeId}>
             <span className={`q-badge ${quality}`}>{flagged.reading.quality}</span>
-            <span className="q-sig"><strong>{flagged.instrument?.tag ?? flagged.reading.opcuaNodeId}</strong><small>{(flagged.asset?.tag ?? flagged.instrument?.equipment_id ?? 'Unmapped signal')} · {flagged.reading.value}{flagged.instrument?.unit ? ` ${flagged.instrument.unit}` : ''}</small></span>
+            <span className="q-sig"><strong>{flagged.instrument?.tag ?? flagged.reading.opcuaNodeId}</strong><small>{(flagged.asset?.tag ?? flagged.instrument?.equipment_id ?? (derivedTag ? `Turbine ${derivedTag}` : 'Unmapped signal'))} · {flagged.reading.value}{flagged.instrument?.unit ? ` ${flagged.instrument.unit}` : ''}</small></span>
             <span className="q-time" title={new Date(flagged.reading.eventTime).toLocaleString()}><strong>{fmtAgo(flagged.reading.eventTime)}</strong><small>{fmtClock(flagged.reading.eventTime)}</small></span>
             <button className="q-action" disabled={hasOrder || raising === flagged.reading.opcuaNodeId} onClick={() => void raiseWorkOrderForSignal(flagged)}>{hasOrder ? 'WO open' : raising === flagged.reading.opcuaNodeId ? 'Raising…' : <><Plus size={12} /> Work order</>}</button>
           </li>
