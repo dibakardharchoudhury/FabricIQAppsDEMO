@@ -171,6 +171,12 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "shortcut_parent_path": shortcut_parent_path,
         "connection_name": connection_name,
 
+        # Key Vault URI + secret NAMES (never secret values) so NB002–010 authenticate the SPN.
+        "key_vault_uri": key_vault_uri,
+        "key_vault_tenant_id_secret": key_vault_tenant_id_secret_name,
+        "key_vault_client_id_secret": key_vault_client_id_secret_name,
+        "key_vault_client_secret_secret": key_vault_client_secret_name,
+
         "ontology_name": ontology_name,
         "eventhouse_name": eventhouse_name,
         "kql_database_name": kql_database_name,
@@ -922,13 +928,9 @@ settings_schema = StructType([
 
 settings_rows = build_rti_demo_settings_rows(
     extra_settings={
+        # Only genuinely runtime-derived IDs belong here; all config-time params live in the base dict.
         "lakehouse_id": lakehouse_id,
         "target_folder_id": target_folder_id,
-        # Key Vault names/URIs (not secret values) so notebooks 002–007 read them from here.
-        "key_vault_uri": key_vault_uri,
-        "key_vault_tenant_id_secret": key_vault_tenant_id_secret_name,
-        "key_vault_client_id_secret": key_vault_client_id_secret_name,
-        "key_vault_client_secret_secret": key_vault_client_secret_name,
     }
 )
 
