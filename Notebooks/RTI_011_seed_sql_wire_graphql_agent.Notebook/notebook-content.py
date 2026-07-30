@@ -177,6 +177,26 @@ SQL_TABLES = [
      "version, updatedByOid, updatedAt."),
 ]
 
+# --- STID GraphQL API binding over the Lakehouse SQL analytics endpoint ------
+# The web app (HydroOperationsApp) issues exactly this query, so the GraphQL API
+# must expose these three silver tables with these fields (identity-mapped to the
+# lakehouse columns). graphqlType == the generated query field name.
+GRAPHQL_DEFINITION_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/"
+    "definition/1.0.0/schema.json"
+)
+GRAPHQL_DEFINITION_PATH = "graphql-definition.json"
+GRAPHQL_OBJECTS = [
+    ("silver_facilities",
+     ["facility_id", "facility_name", "type", "country", "lat", "lon", "commissioned_date"]),
+    ("silver_equipment",
+     ["equipment_id", "facility_id", "system_id", "equipment_type_code", "equipment_type_name",
+      "tag", "manufacturer", "model", "criticality", "install_date", "status", "is_active"]),
+    ("silver_instruments",
+     ["opcua_node_id", "tag", "instrument_id", "equipment_id", "system_id", "facility_id",
+      "unit", "instrument_type", "is_active"]),
+]
+
 OPERATIONAL_INSTRUCTIONS_MARKER = "## Operational data (hydro-operations SQL)"
 OPERATIONAL_INSTRUCTIONS = (
     f"\n\n{OPERATIONAL_INSTRUCTIONS_MARKER}\n"
@@ -521,6 +541,64 @@ def upsert_part(parts: list, path: str, obj: dict) -> list:
     return parts
 
 
+def resolve_sql_analytics_endpoint_id(
+    parent_name: str, parent_kind: str = "sqldatabase", parent_id: Optional[str] = None
+) -> Optional[str]:
+    """Resolve the SQL analytics endpoint (a separate SQLEndpoint workspace item) that
+    mirrors a Lakehouse or Fabric SQL Database. Data Agent `data_warehouse` sources and
+    GraphQL `SqlAnalyticsEndpoint` datasources must reference THIS id — not the parent
+    Lakehouse/SQLDatabase item id. Returns None if it can't be resolved (callers fall back
+    to the parent id so behaviour degrades gracefully)."""
+    # 1) Lakehouses expose their endpoint id directly in item properties.
+    if parent_kind == "lakehouse" and parent_id:
+        resp = api_request("GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/lakehouses/{parent_id}")
+        if resp is not None and resp.status_code == 200 and resp.content:
+            props = (resp.json() or {}).get("properties", {}) or {}
+            ep_id = (props.get("sqlEndpointProperties") or {}).get("id")
+            if ep_id:
+                return ep_id
+    # 2) Otherwise list workspace items of type SQLEndpoint and match by display name.
+    resp = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items", params={"type": "SQLEndpoint"}
+    )
+    if resp is not None and resp.status_code == 200 and resp.content:
+        items = (resp.json() or {}).get("value", []) or []
+        target = (parent_name or "").lower()
+        for it in items:  # exact display-name match first
+            if (it.get("displayName") or "").lower() == target:
+                return it.get("id")
+        for it in items:  # then a contains match (endpoints are sometimes suffixed)
+            if target and target in (it.get("displayName") or "").lower():
+                return it.get("id")
+    return None
+
+
+def build_graphql_definition(source_endpoint_id: str) -> dict:
+    """graphql-definition.json binding the STID GraphQL API to the Lakehouse SQL analytics
+    endpoint, exposing the three silver tables the web app queries."""
+    objects = []
+    for table, cols in GRAPHQL_OBJECTS:
+        objects.append({
+            "graphqlType": table,
+            "sourceObject": f"dbo.{table}",
+            "sourceObjectType": "Table",
+            "actions": {"Query": "Enabled", "Query_by_pk": "Enabled"},
+            "fieldMappings": {c: c for c in cols},
+            "relationships": [],
+        })
+    return {
+        "$schema": GRAPHQL_DEFINITION_SCHEMA_URL,
+        "datasources": [
+            {
+                "sourceItemId": source_endpoint_id,
+                "sourceWorkspaceId": workspace_id,
+                "sourceType": "SqlAnalyticsEndpoint",
+                "objects": objects,
+            }
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # STEP A — Seed the operational SQL Database (idempotent MERGE via SPN + pyodbc)
 # ---------------------------------------------------------------------------
@@ -632,16 +710,39 @@ print("\n=== STEP B — STID GraphQL API item ===")
 try:
     graphql_item = create_graphql_api(graphql_api_name)
     stid_graphql_id = (graphql_item or {}).get("id")
+
+    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose the three
+    # silver tables the web app queries (silver_facilities / silver_equipment /
+    # silver_instruments). Without this the GraphQL item is created empty.
+    lakehouse_endpoint_id = resolve_sql_analytics_endpoint_id(
+        lakehouse_name, parent_kind="lakehouse", parent_id=lakehouse_id
+    )
+    if not lakehouse_endpoint_id:
+        raise RuntimeError(
+            f"Could not resolve the SQL analytics endpoint of Lakehouse '{lakehouse_name}'. "
+            "Ensure the lakehouse (and its SQL endpoint) exists, then re-run."
+        )
+    print(f"✅ Lakehouse SQL analytics endpoint id: {lakehouse_endpoint_id}")
+
+    gql_definition = get_item_definition(stid_graphql_id)
+    gql_parts = gql_definition.get("definition", {}).get("parts", []) or []
+    gql_parts = upsert_part(
+        gql_parts, GRAPHQL_DEFINITION_PATH, build_graphql_definition(lakehouse_endpoint_id)
+    )
+    print(f"Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo silver tables")
+    update_item_definition(stid_graphql_id, {"parts": gql_parts})
     print(
-        "ℹ️ Bind its data source in the portal (GraphQL editor → Get data → Lakehouse SQL "
-        f"analytics endpoint of '{lakehouse_name}' → expose silver_facilities / "
-        "silver_equipment / silver_instruments). The exact endpoint URL is shown on the "
-        "GraphQL item's page and is what the web app needs in VITE_RAYFIN_STID_GRAPHQL_URL."
+        f"🌐 GraphQL API '{graphql_api_name}' bound to '{lakehouse_name}' — exposing "
+        + ", ".join(t for t, _ in GRAPHQL_OBJECTS)
     )
 except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the fallback
-    print("⚠️ GraphQL API creation did not complete:")
+    print("⚠️ GraphQL API creation/binding did not complete:")
     print("   ", exc)
-    print(f"   Manual fallback: New → GraphQL API → '{graphql_api_name}' over the Lakehouse.")
+    print(
+        f"   Manual fallback: open '{graphql_api_name}' → Get data → Lakehouse SQL analytics "
+        f"endpoint of '{lakehouse_name}' → expose silver_facilities / silver_equipment / "
+        "silver_instruments."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -704,14 +805,26 @@ try:
     agent_id = resolve_data_agent_id()
     print(f"✅ Data Agent id: {agent_id}")
 
+    # A Data Agent `data_warehouse` source must reference the SQL analytics endpoint of the
+    # SQL Database (a separate SQLEndpoint item) — NOT the SQLDatabase item id. Referencing
+    # the raw SQLDatabase id is what triggers "Could not create metadata for data source".
+    sql_source_artifact_id = resolve_sql_analytics_endpoint_id(
+        sql_db_item_name, parent_kind="sqldatabase"
+    ) or sql_db_item_id
+    if sql_source_artifact_id == sql_db_item_id:
+        print("⚠️ SQL analytics endpoint not found; falling back to the SQL Database item id.")
+    else:
+        print(f"✅ SQL analytics endpoint id: {sql_source_artifact_id}")
+
     definition = get_item_definition(agent_id)
     parts = definition.get("definition", {}).get("parts", []) or []
 
-    # Reuse an existing data_warehouse datasource part if the portal already created one.
+    # Reuse/upgrade the existing data_warehouse datasource part (it may hold a stale
+    # artifactId from a prior run) — there is only one SQL source, matched by type.
     sql_part_path = SQL_DATASOURCE_PATH
     for part in parts:
         decoded = decode_payload(part.get("payload", ""))
-        if decoded.get("type") == SQL_DATASOURCE_TYPE and decoded.get("artifactId") == sql_db_item_id:
+        if decoded.get("type") == SQL_DATASOURCE_TYPE:
             sql_part_path = part.get("path", SQL_DATASOURCE_PATH)
             break
 
@@ -719,7 +832,7 @@ try:
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == sql_part_path),
         {},
     )
-    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_db_item_id))
+    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_source_artifact_id))
 
     existing_stage = next(
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
