@@ -69,7 +69,7 @@ settings_table_name = "rti_demo_settings"
 # Single environment suffix. Change this ONE value (e.g. "V4", "DEV") to stand up a
 # parallel environment: the workspace folder AND every artifact name below derive
 # from it, so the whole environment shares one suffix and no name is edited by hand.
-env_suffix = "V3"
+env_suffix = "V5"
 
 # Lakehouse name & description
 lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
@@ -107,9 +107,9 @@ ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
 
 # Operations Agent deployment inputs (previously hardcoded as defaults inside NB10).
 # Kept here so NB01 is the single source of truth for all config (never runtime IDs).
-ops_agent_run_as_user = ""  # UPN the agent runs as; blank = the user who deploys it
-ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"       # FacilitiesRealTimeMonitoring
-ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Alerts
+ops_agent_run_as_user = "admin@mngenvmcap218279.onmicrosoft.com"  # UPN the agent runs as; blank = the user who deploys it
+ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"       # Team in Teams: FacilitiesRealTimeMonitoring
+ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Channel in that Team: Alerts (NB10 has instructions about extracting the Team and Channel ID)
 ops_agent_copy_playbook = "true"
 
 # Structured table names used by the ontology
