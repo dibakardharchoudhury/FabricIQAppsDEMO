@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "RTI_Orchestrator_Setup",
+    "description": "Runs the setup notebooks (NB01-06, 08-10) in a single Spark session via runMultiple."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "f7c3a2e1-8b4d-4e6a-9c1f-2d3e4f5a6b7c"
+  }
+}

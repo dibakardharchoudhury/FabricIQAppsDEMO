@@ -54,41 +54,31 @@ print("Notebook environment is ready (using notebookutils).")
 # META   "language_group": "synapse_pyspark"
 # META }
 
-# CELL ********************
+# PARAMETERS CELL ********************
 
 # --------------------------------------------
-# USER PARAMETERS / BOOTSTRAP SETTINGS
+# USER PARAMETERS  (the ONLY inputs; the Setup pipeline / orchestrator injects these)
 # --------------------------------------------
+# Tagged parameters cell — keep it to RAW knobs only. Every name that derives from
+# env_suffix is computed in the NEXT cell, AFTER any injected override is applied.
 
 from datetime import datetime, timezone
 
-# Shared settings table name.
-# Later notebooks should read this table instead of redefining common settings.
+# Shared settings table name (later notebooks read this table instead of redefining common settings).
 settings_table_name = "rti_demo_settings"
 
-# Single environment suffix. Change this ONE value (e.g. "V4", "DEV") to stand up a
-# parallel environment: the workspace folder AND every artifact name below derive
-# from it, so the whole environment shares one suffix and no name is edited by hand.
+# THE one environment lever. Override this (e.g. "V6", "DEV") to stand up a parallel
+# environment; the workspace folder and every artifact name derive from it in the next cell.
 env_suffix = "V5"
 
-# Lakehouse name & description
-lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
+# Workspace that will host the demo items.
+workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"  # from behind /groups/ in the Fabric URL
 
 lakehouse_description = "Lakehouse for Fabric IQ mock dataset (STID, SAP, OPC UA, SOLV, P&ID, Documents)."
 
-# Workspace ID that will host the Lakehouse
-workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"  # from behind /groups/ in Fabric URL
-
-# Workspace folder where the demo items should be created (carries the env suffix).
-# This is a Fabric workspace folder path, not a Lakehouse path.
-workspace_folder_path = f"RTI_DEMO_{env_suffix}"
-
-# ADLS G2 URL containing the mock dataset.
-# This should be the root folder containing `bronze/stid`, `bronze/sap`, etc.
+# Seed dataset location (root containing bronze/stid, bronze/sap, ...) and the shortcut it feeds.
 adls_account_url = "https://didharchadlsg2.dfs.core.windows.net"
 adls_subpath = "/dataiq/bronze"
-
-# Shortcut configuration (we want Lakehouse/Files/bronze -> ADLS G2 dataset)
 shortcut_name = "bronze"
 shortcut_parent_path = "Files"
 connection_name = "ontologydidharch-connection"
@@ -100,33 +90,23 @@ key_vault_tenant_id_secret_name = "tenantid"
 key_vault_client_id_secret_name = "clientid"
 key_vault_client_secret_name = "clientsecret"
 
-# Standard item names used by later notebooks — all derived from env_suffix so the
-# whole environment shares one suffix. The KQL database intentionally reuses the
-# Eventhouse name (Fabric names an Eventhouse's default KQL DB the same way).
-ontology_name = f"RTI_Demo_Ontology_{env_suffix}"
-eventhouse_name = f"RTI_Demo_Eventhouse_{env_suffix}"
-kql_database_name = f"RTI_Demo_Eventhouse_{env_suffix}"
-eventstream_name = f"RTI_Demo_Eventstream_{env_suffix}"
+# Eventhouse landing table (a table name, not a versioned artifact).
 eventhouse_table_name = "OPCUAEvents"
-data_agent_name = f"RTI_Demo_Agent_{env_suffix}"
-dashboard_name = f"RTI_Demo_OPCUA_TelemetryStats_{env_suffix}"
-ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
 
-# Operations Agent deployment inputs (previously hardcoded as defaults inside NB10).
-# Kept here so NB01 is the single source of truth for all config (never runtime IDs).
-ops_agent_run_as_user = "admin@mngenvmcap218279.onmicrosoft.com"  # UPN the agent runs as; blank = the user who deploys it
+# Operations Agent deployment inputs (defaults previously hardcoded inside NB10).
+ops_agent_run_as_user = "admin@mngenvmcap218279.onmicrosoft.com"  # UPN the agent runs as; blank = the deploying user
 ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"       # Team in Teams: FacilitiesRealTimeMonitoring
-ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Channel in that Team: Alerts (NB10 has instructions about extracting the Team and Channel ID)
+ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Channel: Alerts (NB10 explains how to extract these IDs)
 ops_agent_copy_playbook = "true"
 
-# Structured table names used by the ontology
+# Structured table names used by the ontology.
 silver_facilities_table = "silver_facilities"
 silver_systems_table = "silver_systems"
 silver_equipment_table = "silver_equipment"
 silver_instruments_table = "silver_instruments"
 silver_signal_master_table = "silver_signal_master"
 
-# Silver table naming prefix (NB05) and the ontology entity the time-series binding attaches to (NB04/NB06).
+# Silver table prefix (NB05) and the ontology entity the time-series binding attaches to (NB04/NB06).
 silver_table_prefix = "silver_"
 signal_master_entity_name = "signal_master"
 
@@ -136,12 +116,43 @@ timeseries_key_column = "opcua_node_id"
 timeseries_value_column = "value"
 timeseries_quality_column = "quality"
 
-# Eventstream component names (NB02/NB07) and the alert Data Pipeline (NB10).
+# Eventstream component names (NB02/NB07).
 eventstream_source_name = "OPCUA_CustomEndpoint"
 eventstream_stream_name = "OPCUA_DefaultStream"
 eventstream_destination_name = "Eventhouse"
-alert_pipeline_name = f"Pipe_SendEmailAlert_{env_suffix}"
+
+# Alert Data Pipeline description (its name is derived in the next cell).
 alert_pipeline_description = "This will be triggered from Ops Agent!"
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# --------------------------------------------
+# DERIVED NAMES  (computed AFTER parameter injection so overriding env_suffix flows through)
+# --------------------------------------------
+# Every versioned artifact name derives from env_suffix here — nothing is edited by hand.
+# The KQL database reuses the Eventhouse name (Fabric names an Eventhouse's default KQL DB the same way).
+
+lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
+workspace_folder_path = f"RTI_DEMO_{env_suffix}"  # Fabric workspace folder, not a Lakehouse path
+ontology_name = f"RTI_Demo_Ontology_{env_suffix}"
+eventhouse_name = f"RTI_Demo_Eventhouse_{env_suffix}"
+kql_database_name = f"RTI_Demo_Eventhouse_{env_suffix}"
+eventstream_name = f"RTI_Demo_Eventstream_{env_suffix}"
+data_agent_name = f"RTI_Demo_Agent_{env_suffix}"
+dashboard_name = f"RTI_Demo_OPCUA_TelemetryStats_{env_suffix}"
+ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
+
+# Data Pipeline names — all versioned by env_suffix.
+alert_pipeline_name = f"Pipe_SendEmailAlert_{env_suffix}"   # NB10 alert pipeline
+setup_pipeline_name = f"Pipe_Setup_{env_suffix}"            # orchestrated setup (NB01–06, 08–10)
+stream_pipeline_name = f"Pipe_Stream_{env_suffix}"          # on-demand OPC UA stream (NB07)
 
 
 def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
@@ -219,6 +230,8 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "eventstream_destination_name": eventstream_destination_name,
         "alert_pipeline_name": alert_pipeline_name,
         "alert_pipeline_description": alert_pipeline_description,
+        "setup_pipeline_name": setup_pipeline_name,
+        "stream_pipeline_name": stream_pipeline_name,
     }
 
     if extra_settings:
