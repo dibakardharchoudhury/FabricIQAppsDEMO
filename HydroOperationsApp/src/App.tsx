@@ -295,30 +295,37 @@ export default function App() {
   }
 
   // After the pipeline reports 'running', the generator notebook cell still needs a few minutes
-  // before events land in the Eventhouse — poll until the first readings appear (or we give up).
-  async function waitForStreamData(timeoutMs: number): Promise<TelemetryReading[] | null> {
+  // before events land in the Eventhouse — poll until FRESH readings appear (or we give up).
+  // Only events newer than `sinceMs` count, so data lingering from an earlier run (still inside the
+  // 24h query window) can never make a just-started stream look done.
+  async function waitForStreamData(timeoutMs: number, sinceMs: number): Promise<TelemetryReading[] | null> {
     const deadline = Date.now() + timeoutMs
+    const cutoff = sinceMs - 120_000 // tolerate clock skew, but still exclude stale prior-run data
+    const isFresh = (rows: TelemetryReading[] | null) => !!rows && rows.some(r => Date.parse(r.eventTime) >= cutoff)
     let data = await queryLatestTelemetry()
     if (data === null) { await beginInteractiveConnect('telemetry'); data = await queryLatestTelemetry() }
-    while (Date.now() < deadline) {
-      if (data && data.length) return data
+    while (!isFresh(data) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10_000))
       try { data = await queryLatestTelemetry() } catch { data = null }
     }
-    return data && data.length ? data : null
+    return isFresh(data) ? data : null
   }
 
   // Shared completion for the stream job whether it was just started or resumed after a reload.
-  async function awaitStream(poll: () => Promise<unknown>) {
+  async function awaitStream(poll: () => Promise<unknown>, sinceMs: number) {
     try {
       await poll()
       // The pipeline reaching 'running' doesn't mean signals are flowing yet — keep the progress
-      // bar up until the generator cell actually produces telemetry, so it never completes early.
+      // bar up until the generator cell actually produces FRESH telemetry, so it never completes early.
       updateJob('stream', 'Generating signals')
-      const data = await waitForStreamData(STREAM_ETA_MS)
-      setStreamState('started')
-      if (data && data.length) { setTelemetry(data); setTelemetryState(`${data.length} signals`) }
-      else setTelemetryState('No recent events')
+      const data = await waitForStreamData(2 * STREAM_ETA_MS, sinceMs)
+      if (data && data.length) {
+        setStreamState('started'); setTelemetry(data); setTelemetryState(`${data.length} signals`)
+      } else {
+        // Pipeline is running but no new signals have landed yet — stay honest, don't show a green check.
+        setStreamState('idle')
+        setNotice('The telemetry pipeline is running, but fresh OPC UA signals haven’t landed in the Eventhouse yet — the generator can take several minutes on a cold start. Give it a moment, then click Start stream again to check.')
+      }
     } catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
     finally { endJob('stream') }
   }
@@ -332,7 +339,7 @@ export default function App() {
       finally { setSeeding(false) }
     } else {
       setStreamState('starting')
-      await awaitStream(() => resumeStreamingPipeline(s => updateJob('stream', humanStatus(s)), sinceIso))
+      await awaitStream(() => resumeStreamingPipeline(s => updateJob('stream', humanStatus(s)), sinceIso), job.startedAt)
     }
   }
 
@@ -394,9 +401,10 @@ export default function App() {
   async function startStream() {
     if (streamState === 'starting' || jobs.stream) return
     setStreamState('starting'); setNotice(undefined)
+    const startedAt = Date.now()
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
     beginProgress('stream', label, STREAM_ETA_MS)
-    await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))))
+    await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))), startedAt)
   }
 
   async function sendQuestion(override?: string) {
