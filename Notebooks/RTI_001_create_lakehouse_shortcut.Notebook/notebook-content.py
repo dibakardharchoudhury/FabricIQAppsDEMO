@@ -223,11 +223,6 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
     return rows
 
 
-# Echo every configured setting (config-time values; runtime IDs are appended when the table is written).
-print(f"✅ Configured {len(build_rti_demo_settings_rows())} settings for '{settings_table_name}':")
-for _row in build_rti_demo_settings_rows():
-    print(f"   {_row['setting_name']:<34} = {_row['setting_value']}")
-
 # METADATA ********************
 
 # META {
