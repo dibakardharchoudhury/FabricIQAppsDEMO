@@ -74,7 +74,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [seeding, setSeeding] = useState(false)
   const [raising, setRaising] = useState<string>()
-  const [messages, setMessages] = useState([{ role: 'agent', text: 'The Data Agent is preview-only until a published MCP endpoint is configured.' }])
+  const [messages, setMessages] = useState([{ role: 'agent', text: 'Ask me about the operation — assets, work orders, ontology relationships or the operational SQL database. I query the published Fabric Data Agent across all its connected sources.' }])
 
   const facilities = useMemo(() => stid?.facilities ?? [], [stid])
   const facility = facilities.find(item => item.facility_id === selectedFacilityId) ?? facilities[0]

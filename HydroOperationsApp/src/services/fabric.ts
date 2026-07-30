@@ -80,7 +80,7 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
 type WorkspaceItem = { id: string; type: string; displayName: string }
-type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string }
+type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string }
 let configCache: ResolvedConfig | null = null
 
 /** Last-known-good values injected at build time; used only when live discovery is unavailable. */
@@ -91,6 +91,7 @@ function envConfig(): ResolvedConfig {
     eventhouseQueryUri: import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined,
     kqlDatabase: import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined,
     graphqlUrl: graphqlUrlOverride,
+    dataAgentUrl: agentUrl,
   }
 }
 
@@ -142,12 +143,18 @@ async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null
       graphqlUrl = (await resolveGraphqlEndpoint(token, gql.id))
         ?? (graphqlUrlOverride ? graphqlUrlOverride.replace(/graphqlapis\/[0-9a-fA-F-]+/, `graphqlapis/${gql.id}`) : undefined)
     }
+    // The published Data Agent exposes an OpenAI Assistants-compatible endpoint under its item id.
+    const da = items.find(i => i.type === 'DataAgent')
+    const dataAgentUrl = da
+      ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/dataAgents/${da.id}/aiassistant/openai`
+      : undefined
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
       eventhouseQueryUri: eventhouseQueryUri ?? env.eventhouseQueryUri,
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
       graphqlUrl: graphqlUrl ?? env.graphqlUrl,
+      dataAgentUrl: dataAgentUrl ?? env.dataAgentUrl,
     }
     return configCache
   } catch (error) {
@@ -390,18 +397,50 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
   return status
 }
 
+// The published Fabric Data Agent exposes an OpenAI Assistants-compatible endpoint
+// (.../dataAgents/{id}/aiassistant/openai) that already fans out to its SQL DB + ontology sources.
 export async function askDataAgent(question: string) {
-  if (!agentUrl) return 'The Fabric Data Agent is not published to an MCP endpoint. This panel is available after an endpoint is configured.'
+  const config = await ensureConfig(true)
+  const base = config?.dataAgentUrl
+  if (!base) return 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.'
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
-  const response = await fetch(agentUrl, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call', params: { name: 'ask', arguments: { question } } }),
-  })
-  if (!response.ok) throw new Error(`Data Agent request failed (${response.status}).`)
-  const payload = await response.json() as { result?: { content?: Array<{ text?: string }> } }
-  return payload.result?.content?.map(item => item.text).filter(Boolean).join('\n') || 'The Data Agent returned no text.'
+
+  const baseHeaders: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    ActivityId: crypto.randomUUID(),
+  }
+  const version = 'api-version=2024-05-01-preview'
+  const oai = async (path: string, init?: RequestInit) => {
+    const sep = path.includes('?') ? '&' : '?'
+    const res = await fetch(`${base}${path}${sep}${version}`, { ...init, headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
+    if (!res.ok) throw new Error(`Data Agent request failed (${res.status}).`)
+    return res.json()
+  }
+
+  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
+  // Threads are created through Fabric's private endpoint (get-or-create by tag), then driven by id.
+  const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
+  const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
+  if (!threadRes.ok) throw new Error(`Data Agent thread failed (${threadRes.status}).`)
+  const thread = await threadRes.json() as { id: string }
+
+  await oai(`/threads/${thread.id}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: question }) })
+  let run = await oai(`/threads/${thread.id}/runs`, { method: 'POST', body: JSON.stringify({ assistant_id: assistant.id }) }) as { id: string; status: string }
+
+  const deadline = Date.now() + 120_000
+  while (['queued', 'in_progress', 'cancelling', 'requires_action'].includes(run.status) && Date.now() < deadline) {
+    await delay(2000)
+    run = await oai(`/threads/${thread.id}/runs/${run.id}`) as { id: string; status: string }
+  }
+  if (run.status !== 'completed') throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}.`)
+
+  const list = await oai(`/threads/${thread.id}/messages?order=desc`) as { data?: Array<{ role?: string; content?: Array<{ text?: { value?: string } }> }> }
+  const answer = list.data?.find(message => message.role === 'assistant')
+    ?.content?.map(part => part.text?.value ?? '').filter(Boolean).join('\n')
+  return answer || 'The Data Agent returned no answer.'
 }
 
 export type TelemetryReading = { opcuaNodeId: string; eventTime: string; value: number; quality: string }
