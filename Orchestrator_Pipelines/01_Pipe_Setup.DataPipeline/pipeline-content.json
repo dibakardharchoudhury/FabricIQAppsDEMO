@@ -79,7 +79,7 @@
           "secureInput": false,
           "secureOutput": false
         },
-        "name": "RTI_001_create_lakehouse_shortcut",
+        "name": "RTI_001_create_lakehouse_SelfContained",
         "dependsOn": []
       },
       {
@@ -90,7 +90,7 @@
           "parameters": {
             "lakehouseName": {
               "value": {
-                "value": "@activity('RTI_001_create_lakehouse_shortcut').output.result.exitValue",
+                "value": "@activity('RTI_001_create_lakehouse_SelfContained').output.result.exitValue",
                 "type": "Expression"
               },
               "type": "string"
@@ -114,7 +114,7 @@
         "name": "RTI_Orchestrator_Setup",
         "dependsOn": [
           {
-            "activity": "RTI_001_create_lakehouse_shortcut",
+            "activity": "RTI_001_create_lakehouse_SelfContained",
             "dependencyConditions": [
               "Succeeded"
             ]
