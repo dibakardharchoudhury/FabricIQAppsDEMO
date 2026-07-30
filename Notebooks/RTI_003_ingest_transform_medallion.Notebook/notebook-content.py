@@ -25,16 +25,16 @@
 
 # 
 # # 03 – Ingest & Transform (PySpark)
-# ## Bronze via Lakehouse Shortcut → Silver → Gold
+# ## Bronze (Files/bronze) → Silver → Gold
 # 
 # This notebook assumes:
 # 
-# - Notebook **01_create_lakehouse_shortcut** has been run.
-# - A shortcut exists at **Files/bronze** pointing to your ADLS dataset.
+# - Notebook **01_create_lakehouse_SelfContained** has been run.
+# - The STID seed files exist at **Files/bronze/stid** (written directly by Notebook 01 — no ADLS/shortcut).
 # 
 # This notebook will:
 # 
-# 1. Load **Bronze** data via Lakehouse shortcut  
+# 1. Load **Bronze** data from the Lakehouse `Files/bronze` folder  
 # 2. Build **Silver** conformed tables  
 # 3. Build **Gold** KPIs (e.g., limit breaches, equipment health)  
 
@@ -84,9 +84,7 @@ target_folder_id = settings["target_folder_id"]
 lakehouse_name = settings["lakehouse_name"]
 lakehouse_id = settings["lakehouse_id"]
 
-shortcut_name = settings["shortcut_name"]
-shortcut_parent_path = settings["shortcut_parent_path"]
-bronze_root = f"{shortcut_parent_path}/{shortcut_name}"
+bronze_root = settings["bronze_root"]
 
 silver_facilities_table = settings["silver_facilities_table"]
 silver_systems_table = settings["silver_systems_table"]

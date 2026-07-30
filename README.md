@@ -38,7 +38,7 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | Operations Agent | `RTI_Demo_OpsAgent_{env_suffix}` | `RTI_Demo_OpsAgent_V5` | ✅ |
 | Eventhouse table | `OPCUAEvents` (fixed) | `OPCUAEvents` | ❌ |
 | Settings table | `rti_demo_settings` (fixed) | `rti_demo_settings` | ❌ |
-| Bronze shortcut | `Files/bronze` → ADLS | `Files/bronze` | ❌ |
+| Bronze folder | `Files/bronze` (seeded) | `Files/bronze` | ❌ |
 | Setup pipeline | `Pipe_Setup` (fixed) | `Pipe_Setup` | ❌ |
 | Stream pipeline | `Pipe_Stream` (fixed) | `Pipe_Stream` | ❌ |
 | Alert pipeline | `Pipe_SendEmailAlert` (fixed) | `Pipe_SendEmailAlert` | ❌ |
@@ -54,7 +54,8 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | Notebook | Role | Runs in `Pipe_Setup` DAG? |
 |----------|------|:---:|
 | **RTI_000_sampleEnergyDataset_Doc** | Documentation / architecture overview. Not executed by the orchestrator. | — |
-| **RTI_001_create_lakehouse_shortcut** | Foundation: resolves workspace/Lakehouse, creates the ADLS shortcut, derives all names, writes `rti_demo_settings` (**single source of truth**), and **exits with the lakehouse name**. Runs as **Stage 1** of `Pipe_Setup`. | Stage 1 |
+| **RTI_001_create_lakehouse_SelfContained** | Foundation (self-contained): resolves workspace/Lakehouse, **seeds the STID CSVs into `Files/bronze/stid/`** (no ADLS/shortcut/connection), derives all names, writes `rti_demo_settings` (**single source of truth**), and **exits with the lakehouse name**. Runs as **Stage 1** of `Pipe_Setup`. | Stage 1 |
+| **RTI_001_create_lakehouse_shortcut** | Legacy foundation variant that creates an ADLS Gen2 shortcut at `Files/bronze` instead of seeding. Kept for reference; **not** wired into `Pipe_Setup`. | — |
 | **RTI_002_Setup_Eventhouse_Only** | Creates Eventhouse + KQL DB + `OPCUAEvents` table + Eventstream (Custom Endpoint → Eventhouse); seeds signal metadata into silver. | ✅ |
 | **RTI_003_ingest_transform_medallion** | Bronze → Silver → Gold transforms; produces `silver_signal_master` and the structured silver/gold tables. | ✅ |
 | **RTI_004_build_ontology_mapping_rti_structured** | Builds & deploys the ontology (5 entity types, 4 relationship types); adds time-series *properties* on `signal_master`. | ✅ |
@@ -70,7 +71,7 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 
 | Pipeline | Purpose |
 |----------|---------|
-| **`01_Pipe_Setup`** | **Two staged Notebook activities:** (1) `RTI_001_create_lakehouse_shortcut` creates the lakehouse and exits with its name; (2) on success, `RTI_Orchestrator_Setup` attaches that lakehouse via `%%configure` and runs the rest. **Supplies all environment values as pipeline parameters** (see next section). One-click "build the environment" entry point. |
+| **`01_Pipe_Setup`** | **Two staged Notebook activities:** (1) `RTI_001_create_lakehouse_SelfContained` creates the lakehouse, seeds STID, and exits with its name; (2) on success, `RTI_Orchestrator_Setup` attaches that lakehouse via `%%configure` and runs the rest. **Supplies all environment values as pipeline parameters** (see next section). One-click "build the environment" entry point. |
 | **`02_Pipe_Stream`** | Runs `RTI_007_generate_and_ingest_OPCUA_Stream` on demand to push a burst of live telemetry. Reads everything from `rti_demo_settings`. |
 | **`Pipe_SendEmailAlert`** | Created by `RTI_010`; triggered by the Operations Agent to send Teams/email alerts. Not run directly by users. |
 
@@ -90,27 +91,24 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | 4 | `key_vault_tenant_id_secret_name` | String | `tenantid` | Secret **name**, not value. |
 | 5 | `key_vault_client_id_secret_name` | String | `clientid` | Secret **name**, not value. |
 | 6 | `key_vault_client_secret_name` | String | `clientsecret` | Secret **name**, not value. |
-| 7 | `adls_account_url` | String | `https://didharchadlsg2.dfs.core.windows.net` | Seed dataset storage account. |
-| 8 | `adls_subpath` | String | `/dataiq/bronze` | Root that contains `bronze/stid`, `bronze/sap`, … |
-| 9 | `connection_name` | String | `ontologydidharch-connection` | Cloud connection feeding the bronze shortcut. |
-| 10 | `ops_agent_teams_team_id` | String | `c480320e-9204-474b-9b2c-54a53e94f220` | Teams team the Operations Agent posts to. |
-| 11 | `ops_agent_teams_channel_id` | String | `19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2` | Teams channel for alerts. |
-| 12 | `ops_agent_run_as_user` | String | `admin@mngenvmcap218279.onmicrosoft.com` | **Optional** — blank ⇒ the deploying user. |
-| 13 | `per_notebook_timeout_secs` | Int | `3600` | Orchestrator-only DAG knob (per-child timeout). |
+| 7 | `ops_agent_teams_team_id` | String | `c480320e-9204-474b-9b2c-54a53e94f220` | Teams team the Operations Agent posts to. |
+| 8 | `ops_agent_teams_channel_id` | String | `19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2` | Teams channel for alerts. |
+| 9 | `ops_agent_run_as_user` | String | `admin@mngenvmcap218279.onmicrosoft.com` | **Optional** — blank ⇒ the deploying user. |
+| 10 | `per_notebook_timeout_secs` | Int | `3600` | Orchestrator-only DAG knob (per-child timeout). |
 
 **How the values flow:**
 
 ```
 Pipe_Setup (pipeline parameters)
         │
-        ├─ Stage 1 ─►  RTI_001_create_lakehouse_shortcut   (gets the 12 env params)
-        │                     │  creates lakehouse, writes rti_demo_settings,
+        ├─ Stage 1 ─►  RTI_001_create_lakehouse_SelfContained   (gets the 9 env params)
+        │                     │  creates lakehouse, seeds STID, writes rti_demo_settings,
         │                     │  then  notebookutils.notebook.exit(lakehouse_name)
         │                     ▼
         │              exitValue = "Energy_IQ_LakehouseRTI_V5"
         │                     │
         └─ Stage 2 ─►  RTI_Orchestrator_Setup
-              lakehouseName = @activity('RTI_001_create_lakehouse_shortcut').output.result.exitValue
+              lakehouseName = @activity('RTI_001_create_lakehouse_SelfContained').output.result.exitValue
               per_notebook_timeout_secs = @pipeline().parameters.per_notebook_timeout_secs
                     │
                     │  %%configure  attaches that lakehouse to the session
@@ -120,7 +118,7 @@ Pipe_Setup (pipeline parameters)
                     └── NB02–10 read everything from rti_demo_settings
 ```
 
-- **Stage 1** (`RTI_001`) receives the 12 environment params and is the **single source of truth** for the lakehouse name — it publishes that name via `notebookutils.notebook.exit(...)`.
+- **Stage 1** (`RTI_001`) receives the 9 environment params and is the **single source of truth** for the lakehouse name — it publishes that name via `notebookutils.notebook.exit(...)`.
 - **Stage 2** (orchestrator) receives just two params: `lakehouseName` (piped from Stage 1's **exit value**, so there is no duplicated naming literal) and `per_notebook_timeout_secs`.
 - `NB02`–`NB10` read **only** from `rti_demo_settings`.
 - NB01 and the orchestrator **fail fast** with `Missing required parameter(s): …` if any required value is blank (`ops_agent_run_as_user` is exempt).
@@ -158,7 +156,7 @@ NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind ──► NB
 `RTI_001` writes this Delta table (via an explicit OneLake ABFS path, so it does not depend on a default-lakehouse binding). Key columns:
 
 - **Identity / placement:** `env_suffix`, `workspace_id`, `workspace_folder_path`, `lakehouse_name`, `lakehouse_id`, `target_folder_id`
-- **Storage & shortcut:** `adls_account_url`, `adls_subpath`, `shortcut_name`, `shortcut_parent_path`, `connection_name`
+- **Storage:** `bronze_root` (`Files/bronze`)
 - **Key Vault (URI + secret NAMES only, never values):** `key_vault_uri`, `key_vault_tenant_id_secret`, `key_vault_client_id_secret`, `key_vault_client_secret_secret`
 - **Artifact names:** `ontology_name`, `eventhouse_name`, `kql_database_name`, `eventstream_name`, `eventhouse_table_name`, `data_agent_name`, `dashboard_name`, `ops_agent_name` (+ `fabric_*` aliases)
 - **Operations Agent:** `ops_agent_run_as_user`, `ops_agent_teams_team_id`, `ops_agent_teams_channel_id`, `ops_agent_copy_playbook`
@@ -177,7 +175,7 @@ NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind ──► NB
 Context for the whole solution: dataset layout, medallion architecture, ontology, and RTI flow. Not executed by the orchestrator.
 
 ### RTI_001 – Foundation & settings (single source of truth)
-Derives all names from `env_suffix`; resolves/creates the workspace folder, Lakehouse, ADLS cloud connection, and the `Files/bronze` shortcut; authenticates the SPN from Key Vault; and writes `rti_demo_settings`. The parameters cell blanks the **12 injected** values and keeps static data-model config; a guard in the derive cell fails fast if a required injected value is missing.
+Derives all names from `env_suffix`; resolves/creates the workspace folder and Lakehouse, **seeds the four STID CSVs into `Files/bronze/stid/`** via the explicit OneLake path (self-contained — no ADLS account, cloud connection, or shortcut); authenticates the SPN from Key Vault; and writes `rti_demo_settings`. The parameters cell blanks the **9 injected** values and keeps static data-model config; a guard in the derive cell fails fast if a required injected value is missing.
 
 ### RTI_002 – Streaming backbone + seed signal metadata
 Creates Eventhouse `RTI_Demo_Eventhouse_{env_suffix}`, its KQL DB, and the slim `OPCUAEvents` table (`event_time`, `opcua_node_id`, `value`, `quality`); creates Eventstream `RTI_Demo_Eventstream_{env_suffix}` with a Custom Endpoint (`OPCUA_CustomEndpoint`) → Eventhouse destination; seeds `silver_instruments` / `silver_signal_master`.
@@ -208,11 +206,11 @@ Builds `RTI_Demo_OpsAgent_{env_suffix}`, wires Teams targets (`ops_agent_teams_t
 
 ---
 
-## Dataset Layout in ADLS / OneLake
+## Dataset Layout in OneLake
 
 ```
-<adls_subpath>/              # e.g. /dataiq/bronze
-├── stid/                    # Engineering master data
+Files/bronze/                # inside the Lakehouse
+├── stid/                    # Engineering master data (seeded by RTI_001)
 ├── sap/                     # Maintenance & work management
 ├── opcua/                   # Time-series telemetry (historical sample)
 ├── common_library/          # Standards & rules
@@ -221,13 +219,13 @@ Builds `RTI_Demo_OpsAgent_{env_suffix}`, wires Teams targets (`ops_agent_teams_t
 └── documents/               # Engineering documents & metadata
 ```
 
-All raw data lands under **`Files/bronze`** in the Lakehouse via the shortcut created in RTI_001.
+All raw data lands under **`Files/bronze`** in the Lakehouse; the STID seed files are written directly by RTI_001.
 
 ---
 
 ## Medallion Architecture
 
-- **Bronze** – raw ingested data (shortcut to ADLS); as-received fidelity.
+- **Bronze** – raw ingested data (STID seeded into the Lakehouse); as-received fidelity.
 - **Silver** – cleaned/conformed tables with stable IDs; the binding layer for the ontology.
 - **Gold** – derived operational signals (latest measurements, limit comparisons, health/aggregations).
 

@@ -4,7 +4,7 @@
       {
         "type": "TridentNotebook",
         "typeProperties": {
-          "notebookId": "742bda9f-927b-a1e7-4d9a-9f9a4e3444bb",
+          "notebookId": "24da4096-5a9d-4410-9ccd-ef18ab16c705",
           "workspaceId": "00000000-0000-0000-0000-000000000000",
           "parameters": {
             "env_suffix": {
@@ -45,27 +45,6 @@
             "key_vault_client_secret_name": {
               "value": {
                 "value": "@pipeline().parameters.key_vault_client_secret_name",
-                "type": "Expression"
-              },
-              "type": "string"
-            },
-            "adls_account_url": {
-              "value": {
-                "value": "@pipeline().parameters.adls_account_url",
-                "type": "Expression"
-              },
-              "type": "string"
-            },
-            "adls_subpath": {
-              "value": {
-                "value": "@pipeline().parameters.adls_subpath",
-                "type": "Expression"
-              },
-              "type": "string"
-            },
-            "connection_name": {
-              "value": {
-                "value": "@pipeline().parameters.connection_name",
                 "type": "Expression"
               },
               "type": "string"
@@ -167,18 +146,6 @@
       "key_vault_client_secret_name": {
         "type": "string",
         "defaultValue": "clientsecret"
-      },
-      "adls_account_url": {
-        "type": "string",
-        "defaultValue": "https://didharchadlsg2.dfs.core.windows.net"
-      },
-      "adls_subpath": {
-        "type": "string",
-        "defaultValue": "/dataiq/bronze"
-      },
-      "connection_name": {
-        "type": "string",
-        "defaultValue": "ontologydidharch-connection"
       },
       "ops_agent_teams_team_id": {
         "type": "string",
