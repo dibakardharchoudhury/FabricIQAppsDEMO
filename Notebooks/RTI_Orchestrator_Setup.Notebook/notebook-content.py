@@ -17,43 +17,46 @@
 
 # MARKDOWN ********************
 
-# # RTI Demo – Setup Orchestrator
+# # RTI Demo – Setup Orchestrator (Stage 2 of 2)
 # 
-# Runs the full **setup** sequence (NB01–NB06, NB08–NB10) inside **one Spark session** via
-# `notebookutils.notebook.runMultiple`, so the ~5 min VNet cold start is paid **once** instead
-# of once per notebook. Independent notebooks run in parallel per the dependency DAG.
+# **Stage 1** (`RTI_001_create_lakehouse_shortcut`) runs first as its own pipeline activity: it
+# creates the lakehouse, writes `rti_demo_settings`, and rebinds every child notebook's default
+# lakehouse. **Stage 2 is this notebook**, launched by `Pipe_Setup` only after Stage 1 succeeds.
 # 
+# The `%%configure` cell below attaches the (now-existing) lakehouse to THIS session, so the single
+# `runMultiple` session has a real default lakehouse. Every child inherits it, so their relative
+# `spark.read.table(...)` / `saveAsTable(...)` calls resolve — no per-notebook attach, no ABFS rewrite.
+# 
+# - Runs **NB02–NB06, NB08–NB10** in one Spark session (VNet cold start paid once); independent
+#   branches run in parallel per the DAG.
+# - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
-# - Only **NB01** receives the parameters below; NB02–NB10 read everything from the
-#   `rti_demo_settings` table that NB01 writes.
-# - Intended to be launched by the **`Pipe_Setup`** Data Pipeline (single activity).
+
+# CELL ********************
+
+%%configure
+{
+    "defaultLakehouse": {
+        "name": {
+            "parameterName": "lakehouseName",
+            "defaultValue": "Energy_IQ_LakehouseRTI_V5"
+        }
+    }
+}
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
 
 # PARAMETERS CELL ********************
 
-# The ONLY inputs — supplied by the Pipe_Setup pipeline (Base parameters) at runtime.
-# Defaults are intentionally BLANK so the pipeline is the single source of truth; the
-# guard in the next cell fails fast if any required value is missing (e.g. a standalone run).
-
-env_suffix = ""
-workspace_id = ""
-
-# Azure Key Vault (URI + secret NAMES only — never secret values).
-key_vault_uri = ""
-key_vault_tenant_id_secret_name = ""
-key_vault_client_id_secret_name = ""
-key_vault_client_secret_name = ""
-
-# Seed dataset location + the connection feeding the bronze shortcut.
-adls_account_url = ""
-adls_subpath = ""
-connection_name = ""
-
-# Operations Agent (Teams) targets.
-ops_agent_teams_team_id = ""
-ops_agent_teams_channel_id = ""
-ops_agent_run_as_user = ""
-
-# Max seconds any single child notebook may run before it is timed out (operational default).
+# Supplied by the Pipe_Setup pipeline (Stage 2 activity) at runtime:
+#   lakehouseName             -> consumed by the %%configure cell above (session default lakehouse).
+#   per_notebook_timeout_secs -> max seconds any single child notebook may run before timeout.
+# lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
 
 # METADATA ********************
@@ -67,46 +70,15 @@ per_notebook_timeout_secs = 3600
 
 import notebookutils
 
-# Forward ONLY to NB01; every downstream notebook reads the rti_demo_settings table NB01 writes.
-nb01_args = {
-    "env_suffix": env_suffix,
-    "workspace_id": workspace_id,
-    "key_vault_uri": key_vault_uri,
-    "key_vault_tenant_id_secret_name": key_vault_tenant_id_secret_name,
-    "key_vault_client_id_secret_name": key_vault_client_id_secret_name,
-    "key_vault_client_secret_name": key_vault_client_secret_name,
-    "adls_account_url": adls_account_url,
-    "adls_subpath": adls_subpath,
-    "connection_name": connection_name,
-    "ops_agent_teams_team_id": ops_agent_teams_team_id,
-    "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
-    "ops_agent_run_as_user": ops_agent_run_as_user,
-}
-
-# Fail fast if the pipeline did not supply the required inputs (blank defaults above).
-# ops_agent_run_as_user is optional (blank => the deploying user), so it is excluded.
-_optional = {"ops_agent_run_as_user"}
-_missing = [name for name, value in nb01_args.items() if name not in _optional and not str(value).strip()]
-if _missing:
-    raise ValueError(
-        "Missing required parameter(s): " + ", ".join(_missing) +
-        ". Launch this notebook from the Pipe_Setup pipeline (or set the values in the "
-        "parameters cell) before running."
-    )
-print("✅ Received parameters from Pipe_Setup:")
-for _name, _value in nb01_args.items():
-    print(f"   {_name:<34} = {_value}")
-
-# Setup DAG — one Spark session for all activities (VNet cold start paid once).
-# Edges are DATA dependencies resolved through rti_demo_settings; independent branches run in parallel.
-# useRootDefaultLakehouse must ride in EACH activity's args (the same slot as run()'s arguments map);
-# it tells the per-child check to inherit the root default lakehouse instead of the child's stale pin.
+# NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
+# The %%configure cell attached that lakehouse to this session, so NB02–NB10 inherit it and their
+# relative table reads/writes resolve. useRootDefaultLakehouse rides in each activity's args so a
+# child always adopts THIS (root) session's default lakehouse regardless of its own saved pin.
 _lh = {"useRootDefaultLakehouse": True}
 setup_dag = {
     "activities": [
-        {"name": "NB01_lakehouse",  "path": "RTI_001_create_lakehouse_shortcut",             "dependencies": [],                                   "args": {**nb01_args, **_lh}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB02_eventhouse", "path": "RTI_002_Setup_Eventhouse_Only",                 "dependencies": ["NB01_lakehouse"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB03_medallion",  "path": "RTI_003_ingest_transform_medallion",            "dependencies": ["NB01_lakehouse"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB02_eventhouse", "path": "RTI_002_Setup_Eventhouse_Only",                 "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB03_medallion",  "path": "RTI_003_ingest_transform_medallion",            "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB04_ontology",   "path": "RTI_004_build_ontology_mapping_rti_structured", "dependencies": ["NB03_medallion"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB05_entitybind", "path": "RTI_005_entity_DataBinding_rti_structured",     "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB02_eventhouse"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
@@ -119,7 +91,7 @@ setup_dag = {
 }
 
 results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
-print("✅ Setup orchestration complete (NB01–06, 08–10).")
+print("✅ Setup orchestration complete (NB02–06, 08–10).")
 results
 
 # METADATA ********************

@@ -1083,6 +1083,10 @@ print(
     "session start."
 )
 
+# Publish the created lakehouse name as this notebook's exit value so the Stage 2 orchestrator
+# attaches EXACTLY this lakehouse (via %%configure) instead of recomputing the name separately.
+notebookutils.notebook.exit(lakehouse_name)
+
 # METADATA ********************
 
 # META {

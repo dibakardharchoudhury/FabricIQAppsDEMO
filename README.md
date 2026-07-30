@@ -54,7 +54,7 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | Notebook | Role | Runs in `Pipe_Setup` DAG? |
 |----------|------|:---:|
 | **RTI_000_sampleEnergyDataset_Doc** | Documentation / architecture overview. Not executed by the orchestrator. | — |
-| **RTI_001_create_lakehouse_shortcut** | Foundation: resolves workspace/Lakehouse, creates the ADLS shortcut, derives all names, and writes `rti_demo_settings` (**single source of truth**). | ✅ |
+| **RTI_001_create_lakehouse_shortcut** | Foundation: resolves workspace/Lakehouse, creates the ADLS shortcut, derives all names, writes `rti_demo_settings` (**single source of truth**), and **exits with the lakehouse name**. Runs as **Stage 1** of `Pipe_Setup`. | Stage 1 |
 | **RTI_002_Setup_Eventhouse_Only** | Creates Eventhouse + KQL DB + `OPCUAEvents` table + Eventstream (Custom Endpoint → Eventhouse); seeds signal metadata into silver. | ✅ |
 | **RTI_003_ingest_transform_medallion** | Bronze → Silver → Gold transforms; produces `silver_signal_master` and the structured silver/gold tables. | ✅ |
 | **RTI_004_build_ontology_mapping_rti_structured** | Builds & deploys the ontology (5 entity types, 4 relationship types); adds time-series *properties* on `signal_master`. | ✅ |
@@ -64,23 +64,23 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | **RTI_008_build_realtime_dashboard** | Builds & deploys the Real-Time Dashboard over `OPCUAEvents`. | ✅ |
 | **RTI_009_build_data_agent** | Builds & deploys the Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Builds the Operations Agent + `Pipe_SendEmailAlert` pipeline for Teams/email alerts. | ✅ |
-| **RTI_Orchestrator_Setup** | Runs the setup DAG (NB01–06, 08–10) in **one Spark session** via `notebookutils.notebook.runMultiple`. Launched by `Pipe_Setup`. | (is the driver) |
+| **RTI_Orchestrator_Setup** | **Stage 2** driver: a `%%configure` first cell attaches the lakehouse (name received from NB01's exit value), then runs the setup DAG (NB02–06, 08–10) in **one Spark session** via `notebookutils.notebook.runMultiple`. | Stage 2 |
 
 ### Data Pipelines (`Orchestrator_Pipelines/`)
 
 | Pipeline | Purpose |
 |----------|---------|
-| **`01_Pipe_Setup`** | Single Notebook activity → runs `RTI_Orchestrator_Setup`. **Supplies all environment values as Base parameters** (see next section). This is the one-click "build the environment" entry point. |
+| **`01_Pipe_Setup`** | **Two staged Notebook activities:** (1) `RTI_001_create_lakehouse_shortcut` creates the lakehouse and exits with its name; (2) on success, `RTI_Orchestrator_Setup` attaches that lakehouse via `%%configure` and runs the rest. **Supplies all environment values as pipeline parameters** (see next section). One-click "build the environment" entry point. |
 | **`02_Pipe_Stream`** | Runs `RTI_007_generate_and_ingest_OPCUA_Stream` on demand to push a burst of live telemetry. Reads everything from `rti_demo_settings`. |
 | **`Pipe_SendEmailAlert`** | Created by `RTI_010`; triggered by the Operations Agent to send Teams/email alerts. Not run directly by users. |
 
 ---
 
-## ⚙️ `Pipe_Setup` Base parameters (must be keyed in)
+## ⚙️ `Pipe_Setup` pipeline parameters (must be keyed in)
 
-`Pipe_Setup` runs a single Notebook activity that points at **`RTI_Orchestrator_Setup`**. The orchestrator's parameter cell ships **blank on purpose**, so **the pipeline is the single source of truth**. You must add the following rows under the Notebook activity's **Settings → Base parameters** (see the pipeline UI):
+`Pipe_Setup` runs **two staged Notebook activities** and holds all environment values as **pipeline-level parameters** (the pipeline's **Parameters** tab — *not* per-activity Base parameters). The notebook parameter cells ship **blank on purpose**, so **the pipeline is the single source of truth**.
 
-> **Critical:** the **Name** must be the *full* notebook parameter variable name (the UI truncates long names visually — the stored value must be complete, e.g. `key_vault_tenant_id_secret_name`, not `key_vault_tenant_id_s…`).
+> **Critical:** the **Name** must be the *full* parameter variable name (the UI truncates long names visually — the stored value must be complete, e.g. `key_vault_tenant_id_secret_name`, not `key_vault_tenant_id_s…`).
 
 | # | Name (exact) | Type | Example value | Notes |
 |---|---|---|---|---|
@@ -96,52 +96,58 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 | 10 | `ops_agent_teams_team_id` | String | `c480320e-9204-474b-9b2c-54a53e94f220` | Teams team the Operations Agent posts to. |
 | 11 | `ops_agent_teams_channel_id` | String | `19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2` | Teams channel for alerts. |
 | 12 | `ops_agent_run_as_user` | String | `admin@mngenvmcap218279.onmicrosoft.com` | **Optional** — blank ⇒ the deploying user. |
-| 13 | `per_notebook_timeout_secs` | Int | `3600` | Orchestrator-only DAG knob (per-child timeout). **Not** forwarded to NB01. |
+| 13 | `per_notebook_timeout_secs` | Int | `3600` | Orchestrator-only DAG knob (per-child timeout). |
 
 **How the values flow:**
 
 ```
-Pipe_Setup (Base parameters)
-        │  (injected at runtime, right below the tagged parameters cell)
-        ▼
-RTI_Orchestrator_Setup   ── forwards 12 params (nb01_args) via runMultiple ──►  RTI_001
-        │                                                                         │  writes
-        │                                                                         ▼
-        └───────── runs NB02–06, 08–10 in one Spark session ───────────►  rti_demo_settings
-                                                                                  ▲
-                                                             NB02–10 read everything here
+Pipe_Setup (pipeline parameters)
+        │
+        ├─ Stage 1 ─►  RTI_001_create_lakehouse_shortcut   (gets the 12 env params)
+        │                     │  creates lakehouse, writes rti_demo_settings,
+        │                     │  then  notebookutils.notebook.exit(lakehouse_name)
+        │                     ▼
+        │              exitValue = "Energy_IQ_LakehouseRTI_V5"
+        │                     │
+        └─ Stage 2 ─►  RTI_Orchestrator_Setup
+              lakehouseName = @activity('RTI_001_create_lakehouse_shortcut').output.result.exitValue
+              per_notebook_timeout_secs = @pipeline().parameters.per_notebook_timeout_secs
+                    │
+                    │  %%configure  attaches that lakehouse to the session
+                    ▼
+              runs NB02–06, 08–10 in one Spark session (children inherit the default lakehouse)
+                    │
+                    └── NB02–10 read everything from rti_demo_settings
 ```
 
-- Only **NB01** receives parameters (`nb01_args`, the first 12 rows above). `per_notebook_timeout_secs` stays in the orchestrator (DAG timeout).
+- **Stage 1** (`RTI_001`) receives the 12 environment params and is the **single source of truth** for the lakehouse name — it publishes that name via `notebookutils.notebook.exit(...)`.
+- **Stage 2** (orchestrator) receives just two params: `lakehouseName` (piped from Stage 1's **exit value**, so there is no duplicated naming literal) and `per_notebook_timeout_secs`.
 - `NB02`–`NB10` read **only** from `rti_demo_settings`.
-- The orchestrator (and NB01) **fail fast** with `Missing required parameter(s): …` if any required value is blank (`ops_agent_run_as_user` is exempt).
+- NB01 and the orchestrator **fail fast** with `Missing required parameter(s): …` if any required value is blank (`ops_agent_run_as_user` is exempt).
 
-### 🔑 Required: attach a default lakehouse to the orchestrator
+### 🔑 How the default lakehouse is attached (no manual step)
 
-`runMultiple` refuses to run child notebooks whose default lakehouse differs from the root's. The orchestrator therefore calls `runMultiple(..., {"useRootDefaultLakehouse": True})`, which makes **every child inherit the orchestrator's default lakehouse** (ignoring stale pins such as `…_V3`).
+Earlier versions required you to manually pin a default lakehouse on the orchestrator. **That is no longer needed.** In `runMultiple` all children share the **root (orchestrator) session's** default lakehouse, so the orchestrator sets it programmatically:
 
-For this to work, the orchestrator must itself be attached to the workspace lakehouse:
+- Its **first code cell** is a parameterized `%%configure` that sets `defaultLakehouse` to `lakehouseName`.
+- `lakehouseName` arrives from **Stage 1's exit value**, i.e. the exact lakehouse NB01 just created.
+- Each activity also carries `args: {"useRootDefaultLakehouse": True}`, so every child adopts that root default (ignoring any stale saved pin such as `…_V3`).
 
-1. Open **`RTI_Orchestrator_Setup`** in Fabric.
-2. In the Lakehouse explorer, **add / set the default lakehouse** to `Energy_IQ_LakehouseRTI_{env_suffix}` (e.g. `Energy_IQ_LakehouseRTI_V5`).
-3. Save. (The binding carries a workspace-specific GUID, so it is **not** committed to git — set it per workspace.)
-
-> On a brand-new workspace the lakehouse must exist before the orchestrated run (day-0 bootstrap). `RTI_001` is idempotent and will resolve/ensure it; create the lakehouse once, attach the orchestrator to it, then run `Pipe_Setup`.
+> Why two stages? `%%configure` must be the **first code cell** and the lakehouse must **already exist** when it runs. NB01 creates the lakehouse, so it must finish in an **earlier** session (Stage 1) before the orchestrator can attach it (Stage 2). Cost: the VNet cold start is paid twice (once per stage).
 
 ---
 
 ## Setup DAG (dependency graph)
 
-`RTI_Orchestrator_Setup` runs this DAG in a single Spark session (VNet cold start paid once). Independent branches run in parallel (`concurrency = 4`).
+`RTI_Orchestrator_Setup` (Stage 2) runs this DAG in a single Spark session. Independent branches run in parallel (`concurrency = 4`). NB01 already ran in Stage 1 and is **not** in this DAG.
 
 ```
-NB01_lakehouse
- ├─► NB02_eventhouse ─┬─► NB06_tsbind        (also depends on NB04)
- │                    ├─► NB08_dashboard
- │                    └─(NB06 needs NB02 + NB04)
- └─► NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind
-                                       ├─► NB06_tsbind
-                                       └─► NB09_dataagent ──► NB10_opsagent
+NB02_eventhouse ─┬─► NB06_tsbind        (also depends on NB04)
+                 └─► NB08_dashboard
+
+NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind
+                                  ├─► NB06_tsbind
+                                  └─► NB09_dataagent ──► NB10_opsagent
 ```
 
 - **NB07 is excluded** from setup — run it on demand from `Pipe_Stream`.
@@ -246,10 +252,9 @@ All raw data lands under **`Files/bronze`** in the Lakehouse via the shortcut cr
 ## How to run
 
 ### One-click setup (recommended)
-1. Ensure the workspace lakehouse exists and **attach `RTI_Orchestrator_Setup` to it** (see "Required: attach a default lakehouse").
-2. Fill the **`Pipe_Setup` Base parameters** (table above).
-3. Run **`Pipe_Setup`** → orchestrator runs NB01–06, 08–10 in one Spark session.
-4. When you want live data, run **`Pipe_Stream`** (NB07).
+1. Fill the **`Pipe_Setup` pipeline parameters** (table above) on the pipeline's **Parameters** tab.
+2. Run **`Pipe_Setup`** → **Stage 1** (NB01) creates the lakehouse and exits with its name; **Stage 2** (orchestrator) attaches it via `%%configure` and runs NB02–06, 08–10 in one Spark session.
+3. When you want live data, run **`Pipe_Stream`** (NB07).
 
 ### Manual / notebook-by-notebook
 Run `RTI_001` first (fill its parameter cell for a standalone run), then `002`–`006`, `008`–`010`; run `007` whenever you want a telemetry burst.
@@ -269,7 +274,7 @@ Edit the simulator logic in **RTI_007** (value ranges, quality probabilities, dr
 Align all of: **RTI_004** (ontology `timeseriesProperties`) → **RTI_002** (`OPCUAEvents` schema) → **RTI_007** (event payload) → **RTI_006** (TimeSeries DataBinding).
 
 ### Stand up a new environment
-Change **`env_suffix`** in the `Pipe_Setup` Base parameters (e.g. `V6`); re-attach the orchestrator to the new lakehouse; run `Pipe_Setup`.
+Change **`env_suffix`** in the `Pipe_Setup` pipeline parameters (e.g. `V6`) and run `Pipe_Setup`. No manual lakehouse attach — Stage 1 creates the lakehouse and Stage 2 attaches it automatically.
 
 ---
 
@@ -278,7 +283,7 @@ Change **`env_suffix`** in the `Pipe_Setup` Base parameters (e.g. `V6`); re-atta
 - All data is **fully synthetic**; P&ID parsing is simulated via prepared CSVs; 3D data is metadata-only.
 - Notebooks are idempotent where feasible; run in a clean demo folder for best reproducibility.
 - Verify the `rti_demo_settings` table after RTI_001; monitor Eventhouse ingestion during RTI_007.
-- The `Pipe_Setup` / orchestrator parameter cells must show the **"parameters"** badge in Fabric for injection to work — verify after a git sync.
+- The NB01 / orchestrator parameter cells must show the **"parameters"** badge in Fabric for injection to work — verify after a git sync. The orchestrator's `%%configure` must remain the **first code cell** (Fabric fails the pipeline run otherwise).
 - Pipeline Notebook activities reference notebooks by **GUID**, so pipelines do not auto-repoint across `env_suffix` workspaces.
 
 ---

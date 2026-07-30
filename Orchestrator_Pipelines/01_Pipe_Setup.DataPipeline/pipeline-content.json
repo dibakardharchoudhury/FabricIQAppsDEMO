@@ -4,59 +4,123 @@
       {
         "type": "TridentNotebook",
         "typeProperties": {
-          "notebookId": "f7c3a2e1-8b4d-4e6a-9c1f-2d3e4f5a6b7c",
+          "notebookId": "742bda9f-927b-a1e7-4d9a-9f9a4e3444bb",
           "workspaceId": "00000000-0000-0000-0000-000000000000",
           "parameters": {
             "env_suffix": {
-              "value": "V5",
+              "value": {
+                "value": "@pipeline().parameters.env_suffix",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "workspace_id": {
-              "value": "19f3d588-1585-4f3b-bb59-5abaf90c193a",
+              "value": {
+                "value": "@pipeline().parameters.workspace_id",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "key_vault_uri": {
-              "value": "https://akvfabcapnew.vault.azure.net/",
+              "value": {
+                "value": "@pipeline().parameters.key_vault_uri",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "key_vault_tenant_id_secret_name": {
-              "value": "tenantid",
+              "value": {
+                "value": "@pipeline().parameters.key_vault_tenant_id_secret_name",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "key_vault_client_id_secret_name": {
-              "value": "clientid",
+              "value": {
+                "value": "@pipeline().parameters.key_vault_client_id_secret_name",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "key_vault_client_secret_name": {
-              "value": "clientsecret",
+              "value": {
+                "value": "@pipeline().parameters.key_vault_client_secret_name",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "adls_account_url": {
-              "value": "https://didharchadlsg2.dfs.core.windows.net",
+              "value": {
+                "value": "@pipeline().parameters.adls_account_url",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "adls_subpath": {
-              "value": "/dataiq/bronze",
+              "value": {
+                "value": "@pipeline().parameters.adls_subpath",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "connection_name": {
-              "value": "ontologydidharch-connection",
+              "value": {
+                "value": "@pipeline().parameters.connection_name",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "ops_agent_teams_team_id": {
-              "value": "c480320e-9204-474b-9b2c-54a53e94f220",
+              "value": {
+                "value": "@pipeline().parameters.ops_agent_teams_team_id",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "ops_agent_teams_channel_id": {
-              "value": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+              "value": {
+                "value": "@pipeline().parameters.ops_agent_teams_channel_id",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "ops_agent_run_as_user": {
-              "value": "admin@mngenvmcap218279.onmicrosoft.com",
+              "value": {
+                "value": "@pipeline().parameters.ops_agent_run_as_user",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        },
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "name": "RTI_001_create_lakehouse_shortcut",
+        "dependsOn": []
+      },
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "f7c3a2e1-8b4d-4e6a-9c1f-2d3e4f5a6b7c",
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "lakehouseName": {
+              "value": {
+                "value": "@activity('RTI_001_create_lakehouse_shortcut').output.result.exitValue",
+                "type": "Expression"
+              },
               "type": "string"
             },
             "per_notebook_timeout_secs": {
-              "value": "3600",
+              "value": {
+                "value": "@pipeline().parameters.per_notebook_timeout_secs",
+                "type": "Expression"
+              },
               "type": "int"
             }
           }
@@ -69,8 +133,69 @@
           "secureOutput": false
         },
         "name": "RTI_Orchestrator_Setup",
-        "dependsOn": []
+        "dependsOn": [
+          {
+            "activity": "RTI_001_create_lakehouse_shortcut",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
       }
-    ]
+    ],
+    "parameters": {
+      "env_suffix": {
+        "type": "string",
+        "defaultValue": "V5"
+      },
+      "workspace_id": {
+        "type": "string",
+        "defaultValue": "19f3d588-1585-4f3b-bb59-5abaf90c193a"
+      },
+      "key_vault_uri": {
+        "type": "string",
+        "defaultValue": "https://akvfabcapnew.vault.azure.net/"
+      },
+      "key_vault_tenant_id_secret_name": {
+        "type": "string",
+        "defaultValue": "tenantid"
+      },
+      "key_vault_client_id_secret_name": {
+        "type": "string",
+        "defaultValue": "clientid"
+      },
+      "key_vault_client_secret_name": {
+        "type": "string",
+        "defaultValue": "clientsecret"
+      },
+      "adls_account_url": {
+        "type": "string",
+        "defaultValue": "https://didharchadlsg2.dfs.core.windows.net"
+      },
+      "adls_subpath": {
+        "type": "string",
+        "defaultValue": "/dataiq/bronze"
+      },
+      "connection_name": {
+        "type": "string",
+        "defaultValue": "ontologydidharch-connection"
+      },
+      "ops_agent_teams_team_id": {
+        "type": "string",
+        "defaultValue": "c480320e-9204-474b-9b2c-54a53e94f220"
+      },
+      "ops_agent_teams_channel_id": {
+        "type": "string",
+        "defaultValue": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
+      },
+      "ops_agent_run_as_user": {
+        "type": "string",
+        "defaultValue": "admin@mngenvmcap218279.onmicrosoft.com"
+      },
+      "per_notebook_timeout_secs": {
+        "type": "int",
+        "defaultValue": 3600
+      }
+    }
   }
 }
