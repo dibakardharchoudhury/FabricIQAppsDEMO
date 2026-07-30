@@ -212,6 +212,31 @@ async function runJob(itemId: string, jobType: string, onStatus?: JobProgress, o
   return last
 }
 
+/** Re-attach to the newest instance of an already-triggered job — used to resume progress after a page reload. */
+async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number }): Promise<JobStatus> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
+  const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
+  let last: JobStatus = 'NotStarted'
+  onStatus?.(last)
+  while (Date.now() < deadline) {
+    let status: JobStatus | undefined
+    let failure: string | undefined
+    try {
+      const inst = await latestInstance(token, itemId, sinceIso)
+      status = inst?.status; failure = inst?.failureReason?.message
+    } catch { await delay(4000); continue }
+    if (status) {
+      if (status !== last) { last = status; onStatus?.(status) }
+      if (status === 'Failed') throw new Error(failure || 'Fabric job failed.')
+      if (stopAt.includes(status)) return status
+    }
+    await delay(4000)
+  }
+  return last
+}
+
 /** Sign in / consent for a resource using a popup; the caller then retries its query. */
 export async function beginInteractiveConnect(target: ConnectTarget) {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
@@ -316,6 +341,13 @@ export async function startStreamingPipeline(onStatus?: JobProgress) {
   await runJob(config.pipelineId, 'Pipeline', onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 3 * 60_000 })
 }
 
+/** Resume tracking a stream pipeline that was already started before a page reload. */
+export async function resumeStreamingPipeline(onStatus: JobProgress | undefined, sinceIso: string) {
+  const config = await ensureConfig(true)
+  if (!config?.pipelineId) throw new Error(`Streaming pipeline (${pipelineName}) was not found in the workspace.`)
+  await pollLatestInstance(config.pipelineId, sinceIso, onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 3 * 60_000 })
+}
+
 export function isPostSeedConfigured() { return Boolean(msal) }
 
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
@@ -325,6 +357,15 @@ export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobSt
   if (!config?.postseedNotebookId) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
   const status = await runJob(config.postseedNotebookId, 'RunNotebook', onStatus, { timeoutMs: 15 * 60_000 })
   // The notebook publishes new items (GraphQL API, Data Agent source) — force a fresh discovery.
+  if (status === 'Completed') clearWorkspaceConfigCache()
+  return status
+}
+
+/** Resume tracking a post-seed notebook run that was already started before a page reload. */
+export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
+  const config = await ensureConfig(true)
+  if (!config?.postseedNotebookId) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
+  const status = await pollLatestInstance(config.postseedNotebookId, sinceIso, onStatus, { timeoutMs: 15 * 60_000 })
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
 }

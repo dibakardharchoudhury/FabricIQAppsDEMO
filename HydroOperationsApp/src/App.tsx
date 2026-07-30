@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
-import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
   createWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
@@ -15,7 +15,28 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
-type ProgressJob = { label: string; status: string; pct: number; startedAt: number; etaMs: number }
+// `kind` lets a reloaded page re-attach to the right long-running Fabric job.
+type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number }
+
+// Running jobs are mirrored to localStorage so a page refresh can resume their progress bars.
+const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
+// A Fabric job started longer ago than this is assumed finished; don't try to resume it.
+const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
+
+// Read still-running jobs saved before a reload, dropping anything too old to still be live.
+function readPersistedJobs(): Record<string, ProgressJob> {
+  try {
+    const raw = localStorage.getItem(JOBS_STORAGE_KEY)
+    if (!raw) return {}
+    const saved = JSON.parse(raw) as Record<string, ProgressJob>
+    const fresh: Record<string, ProgressJob> = {}
+    for (const [key, job] of Object.entries(saved)) {
+      if (job && (job.kind === 'seed' || job.kind === 'stream') && typeof job.startedAt === 'number'
+        && Date.now() - job.startedAt < JOB_RESUME_MAX_AGE_MS) fresh[key] = job
+    }
+    return fresh
+  } catch { return {} }
+}
 
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null)
@@ -59,6 +80,11 @@ export default function App() {
   const lowStockParts = spareParts.filter(part => part.quantityOnHand <= part.reorderLevel)
 
   useEffect(() => {
+    // Restore bars for any job still running when the page was last open (before auth) so a
+    // refresh visibly keeps the in-flight work instead of dropping it.
+    const resumable = readPersistedJobs()
+    if (Object.keys(resumable).length) setJobs(resumable)
+
     const initialize = async () => {
       if (isRayfinConfigured()) {
         try {
@@ -78,8 +104,11 @@ export default function App() {
         const data = await queryLatestTelemetry()
         if (data) { setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
       } catch (error) { setNotice(`Telemetry: ${errorMessage(error)}`) }
+      // Fabric auth is ready — re-attach to the restored jobs and drive them to completion.
+      await Promise.all(Object.values(resumable).map(job => resumeJob(job)))
     }
     void initialize()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, [])
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
@@ -104,8 +133,16 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [jobKeys])
 
-  function beginProgress(key: string, label: string, etaMs: number) {
-    setJobs(prev => ({ ...prev, [key]: { label, status: 'Starting', pct: 3, startedAt: Date.now(), etaMs } }))
+  // Mirror running jobs to localStorage so a refresh can restore their bars and resume polling.
+  useEffect(() => {
+    try {
+      if (Object.keys(jobs).length) localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify(jobs))
+      else localStorage.removeItem(JOBS_STORAGE_KEY)
+    } catch { /* storage unavailable (private mode / iframe) — progress just won't survive reload */ }
+  }, [jobs])
+
+  function beginProgress(key: 'seed' | 'stream', label: string, etaMs: number) {
+    setJobs(prev => ({ ...prev, [key]: { kind: key, label, status: 'Starting', pct: 3, startedAt: Date.now(), etaMs } }))
   }
 
   function updateJob(key: string, status: string) {
@@ -171,6 +208,44 @@ export default function App() {
     } catch (error) { setNotice(errorMessage(error)); return null }
   }
 
+  // Shared completion for the seed/provision job whether it was just started or resumed after a reload.
+  async function awaitProvision(poll: () => Promise<JobStatus>) {
+    try {
+      const status = await poll()
+      if (status === 'Completed') {
+        setProvisioned(true)
+        await loadOperationalData()
+        setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
+        await connectStid()
+      } else {
+        setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
+      }
+    } catch (error) { setNotice(`Fabric provisioning failed: ${errorMessage(error)}`) }
+    finally { endJob('seed') }
+  }
+
+  // Shared completion for the stream job whether it was just started or resumed after a reload.
+  async function awaitStream(poll: () => Promise<unknown>) {
+    try {
+      await poll()
+      setStreamState('started'); await connectTelemetry()
+    } catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
+    finally { endJob('stream') }
+  }
+
+  // Re-attach to a Fabric job that was still running when the page was last open.
+  async function resumeJob(job: ProgressJob) {
+    const sinceIso = new Date(job.startedAt - 60_000).toISOString()
+    if (job.kind === 'seed') {
+      setSeeding(true)
+      try { await awaitProvision(() => resumePostSeedNotebook(s => updateJob('seed', humanStatus(s)), sinceIso)) }
+      finally { setSeeding(false) }
+    } else {
+      setStreamState('starting')
+      await awaitStream(() => resumeStreamingPipeline(s => updateJob('stream', humanStatus(s)), sinceIso))
+    }
+  }
+
   async function seedDemo() {
     if (seeding) return
     setSeeding(true); setNotice(undefined)
@@ -182,18 +257,7 @@ export default function App() {
         // every run, so skip the client-side insert-if-empty pre-seed.
         const label = 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)…'
         beginProgress('seed', label, 5 * 60_000)
-        try {
-          const status = await runPostSeedNotebook(s => updateJob('seed', humanStatus(s)))
-          if (status === 'Completed') {
-            setProvisioned(true)
-            await loadOperationalData()
-            setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
-            await connectStid()
-          } else {
-            setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
-          }
-        } catch (error) { setNotice(`Fabric provisioning failed: ${errorMessage(error)}`) }
-        finally { endJob('seed') }
+        await awaitProvision(() => runPostSeedNotebook(s => updateJob('seed', humanStatus(s))))
       } else {
         // Fallback when RTI_011 isn't configured: client-side insert-if-empty seed.
         const result = await seedOperationalDataIfEmpty(activeUser)
@@ -222,12 +286,7 @@ export default function App() {
     setStreamState('starting'); setNotice(undefined)
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
     beginProgress('stream', label, 90_000)
-    try {
-      await startStreamingPipeline(s => updateJob('stream', humanStatus(s)))
-      setStreamState('started'); await connectTelemetry()
-    }
-    catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
-    finally { endJob('stream') }
+    await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))))
   }
 
   async function sendQuestion() {
