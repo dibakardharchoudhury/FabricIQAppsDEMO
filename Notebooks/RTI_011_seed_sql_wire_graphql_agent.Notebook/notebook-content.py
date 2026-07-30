@@ -530,41 +530,8 @@ def update_item_definition(item_id: str, definition: dict) -> dict:
     raise RuntimeError(f"Failed to update item definition: {response.status_code} {response.text}")
 
 
-# Data Agents expose their own definition endpoints (/dataAgents/{id}/getDefinition and
-# /updateDefinition) — the generic /items/{id}/getDefinition returns 404 EntityNotFound for
-# a DataAgent item. Both are long-running operations.
-def get_data_agent_definition(item_id: str) -> dict:
-    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/getDefinition"
-    response = api_request("POST", url, timeout=120)
-    if response.status_code == 200:
-        return response.json() if response.content else {}
-    if response.status_code == 202:
-        operation_url = response.headers.get("Location")
-        if not operation_url:
-            raise RuntimeError("Data Agent getDefinition returned 202 without Location header.")
-        wait_for_lro(operation_url)
-        result_response = api_request("GET", f"{operation_url}/result", timeout=120)
-        if result_response.status_code == 200:
-            return result_response.json() if result_response.content else {}
-        raise RuntimeError(
-            f"Data Agent getDefinition result failed: {result_response.status_code} {result_response.text}"
-        )
-    raise RuntimeError(f"Failed to get Data Agent definition: {response.status_code} {response.text}")
-
-
-def update_data_agent_definition(item_id: str, definition: dict) -> dict:
-    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/updateDefinition"
-    response = api_request("POST", url, data={"definition": definition}, timeout=300)
-    if response.status_code == 200:
-        return response.json() if response.content else {}
-    if response.status_code == 202:
-        operation_url = response.headers.get("Location")
-        if not operation_url:
-            raise RuntimeError("Data Agent updateDefinition returned 202 without Location header.")
-        return wait_for_lro(operation_url)
-    raise RuntimeError(f"Failed to update Data Agent definition: {response.status_code} {response.text}")
-
-
+# The Data Agent uses the SAME generic /items/{id}/getDefinition + /updateDefinition endpoints
+# as RTI_009 (its create/patch flow). Only publish has a type-specific endpoint (below).
 def publish_data_agent(item_id: str, published_description: str = "") -> None:
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/staging/publish"
     body = {"publishedDescription": published_description[:256]} if published_description else {}
@@ -829,14 +796,19 @@ except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the f
 # STEP C — Add the SQL Database as a Data Agent source and republish
 # ---------------------------------------------------------------------------
 def resolve_data_agent_id() -> str:
-    if data_agent_id:
+    # Never trust a persisted data_agent_id blindly — the agent may have been deleted/rebuilt
+    # (a stale id makes getDefinition 404 EntityNotFound). Verify it against the live workspace.
+    agents = list_items_of_type(DATA_AGENT_ITEM_TYPE)
+    if data_agent_id and any(a.get("id") == data_agent_id for a in agents):
         return data_agent_id
-    item = find_item_by_name(data_agent_name, item_type=DATA_AGENT_ITEM_TYPE)
-    if not item:
-        raise RuntimeError(
-            f"Data Agent '{data_agent_name}' not found. Run RTI_009 first to create + publish it."
-        )
-    return item["id"]
+    by_name = next((a for a in agents if a.get("displayName") == data_agent_name), None)
+    if by_name:
+        return by_name["id"]
+    if agents:
+        return agents[0]["id"]
+    raise RuntimeError(
+        f"Data Agent '{data_agent_name}' not found. Run RTI_009 first to create + publish it."
+    )
 
 
 def build_sql_datasource_obj(existing: dict, artifact_id: str) -> dict:
@@ -894,7 +866,7 @@ try:
     sql_source_artifact_id = sql_db_item_id
     print(f"✅ SQL Database source artifact id: {sql_source_artifact_id}")
 
-    definition = get_data_agent_definition(agent_id)
+    definition = get_item_definition(agent_id)
     parts = definition.get("definition", {}).get("parts", []) or []
 
     # Reuse/upgrade the existing data_warehouse datasource part (it may hold a stale
@@ -920,7 +892,7 @@ try:
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table element(s))")
-    update_data_agent_definition(agent_id, {"parts": parts})
+    update_item_definition(agent_id, {"parts": parts})
 
     publish_data_agent(agent_id, "Operational SQL source added.")
     print("🌐 Data Agent republished with ontology + operational SQL sources.")
