@@ -4,7 +4,7 @@ import './App.css'
 import { FacilityMap } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
 const AssetModelViewer = lazy(() => import('./components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
-import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
   createWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
@@ -34,7 +34,7 @@ const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 // ETAs the progress bar eases toward — set to the upper end of observed run times so the
 // bar keeps moving through the whole window instead of stalling at its 95% cap too early.
 const SEED_ETA_MS = 6 * 60_000    // RTI_011 provision: ~5-6 min
-const STREAM_ETA_MS = 2 * 60_000  // 02_Pipe_Stream start: ~1.5-2 min
+const STREAM_ETA_MS = 5 * 60_000  // 02_Pipe_Stream: pipeline start + generator cell warmup until events flow (~5 min)
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -205,14 +205,29 @@ export default function App() {
     if (mn.status === 'fulfilled') setNotifications(mn.value)
   }
 
-  async function connectStid() {
+  async function connectStid(opts?: { retries?: number }) {
     setSourceState('Connecting...'); setNotice(undefined)
+    const retries = opts?.retries ?? 0
     try {
       let data = await queryStid()
+      // Right after Seed & provision the GraphQL API can take a moment to become queryable —
+      // rediscover the workspace and retry a few times before surfacing an error.
+      for (let attempt = 0; !data && attempt < retries; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 8_000))
+        clearWorkspaceConfigCache()
+        data = await queryStid()
+      }
       if (!data) { await beginInteractiveConnect('stid'); data = await queryStid() }
       if (data) { applyStid(data); setSourceState('STID connected') }
       else setSourceState('Connect STID')
-    } catch (error) { setSourceState('Connect STID'); setNotice(errorMessage(error)) }
+    } catch (error) {
+      setSourceState('Connect STID')
+      const message = errorMessage(error)
+      // Don't tell the operator to "run RTI_011" when Seed & provision has already completed.
+      if (provisioned && /No GraphQL API found/i.test(message)) {
+        setNotice('STID GraphQL API isn’t queryable yet — it can take a minute to finish publishing after Seed & provision. Wait a moment, then click Connect STID again.')
+      } else setNotice(message)
+    }
   }
 
   async function connectTelemetry() {
@@ -241,7 +256,7 @@ export default function App() {
         setProvisioned(true)
         await loadOperationalData()
         setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
-        await connectStid()
+        await connectStid({ retries: 5 })
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
@@ -249,11 +264,31 @@ export default function App() {
     finally { endJob('seed') }
   }
 
+  // After the pipeline reports 'running', the generator notebook cell still needs a few minutes
+  // before events land in the Eventhouse — poll until the first readings appear (or we give up).
+  async function waitForStreamData(timeoutMs: number): Promise<TelemetryReading[] | null> {
+    const deadline = Date.now() + timeoutMs
+    let data = await queryLatestTelemetry()
+    if (data === null) { await beginInteractiveConnect('telemetry'); data = await queryLatestTelemetry() }
+    while (Date.now() < deadline) {
+      if (data && data.length) return data
+      await new Promise(resolve => setTimeout(resolve, 10_000))
+      try { data = await queryLatestTelemetry() } catch { data = null }
+    }
+    return data && data.length ? data : null
+  }
+
   // Shared completion for the stream job whether it was just started or resumed after a reload.
   async function awaitStream(poll: () => Promise<unknown>) {
     try {
       await poll()
-      setStreamState('started'); await connectTelemetry()
+      // The pipeline reaching 'running' doesn't mean signals are flowing yet — keep the progress
+      // bar up until the generator cell actually produces telemetry, so it never completes early.
+      updateJob('stream', 'Generating signals')
+      const data = await waitForStreamData(STREAM_ETA_MS)
+      setStreamState('started')
+      if (data && data.length) { setTelemetry(data); setTelemetryState(`${data.length} signals`) }
+      else setTelemetryState('No recent events')
     } catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
     finally { endJob('stream') }
   }
@@ -344,7 +379,7 @@ export default function App() {
   const steps = [
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
     { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
-    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
+    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel. Takes ~5 min to warm up before signals appear.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
     { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]

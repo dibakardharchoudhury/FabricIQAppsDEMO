@@ -338,14 +338,14 @@ export async function startStreamingPipeline(onStatus?: JobProgress) {
   const config = await ensureConfig(true)
   if (!config?.pipelineId) throw new Error(`Streaming pipeline (${pipelineName}) was not found in the workspace.`)
   // The streaming pipeline keeps running; stop polling once it is confirmed live (InProgress).
-  await runJob(config.pipelineId, 'Pipeline', onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 3 * 60_000 })
+  await runJob(config.pipelineId, 'Pipeline', onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 6 * 60_000 })
 }
 
 /** Resume tracking a stream pipeline that was already started before a page reload. */
 export async function resumeStreamingPipeline(onStatus: JobProgress | undefined, sinceIso: string) {
   const config = await ensureConfig(true)
   if (!config?.pipelineId) throw new Error(`Streaming pipeline (${pipelineName}) was not found in the workspace.`)
-  await pollLatestInstance(config.pipelineId, sinceIso, onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 3 * 60_000 })
+  await pollLatestInstance(config.pipelineId, sinceIso, onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 6 * 60_000 })
 }
 
 export function isPostSeedConfigured() { return Boolean(msal) }
