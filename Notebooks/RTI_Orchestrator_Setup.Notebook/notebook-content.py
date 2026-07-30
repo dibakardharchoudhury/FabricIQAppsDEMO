@@ -23,10 +23,10 @@
 # `notebookutils.notebook.runMultiple`, so the ~5 min VNet cold start is paid **once** instead
 # of once per notebook. Independent notebooks run in parallel per the dependency DAG.
 # 
-# - **Streaming (NB07) is excluded** — run it on demand from `Pipe_Stream_<suffix>`.
+# - **Streaming (NB07) is excluded** — run it on demand from `Pipe_Stream`.
 # - Only **NB01** receives the parameters below; NB02–NB10 read everything from the
 #   `rti_demo_settings` table that NB01 writes.
-# - Intended to be launched by the **`Pipe_Setup_<suffix>`** Data Pipeline (single activity).
+# - Intended to be launched by the **`Pipe_Setup`** Data Pipeline (single activity).
 
 # PARAMETERS CELL ********************
 
