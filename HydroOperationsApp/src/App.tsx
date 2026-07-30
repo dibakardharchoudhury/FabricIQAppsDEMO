@@ -307,7 +307,7 @@ export default function App() {
   }
 
   async function seedDemo() {
-    if (seeding) return
+    if (seeding || jobs.seed) return
     setSeeding(true); setNotice(undefined)
     try {
       const activeUser = user ?? await authenticate()
@@ -358,6 +358,7 @@ export default function App() {
   }
 
   async function startStream() {
+    if (streamState === 'starting' || jobs.stream) return
     setStreamState('starting'); setNotice(undefined)
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
     beginProgress('stream', label, STREAM_ETA_MS)

@@ -166,6 +166,7 @@ const TERMINAL_STATUSES: JobStatus[] = ['Completed', 'Failed', 'Cancelled', 'Ded
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 type JobInstance = { id?: string; status?: JobStatus; startTimeUtc?: string; failureReason?: { message?: string } }
+const ACTIVE_STATUSES: JobStatus[] = ['NotStarted', 'InProgress']
 
 /** Newest job instance started at/after `sinceIso` — used when the 202 Location header is not CORS-exposed. */
 async function latestInstance(token: string, itemId: string, sinceIso: string): Promise<JobInstance | undefined> {
@@ -177,16 +178,35 @@ async function latestInstance(token: string, itemId: string, sinceIso: string): 
     .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
 }
 
+/** Newest still-running (NotStarted/InProgress) instance for an item, so callers can reattach
+ *  instead of starting a duplicate run after a refresh or repeated clicks. */
+async function activeInstance(token: string, itemId: string): Promise<JobInstance | undefined> {
+  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) return undefined
+  const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
+  return list
+    .filter(i => i.status && ACTIVE_STATUSES.includes(i.status))
+    .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
+}
+
 /** Trigger a Fabric item job and poll until a terminal (or requested `stopAt`) status, reporting progress. */
-async function runJob(itemId: string, jobType: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number }): Promise<JobStatus> {
+async function runJob(itemId: string, jobType: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number; reuseActive?: boolean }): Promise<JobStatus> {
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
-  const startedAt = new Date(Date.now() - 5000).toISOString()
-  const trigger = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances?jobType=${jobType}`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!trigger.ok && trigger.status !== 202) throw new Error(`Job start failed (${trigger.status}).`)
-  const location = trigger.headers.get('Location')
+  let startedAt = new Date(Date.now() - 5000).toISOString()
+  let location: string | null = null
+  // Reattach to an already-running instance instead of starting a duplicate (survives refresh / repeat clicks).
+  const active = opts?.reuseActive ? await activeInstance(token, itemId) : undefined
+  if (active?.startTimeUtc) {
+    startedAt = new Date(Date.parse(active.startTimeUtc) - 5000).toISOString()
+    if (active.status) onStatus?.(active.status)
+  } else {
+    const trigger = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances?jobType=${jobType}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!trigger.ok && trigger.status !== 202) throw new Error(`Job start failed (${trigger.status}).`)
+    location = trigger.headers.get('Location')
+  }
   const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
   const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
   let last: JobStatus = 'NotStarted'
@@ -338,7 +358,7 @@ export async function startStreamingPipeline(onStatus?: JobProgress) {
   const config = await ensureConfig(true)
   if (!config?.pipelineId) throw new Error(`Streaming pipeline (${pipelineName}) was not found in the workspace.`)
   // The streaming pipeline keeps running; stop polling once it is confirmed live (InProgress).
-  await runJob(config.pipelineId, 'Pipeline', onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 6 * 60_000 })
+  await runJob(config.pipelineId, 'Pipeline', onStatus, { stopAt: ['InProgress', ...TERMINAL_STATUSES], timeoutMs: 6 * 60_000, reuseActive: true })
 }
 
 /** Resume tracking a stream pipeline that was already started before a page reload. */
@@ -355,7 +375,7 @@ export function isPostSeedConfigured() { return Boolean(msal) }
 export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobStatus> {
   const config = await ensureConfig(true)
   if (!config?.postseedNotebookId) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
-  const status = await runJob(config.postseedNotebookId, 'RunNotebook', onStatus, { timeoutMs: 15 * 60_000 })
+  const status = await runJob(config.postseedNotebookId, 'RunNotebook', onStatus, { timeoutMs: 15 * 60_000, reuseActive: true })
   // The notebook publishes new items (GraphQL API, Data Agent source) — force a fresh discovery.
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
