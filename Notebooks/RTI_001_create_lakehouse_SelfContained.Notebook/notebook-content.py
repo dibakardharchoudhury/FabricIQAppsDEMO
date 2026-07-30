@@ -38,6 +38,25 @@
 # ```
 # 
 # inside the newly created Lakehouse.
+# 
+# ---
+# 
+# ## ✅ Prerequisites — before running `Pipe_Setup`
+# 
+# These are **one-time** setup steps that give the executing **Service Principal (SPN)**
+# the access it needs. (No ADLS Gen2, shortcut, cloud connection, or Workspace Identity
+# is required by this self-contained variant.)
+# 
+# 1. **Private endpoint to Azure Key Vault** — required **only if the Key Vault is not
+#    publicly accessible**. Create a **Managed private endpoint** to the vault under
+#    **Workspace settings → Outbound networking → Managed private endpoints**, then approve
+#    it on the Key Vault's *Networking → Private endpoint connections*. Skip if the vault
+#    allows public network access.
+# 2. **SPN access to the Key Vault** — the SPN must be able to **Get** the secrets
+#    (`tenantid`, `clientid`, `clientsecret`), e.g. via the **Key Vault Secrets User** role
+#    or an access policy granting *Secret Get*.
+# 3. **SPN Contributor on the Fabric workspace** — grant the SPN at least **Contributor**
+#    (Workspace → Manage access) so it can create the Lakehouse and downstream items.
 
 
 # CELL ********************

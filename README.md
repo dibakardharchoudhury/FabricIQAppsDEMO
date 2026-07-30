@@ -78,6 +78,20 @@ The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`)
 
 ---
 
+## ✅ Prerequisites — before you run `Pipe_Setup`
+
+Complete these **one-time** steps first. All three are about giving the executing **Service Principal (SPN)** the access it needs; the demo is otherwise self-contained (no ADLS Gen2, shortcut, cloud connection, or Workspace Identity).
+
+| # | Requirement | Where / how |
+|---|---|---|
+| 1 | **Private endpoint to Azure Key Vault** — required **only if the Key Vault is not publicly accessible** (public network access disabled / firewalled). | Fabric **Workspace settings → Outbound networking → Managed private endpoints** → add a managed private endpoint targeting the Key Vault, then **approve** it on the Key Vault's *Networking → Private endpoint connections*. Skip if the vault allows public access. |
+| 2 | **SPN can read the Key Vault secrets** — the SPN must have **Get** on the secrets (`tenantid`, `clientid`, `clientsecret`). | Key Vault **Access control (IAM)** → assign **Key Vault Secrets User**, or add a Key Vault **access policy** granting *Secret Get*. |
+| 3 | **SPN has Contributor on the Fabric workspace** — so it can create the Lakehouse, Eventhouse, ontology, and the other items. | Fabric **Workspace → Manage access** → add the SPN with the **Contributor** role (or higher). |
+
+> These same three prerequisites are also called out at the top of **`RTI_001_create_lakehouse_SelfContained`** and in the **`Pipe_Setup`** pipeline description.
+
+---
+
 ## ⚙️ `Pipe_Setup` pipeline parameters (must be keyed in)
 
 `Pipe_Setup` runs **two staged Notebook activities** and holds all environment values as **pipeline-level parameters** (the pipeline's **Parameters** tab — *not* per-activity Base parameters). The notebook parameter cells ship **blank on purpose**, so **the pipeline is the single source of truth**.

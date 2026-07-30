@@ -1,5 +1,6 @@
 {
   "properties": {
+    "description": "Prereqs before run: 1) If Key Vault isn't public, add a Managed Private Endpoint to it (Workspace settings > Outbound networking > Managed private endpoints). 2) SPN needs Get on Key Vault secrets. 3) SPN needs Contributor on this Fabric workspace.",
     "activities": [
       {
         "type": "TridentNotebook",
