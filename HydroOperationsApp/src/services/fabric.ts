@@ -101,15 +101,6 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
   return ((await res.json()) as { value?: WorkspaceItem[] }).value ?? []
 }
 
-async function resolveGraphqlEndpoint(token: string, id: string): Promise<string | undefined> {
-  try {
-    const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${id}`, { headers: { Authorization: `Bearer ${token}` } })
-    if (!res.ok) return undefined
-    const props = ((await res.json()) as { properties?: Record<string, unknown> }).properties
-    return (props?.graphQlEndpoint ?? props?.graphqlEndpoint ?? props?.endpoint) as string | undefined
-  } catch { return undefined }
-}
-
 /** Discover artifact ids/URIs from the workspace by display name; fall back to build-time env values.
  *  Discovered values are cached for the session so no id can go stale. */
 async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null> {
@@ -137,12 +128,12 @@ async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null
         kqlDatabase = items.find(i => i.id === dbId)?.displayName ?? eh.displayName
       }
     }
+    // Fabric doesn't expose a GraphQL item's endpoint, but api.fabric.microsoft.com serves
+    // queries directly at this deterministic path — no per-capacity cluster host or env override needed.
     const gql = items.find(i => i.type === 'GraphQLApi')
-    let graphqlUrl: string | undefined
-    if (gql) {
-      graphqlUrl = (await resolveGraphqlEndpoint(token, gql.id))
-        ?? (graphqlUrlOverride ? graphqlUrlOverride.replace(/graphqlapis\/[0-9a-fA-F-]+/, `graphqlapis/${gql.id}`) : undefined)
-    }
+    const graphqlUrl = gql
+      ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${gql.id}/graphql`
+      : undefined
     // The published Data Agent exposes an OpenAI Assistants-compatible endpoint under its item id.
     const da = items.find(i => i.type === 'DataAgent')
     const dataAgentUrl = da
