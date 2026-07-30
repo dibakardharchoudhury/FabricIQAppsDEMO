@@ -60,7 +60,7 @@ export default function App() {
           if (current) await loadOperationalData()
         } catch (error) { setNotice(`Operations data: ${errorMessage(error)}`) }
       }
-      const pending = await initAuth()
+      await initAuth()
       if (isStidConfigured()) {
         try {
           const data = await queryStid()
@@ -71,9 +71,6 @@ export default function App() {
         const data = await queryLatestTelemetry()
         if (data) { setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
       } catch (error) { setNotice(`Telemetry: ${errorMessage(error)}`) }
-      if (pending === 'stid') void connectStid()
-      else if (pending === 'telemetry') void connectTelemetry()
-      else if (pending === 'stream') void startStream()
     }
     void initialize()
   }, [])
@@ -105,18 +102,20 @@ export default function App() {
   async function connectStid() {
     setSourceState('Connecting...'); setNotice(undefined)
     try {
-      const data = await queryStid()
-      if (!data) { await beginInteractiveConnect('stid'); return }
-      applyStid(data); setSourceState('STID connected')
+      let data = await queryStid()
+      if (!data) { await beginInteractiveConnect('stid'); data = await queryStid() }
+      if (data) { applyStid(data); setSourceState('STID connected') }
+      else setSourceState('Connect STID')
     } catch (error) { setSourceState('Connect STID'); setNotice(errorMessage(error)) }
   }
 
   async function connectTelemetry() {
     setTelemetryState('Connecting...'); setNotice(undefined)
     try {
-      const data = await queryLatestTelemetry()
-      if (data === null) { await beginInteractiveConnect('telemetry'); return }
-      setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events')
+      let data = await queryLatestTelemetry()
+      if (data === null) { await beginInteractiveConnect('telemetry'); data = await queryLatestTelemetry() }
+      if (data) { setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
+      else setTelemetryState('Connect telemetry')
     } catch (error) { setTelemetryState('Connect telemetry'); setNotice(errorMessage(error)) }
   }
 

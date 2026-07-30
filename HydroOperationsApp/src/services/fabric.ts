@@ -15,7 +15,6 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
 const FABRIC_SCOPE = 'https://api.fabric.microsoft.com/Item.Execute.All'
-const PENDING_KEY = 'hydro:pendingConnect'
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
@@ -29,9 +28,9 @@ function scopeFor(target: ConnectTarget) {
   return FABRIC_SCOPE
 }
 
-/** Initialize MSAL and process any redirect returning from Entra. Returns the pending connect target, if any. */
-export async function initAuth(): Promise<ConnectTarget | null> {
-  if (!msal) return null
+/** Initialize MSAL and process any redirect returning from Entra. */
+export async function initAuth(): Promise<void> {
+  if (!msal) return
   await msal.initialize()
   try {
     await msal.handleRedirectPromise()
@@ -39,9 +38,6 @@ export async function initAuth(): Promise<ConnectTarget | null> {
     console.warn('Entra redirect handling failed.', error)
   }
   initialized = true
-  const pending = sessionStorage.getItem(PENDING_KEY) as ConnectTarget | null
-  if (pending) sessionStorage.removeItem(PENDING_KEY)
-  return pending
 }
 
 async function ensureInit() {
@@ -65,12 +61,19 @@ async function silentToken(scope: string): Promise<string | null> {
   }
 }
 
-/** Redirect to Entra to sign in / consent for a resource, resuming the same action on return. */
+/** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
+ *  Must be invoked from a user gesture. */
+async function popupToken(scope: string): Promise<string> {
+  await ensureInit()
+  const account = msal!.getAllAccounts()[0]
+  const result = await msal!.acquireTokenPopup({ scopes: [scope], account: account ?? undefined })
+  return result.accessToken
+}
+
+/** Sign in / consent for a resource using a popup; the caller then retries its query. */
 export async function beginInteractiveConnect(target: ConnectTarget) {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
-  await ensureInit()
-  sessionStorage.setItem(PENDING_KEY, target)
-  await msal.acquireTokenRedirect({ scopes: [scopeFor(target)], account: msal.getAllAccounts()[0] ?? undefined })
+  await popupToken(scopeFor(target))
 }
 
 export type Facility = {
@@ -156,8 +159,7 @@ export async function queryStid(): Promise<StidData | null> {
 
 export async function startStreamingPipeline() {
   if (!pipelineId) throw new Error('Streaming pipeline is not configured.')
-  const token = await silentToken(FABRIC_SCOPE)
-  if (!token) { await beginInteractiveConnect('stream'); return }
+  const token = await silentToken(FABRIC_SCOPE) ?? await popupToken(FABRIC_SCOPE)
   const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${pipelineId}/jobs/instances?jobType=Pipeline`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   })
@@ -166,8 +168,7 @@ export async function startStreamingPipeline() {
 
 export async function askDataAgent(question: string) {
   if (!agentUrl) return 'The Fabric Data Agent is not published to an MCP endpoint. This panel is available after an endpoint is configured.'
-  const token = await silentToken(FABRIC_SCOPE)
-  if (!token) { await beginInteractiveConnect('stream'); return 'Signing in to Microsoft Entra...' }
+  const token = await silentToken(FABRIC_SCOPE) ?? await popupToken(FABRIC_SCOPE)
   const response = await fetch(agentUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
