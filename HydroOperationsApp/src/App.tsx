@@ -35,6 +35,10 @@ const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 // bar keeps moving through the whole window instead of stalling at its 95% cap too early.
 const SEED_ETA_MS = 6 * 60_000    // RTI_011 provision: ~5-6 min
 const STREAM_ETA_MS = 5 * 60_000  // 02_Pipe_Stream: pipeline start + generator cell warmup until events flow (~5 min)
+// While a Fabric job is still "Queued" (cold-starting a Spark session) the bar only crawls to
+// this cap; it catches up toward 95% once the job flips to "Running".
+const QUEUED_PCT_CAP = 15
+const isQueuedStatus = (status: string) => status === 'Queued' || status === 'NotStarted'
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -146,8 +150,11 @@ export default function App() {
       const next: Record<string, ProgressJob> = {}
       for (const [key, job] of Object.entries(prev)) {
         const elapsed = Date.now() - job.startedAt
-        const frac = 1 - Math.exp((-2.5 * elapsed) / Math.max(1, job.etaMs))
-        const pct = Math.max(job.pct, Math.min(95, Math.round(frac * 100)))
+        // Queued: crawl very slowly toward a low cap. Running: ease toward ~95% (catches up).
+        const target = isQueuedStatus(job.status)
+          ? Math.min(QUEUED_PCT_CAP, Math.round((1 - Math.exp(-elapsed / Math.max(1, job.etaMs))) * QUEUED_PCT_CAP))
+          : Math.min(95, Math.round((1 - Math.exp((-2.5 * elapsed) / Math.max(1, job.etaMs))) * 100))
+        const pct = Math.max(job.pct, target)
         if (pct !== job.pct) changed = true
         next[key] = pct === job.pct ? job : { ...job, pct }
       }
