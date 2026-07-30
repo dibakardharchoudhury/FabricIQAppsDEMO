@@ -133,7 +133,7 @@ timeseries_quality_column = "quality"
 eventstream_source_name = "OPCUA_CustomEndpoint"
 eventstream_stream_name = "OPCUA_DefaultStream"
 eventstream_destination_name = "Eventhouse"
-alert_pipeline_name = "Pipe_SendEmailAlert"
+alert_pipeline_name = f"Pipe_SendEmailAlert_{env_suffix}"
 alert_pipeline_description = "This will be triggered from Ops Agent!"
 
 
@@ -973,6 +973,12 @@ settings_table_path = (
 )
 
 print(f"✅ Wrote shared settings table to: {settings_table_path}")
+
+# Print every setting written so the full configuration is visible in the run log.
+print(f"\n=== rti_demo_settings ({len(settings_rows)} settings) ===")
+for _row in sorted(settings_rows, key=lambda r: r["setting_name"]):
+    print(f"  {_row['setting_name']:<34} = {_row['setting_value']}")
+
 display(spark.read.format("delta").load(settings_table_path).orderBy("setting_name"))
 
 # METADATA ********************
