@@ -23,7 +23,7 @@ const fmtAgo = (iso: string) => { const ms = Date.now() - new Date(iso).getTime(
 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
 // `kind` lets a reloaded page re-attach to the right long-running Fabric job.
-type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number }
+type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 // A live telemetry signal whose OPC UA quality is Bad/Uncertain, resolved back to its asset.
 type FlaggedSignal = { reading: TelemetryReading; instrument?: StidData['instruments'][number]; asset?: StidData['equipment'][number] }
 
@@ -39,6 +39,11 @@ const STREAM_ETA_MS = 5 * 60_000  // 02_Pipe_Stream: pipeline start + generator 
 // this cap; it catches up toward 95% once the job flips to "Running".
 const QUEUED_PCT_CAP = 15
 const isQueuedStatus = (status: string) => status === 'Queued' || status === 'NotStarted'
+// Completed fills the bar to 100%; a failed/cancelled job just stops where it is.
+const isDoneStatus = (status: string) => status === 'Completed'
+const isTerminalJobStatus = (status: string) => isDoneStatus(status) || status === 'Failed' || status === 'Cancelled'
+// Compact elapsed-time label for a running or finished job (e.g. "3m 12s").
+const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(s / 60); const r = s % 60; return m ? `${m}m ${r}s` : `${r}s` }
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -71,6 +76,7 @@ export default function App() {
   const [streamState, setStreamState] = useState<'idle' | 'starting' | 'started' | 'error'>('idle')
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>({})
+  const [now, setNow] = useState(() => Date.now())
   const [provisioned, setProvisioned] = useState(false)
   const [setupHidden, setSetupHidden] = useState(false)
   const [copilotOpen, setCopilotOpen] = useState(false)
@@ -145,21 +151,32 @@ export default function App() {
   const jobKeys = Object.keys(jobs).sort().join(',')
   useEffect(() => {
     if (!jobKeys) return
-    const tick = () => setJobs(prev => {
-      let changed = false
-      const next: Record<string, ProgressJob> = {}
-      for (const [key, job] of Object.entries(prev)) {
-        const elapsed = Date.now() - job.startedAt
-        // Queued: crawl very slowly toward a low cap. Running: ease toward ~95% (catches up).
-        const target = isQueuedStatus(job.status)
-          ? Math.min(QUEUED_PCT_CAP, Math.round((1 - Math.exp(-elapsed / Math.max(1, job.etaMs))) * QUEUED_PCT_CAP))
-          : Math.min(95, Math.round((1 - Math.exp((-2.5 * elapsed) / Math.max(1, job.etaMs))) * 100))
-        const pct = Math.max(job.pct, target)
-        if (pct !== job.pct) changed = true
-        next[key] = pct === job.pct ? job : { ...job, pct }
-      }
-      return changed ? next : prev
-    })
+    const tick = () => {
+      setNow(Date.now())
+      setJobs(prev => {
+        let changed = false
+        const next: Record<string, ProgressJob> = {}
+        for (const [key, job] of Object.entries(prev)) {
+          const elapsed = Date.now() - job.startedAt
+          if (isTerminalJobStatus(job.status)) {
+            // Finished: fill to 100% on success and freeze the elapsed clock once.
+            const pct = isDoneStatus(job.status) ? 100 : job.pct
+            const endedAt = job.endedAt ?? Date.now()
+            if (pct !== job.pct || job.endedAt == null) { changed = true; next[key] = { ...job, pct, endedAt } }
+            else next[key] = job
+            continue
+          }
+          // Queued: crawl very slowly toward a low cap. Running: ease toward ~95% (catches up).
+          const target = isQueuedStatus(job.status)
+            ? Math.min(QUEUED_PCT_CAP, Math.round((1 - Math.exp(-elapsed / Math.max(1, job.etaMs))) * QUEUED_PCT_CAP))
+            : Math.min(95, Math.round((1 - Math.exp((-2.5 * elapsed) / Math.max(1, job.etaMs))) * 100))
+          const pct = Math.max(job.pct, target)
+          if (pct !== job.pct) changed = true
+          next[key] = pct === job.pct ? job : { ...job, pct }
+        }
+        return changed ? next : prev
+      })
+    }
     tick()
     const id = window.setInterval(tick, 500)
     return () => window.clearInterval(id)
@@ -372,14 +389,21 @@ export default function App() {
     await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))))
   }
 
-  async function sendQuestion() {
-    const text = question.trim(); if (!text || busy) return
-    setQuestion(''); setBusy(true); setMessages(current => [...current, { role: 'user', text }])
+  async function sendQuestion(override?: string) {
+    const text = (override ?? question).trim(); if (!text || busy) return
+    setQuestion(''); setBusy(true)
+    // Append the user turn plus an empty agent bubble that streamed tokens fill in place.
+    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
+    const setLastAgent = (value: string) => setMessages(current => {
+      const copy = current.slice()
+      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value }; break } }
+      return copy
+    })
     try {
-      const answer = await askDataAgent(text)
-      setMessages(current => [...current, { role: 'agent', text: answer }])
+      const answer = await askDataAgent(text, partial => setLastAgent(partial))
+      setLastAgent(answer)
     }
-    catch (error) { setMessages(current => [...current, { role: 'agent', text: errorMessage(error) }]) }
+    catch (error) { setLastAgent(errorMessage(error)) }
     setBusy(false)
   }
 
@@ -392,6 +416,13 @@ export default function App() {
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
   const setupComplete = steps.every(step => step.done)
+  // Starter prompts grounded in the loaded data so users click questions the agent can actually answer.
+  const primaryFacilityId = facility?.facility_id ?? facilities[0]?.facility_id
+  const suggestedPrompts = [
+    'Summarize the open work orders and which assets they affect.',
+    primaryFacilityId ? `Which turbines in ${primaryFacilityId} report Bad or Uncertain signal quality?` : 'Which turbines report Bad or Uncertain signal quality?',
+    'List the equipment and their instruments from the ontology.',
+  ]
 
   return <div className="app-shell">
     <header className="topbar">
@@ -405,7 +436,7 @@ export default function App() {
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
-      {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
+      {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? now) - job.startedAt)}</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
       {!setupHidden && !setupComplete && <section className="setup">
         <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
         <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
@@ -461,7 +492,7 @@ export default function App() {
       </div>
     </main>
 
-    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}><p>{item.text}</p></div>)}{busy && <small>Waiting for Data Agent...</small>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} title="Send"><Send size={16} /></button></div></aside>}
+    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}><p className={!item.text && item.role === 'agent' ? 'thinking' : undefined}>{item.text || (item.role === 'agent' ? 'Thinking' : '')}</p></div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} title="Send"><Send size={16} /></button></div></aside>}
   </div>
 }
 
