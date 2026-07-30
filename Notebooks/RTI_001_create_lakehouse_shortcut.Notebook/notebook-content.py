@@ -66,17 +66,22 @@ from datetime import datetime, timezone
 # Later notebooks should read this table instead of redefining common settings.
 settings_table_name = "rti_demo_settings"
 
+# Single environment suffix. Change this ONE value (e.g. "V4", "DEV") to stand up a
+# parallel environment: the workspace folder AND every artifact name below derive
+# from it, so the whole environment shares one suffix and no name is edited by hand.
+env_suffix = "V3"
+
 # Lakehouse name & description
-lakehouse_name = "Energy_IQ_LakehouseRTI_V3"
+lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
 
 lakehouse_description = "Lakehouse for Fabric IQ mock dataset (STID, SAP, OPC UA, SOLV, P&ID, Documents)."
 
 # Workspace ID that will host the Lakehouse
 workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"  # from behind /groups/ in Fabric URL
 
-# Workspace folder where the demo items should be created.
+# Workspace folder where the demo items should be created (carries the env suffix).
 # This is a Fabric workspace folder path, not a Lakehouse path.
-workspace_folder_path = "RTI_DEMO_V3"
+workspace_folder_path = f"RTI_DEMO_{env_suffix}"
 
 # ADLS G2 URL containing the mock dataset.
 # This should be the root folder containing `bronze/stid`, `bronze/sap`, etc.
@@ -88,13 +93,24 @@ shortcut_name = "bronze"
 shortcut_parent_path = "Files"
 connection_name = "ontologydidharch-connection"
 
-# Standard item names used by later notebooks
-ontology_name = "RTI_Demo_Ontology_V3"
-eventhouse_name = "RTI_Demo_Eventhouse_V3"
-kql_database_name = "RTI_Demo_Eventhouse_V3"
-eventstream_name = "RTI_Demo_Eventstream_V3"
+# Standard item names used by later notebooks — all derived from env_suffix so the
+# whole environment shares one suffix. The KQL database intentionally reuses the
+# Eventhouse name (Fabric names an Eventhouse's default KQL DB the same way).
+ontology_name = f"RTI_Demo_Ontology_{env_suffix}"
+eventhouse_name = f"RTI_Demo_Eventhouse_{env_suffix}"
+kql_database_name = f"RTI_Demo_Eventhouse_{env_suffix}"
+eventstream_name = f"RTI_Demo_Eventstream_{env_suffix}"
 eventhouse_table_name = "OPCUAEvents"
-data_agent_name = "RTI_Demo_Agent_V3"
+data_agent_name = f"RTI_Demo_Agent_{env_suffix}"
+dashboard_name = f"RTI_Demo_OPCUA_TelemetryStats_{env_suffix}"
+ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
+
+# Operations Agent deployment inputs (previously hardcoded as defaults inside NB10).
+# Kept here so NB01 is the single source of truth for all config (never runtime IDs).
+ops_agent_run_as_user = ""  # UPN the agent runs as; blank = the user who deploys it
+ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"       # FacilitiesRealTimeMonitoring
+ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Alerts
+ops_agent_copy_playbook = "true"
 
 # Structured table names used by the ontology
 silver_facilities_table = "silver_facilities"
@@ -116,6 +132,7 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
 
     settings = {
         "settings_table_name": settings_table_name,
+        "env_suffix": env_suffix,
 
         "workspace_id": workspace_id,
         "workspace_folder_path": workspace_folder_path,
@@ -136,6 +153,21 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "eventstream_name": eventstream_name,
         "eventhouse_table_name": eventhouse_table_name,
         "data_agent_name": data_agent_name,
+        "dashboard_name": dashboard_name,
+        "ops_agent_name": ops_agent_name,
+
+        # Canonical fabric_* aliases so downstream first_setting() primary keys
+        # resolve straight from NB01 (no fallback dependency, no name drift).
+        "fabric_ontology_name": ontology_name,
+        "fabric_eventhouse_name": eventhouse_name,
+        "fabric_kql_db_name": kql_database_name,
+        "fabric_eventhouse_table": eventhouse_table_name,
+
+        # Operations Agent deployment inputs.
+        "ops_agent_run_as_user": ops_agent_run_as_user,
+        "ops_agent_teams_team_id": ops_agent_teams_team_id,
+        "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
+        "ops_agent_copy_playbook": ops_agent_copy_playbook,
 
         "silver_facilities_table": silver_facilities_table,
         "silver_systems_table": silver_systems_table,

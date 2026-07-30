@@ -93,7 +93,7 @@ key_vault_tenant_id_secret = first_setting("key_vault_tenant_id_secret", require
 key_vault_client_id_secret = first_setting("key_vault_client_id_secret", required=True)
 key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret", required=True)
 
-data_agent_name = first_setting("data_agent_name", default="RTI_Demo_DataAgent_V3")
+data_agent_name = first_setting("data_agent_name", default="RTI_Demo_Agent_V3")
 
 print("✅ Settings loaded")
 print("   Workspace ID     :", workspace_id)
