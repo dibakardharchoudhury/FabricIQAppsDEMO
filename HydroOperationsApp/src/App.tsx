@@ -381,19 +381,27 @@ export default function App() {
 
   // Raise a work order straight from a Bad/Uncertain telemetry signal.
   async function raiseWorkOrderForSignal(flagged: FlaggedSignal) {
-    // Prefer the STID-mapped asset; otherwise derive the equipment from the OPC UA node id so the
-    // button always works, even before STID metadata is connected.
-    const tag = equipmentTagFromNode(flagged.reading.opcuaNodeId)
-    const matched = tag ? stid?.equipment.find(item => item.equipment_id.includes(tag) || (item.tag ?? '').includes(tag)) : undefined
-    const equipmentId = flagged.instrument?.equipment_id ?? flagged.asset?.equipment_id ?? matched?.equipment_id ?? (tag ? `EQUIP_RTI_${tag}` : undefined)
-    if (!equipmentId) { setNotice(`Could not identify an asset for ${flagged.reading.opcuaNodeId}; cannot raise a work order.`); return }
+    const node = flagged.reading.opcuaNodeId
     const activeUser = user ?? await authenticate()
     if (!activeUser) { setNotice('Sign in with Fabric to create a work order.'); return }
-    setRaising(flagged.reading.opcuaNodeId)
+    setRaising(node); setNotice(undefined)
     try {
-      const record = await createWorkOrder(activeUser, equipmentId, flagged.instrument?.instrument_id, flagged.reading.opcuaNodeId)
+      // Bind the signal to a real asset. Prefer the already-loaded STID mapping; otherwise query the
+      // lakehouse instruments table (silver_instruments) on demand and match on the opcua_node_id
+      // column — no full Connect STID needed. Cache it so every alert row relabels from the mapping.
+      let instrument = flagged.instrument
+      if (!instrument?.equipment_id) {
+        const data = stid ?? await queryStid().catch(() => null)
+        if (data && !stid) { applyStid(data); setSourceState('STID connected') }
+        instrument = data?.instruments.find(item => item.opcua_node_id === node) ?? instrument
+      }
+      // Last resort: the node id itself encodes the equipment tag, so the button can never dead-end.
+      const tag = equipmentTagFromNode(node)
+      const equipmentId = instrument?.equipment_id ?? flagged.asset?.equipment_id ?? (tag ? `EQUIP_RTI_${tag}` : undefined)
+      if (!equipmentId) { setNotice(`Could not identify an asset for ${node}; cannot raise a work order.`); return }
+      const record = await createWorkOrder(activeUser, equipmentId, instrument?.instrument_id, node)
       setOrders(current => [record, ...current])
-      setNotice(`Work order ${record.workOrderNumber} raised for ${flagged.instrument?.tag ?? flagged.reading.opcuaNodeId} (${flagged.reading.quality} quality).`)
+      setNotice(`Work order ${record.workOrderNumber} raised for ${instrument?.tag ?? tag ?? node} on ${equipmentId} (${flagged.reading.quality} quality).`)
     } catch (error) { setNotice(errorMessage(error)) }
     finally { setRaising(undefined) }
   }
