@@ -469,6 +469,11 @@ def create_data_pipeline(display_name: str, definition_obj: dict, description: s
             raise RuntimeError("Create Data Pipeline returned 202 without Location header.")
         wait_for_lro(operation_url)
         created = find_item_by_name(display_name, "DataPipeline") or {}
+        for _ in range(5):  # item can lag the LRO completion — re-query until it is listed
+            if created.get("id"):
+                break
+            time.sleep(RETRY_DELAY_SECONDS)
+            created = find_item_by_name(display_name, "DataPipeline") or {}
         print(f"✅ Created Data Pipeline (via LRO): {display_name} (id={created.get('id')})")
         return created
     raise RuntimeError(f"Failed to create Data Pipeline: {response.status_code} {response.text}")
@@ -515,6 +520,11 @@ def create_operations_agent(display_name: str, description: str = "") -> dict:
             raise RuntimeError("Create Operations Agent returned 202 without Location header.")
         wait_for_lro(operation_url)
         created = find_operations_agent(display_name) or {}
+        for _ in range(5):  # item can lag the LRO completion — re-query until it is listed
+            if created.get("id"):
+                break
+            time.sleep(RETRY_DELAY_SECONDS)
+            created = find_operations_agent(display_name) or {}
         print(f"✅ Created Operations Agent (via LRO): {display_name} (id={created.get('id')})")
         return created
     raise RuntimeError(f"Failed to create Operations Agent: {response.status_code} {response.text}")
