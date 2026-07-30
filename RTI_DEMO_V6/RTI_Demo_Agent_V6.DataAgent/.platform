@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataAgent",
+    "displayName": "RTI_Demo_Agent_V6",
+    "description": "Conversational agent over the RTI turbine telemetry ontology 'RTI_Demo_Ontology_V6': real-time OPC UA readings joined to equipment, facility, system and instrument context."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "fef21387-3045-9451-4f39-93fa106a203d"
+  }
+}

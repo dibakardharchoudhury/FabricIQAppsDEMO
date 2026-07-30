@@ -1,0 +1,23 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/contextualization/1.0.0/schema.json",
+  "id": "c39378b4-9900-4985-a1ca-71b769735c06",
+  "dataBindingTable": {
+    "workspaceId": "00000000-0000-0000-0000-000000000000",
+    "itemId": "6c7f67fa-9819-b96c-403d-e7d69127c0bf",
+    "sourceTableName": "silver_signal_master",
+    "sourceSchema": null,
+    "sourceType": "LakehouseTable"
+  },
+  "sourceKeyRefBindings": [
+    {
+      "sourceColumnName": "opcua_node_id",
+      "targetPropertyId": "4918691961319372906"
+    }
+  ],
+  "targetKeyRefBindings": [
+    {
+      "sourceColumnName": "instrument_id",
+      "targetPropertyId": "926766628345478225"
+    }
+  ]
+}

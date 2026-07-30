@@ -1,0 +1,44 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/dataBinding/1.0.0/schema.json",
+  "id": "b23b27b6-4b98-4684-8e69-4b25e829ec3a",
+  "dataBindingConfiguration": {
+    "dataBindingType": "NonTimeSeries",
+    "propertyBindings": [
+      {
+        "sourceColumnName": "facility_id",
+        "targetPropertyId": "1574473833081844002"
+      },
+      {
+        "sourceColumnName": "facility_name",
+        "targetPropertyId": "5824134941907698608"
+      },
+      {
+        "sourceColumnName": "type",
+        "targetPropertyId": "4635620366852446943"
+      },
+      {
+        "sourceColumnName": "country",
+        "targetPropertyId": "4728312428637988432"
+      },
+      {
+        "sourceColumnName": "lat",
+        "targetPropertyId": "2981174198685782484"
+      },
+      {
+        "sourceColumnName": "lon",
+        "targetPropertyId": "6410364941934136495"
+      },
+      {
+        "sourceColumnName": "commissioned_date",
+        "targetPropertyId": "4735801365573187530"
+      }
+    ],
+    "sourceTableProperties": {
+      "sourceType": "LakehouseTable",
+      "workspaceId": "00000000-0000-0000-0000-000000000000",
+      "itemId": "6c7f67fa-9819-b96c-403d-e7d69127c0bf",
+      "sourceTableName": "silver_facilities",
+      "sourceSchema": null
+    }
+  }
+}
