@@ -34,15 +34,15 @@
 
 # CELL ********************
 
-%%configure
-{
-    "defaultLakehouse": {
-        "name": {
-            "parameterName": "lakehouseName",
-            "defaultValue": "Energy_IQ_LakehouseRTI_V5"
-        }
-    }
-}
+# MAGIC %%configure
+# MAGIC {
+# MAGIC     "defaultLakehouse": {
+# MAGIC         "name": {
+# MAGIC             "parameterName": "lakehouseName",
+# MAGIC             "defaultValue": "Energy_IQ_LakehouseRTI_V5"
+# MAGIC         }
+# MAGIC     }
+# MAGIC }
 
 # METADATA ********************
 
