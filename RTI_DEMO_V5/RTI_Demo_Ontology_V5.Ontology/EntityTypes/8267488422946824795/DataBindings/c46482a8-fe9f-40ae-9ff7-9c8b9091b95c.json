@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/dataBinding/1.0.0/schema.json",
+  "id": "c46482a8-fe9f-40ae-9ff7-9c8b9091b95c",
+  "dataBindingConfiguration": {
+    "dataBindingType": "NonTimeSeries",
+    "propertyBindings": [
+      {
+        "sourceColumnName": "system_id",
+        "targetPropertyId": "6754165913257101419"
+      },
+      {
+        "sourceColumnName": "facility_id",
+        "targetPropertyId": "3410650529679587403"
+      },
+      {
+        "sourceColumnName": "system_name",
+        "targetPropertyId": "4173754373974870843"
+      },
+      {
+        "sourceColumnName": "oag_rds_system_code",
+        "targetPropertyId": "1644370745893852933"
+      }
+    ],
+    "sourceTableProperties": {
+      "sourceType": "LakehouseTable",
+      "workspaceId": "00000000-0000-0000-0000-000000000000",
+      "itemId": "38ecbc17-f4b8-a018-458f-5e98de191d24",
+      "sourceTableName": "silver_systems",
+      "sourceSchema": null
+    }
+  }
+}

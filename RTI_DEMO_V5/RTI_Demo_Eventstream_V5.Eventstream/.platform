@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventstream",
+    "displayName": "RTI_Demo_Eventstream_V5",
+    "description": "Eventstream for slim OPC UA RTI telemetry"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "3d91eb6c-984b-9b1f-488c-b01b91dc5011"
+  }
+}
