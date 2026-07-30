@@ -300,6 +300,30 @@ Change **`env_suffix`** in the `Pipe_Setup` pipeline parameters (e.g. `V6`) and 
 
 ---
 
+## Hydro Operations App (Rayfin)
+
+`HydroOperationsApp/` is a React + Leaflet + **Rayfin** single-page app that runs inside Fabric and
+composes **all three data stores on one screen**: STID master data (Lakehouse, via the
+`Hydro_STID_API` GraphQL item), live telemetry (Eventhouse `OPCUAEvents`, via KQL), and mutable
+**operational records** (a Rayfin-managed SQL database — work orders, maintenance notifications,
+inspections, spare-part inventory, and digital-twin 3D models). Records join across stores by
+`equipmentId` / `instrumentId` / `opcua_node_id`.
+
+All demo data is **synthetic yet stored where it would live in production** (no reference or
+telemetry rows are copied into the operational SQL DB). Two deterministic generators at the repo
+root reproduce it:
+
+| Script | Regenerates | For |
+|---|---|---|
+| **`_gen_stid.py`** | The four STID CSVs + the embedded `STID_FILES` block in `RTI_001_create_lakehouse_SelfContained` (`.py` + `.ipynb`) — **3 facilities / 15 turbines / 90 instruments** | Lakehouse (re-run `Pipe_Setup` in Fabric to load) |
+| **`_gen_seed.py`** | `HydroOperationsApp/sql/seed-operational-data.sql` **and** `HydroOperationsApp/src/services/seedData.ts` — 12 work orders, 6 notifications, 30 inspections, 12 spare parts, 15 3D models | Operational SQL (seed via the app's **"Seed demo data"** button) |
+
+Because the medallion (`RTI_003`→`007`) is fully data-driven off the STID CSVs, growing from 1 to 3
+facilities needs **no notebook logic changes** — only a `Pipe_Setup` re-run. Full build, deploy, and
+seed instructions are in **[`HydroOperationsApp/README.md`](HydroOperationsApp/README.md)**.
+
+---
+
 ## Related Resources
 
 - **RTI_000** – full dataset & pipeline documentation notebook.

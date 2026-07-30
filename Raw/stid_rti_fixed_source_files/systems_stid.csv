@@ -1,2 +1,4 @@
 system_id,facility_id,system_name,oag_rds_system_code
 SYSTEM_RTI_001,FACILITY_RTI_001,RTI Turbine System,TURBINE
+SYSTEM_RTI_002,FACILITY_RTI_002,RTI Turbine System,TURBINE
+SYSTEM_RTI_003,FACILITY_RTI_003,RTI Turbine System,TURBINE
