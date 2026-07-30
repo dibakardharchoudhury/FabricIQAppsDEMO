@@ -130,7 +130,7 @@
       },
       "workspace_id": {
         "type": "string",
-        "defaultValue": "19f3d588-1585-4f3b-bb59-5abaf90c193a"
+        "defaultValue": ""
       },
       "key_vault_uri": {
         "type": "string",
