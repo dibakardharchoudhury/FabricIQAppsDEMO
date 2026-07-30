@@ -1,0 +1,32 @@
+id: hydro-operations
+appName: hydro-operations
+description: Hydro turbine operations and maintenance on Microsoft Fabric
+version: 1.0.0
+services:
+  db:
+    enabled: true
+    dialect: mssql
+    schema:
+      entitiesPath: ./data/schema.ts
+  auth:
+    enabled: true
+    password:
+      enabled: false
+    fabric:
+      enabled: true
+    allowedRedirectUris:
+      - https://firm-wren-d5bfdbede5-swedencentral.webapp.fabricapps.net
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build:rayfin
+    indexDocument: index.html
+  data:
+    enabled: true
+    dialect: mssql
+  storage:
+    enabled: false
+  functions:
+    enabled: false
+workspace:
+  name: ${FABRIC_WORKSPACE_NAME}
