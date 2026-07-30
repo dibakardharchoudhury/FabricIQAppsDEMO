@@ -1,0 +1,23 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/contextualization/1.0.0/schema.json",
+  "id": "64213926-17cc-4cdc-a309-eac7a4432a01",
+  "dataBindingTable": {
+    "workspaceId": "00000000-0000-0000-0000-000000000000",
+    "itemId": "3c4a28b2-18a0-bd7e-40f9-36aa1915afbd",
+    "sourceTableName": "silver_instruments",
+    "sourceSchema": null,
+    "sourceType": "LakehouseTable"
+  },
+  "sourceKeyRefBindings": [
+    {
+      "sourceColumnName": "instrument_id",
+      "targetPropertyId": "926766628345478225"
+    }
+  ],
+  "targetKeyRefBindings": [
+    {
+      "sourceColumnName": "equipment_id",
+      "targetPropertyId": "4497584892482295562"
+    }
+  ]
+}
