@@ -197,11 +197,12 @@ ops_agent_teams_channel_id = first_setting(
 # never force the agent to start. Set to True only if you want the notebook to start monitoring.
 ops_agent_should_run = False
 
-# Attach the embedded `playbook` (OntologyDefinitions + RuleDefinitions) to the pushed
-# definition. Default TRUE: pushing a playbook via updateDefinition works (verified against the
-# working reference agent that generated it), so the deployed agent is immediately playbook-ready.
-# Set 'false' to deploy config-only and click 'Generate Playbook' in the portal instead.
-ops_agent_copy_playbook = str(first_setting("ops_agent_copy_playbook", default="true")).lower() in ("true", "1", "yes")
+# Attach the embedded `playbook` (OntologyDefinitions + RuleDefinitions) to the pushed definition.
+# Default FALSE: the updateDefinition API REJECTS a transplanted playbook (400 UnknownError) — a
+# playbook is bound to the specific ontology it was generated against and cannot be moved onto the
+# rebuilt ontology. Deploy config-only and click 'Generate Playbook' in the portal. Set 'true' only
+# to opt into an (currently failing) automatic playbook push as the first candidate.
+ops_agent_copy_playbook = str(first_setting("ops_agent_copy_playbook", default="false")).lower() in ("true", "1", "yes")
 
 
 print("✅ Settings loaded")
@@ -377,21 +378,6 @@ def resolve_ontology_id() -> str:
         raise RuntimeError(f"Ontology '{ontology_name}' not found. Run 004–006 first.")
     in_folder = [it for it in matches if it.get("folderId") == target_folder_id]
     return (in_folder or matches)[0]["id"]
-
-
-def fabric_encode_guid(guid: str) -> str:
-    """Map an ontology item id to the Ops Agent Knowledge data-source id.
-
-    The live agent binds the ontology by an ENCODED id (self-inverse hex regroup), verified
-    against the working RTI_Demo_OpsAgent_V3 export where Generate playbook succeeds:
-    30f512c4-d2db-46c6-a9db-801f4cdeb9b3 -> 4cdeb9b3-801f-a9db-46c6-d2db30f512c4. Applying it
-    twice returns the original.
-    """
-    h = guid.replace("-", "")
-    if len(h) != 32:
-        return guid
-    enc = h[24:32] + h[20:24] + h[16:20] + h[12:16] + h[8:12] + h[0:8]
-    return f"{enc[0:8]}-{enc[8:12]}-{enc[12:16]}-{enc[16:20]}-{enc[20:32]}"
 
 
 # Name + definition of the git-synced Data Pipeline (RTI_DEMO_V3/Pipe_SendEmailAlert.DataPipeline).
@@ -637,7 +623,7 @@ def build_configurations(should_run: Optional[bool] = None,
                          pipeline_id: Optional[str] = None) -> dict:
     """Configurations.json body — the byte-exact working definition (from git), with only the
     workspace-specific bindings injected: the Ontology data source is re-keyed to this workspace's
-    ontology (encoded Knowledge id + zero workspaceId, the working shape), the action's pipeline
+    ontology (the PLAIN ontology item id + the real workspace id), the action's pipeline
     jobArtifactId/jobWorkspaceId point at the created Pipe_SendEmailAlert, the Teams destination is
     overridden, and shouldRun is set. Drop the playbook only when copy_playbook is False. `identity`
     is never sent — the running user's delegated token provisions Run-as.
@@ -648,11 +634,13 @@ def build_configurations(should_run: Optional[bool] = None,
     config.pop("identity", None)
     config["shouldRun"] = run_state
     if datasource_id:
-        # Re-key the single Ontology data source to this workspace's ontology (encoded Knowledge id
-        # as both key and id, workspaceId zeros — the working shape).
+        # Re-key the single Ontology data source to this workspace's ontology: the PLAIN ontology
+        # item id as key+id, and the REAL workspace id. All-zeros workspaceId breaks both the git
+        # commit ("Missing dependency mapping") and portal 'Generate Playbook' (400) — the portal's
+        # own "remove + re-add knowledge" writes this same real-workspace-id shape.
         inner = next(iter(config["configuration"]["dataSources"].values()))
         inner["id"] = datasource_id
-        inner["workspaceId"] = "00000000-0000-0000-0000-000000000000"
+        inner["workspaceId"] = workspace_id
         config["configuration"]["dataSources"] = {datasource_id: inner}
     if pipeline_id:
         for action in config["configuration"]["actions"].values():
@@ -685,10 +673,11 @@ try:
     # Run-as guardrail: confirm the agent will Run as the intended (signed-in) user.
     check_run_as(ops_agent_run_as_user)
 
-    # Ontology data source: resolve the ontology's live (plain) id from the settings table (by
-    # ontology_name, unless one is forced), then map it to the Knowledge id the working agent uses.
+    # Ontology data source: resolve the ontology's live PLAIN item id (by ontology_name, unless one
+    # is forced). Diagnosed: the API binds the ontology by its PLAIN id — the earlier "encoded"
+    # form 404s (EntityNotFound), so no encoding is applied.
     ontology_live_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
-    resolved_datasource_id = fabric_encode_guid(ontology_live_id)
+    resolved_datasource_id = ontology_live_id
 
     # Email pipeline: always create Pipe_SendEmailAlert in THIS workspace (or reuse the existing
     # one with that name). Verified by name so the job action never points at a missing pipeline.
@@ -709,17 +698,16 @@ try:
         raise RuntimeError("Operations Agent create returned no id.")
     time.sleep(RETRY_DELAY_SECONDS)  # let the new item settle before its definition is pushed
 
-    # 2) Push the working definition via updateDefinition. The full config was 404ing (EntityNotFound
-    #    — a reference the service cannot resolve), so we ladder richest -> simplest AND try BOTH
-    #    ontology-id forms (the encoded "Knowledge" id vs the real ontology item id) to isolate the
-    #    one reference that breaks it. First 200 wins (richest deployable config). Each rejection
-    #    prints the status + response body — the 404 body from Fabric names the missing entity.
-    enc_ds_id = resolved_datasource_id          # 4cdeb9b3-... (encoded "Knowledge" form)
-    plain_ds_id = ontology_live_id              # 30f512c4-... (real ontology item id)
-
-    def _variant(ds_id=None, with_action=True, with_teams=True, with_playbook=True) -> dict:
-        """Build a Configurations.json variant, dropping any component we want to exclude so we can
-        isolate which reference the API rejects. ds_id=None drops the (stale) embedded ontology."""
+    # 2) Push the working definition via updateDefinition. Diagnosed by the earlier isolation ladder:
+    #    - the ENCODED ontology id 404s (EntityNotFound) — the PLAIN ontology item id is required;
+    #    - pushing the byte-exact PLAYBOOK 400s (UnknownError) — a playbook is bound to the ontology
+    #      it was generated against and cannot be transplanted via the API; use 'Generate Playbook'
+    #      in the portal.
+    #    So the target config is Ontology(plain) + action + Teams (no playbook). We ladder down to
+    #    simpler configs only as a safety net; the first 200 wins.
+    def _variant(ds_id=None, with_action=True, with_teams=True, with_playbook=False) -> dict:
+        """Build a Configurations.json variant, dropping any excluded component. ds_id=None drops
+        the embedded ontology; with_playbook defaults False (the API rejects playbook pushes)."""
         cfg = build_configurations(
             should_run=ops_agent_should_run,
             copy_playbook=with_playbook,
@@ -738,18 +726,18 @@ try:
             cfg.pop("playbook", None)
         return cfg
 
-    # Ordered richest -> simplest. The boundary between the last 404 and the first 200 pinpoints the
-    # culprit (e.g. encoded-vs-plain id, the playbook, the action, or Teams).
-    candidates = [
-        ("full: Ontology(encoded) + action + Teams + playbook", _variant(enc_ds_id)),
-        ("full: Ontology(plain) + action + Teams + playbook", _variant(plain_ds_id)),
-        ("Ontology(plain) + action + Teams (no playbook)", _variant(plain_ds_id, with_playbook=False)),
-        ("Ontology(plain) + action (no Teams, no playbook)", _variant(plain_ds_id, with_teams=False, with_playbook=False)),
-        ("Ontology(plain) only", _variant(plain_ds_id, with_action=False, with_teams=False, with_playbook=False)),
-        ("Ontology(encoded) only", _variant(enc_ds_id, with_action=False, with_teams=False, with_playbook=False)),
-        ("action only (no Ontology)", _variant(None, with_action=True, with_teams=False, with_playbook=False)),
-        ("Teams only (no Ontology, no action)", _variant(None, with_action=False, with_teams=True, with_playbook=False)),
-        ("instructions only (finish in portal)", _variant(None, with_action=False, with_teams=False, with_playbook=False)),
+    candidates = []
+    if ops_agent_copy_playbook:
+        # Opt-in: the API currently rejects playbook pushes (400). Kept as the first attempt so the
+        # agent deploys the playbook automatically if/when Fabric starts accepting it.
+        candidates.append(
+            ("Ontology + action + Teams + playbook (API may reject — use portal Generate)",
+             _variant(ontology_live_id, with_playbook=True)))
+    candidates += [
+        ("Ontology + action + Teams (no playbook)", _variant(ontology_live_id)),
+        ("Ontology + action (no Teams)", _variant(ontology_live_id, with_teams=False)),
+        ("Ontology only", _variant(ontology_live_id, with_action=False, with_teams=False)),
+        ("instructions only (finish in portal)", _variant(None, with_action=False, with_teams=False)),
     ]
 
     applied_label = None
@@ -809,12 +797,13 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
 
 
 print()
-print("✅ Deployed from the byte-exact working definition (recovered from git history):")
-print("   instructions, the encoded Ontology data source, the Teams message destination, the")
-print("   'Send Email Alert!' Fabric job action (wired to Pipe_SendEmailAlert), and the playbook")
-print("   (OntologyDefinitions + 2 RuleDefinitions: BAD / UNCERTAIN → Send Email Alert!).")
-print("👉 The agent is deployed STOPPED so you stay in control. To START monitoring: open the agent")
-print("   in the Fabric portal and turn it On (Run). You can stop it there anytime.")
+print("✅ Deployed from the working definition: instructions, the Ontology data source (plain id),")
+print("   the Teams message destination, and the 'Send Email Alert!' Fabric job action (wired to")
+print("   Pipe_SendEmailAlert). The PLAYBOOK is NOT pushed — the API rejects a transplanted playbook,")
+print("   so click 'Generate Playbook' on the agent in the portal (it recreates the BAD / UNCERTAIN")
+print("   → Send Email Alert! rules against this ontology).")
+print("👉 The agent is deployed STOPPED so you stay in control. Finish it in the portal:")
+print("   1) open the agent, 2) click 'Generate Playbook', 3) turn it On (Run).")
 
 
 if ops_agent_item_id:
