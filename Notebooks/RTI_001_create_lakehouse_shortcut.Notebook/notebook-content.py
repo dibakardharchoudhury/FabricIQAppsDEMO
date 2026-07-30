@@ -93,6 +93,13 @@ shortcut_name = "bronze"
 shortcut_parent_path = "Files"
 connection_name = "ontologydidharch-connection"
 
+# Azure Key Vault holding the SPN secrets (store secret *names* here, not values).
+# The executing identity needs 'get secret' on this vault.
+key_vault_uri = "https://akvfabcapnew.vault.azure.net/"
+key_vault_tenant_id_secret_name = "tenantid"
+key_vault_client_id_secret_name = "clientid"
+key_vault_client_secret_name = "clientsecret"
+
 # Standard item names used by later notebooks — all derived from env_suffix so the
 # whole environment shares one suffix. The KQL database intentionally reuses the
 # Eventhouse name (Fabric names an Eventhouse's default KQL DB the same way).
@@ -233,26 +240,9 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
 # CELL ********************
 
 # --------------------------------------------
-# Azure Key Vault configuration for SPN secrets (NotebookUtils)
-# --------------------------------------------
-
-# The URI of your Azure Key Vault (DNS name)
-key_vault_uri = "https://akvfabcapnew.vault.azure.net/"
-
-# Secret names inside Key Vault (not the values themselves).
-# Each of these secrets should store one SPN value as plain text.
-key_vault_tenant_id_secret_name  = "tenantid"
-key_vault_client_id_secret_name  = "clientid"
-key_vault_client_secret_name     = "clientsecret"
-
-print("Key Vault URI:", key_vault_uri)
-print("Tenant ID secret name:", key_vault_tenant_id_secret_name)
-print("Client ID secret name:", key_vault_client_id_secret_name)
-print("Client Secret secret name:", key_vault_client_secret_name)
-
-# --------------------------------------------
 # SPN AUTH: Get Fabric API token via Client Credentials (from Key Vault)
 # --------------------------------------------
+# Key Vault URI and secret names come from the parameter cell above.
 
 def get_spn_access_token() -> str:
     """
