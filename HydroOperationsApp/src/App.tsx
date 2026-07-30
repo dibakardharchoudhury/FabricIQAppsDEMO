@@ -119,19 +119,21 @@ export default function App() {
     } catch (error) { setTelemetryState('Connect telemetry'); setNotice(errorMessage(error)) }
   }
 
-  async function authenticate() {
+  async function authenticate(): Promise<AppUser | null> {
     try {
       const current = await signInToRayfin()
       setUser(current); await loadOperationalData()
-    } catch (error) { setNotice(errorMessage(error)) }
+      return current
+    } catch (error) { setNotice(errorMessage(error)); return null }
   }
 
   async function seedDemo() {
     if (seeding) return
-    if (!user) { await authenticate(); return }
     setSeeding(true); setNotice(undefined)
     try {
-      const result = await seedOperationalDataIfEmpty(user)
+      const activeUser = user ?? await authenticate()
+      if (!activeUser) { setNotice('Sign in with Fabric to seed operational data.'); return }
+      const result = await seedOperationalDataIfEmpty(activeUser)
       const created = result.filter(item => !item.skipped)
       await loadOperationalData()
       setNotice(created.length
@@ -143,10 +145,11 @@ export default function App() {
 
   async function addWorkOrder() {
     if (!selected) return
-    if (!user) { await authenticate(); return }
+    const activeUser = user ?? await authenticate()
+    if (!activeUser) { setNotice('Sign in with Fabric to create a work order.'); return }
     const instrument = instruments[0]
     try {
-      const record = await createWorkOrder(user, selected.equipment_id, instrument?.instrument_id, instrument?.opcua_node_id)
+      const record = await createWorkOrder(activeUser, selected.equipment_id, instrument?.instrument_id, instrument?.opcua_node_id)
       setOrders(current => [record, ...current])
     } catch (error) { setNotice(errorMessage(error)) }
   }
