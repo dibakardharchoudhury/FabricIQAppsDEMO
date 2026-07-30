@@ -159,10 +159,10 @@ ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
 
-# Email pipeline: by default CELL 1 creates/reuses the `Pipe_SendEmailAlert` Data Pipeline
-# (embedded from the git-synced definition) and persists its id to the settings table as
-# `email_pipeline_id`. Set ops_agent_email_pipeline_id to reuse an existing pipeline id.
-ops_agent_email_pipeline_id = first_setting("ops_agent_email_pipeline_id", "email_pipeline_id", default="")
+# Email pipeline: CELL 1 always creates the `Pipe_SendEmailAlert` Data Pipeline in THIS workspace
+# from the embedded (git-synced) definition, or reuses the existing pipeline with that name. It is
+# deliberately NOT read from a persisted id — a stale id can point at a pipeline that no longer
+# exists here, which makes the agent's job action reference a missing entity (updateDefinition 404).
 
 # --- User inputs: Run-as identity + Teams destination -------------------
 # Run-as: the agent runs autonomously under the delegated identity that DEPLOYS it (whoever
@@ -191,10 +191,10 @@ ops_agent_teams_channel_id = first_setting(
     "ops_agent_teams_channel_id", "teams_channel_id",
     default="19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2")
 
-# Deploy the agent STOPPED (definition `shouldRun`) so the user starts it in the portal for full
-# control. Default 'false': the agent is created fully (playbook + Teams) but not started. Set
-# 'true' only if you want the notebook to start monitoring immediately.
-ops_agent_should_run = str(first_setting("ops_agent_should_run", default="false")).lower() in ("true", "1", "yes")
+# Deploy the agent STOPPED so you start it yourself in the portal (full control). This is a plain
+# constant — deliberately NOT read from the settings table — so a previously-persisted value can
+# never force the agent to start. Set to True only if you want the notebook to start monitoring.
+ops_agent_should_run = False
 
 # Attach the embedded `playbook` (OntologyDefinitions + RuleDefinitions) to the pushed
 # definition. Default TRUE: pushing a playbook via updateDefinition works (verified against the
@@ -209,7 +209,7 @@ print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
 print("   Ontology name     :", ontology_name)
 print("   Ontology dsrc     :", ops_agent_ontology_datasource_id or "(resolve from ontology by name)")
-print("   Email pipeline    :", ops_agent_email_pipeline_id or "(create/reuse Pipe_SendEmailAlert)")
+print("   Email pipeline    : (create/reuse Pipe_SendEmailAlert by name in this workspace)")
 print("   Run as (expected) :", ops_agent_run_as_user or "(the user running this notebook)")
 print("   Teams team id     :", ops_agent_teams_team_id)
 print("   Teams channel id  :", ops_agent_teams_channel_id)
@@ -533,15 +533,24 @@ def update_operations_agent_definition(agent_id: str, configurations: dict) -> d
             }
         ],
     }
-    response = api_request("POST", url, data={"definition": definition}, timeout=300)
-    if response.status_code == 200:
-        return response.json() if response.content else {}
-    if response.status_code == 202:
-        operation_url = response.headers.get("Location")
-        if not operation_url:
-            raise RuntimeError("updateDefinition returned 202 without Location header.")
-        return wait_for_lro(operation_url)
-    raise RuntimeError(f"Failed to update agent definition: {response.status_code} {response.text}")
+    last = None
+    for attempt in range(6):
+        response = api_request("POST", url, data={"definition": definition}, timeout=300)
+        if response.status_code == 200:
+            return response.json() if response.content else {}
+        if response.status_code == 202:
+            operation_url = response.headers.get("Location")
+            if not operation_url:
+                raise RuntimeError("updateDefinition returned 202 without Location header.")
+            return wait_for_lro(operation_url)
+        last = response
+        # A freshly-created agent can briefly 404 (EntityNotFound) while it provisions — retry.
+        if response.status_code == 404 and attempt < 5:
+            print(f"⏳ Agent not queryable yet (404) — retrying updateDefinition ({attempt + 1}/6).")
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        break
+    raise RuntimeError(f"Failed to update agent definition: {last.status_code} {last.text}")
 
 
 # -------------------------------------------------------------------------
@@ -702,13 +711,12 @@ try:
     ontology_live_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
     resolved_datasource_id = fabric_encode_guid(ontology_live_id)
 
-    # Email pipeline: create/reuse Pipe_SendEmailAlert (unless an id was provided).
-    if ops_agent_email_pipeline_id:
-        resolved_pipeline_id = ops_agent_email_pipeline_id
-        print(f"✅ Reusing Data Pipeline id from settings: {resolved_pipeline_id} ({PIPELINE_NAME})")
-    else:
-        resolved_pipeline_id = create_data_pipeline(
-            PIPELINE_NAME, EMBEDDED_PIPELINE_CONTENT, PIPELINE_DESCRIPTION).get("id")
+    # Email pipeline: always create Pipe_SendEmailAlert in THIS workspace (or reuse the existing
+    # one with that name). Verified by name so the job action never points at a missing pipeline.
+    resolved_pipeline_id = create_data_pipeline(
+        PIPELINE_NAME, EMBEDDED_PIPELINE_CONTENT, PIPELINE_DESCRIPTION).get("id")
+    if not resolved_pipeline_id:
+        raise RuntimeError(f"Could not create or resolve the '{PIPELINE_NAME}' Data Pipeline.")
 
     print("✅ Using embedded known-good definition (no external reference agent):")
     print("   data source (Ontology)  :", resolved_datasource_id, f"({ontology_name})")
