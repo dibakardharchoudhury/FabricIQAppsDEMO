@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "OperationsAgent",
+    "displayName": "RTI_Demo_OpsAgent_V6",
+    "description": "AI Operations Agent monitoring RTI turbine OPC UA telemetry via the RTI ontology. Posts a Teams alert and invokes the Send Email Alert pipeline when signal quality degrades (UNCERTAIN) or fails (BAD)."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "277e27d1-30fe-8dd7-4a91-0fd35c677995"
+  }
+}
