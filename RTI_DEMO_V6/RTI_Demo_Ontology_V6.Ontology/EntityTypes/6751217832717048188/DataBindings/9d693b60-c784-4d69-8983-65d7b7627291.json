@@ -1,0 +1,52 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/dataBinding/1.0.0/schema.json",
+  "id": "9d693b60-c784-4d69-8983-65d7b7627291",
+  "dataBindingConfiguration": {
+    "dataBindingType": "NonTimeSeries",
+    "propertyBindings": [
+      {
+        "sourceColumnName": "opcua_node_id",
+        "targetPropertyId": "6633205205111922616"
+      },
+      {
+        "sourceColumnName": "tag",
+        "targetPropertyId": "6569177320662822672"
+      },
+      {
+        "sourceColumnName": "instrument_id",
+        "targetPropertyId": "926766628345478225"
+      },
+      {
+        "sourceColumnName": "equipment_id",
+        "targetPropertyId": "7511181305790535553"
+      },
+      {
+        "sourceColumnName": "system_id",
+        "targetPropertyId": "2979738921514455353"
+      },
+      {
+        "sourceColumnName": "facility_id",
+        "targetPropertyId": "3854189816576577166"
+      },
+      {
+        "sourceColumnName": "unit",
+        "targetPropertyId": "3106017126974018014"
+      },
+      {
+        "sourceColumnName": "instrument_type",
+        "targetPropertyId": "2748928888783786799"
+      },
+      {
+        "sourceColumnName": "is_active",
+        "targetPropertyId": "6939043994835945336"
+      }
+    ],
+    "sourceTableProperties": {
+      "sourceType": "LakehouseTable",
+      "workspaceId": "00000000-0000-0000-0000-000000000000",
+      "itemId": "3c4a28b2-18a0-bd7e-40f9-36aa1915afbd",
+      "sourceTableName": "silver_instruments",
+      "sourceSchema": null
+    }
+  }
+}

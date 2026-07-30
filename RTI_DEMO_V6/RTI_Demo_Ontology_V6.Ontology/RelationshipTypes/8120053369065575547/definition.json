@@ -1,0 +1,13 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/relationshipType/1.0.0/schema.json",
+  "namespace": "usertypes",
+  "id": "8120053369065575547",
+  "name": "instruments_on_equipment",
+  "namespaceType": "Custom",
+  "source": {
+    "entityTypeId": "6751217832717048188"
+  },
+  "target": {
+    "entityTypeId": "5905493154414412463"
+  }
+}
