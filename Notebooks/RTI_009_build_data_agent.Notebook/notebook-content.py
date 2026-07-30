@@ -8,12 +8,12 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "9127c0bf-e7d6-403d-b96c-98196c7f67fa",
+# META       "default_lakehouse": "de640e04-dca3-4ae3-8966-e09ceba8f9fa",
 # META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V6",
 # META       "default_lakehouse_workspace_id": "19f3d588-1585-4f3b-bb59-5abaf90c193a",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "9127c0bf-e7d6-403d-b96c-98196c7f67fa"
+# META           "id": "de640e04-dca3-4ae3-8966-e09ceba8f9fa"
 # META         }
 # META       ]
 # META     },
