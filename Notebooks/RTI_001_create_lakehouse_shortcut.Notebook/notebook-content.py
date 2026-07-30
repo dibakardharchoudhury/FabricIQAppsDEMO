@@ -119,6 +119,23 @@ silver_equipment_table = "silver_equipment"
 silver_instruments_table = "silver_instruments"
 silver_signal_master_table = "silver_signal_master"
 
+# Silver table naming prefix (NB05) and the ontology entity the time-series binding attaches to (NB04/NB06).
+silver_table_prefix = "silver_"
+signal_master_entity_name = "signal_master"
+
+# OPCUAEvents column mapping consumed by the Eventhouse time-series binding (NB06).
+timeseries_timestamp_column = "event_time"
+timeseries_key_column = "opcua_node_id"
+timeseries_value_column = "value"
+timeseries_quality_column = "quality"
+
+# Eventstream component names (NB02/NB07) and the alert Data Pipeline (NB10).
+eventstream_source_name = "OPCUA_CustomEndpoint"
+eventstream_stream_name = "OPCUA_DefaultStream"
+eventstream_destination_name = "Eventhouse"
+alert_pipeline_name = "Pipe_SendEmailAlert"
+alert_pipeline_description = "This will be triggered from Ops Agent!"
+
 
 def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
     """
@@ -174,6 +191,21 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "silver_equipment_table": silver_equipment_table,
         "silver_instruments_table": silver_instruments_table,
         "silver_signal_master_table": silver_signal_master_table,
+
+        # Data-model / structural parameters (previously hardcoded in NB04/NB05/NB06).
+        "silver_table_prefix": silver_table_prefix,
+        "signal_master_entity_name": signal_master_entity_name,
+        "timeseries_timestamp_column": timeseries_timestamp_column,
+        "timeseries_key_column": timeseries_key_column,
+        "timeseries_value_column": timeseries_value_column,
+        "timeseries_quality_column": timeseries_quality_column,
+
+        # Eventstream component names (NB02/NB07) and alert Data Pipeline (NB10).
+        "eventstream_source_name": eventstream_source_name,
+        "eventstream_stream_name": eventstream_stream_name,
+        "eventstream_destination_name": eventstream_destination_name,
+        "alert_pipeline_name": alert_pipeline_name,
+        "alert_pipeline_description": alert_pipeline_description,
     }
 
     if extra_settings:

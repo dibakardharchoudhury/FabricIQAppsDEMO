@@ -501,9 +501,9 @@ import json
 import requests
 import time
 
-SOURCE_NAME = "OPCUA_CustomEndpoint"
-STREAM_NAME = "OPCUA_DefaultStream"
-DESTINATION_NAME = "Eventhouse"
+SOURCE_NAME = settings.get("eventstream_source_name", "OPCUA_CustomEndpoint")
+STREAM_NAME = settings.get("eventstream_stream_name", "OPCUA_DefaultStream")
+DESTINATION_NAME = settings.get("eventstream_destination_name", "Eventhouse")
 
 def get_eventstream_by_name(workspace_id: str, name: str, token: str):
     items = fabric_get_items(workspace_id, token, "Eventstream")

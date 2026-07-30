@@ -780,7 +780,7 @@ property_id_globalset: set[int] = set()
 id_to_entity: dict[str, int] = {}
 entity_pid_map: dict[str, dict] = {}
 
-SIGNAL_MASTER_ENTITY = "signal_master"
+SIGNAL_MASTER_ENTITY = settings.get("signal_master_entity_name", "signal_master")
 
 RTI_TIMESERIES_PROPERTIES = [
     {

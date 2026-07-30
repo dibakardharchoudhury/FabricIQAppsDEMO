@@ -109,7 +109,7 @@ key_vault_client_secret_secret = settings["key_vault_client_secret_secret"]
 # --------------------------------------------
 
 SOURCE_SCHEMA = None
-TABLE_PREFIX = "silver_"
+TABLE_PREFIX = settings.get("silver_table_prefix", "silver_")
 
 SILVER_FACILITIES_TABLE = settings["silver_facilities_table"]
 SILVER_SYSTEMS_TABLE = settings["silver_systems_table"]

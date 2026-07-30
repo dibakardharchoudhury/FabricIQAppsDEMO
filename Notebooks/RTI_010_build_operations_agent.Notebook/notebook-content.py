@@ -381,8 +381,8 @@ def resolve_ontology_id() -> str:
 # Name + definition of the git-synced Data Pipeline (RTI_DEMO_V3/Pipe_SendEmailAlert.DataPipeline).
 # Parameters equipment_id/facility_id/value/unit/quality/event_time mirror the alert context the
 # agent passes. The Office365 connection id + recipients are the RTI-demo values (override per env).
-PIPELINE_NAME = "Pipe_SendEmailAlert"
-PIPELINE_DESCRIPTION = "This will be triggered from Ops Agent!"
+PIPELINE_NAME = settings.get("alert_pipeline_name", "Pipe_SendEmailAlert")
+PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be triggered from Ops Agent!")
 # Dynamic-content expressions for the Office365 email (evaluated at pipeline run from the alert
 # parameters the Ops Agent passes). Subject has no double quotes; body embeds HTML so it is stored
 # in a triple-single-quoted literal.

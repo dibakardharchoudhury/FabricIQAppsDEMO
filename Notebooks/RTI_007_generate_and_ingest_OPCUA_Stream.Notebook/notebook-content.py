@@ -1005,9 +1005,9 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType
 
 
-SOURCE_NAME = "OPCUA_CustomEndpoint"
-STREAM_NAME = "OPCUA_DefaultStream"
-DESTINATION_NAME = "Eventhouse"
+SOURCE_NAME = settings.get("eventstream_source_name", "OPCUA_CustomEndpoint")
+STREAM_NAME = settings.get("eventstream_stream_name", "OPCUA_DefaultStream")
+DESTINATION_NAME = settings.get("eventstream_destination_name", "Eventhouse")
 
 
 # ============================================================

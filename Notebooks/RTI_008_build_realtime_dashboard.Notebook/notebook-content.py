@@ -94,7 +94,7 @@ key_vault_tenant_id_secret = first_setting("key_vault_tenant_id_secret", require
 key_vault_client_id_secret = first_setting("key_vault_client_id_secret", required=True)
 key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret", required=True)
 
-dashboard_name = first_setting("dashboard_name", default="RTI_Demo_OPCUA_TelemetryStats")
+dashboard_name = settings.get("dashboard_name", "RTI_Demo_OPCUA_TelemetryStats_V3")
 
 print("✅ Settings loaded")
 print("   Workspace ID       :", workspace_id)

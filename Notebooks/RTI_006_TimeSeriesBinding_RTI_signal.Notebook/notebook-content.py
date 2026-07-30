@@ -108,7 +108,7 @@ key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret",
 # The Eventhouse time-series binding attaches to signal_master.
 # --------------------------------------------
 
-STATIC_ENTITY_NAME = "signal_master"
+STATIC_ENTITY_NAME = settings.get("signal_master_entity_name", "signal_master")
 
 # --------------------------------------------
 # EVENTHOUSE / KQL SOURCE
@@ -138,10 +138,10 @@ CLUSTER_INGEST_URI = cluster_ingest_uri
 #   event_time, opcua_node_id, value, quality
 # --------------------------------------------
 
-TIMESTAMP_COLUMN_NAME = "event_time"
-KEY_COLUMN_NAME = "opcua_node_id"
-VALUE_COLUMN_NAME = "value"
-QUALITY_COLUMN_NAME = "quality"
+TIMESTAMP_COLUMN_NAME = settings.get("timeseries_timestamp_column", "event_time")
+KEY_COLUMN_NAME = settings.get("timeseries_key_column", "opcua_node_id")
+VALUE_COLUMN_NAME = settings.get("timeseries_value_column", "value")
+QUALITY_COLUMN_NAME = settings.get("timeseries_quality_column", "quality")
 
 # --------------------------------------------
 # REPLACE OLD/BAD RTI BINDINGS
