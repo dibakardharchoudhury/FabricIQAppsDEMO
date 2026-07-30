@@ -102,44 +102,6 @@ w("WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,summary,severity,sta
 w("VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.summary,source.severity,source.status,source.reportedByOid,source.reportedAt);")
 w("")
 
-# ---------------- Operator Notes ----------------
-notes = [
-    ("T001", "vibration_a", "Vibration increased during ramp to peak load; no audible bearing noise.", "2026-07-30T07:55:00"),
-    ("T006", "vibration_d", "Driven-end reading higher on cold start; settles after warm-up.", "2026-07-29T18:20:00"),
-    ("T011", "turbine_temp", "Cooling water inlet slightly warm; flagged for heat exchanger check.", "2026-07-30T10:35:00"),
-]
-w("MERGE dbo.OperatorNotes AS target")
-w("USING (VALUES")
-rows = []
-for i, (tag, sig, body, created) in enumerate(notes, start=1):
-    rows.append(f"    ({q(guid('30000000', i))},{q(eq(tag))},{q(node(tag, sig))},{q(body)},@ActorOid,{q(created)})")
-w(",\n".join(rows))
-w(") AS source(id,equipmentId,opcuaNodeId,body,authorOid,createdAt)")
-w("ON target.id = source.id")
-w("WHEN MATCHED THEN UPDATE SET body=source.body")
-w("WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,body,authorOid,createdAt)")
-w("VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.body,source.authorOid,source.createdAt);")
-w("")
-
-# ---------------- Shift Handovers ----------------
-handovers = [
-    ("2026-07-30T06:00:00", "2026-07-30T18:00:00", "Unit T001 vibration advisory active. WO-2841 in progress; avoid rapid load changes pending inspection.", 0),
-    ("2026-07-30T18:00:00", "2026-07-31T06:00:00", "Highland T013 vibration advisory raised; WO-2860 staged for day shift. Fjord units nominal.", 1),
-]
-w("MERGE dbo.ShiftHandovers AS target")
-w("USING (VALUES")
-rows = []
-for i, (start, end, summary, accepted) in enumerate(handovers, start=1):
-    acc_at = q(end) if accepted else "NULL"
-    rows.append(f"    ({q(guid('50000000', i))},{q(start)},{q(end)},{q(summary)},@ActorOid,NULL,{accepted},{acc_at})")
-w(",\n".join(rows))
-w(") AS source(id,shiftStart,shiftEnd,summary,outgoingOperatorOid,incomingOperatorOid,accepted,acceptedAt)")
-w("ON target.id = source.id")
-w("WHEN MATCHED THEN UPDATE SET summary=source.summary,accepted=source.accepted,acceptedAt=source.acceptedAt")
-w("WHEN NOT MATCHED THEN INSERT (id,shiftStart,shiftEnd,summary,outgoingOperatorOid,incomingOperatorOid,accepted,acceptedAt)")
-w("VALUES (source.id,source.shiftStart,source.shiftEnd,source.summary,source.outgoingOperatorOid,source.incomingOperatorOid,source.accepted,source.acceptedAt);")
-w("")
-
 # ---------------- Inspections (2 per turbine) ----------------
 insp_variants = [
     ("VISUAL", None, "PASS", "Casing, fasteners, and seals visually normal."),
@@ -225,8 +187,6 @@ w("COMMIT TRANSACTION;")
 w("")
 w("SELECT 'WorkOrder' entity, COUNT(*) row_count FROM dbo.WorkOrders")
 w("UNION ALL SELECT 'MaintenanceNotification', COUNT(*) FROM dbo.MaintenanceNotifications")
-w("UNION ALL SELECT 'OperatorNote', COUNT(*) FROM dbo.OperatorNotes")
-w("UNION ALL SELECT 'ShiftHandover', COUNT(*) FROM dbo.ShiftHandovers")
 w("UNION ALL SELECT 'Inspection', COUNT(*) FROM dbo.Inspections")
 w("UNION ALL SELECT 'SparePart', COUNT(*) FROM dbo.SpareParts")
 w("UNION ALL SELECT 'Asset3DModel', COUNT(*) FROM dbo.Asset3DModels;")

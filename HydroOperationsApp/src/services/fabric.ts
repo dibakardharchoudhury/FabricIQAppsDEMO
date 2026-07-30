@@ -4,6 +4,7 @@ const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
 const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID) as string | undefined ?? 'a79a4b7e-e508-4fa4-8b6f-15deadca0f34'
 const pipelineId = import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_ID as string | undefined
+const postseedNotebookId = import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_ID as string | undefined
 const agentUrl = import.meta.env.VITE_RAYFIN_DATA_AGENT_MCP_URL as string | undefined
 const kqlCluster = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
 const kqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
@@ -164,6 +165,19 @@ export async function startStreamingPipeline() {
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   })
   if (!response.ok) throw new Error(`Pipeline start failed (${response.status}).`)
+}
+
+export function isPostSeedConfigured() { return Boolean(postseedNotebookId) }
+
+/** Fire the RTI_011 post-seed notebook (seed SQL + GraphQL + Data Agent SQL source + republish).
+ *  Fire-and-forget: Fabric returns 202 with the job location; we don't wait for completion. */
+export async function runPostSeedNotebook() {
+  if (!postseedNotebookId) throw new Error('Post-seed notebook is not configured.')
+  const token = await silentToken(FABRIC_SCOPE) ?? await popupToken(FABRIC_SCOPE)
+  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${postseedNotebookId}/jobs/instances?jobType=RunNotebook`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok && response.status !== 202) throw new Error(`Post-seed notebook run failed (${response.status}).`)
 }
 
 export async function askDataAgent(question: string) {

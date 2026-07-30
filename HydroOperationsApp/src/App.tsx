@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Bot, Box, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
-import { askDataAgent, beginInteractiveConnect, initAuth, isStidConfigured, queryLatestTelemetry, queryStid, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, initAuth, isPostSeedConfigured, isStidConfigured, queryLatestTelemetry, queryStid, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
   createWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
@@ -136,9 +136,16 @@ export default function App() {
       const result = await seedOperationalDataIfEmpty(activeUser)
       const created = result.filter(item => !item.skipped)
       await loadOperationalData()
-      setNotice(created.length
+      let note = created.length
         ? `Seeded ${created.map(item => `${item.created} ${item.entity}`).join(', ')}.`
-        : 'Operational data already present — nothing to seed.')
+        : 'Operational data already present — nothing to seed.'
+      if (isPostSeedConfigured()) {
+        try {
+          await runPostSeedNotebook()
+          note += ' Provisioning SQL, GraphQL and the Data Agent source in Fabric…'
+        } catch (error) { note += ` (Fabric provisioning not triggered: ${errorMessage(error)})` }
+      }
+      setNotice(note)
     } catch (error) { setNotice(errorMessage(error)) }
     finally { setSeeding(false) }
   }

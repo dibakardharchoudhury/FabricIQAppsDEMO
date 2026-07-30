@@ -44,27 +44,6 @@ WHEN MATCHED THEN UPDATE SET summary=source.summary,severity=source.severity,sta
 WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt)
 VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.summary,source.severity,source.status,source.reportedByOid,source.reportedAt);
 
-MERGE dbo.OperatorNotes AS target
-USING (VALUES
-    ('30000000-0000-0000-0000-000000000001','EQUIP_RTI_T001','ns=2;s=T001.vibration_a','Vibration increased during ramp to peak load; no audible bearing noise.',@ActorOid,'2026-07-30T07:55:00'),
-    ('30000000-0000-0000-0000-000000000002','EQUIP_RTI_T006','ns=2;s=T006.vibration_d','Driven-end reading higher on cold start; settles after warm-up.',@ActorOid,'2026-07-29T18:20:00'),
-    ('30000000-0000-0000-0000-000000000003','EQUIP_RTI_T011','ns=2;s=T011.turbine_temp','Cooling water inlet slightly warm; flagged for heat exchanger check.',@ActorOid,'2026-07-30T10:35:00')
-) AS source(id,equipmentId,opcuaNodeId,body,authorOid,createdAt)
-ON target.id = source.id
-WHEN MATCHED THEN UPDATE SET body=source.body
-WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,body,authorOid,createdAt)
-VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.body,source.authorOid,source.createdAt);
-
-MERGE dbo.ShiftHandovers AS target
-USING (VALUES
-    ('50000000-0000-0000-0000-000000000001','2026-07-30T06:00:00','2026-07-30T18:00:00','Unit T001 vibration advisory active. WO-2841 in progress; avoid rapid load changes pending inspection.',@ActorOid,NULL,0,NULL),
-    ('50000000-0000-0000-0000-000000000002','2026-07-30T18:00:00','2026-07-31T06:00:00','Highland T013 vibration advisory raised; WO-2860 staged for day shift. Fjord units nominal.',@ActorOid,NULL,1,'2026-07-31T06:00:00')
-) AS source(id,shiftStart,shiftEnd,summary,outgoingOperatorOid,incomingOperatorOid,accepted,acceptedAt)
-ON target.id = source.id
-WHEN MATCHED THEN UPDATE SET summary=source.summary,accepted=source.accepted,acceptedAt=source.acceptedAt
-WHEN NOT MATCHED THEN INSERT (id,shiftStart,shiftEnd,summary,outgoingOperatorOid,incomingOperatorOid,accepted,acceptedAt)
-VALUES (source.id,source.shiftStart,source.shiftEnd,source.summary,source.outgoingOperatorOid,source.incomingOperatorOid,source.accepted,source.acceptedAt);
-
 MERGE dbo.Inspections AS target
 USING (VALUES
     ('60000000-0000-0000-0000-000000000001','EQUIP_RTI_T001',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-20T09:00:00','2026-10-15T09:00:00'),
@@ -150,8 +129,6 @@ COMMIT TRANSACTION;
 
 SELECT 'WorkOrder' entity, COUNT(*) row_count FROM dbo.WorkOrders
 UNION ALL SELECT 'MaintenanceNotification', COUNT(*) FROM dbo.MaintenanceNotifications
-UNION ALL SELECT 'OperatorNote', COUNT(*) FROM dbo.OperatorNotes
-UNION ALL SELECT 'ShiftHandover', COUNT(*) FROM dbo.ShiftHandovers
 UNION ALL SELECT 'Inspection', COUNT(*) FROM dbo.Inspections
 UNION ALL SELECT 'SparePart', COUNT(*) FROM dbo.SpareParts
 UNION ALL SELECT 'Asset3DModel', COUNT(*) FROM dbo.Asset3DModels;
