@@ -28,6 +28,10 @@ type FlaggedSignal = { reading: TelemetryReading; instrument?: StidData['instrum
 const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
 // A Fabric job started longer ago than this is assumed finished; don't try to resume it.
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
+// ETAs the progress bar eases toward — set to the upper end of observed run times so the
+// bar keeps moving through the whole window instead of stalling at its 95% cap too early.
+const SEED_ETA_MS = 6 * 60_000    // RTI_011 provision: ~5-6 min
+const STREAM_ETA_MS = 2 * 60_000  // 02_Pipe_Stream start: ~1.5-2 min
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -273,7 +277,7 @@ export default function App() {
         // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
         // every run, so skip the client-side insert-if-empty pre-seed.
         const label = 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)…'
-        beginProgress('seed', label, 5 * 60_000)
+        beginProgress('seed', label, SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(s => updateJob('seed', humanStatus(s))))
       } else {
         // Fallback when RTI_011 isn't configured: client-side insert-if-empty seed.
@@ -317,8 +321,15 @@ export default function App() {
   async function startStream() {
     setStreamState('starting'); setNotice(undefined)
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
-    beginProgress('stream', label, 90_000)
+    beginProgress('stream', label, STREAM_ETA_MS)
     await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))))
+  }
+
+  // Seed/provision and the telemetry stream are independent Fabric jobs (SQL+GraphQL+Data Agent
+  // vs. the OPC UA pipeline), so fire both together — the ~2 min stream shouldn't wait behind
+  // the ~6 min provision. Each keeps its own progress bar; allSettled so one failing doesn't abort the other.
+  async function startSetup() {
+    await Promise.allSettled([seedDemo(), startStream()])
   }
 
   async function sendQuestion() {
@@ -336,7 +347,7 @@ export default function App() {
   const steps = [
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
     { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
-    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
+    { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
     { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
@@ -349,14 +360,14 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
       </div>
-      <div className="top-actions"><button className="stream-button" onClick={() => void startStream()} disabled={streamState === 'starting'} title="Step 3 · Start the OPC UA telemetry pipeline (02_Pipe_Stream) so live signals flow into the Eventhouse."><Play size={14} fill="currentColor" />{streamState === 'starting' ? 'Starting' : streamState === 'started' ? 'Stream started' : '3 · Start stream'}</button><button className="seed-button" onClick={() => void seedDemo()} disabled={seeding} title="Step 2 · Seed demo SQL data and publish the STID GraphQL API + Data Agent (runs the RTI_011 notebook)."><Database size={14} />{seeding ? 'Seeding…' : '2 · Seed & provision'}</button><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
+      <div className="top-actions"><button className="stream-button" onClick={() => void startSetup()} disabled={seeding || streamState === 'starting'} title="Steps 2 + 3 · Provision (RTI_011) and start the telemetry stream together — they run in parallel."><Play size={14} fill="currentColor" />2 + 3 · Provision + stream</button><button className="stream-button" onClick={() => void startStream()} disabled={streamState === 'starting'} title="Step 3 · Start the OPC UA telemetry pipeline (02_Pipe_Stream) so live signals flow into the Eventhouse."><Play size={14} fill="currentColor" />{streamState === 'starting' ? 'Starting' : streamState === 'started' ? 'Stream started' : '3 · Start stream'}</button><button className="seed-button" onClick={() => void seedDemo()} disabled={seeding} title="Step 2 · Seed demo SQL data and publish the STID GraphQL API + Data Agent (runs the RTI_011 notebook)."><Database size={14} />{seeding ? 'Seeding…' : '2 · Seed & provision'}</button><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
     </header>
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
       {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
       {!setupHidden && !setupComplete && <section className="setup">
-        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Run these steps in order — each one unlocks the next.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
+        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Steps 2 and 3 are independent — launch them together, then finish 4 and 5.</p><button className="step-action" onClick={() => void startSetup()} disabled={seeding || streamState === 'starting'} title="Run steps 2 and 3 in parallel">Run 2 + 3</button><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
         <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
           <span className="step-num">{step.done ? <Check size={14} /> : step.n}</span>
           <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
