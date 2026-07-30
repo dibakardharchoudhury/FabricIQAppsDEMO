@@ -57,46 +57,49 @@ print("Notebook environment is ready (using notebookutils).")
 # PARAMETERS CELL ********************
 
 # --------------------------------------------
-# USER PARAMETERS  (the ONLY inputs; the Setup pipeline / orchestrator injects these)
+# PARAMETERS  (tagged cell — RAW knobs only; derived names are in the NEXT cell)
 # --------------------------------------------
-# Tagged parameters cell — keep it to RAW knobs only. Every name that derives from
-# env_suffix is computed in the NEXT cell, AFTER any injected override is applied.
+# Two groups below:
+#   • INJECTED by Pipe_Setup (via the orchestrator's nb01_args) — blank defaults so the
+#     pipeline is the single source of truth; the next cell fails fast if any is missing.
+#   • STATIC config — NOT injected; keeps real defaults (edit here to change it).
 
 from datetime import datetime, timezone
 
 # Shared settings table name (later notebooks read this table instead of redefining common settings).
 settings_table_name = "rti_demo_settings"
 
-# THE one environment lever. Override this (e.g. "V6", "DEV") to stand up a parallel
-# environment; the workspace folder and every artifact name derive from it in the next cell.
-env_suffix = "V5"
+# THE one environment lever (INJECTED by Pipe_Setup). The workspace folder and every artifact
+# name derive from it in the next cell, AFTER the injected override is applied.
+env_suffix = ""
 
-# Workspace that will host the demo items.
-workspace_id = "19f3d588-1585-4f3b-bb59-5abaf90c193a"  # from behind /groups/ in the Fabric URL
+# Workspace that will host the demo items. (INJECTED by Pipe_Setup.)
+workspace_id = ""
 
 lakehouse_description = "Lakehouse for Fabric IQ mock dataset (STID, SAP, OPC UA, SOLV, P&ID, Documents)."
 
-# Seed dataset location (root containing bronze/stid, bronze/sap, ...) and the shortcut it feeds.
-adls_account_url = "https://didharchadlsg2.dfs.core.windows.net"
-adls_subpath = "/dataiq/bronze"
+# Seed dataset location + the connection feeding the shortcut. (INJECTED by Pipe_Setup.)
+adls_account_url = ""
+adls_subpath = ""
+connection_name = ""
+# Static shortcut placement (NOT injected).
 shortcut_name = "bronze"
 shortcut_parent_path = "Files"
-connection_name = "ontologydidharch-connection"
 
-# Azure Key Vault holding the SPN secrets (store secret *names* here, not values).
-# The executing identity needs 'get secret' on this vault.
-key_vault_uri = "https://akvfabcapnew.vault.azure.net/"
-key_vault_tenant_id_secret_name = "tenantid"
-key_vault_client_id_secret_name = "clientid"
-key_vault_client_secret_name = "clientsecret"
+# Azure Key Vault (URI + secret NAMES only, never values). (INJECTED by Pipe_Setup.)
+key_vault_uri = ""
+key_vault_tenant_id_secret_name = ""
+key_vault_client_id_secret_name = ""
+key_vault_client_secret_name = ""
 
-# Eventhouse landing table (a table name, not a versioned artifact).
+# Eventhouse landing table (a table name, not a versioned artifact). (STATIC.)
 eventhouse_table_name = "OPCUAEvents"
 
-# Operations Agent deployment inputs (defaults previously hardcoded inside NB10).
-ops_agent_run_as_user = "admin@mngenvmcap218279.onmicrosoft.com"  # UPN the agent runs as; blank = the deploying user
-ops_agent_teams_team_id = "c480320e-9204-474b-9b2c-54a53e94f220"       # Team in Teams: FacilitiesRealTimeMonitoring
-ops_agent_teams_channel_id = "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"  # Channel: Alerts (NB10 explains how to extract these IDs)
+# Operations Agent Teams targets. (INJECTED by Pipe_Setup.)
+ops_agent_run_as_user = ""      # UPN the agent runs as; blank => the deploying user (optional)
+ops_agent_teams_team_id = ""
+ops_agent_teams_channel_id = ""
+# Whether to copy the playbook (STATIC, NOT injected).
 ops_agent_copy_playbook = "true"
 
 # Structured table names used by the ontology.
@@ -138,6 +141,30 @@ alert_pipeline_description = "This will be triggered from Ops Agent!"
 # --------------------------------------------
 # Every versioned artifact name derives from env_suffix here — nothing is edited by hand.
 # The KQL database reuses the Eventhouse name (Fabric names an Eventhouse's default KQL DB the same way).
+
+# Fail fast if the injected parameters (from Pipe_Setup via the orchestrator's nb01_args) are
+# missing. Only these are injected; the STATIC config above keeps its own defaults.
+# ops_agent_run_as_user is optional (blank => the deploying user), so it is not required here.
+_required_injected = {
+    "env_suffix": env_suffix,
+    "workspace_id": workspace_id,
+    "key_vault_uri": key_vault_uri,
+    "key_vault_tenant_id_secret_name": key_vault_tenant_id_secret_name,
+    "key_vault_client_id_secret_name": key_vault_client_id_secret_name,
+    "key_vault_client_secret_name": key_vault_client_secret_name,
+    "adls_account_url": adls_account_url,
+    "adls_subpath": adls_subpath,
+    "connection_name": connection_name,
+    "ops_agent_teams_team_id": ops_agent_teams_team_id,
+    "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
+}
+_missing = [name for name, value in _required_injected.items() if not str(value).strip()]
+if _missing:
+    raise ValueError(
+        "Missing required parameter(s): " + ", ".join(_missing) +
+        ". These are injected by the Pipe_Setup pipeline (orchestrator nb01_args). "
+        "Run via Pipe_Setup, or fill them in the parameters cell for a standalone run."
+    )
 
 lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
 workspace_folder_path = f"RTI_DEMO_{env_suffix}"  # Fabric workspace folder, not a Lakehouse path

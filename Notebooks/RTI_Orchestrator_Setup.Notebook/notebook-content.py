@@ -84,7 +84,9 @@ nb01_args = {
 }
 
 # Fail fast if the pipeline did not supply the required inputs (blank defaults above).
-_missing = [name for name, value in nb01_args.items() if not str(value).strip()]
+# ops_agent_run_as_user is optional (blank => the deploying user), so it is excluded.
+_optional = {"ops_agent_run_as_user"}
+_missing = [name for name, value in nb01_args.items() if name not in _optional and not str(value).strip()]
 if _missing:
     raise ValueError(
         "Missing required parameter(s): " + ", ".join(_missing) +
