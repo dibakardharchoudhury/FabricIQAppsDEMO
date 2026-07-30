@@ -21,6 +21,8 @@ const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
 // `kind` lets a reloaded page re-attach to the right long-running Fabric job.
 type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number }
+// A live telemetry signal whose OPC UA quality is Bad/Uncertain, resolved back to its asset.
+type FlaggedSignal = { reading: TelemetryReading; instrument?: StidData['instruments'][number]; asset?: StidData['equipment'][number] }
 
 // Running jobs are mirrored to localStorage so a page refresh can resume their progress bars.
 const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
@@ -64,6 +66,7 @@ export default function App() {
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [seeding, setSeeding] = useState(false)
+  const [raising, setRaising] = useState<string>()
   const [messages, setMessages] = useState([{ role: 'agent', text: 'The Data Agent is preview-only until a published MCP endpoint is configured.' }])
 
   const facilities = useMemo(() => stid?.facilities ?? [], [stid])
@@ -82,6 +85,16 @@ export default function App() {
   const selectedModel = models.find(item => item.equipmentId === selected?.equipment_id)
   const selectedNotifications = notifications.filter(item => item.equipmentId === selected?.equipment_id)
   const lowStockParts = spareParts.filter(part => part.quantityOnHand <= part.reorderLevel)
+  // OPC UA quality flags: surface Bad/Uncertain live signals and let the operator raise a work order.
+  const instrumentByNode = useMemo(() => new Map((stid?.instruments ?? []).map(item => [item.opcua_node_id, item])), [stid])
+  const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
+  const flaggedSignals = useMemo<FlaggedSignal[]>(() => telemetry
+    .filter(reading => ['bad', 'uncertain'].includes((reading.quality ?? '').toLowerCase()))
+    .map(reading => {
+      const instrument = instrumentByNode.get(reading.opcuaNodeId)
+      return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
+    }), [telemetry, instrumentByNode, equipmentById])
+  const nodesWithOpenOrder = useMemo(() => new Set(openOrders.map(order => order.opcuaNodeId)), [openOrders])
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a
@@ -286,6 +299,21 @@ export default function App() {
     } catch (error) { setNotice(errorMessage(error)) }
   }
 
+  // Raise a work order straight from a Bad/Uncertain telemetry signal.
+  async function raiseWorkOrderForSignal(flagged: FlaggedSignal) {
+    const equipmentId = flagged.instrument?.equipment_id ?? flagged.asset?.equipment_id
+    if (!equipmentId) { setNotice(`No asset is mapped to ${flagged.reading.opcuaNodeId}; cannot raise a work order.`); return }
+    const activeUser = user ?? await authenticate()
+    if (!activeUser) { setNotice('Sign in with Fabric to create a work order.'); return }
+    setRaising(flagged.reading.opcuaNodeId)
+    try {
+      const record = await createWorkOrder(activeUser, equipmentId, flagged.instrument?.instrument_id, flagged.reading.opcuaNodeId)
+      setOrders(current => [record, ...current])
+      setNotice(`Work order ${record.workOrderNumber} raised for ${flagged.instrument?.tag ?? flagged.reading.opcuaNodeId} (${flagged.reading.quality} quality).`)
+    } catch (error) { setNotice(errorMessage(error)) }
+    finally { setRaising(undefined) }
+  }
+
   async function startStream() {
     setStreamState('starting'); setNotice(undefined)
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
@@ -347,13 +375,26 @@ export default function App() {
         <div><Wrench size={17} /><span>Open work orders<strong>{user ? openOrders.length : '—'}</strong><small>Rayfin SQL</small></span></div>
       </section>
 
+      {flaggedSignals.length > 0 && <section className="quality-alert">
+        <div className="quality-alert-head"><AlertTriangle size={16} /><div><strong>{flaggedSignals.length} live signal{flaggedSignals.length > 1 ? 's' : ''} reporting Bad / Uncertain quality</strong><small>OPC UA quality flags from the Eventhouse stream — raise a work order to investigate the affected asset.</small></div></div>
+        <ul className="quality-alert-list">{flaggedSignals.slice(0, 6).map(flagged => {
+          const hasOrder = nodesWithOpenOrder.has(flagged.reading.opcuaNodeId)
+          const quality = (flagged.reading.quality ?? '').toLowerCase()
+          return <li key={flagged.reading.opcuaNodeId}>
+            <span className={`q-badge ${quality}`}>{flagged.reading.quality}</span>
+            <span className="q-sig"><strong>{flagged.instrument?.tag ?? flagged.reading.opcuaNodeId}</strong><small>{(flagged.asset?.tag ?? flagged.instrument?.equipment_id ?? 'Unmapped signal')} · {flagged.reading.value}{flagged.instrument?.unit ? ` ${flagged.instrument.unit}` : ''}</small></span>
+            <button className="q-action" disabled={hasOrder || raising === flagged.reading.opcuaNodeId} onClick={() => void raiseWorkOrderForSignal(flagged)}>{hasOrder ? 'WO open' : raising === flagged.reading.opcuaNodeId ? 'Raising…' : <><Plus size={12} /> Work order</>}</button>
+          </li>
+        })}</ul>
+      </section>}
+
       <div className="workspace-grid">
         <section className="map-panel panel"><div className="panel-head"><div><h2>Facility network</h2><p>{facilities.length > 1 ? `${facilities.length} facilities from silver_facilities` : 'Facility coordinates from silver_facilities'}</p></div><MapPin size={18} /></div>{facilities.length ? <FacilityMap facilities={facilities} selectedId={facility?.facility_id} onSelect={selectFacility} /> : <EmptyState title="No facility loaded" action="Connect STID" onClick={() => void connectStid()} />}</section>
         <section className="assets-panel panel"><div className="panel-head"><div><h2>Asset registry</h2><p>{stid ? `${equipment.length} equipment records` : 'Authoritative STID source'}</p></div></div><div className="asset-list">{equipment.map(asset => <button key={asset.equipment_id} className={selected?.equipment_id === asset.equipment_id ? 'asset-row selected' : 'asset-row'} onClick={() => setSelectedId(asset.equipment_id)}><span className="asset-index">{asset.tag?.replace(/\D/g, '').padStart(2, '0') || '—'}</span><span><strong>{asset.tag ?? asset.equipment_id}</strong><small>{asset.manufacturer ?? 'Manufacturer unavailable'} · {asset.model ?? 'Model unavailable'}</small></span><em>{asset.status ?? 'Unknown'}</em></button>)}{!equipment.length && <EmptyState title="No assets loaded" action="Connect STID" onClick={() => void connectStid()} />}</div></section>
       </div>
 
       <div className="detail-grid">
-        <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span>{reading ? <>{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></> : 'No event'}</span><em className={reading?.quality?.toLowerCase() === 'good' ? 'good' : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
+        <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span>{reading ? <>{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></> : 'No event'}</span><em className={reading?.quality ? reading.quality.toLowerCase() : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
         <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{selected ? `${selectedOrders.length} open for this asset` : 'Rayfin operational SQL'}</p></div><button className="icon-button" title="Create work order" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div><div className="order-list">{selectedOrders.map(order => <article className="order" key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber}</small><p>{order.status} · {order.priority}</p></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !selectedOrders.length && <div className="inline-empty">No open work orders for this asset.</div>}</div></section>
       </div>
 

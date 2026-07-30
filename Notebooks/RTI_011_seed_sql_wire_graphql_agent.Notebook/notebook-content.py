@@ -491,6 +491,15 @@ def find_item_by_name(display_name: str, item_type: Optional[str] = None) -> Opt
     return None
 
 
+def list_items_of_type(item_type: str) -> list:
+    """Return all workspace items of a given type (e.g. 'SQLDatabase')."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    resp = api_request("GET", url, params={"type": item_type})
+    if resp is not None and resp.status_code == 200 and resp.content:
+        return (resp.json() or {}).get("value", []) or []
+    return []
+
+
 def get_item_definition(item_id: str) -> dict:
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/getDefinition"
     response = api_request("POST", url, timeout=120)
@@ -519,6 +528,41 @@ def update_item_definition(item_id: str, definition: dict) -> dict:
             raise RuntimeError("updateDefinition returned 202 without Location header.")
         return wait_for_lro(operation_url)
     raise RuntimeError(f"Failed to update item definition: {response.status_code} {response.text}")
+
+
+# Data Agents expose their own definition endpoints (/dataAgents/{id}/getDefinition and
+# /updateDefinition) — the generic /items/{id}/getDefinition returns 404 EntityNotFound for
+# a DataAgent item. Both are long-running operations.
+def get_data_agent_definition(item_id: str) -> dict:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/getDefinition"
+    response = api_request("POST", url, timeout=120)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Data Agent getDefinition returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        result_response = api_request("GET", f"{operation_url}/result", timeout=120)
+        if result_response.status_code == 200:
+            return result_response.json() if result_response.content else {}
+        raise RuntimeError(
+            f"Data Agent getDefinition result failed: {result_response.status_code} {result_response.text}"
+        )
+    raise RuntimeError(f"Failed to get Data Agent definition: {response.status_code} {response.text}")
+
+
+def update_data_agent_definition(item_id: str, definition: dict) -> dict:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/updateDefinition"
+    response = api_request("POST", url, data={"definition": definition}, timeout=300)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("Data Agent updateDefinition returned 202 without Location header.")
+        return wait_for_lro(operation_url)
+    raise RuntimeError(f"Failed to update Data Agent definition: {response.status_code} {response.text}")
 
 
 def publish_data_agent(item_id: str, published_description: str = "") -> None:
@@ -608,12 +652,38 @@ def build_graphql_definition(source_endpoint_id: str) -> dict:
 # ---------------------------------------------------------------------------
 # STEP A — Seed the operational SQL Database (idempotent MERGE via SPN + pyodbc)
 # ---------------------------------------------------------------------------
+def _parse_conn_string(conn: str) -> tuple:
+    """Extract (server, database) from an ADO.NET-style connection string."""
+    server = database = None
+    for part in (conn or "").split(";"):
+        key, _, value = part.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if key in ("data source", "server", "address", "addr", "network address"):
+            server = value
+        elif key in ("initial catalog", "database"):
+            database = value
+    return server, database
+
+
 def resolve_sql_database() -> tuple:
-    """Return (item_id, server_fqdn, database_name) for the hydro-operations SQL DB."""
-    item = find_item_by_name(sql_db_item_name)
+    """Return (item_id, server_fqdn, database_name) for the hydro-operations SQL DB.
+
+    The Rayfin app can create several items that share the app name (AppBackend,
+    SQLDatabase, …), so match the SQLDatabase item by TYPE — matching by name alone can
+    resolve the wrong item and make the connection-string lookup return nothing."""
+    item = find_item_by_name(sql_db_item_name, item_type="SQLDatabase")
+    if not item:
+        candidates = list_items_of_type("SQLDatabase")
+        if len(candidates) > 1:
+            print(
+                f"⚠️ {len(candidates)} SQL Databases in the workspace; using "
+                f"'{candidates[0].get('displayName')}'."
+            )
+        item = candidates[0] if candidates else None
     if not item:
         raise RuntimeError(
-            f"SQL Database item '{sql_db_item_name}' not found in the workspace. "
+            f"No SQL Database item found in the workspace (looked for '{sql_db_item_name}'). "
             "Deploy the Rayfin app (rayfin up) so its SQL Database item is created first."
         )
     item_id = item["id"]
@@ -621,9 +691,13 @@ def resolve_sql_database() -> tuple:
     props = {}
     if resp is not None and resp.status_code == 200 and resp.content:
         props = (resp.json() or {}).get("properties", {}) or {}
-    conn = props.get("connectionInfo") or props.get("connectionString")
-    server = props.get("serverFqdn") or conn
-    database = props.get("databaseName") or props.get("database") or sql_db_item_name
+    server = props.get("serverFqdn")
+    database = props.get("databaseName")
+    if (not server or not database) and props.get("connectionString"):
+        cs_server, cs_database = _parse_conn_string(props["connectionString"])
+        server = server or cs_server
+        database = database or cs_database
+    database = database or sql_db_item_name
     if not server:
         raise RuntimeError(
             "Could not resolve the SQL Database connection string from the Fabric REST API. "
@@ -804,25 +878,23 @@ print("\n=== STEP C — Add SQL source to the Data Agent + republish ===")
 try:
     if not sql_db_item_id:
         # Resolve id even if seeding failed, so the source can still be wired.
-        sql_db_item_id = (find_item_by_name(sql_db_item_name) or {}).get("id")
+        sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
+    if not sql_db_item_id:
+        candidates = list_items_of_type("SQLDatabase")
+        sql_db_item_id = candidates[0].get("id") if candidates else None
     if not sql_db_item_id:
         raise RuntimeError(f"SQL Database item '{sql_db_item_name}' not found; cannot wire source.")
 
     agent_id = resolve_data_agent_id()
     print(f"✅ Data Agent id: {agent_id}")
 
-    # A Data Agent `data_warehouse` source must reference the SQL analytics endpoint of the
-    # SQL Database (a separate SQLEndpoint item) — NOT the SQLDatabase item id. Referencing
-    # the raw SQLDatabase id is what triggers "Could not create metadata for data source".
-    sql_source_artifact_id = resolve_sql_analytics_endpoint_id(
-        sql_db_item_name, parent_kind="sqldatabase"
-    ) or sql_db_item_id
-    if sql_source_artifact_id == sql_db_item_id:
-        print("⚠️ SQL analytics endpoint not found; falling back to the SQL Database item id.")
-    else:
-        print(f"✅ SQL analytics endpoint id: {sql_source_artifact_id}")
+    # Reference the SQLDatabase item id directly — this is exactly what the portal's
+    # "Add data → SQL database" flow stores. Do NOT swap in the SQL analytics/warehouse
+    # endpoint id; that item isn't what the Data Agent binds to for a Fabric SQL Database.
+    sql_source_artifact_id = sql_db_item_id
+    print(f"✅ SQL Database source artifact id: {sql_source_artifact_id}")
 
-    definition = get_item_definition(agent_id)
+    definition = get_data_agent_definition(agent_id)
     parts = definition.get("definition", {}).get("parts", []) or []
 
     # Reuse/upgrade the existing data_warehouse datasource part (it may hold a stale
@@ -848,7 +920,7 @@ try:
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table element(s))")
-    update_item_definition(agent_id, {"parts": parts})
+    update_data_agent_definition(agent_id, {"parts": parts})
 
     publish_data_agent(agent_id, "Operational SQL source added.")
     print("🌐 Data Agent republished with ontology + operational SQL sources.")
