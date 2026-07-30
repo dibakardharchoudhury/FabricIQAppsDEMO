@@ -2,8 +2,8 @@ import { CircleMarker, MapContainer, Popup, TileLayer } from 'react-leaflet'
 import type { Facility } from '../services/fabric'
 
 export function FacilityMap({ facility }: { facility: Facility }) {
-  const latitude = Number(facility.latitude)
-  const longitude = Number(facility.longitude)
+  const latitude = Number(facility.lat)
+  const longitude = Number(facility.lon)
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     return <div className="map-empty">Facility coordinates are not available in STID.</div>
   }

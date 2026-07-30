@@ -1,4 +1,4 @@
-import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser'
+import { PublicClientApplication } from '@azure/msal-browser'
 
 const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
@@ -14,23 +14,63 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+const FABRIC_SCOPE = 'https://api.fabric.microsoft.com/Item.Execute.All'
+const PENDING_KEY = 'hydro:pendingConnect'
 
-async function accessToken(scope: string, interactive: boolean) {
-  if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
+export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
+
+let initialized = false
+
+function kqlScope() { return `${(kqlCluster ?? '').replace(/\/$/, '')}/.default` }
+
+function scopeFor(target: ConnectTarget) {
+  if (target === 'stid') return GRAPHQL_SCOPE
+  if (target === 'telemetry') return kqlScope()
+  return FABRIC_SCOPE
+}
+
+/** Initialize MSAL and process any redirect returning from Entra. Returns the pending connect target, if any. */
+export async function initAuth(): Promise<ConnectTarget | null> {
+  if (!msal) return null
   await msal.initialize()
-  const account = msal.getAllAccounts()[0]
-  if (account) {
-    try {
-      return (await msal.acquireTokenSilent({ account, scopes: [scope] })).accessToken
-    } catch (error) {
-      if (!(error instanceof InteractionRequiredAuthError) && !interactive) throw error
-      console.warn('Silent Fabric token acquisition failed.', error)
-    }
+  try {
+    await msal.handleRedirectPromise()
+  } catch (error) {
+    console.warn('Entra redirect handling failed.', error)
   }
-  if (!interactive) return null
-  const response = await msal.acquireTokenPopup({ scopes: [scope], account: account ?? undefined })
-  if (!response.accessToken) throw new Error('Microsoft Entra did not return an access token.')
-  return response.accessToken
+  initialized = true
+  const pending = sessionStorage.getItem(PENDING_KEY) as ConnectTarget | null
+  if (pending) sessionStorage.removeItem(PENDING_KEY)
+  return pending
+}
+
+async function ensureInit() {
+  if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
+  if (initialized) return
+  await msal.initialize()
+  try { await msal.handleRedirectPromise() } catch (error) { console.warn('Entra redirect handling failed.', error) }
+  initialized = true
+}
+
+/** Acquire a token silently. Returns null when interactive sign-in/consent is required. */
+async function silentToken(scope: string): Promise<string | null> {
+  await ensureInit()
+  const account = msal!.getAllAccounts()[0]
+  if (!account) return null
+  try {
+    return (await msal!.acquireTokenSilent({ account, scopes: [scope] })).accessToken
+  } catch (error) {
+    console.warn('Silent token acquisition failed; interactive consent required.', error)
+    return null
+  }
+}
+
+/** Redirect to Entra to sign in / consent for a resource, resuming the same action on return. */
+export async function beginInteractiveConnect(target: ConnectTarget) {
+  if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
+  await ensureInit()
+  sessionStorage.setItem(PENDING_KEY, target)
+  await msal.acquireTokenRedirect({ scopes: [scopeFor(target)], account: msal.getAllAccounts()[0] ?? undefined })
 }
 
 export type Facility = {
@@ -38,8 +78,8 @@ export type Facility = {
   facility_name: string
   type?: string
   country?: string
-  latitude?: number
-  longitude?: number
+  lat?: string | number
+  lon?: string | number
   commissioned_date?: string
 }
 
@@ -73,7 +113,7 @@ export type Instrument = {
 type StidPayload = {
   data?: {
     silver_facilities?: { items?: Facility[] }
-    silver_equipment?: { items?: Equipment[] }
+    silver_equipments?: { items?: Equipment[] }
     silver_instruments?: { items?: Instrument[] }
   }
   errors?: Array<{ message?: string }>
@@ -83,16 +123,16 @@ export type StidData = { facilities: Facility[]; equipment: Equipment[]; instrum
 
 export function isStidConfigured() { return Boolean(stidGraphqlUrl) }
 
-export async function queryStid(interactive = false): Promise<StidData | null> {
+export async function queryStid(): Promise<StidData | null> {
   if (!stidGraphqlUrl) {
     console.warn('STID GraphQL endpoint is not configured.')
     return null
   }
-  const token = await accessToken(GRAPHQL_SCOPE, interactive)
+  const token = await silentToken(GRAPHQL_SCOPE)
   if (!token) return null
   const query = `query HydroStid {
-    silver_facilities(first: 20) { items { facility_id facility_name type country latitude longitude commissioned_date } }
-    silver_equipment(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
+    silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
+    silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
     silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }
   }`
   const response = await fetch(stidGraphqlUrl, {
@@ -109,14 +149,15 @@ export async function queryStid(interactive = false): Promise<StidData | null> {
   if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
   return {
     facilities: payload.data?.silver_facilities?.items ?? [],
-    equipment: payload.data?.silver_equipment?.items ?? [],
+    equipment: payload.data?.silver_equipments?.items ?? [],
     instruments: payload.data?.silver_instruments?.items ?? [],
   }
 }
 
 export async function startStreamingPipeline() {
   if (!pipelineId) throw new Error('Streaming pipeline is not configured.')
-  const token = await accessToken('https://api.fabric.microsoft.com/Item.Execute.All', true)
+  const token = await silentToken(FABRIC_SCOPE)
+  if (!token) { await beginInteractiveConnect('stream'); return }
   const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${pipelineId}/jobs/instances?jobType=Pipeline`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   })
@@ -125,7 +166,8 @@ export async function startStreamingPipeline() {
 
 export async function askDataAgent(question: string) {
   if (!agentUrl) return 'The Fabric Data Agent is not published to an MCP endpoint. This panel is available after an endpoint is configured.'
-  const token = await accessToken('https://api.fabric.microsoft.com/Item.Execute.All', true)
+  const token = await silentToken(FABRIC_SCOPE)
+  if (!token) { await beginInteractiveConnect('stream'); return 'Signing in to Microsoft Entra...' }
   const response = await fetch(agentUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -140,17 +182,17 @@ export type TelemetryReading = { opcuaNodeId: string; eventTime: string; value: 
 
 export function isTelemetryConfigured() { return Boolean(kqlCluster && kqlDatabase) }
 
-export async function queryLatestTelemetry(interactive = false): Promise<TelemetryReading[] | null> {
+export async function queryLatestTelemetry(): Promise<TelemetryReading[] | null> {
   if (!kqlCluster || !kqlDatabase) {
     console.warn('Eventhouse connection is not configured.')
     return []
   }
-  const token = await accessToken(`${kqlCluster.replace(/\/$/, '')}/.default`, interactive)
+  const token = await silentToken(kqlScope())
   if (!token) return null
   const response = await fetch(`${kqlCluster.replace(/\/$/, '')}/v1/rest/query`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ db: kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(15m) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
+    body: JSON.stringify({ db: kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(24h) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
   })
   const text = await response.text()
   if (!response.ok) {

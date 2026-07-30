@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Activity, Bot, Database, Factory, Gauge, MapPin, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
-import { askDataAgent, isStidConfigured, queryLatestTelemetry, queryStid, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
+import { askDataAgent, beginInteractiveConnect, initAuth, isStidConfigured, queryLatestTelemetry, queryStid, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import { createWorkOrder, initializeRayfin, isRayfinConfigured, listWorkOrders, signInToRayfin, type AppUser, type WorkOrderRecord } from './services/rayfin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
@@ -40,16 +40,20 @@ export default function App() {
           if (current) setOrders(await listWorkOrders())
         } catch (error) { setNotice(`Operations data: ${errorMessage(error)}`) }
       }
+      const pending = await initAuth()
       if (isStidConfigured()) {
         try {
-          const data = await queryStid(false)
+          const data = await queryStid()
           if (data) { setStid(data); setSelectedId(data.equipment[0]?.equipment_id); setSourceState('STID connected') }
         } catch (error) { setNotice(`STID: ${errorMessage(error)}`) }
       }
       try {
-        const data = await queryLatestTelemetry(false)
+        const data = await queryLatestTelemetry()
         if (data) { setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
       } catch (error) { setNotice(`Telemetry: ${errorMessage(error)}`) }
+      if (pending === 'stid') void connectStid()
+      else if (pending === 'telemetry') void connectTelemetry()
+      else if (pending === 'stream') void startStream()
     }
     void initialize()
   }, [])
@@ -57,8 +61,8 @@ export default function App() {
   async function connectStid() {
     setSourceState('Connecting...'); setNotice(undefined)
     try {
-      const data = await queryStid(true)
-      if (!data) return
+      const data = await queryStid()
+      if (!data) { await beginInteractiveConnect('stid'); return }
       setStid(data); setSelectedId(data.equipment[0]?.equipment_id); setSourceState('STID connected')
     } catch (error) { setSourceState('Connect STID'); setNotice(errorMessage(error)) }
   }
@@ -66,7 +70,8 @@ export default function App() {
   async function connectTelemetry() {
     setTelemetryState('Connecting...'); setNotice(undefined)
     try {
-      const data = await queryLatestTelemetry(true) ?? []
+      const data = await queryLatestTelemetry()
+      if (data === null) { await beginInteractiveConnect('telemetry'); return }
       setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events')
     } catch (error) { setTelemetryState('Connect telemetry'); setNotice(errorMessage(error)) }
   }
@@ -122,7 +127,7 @@ export default function App() {
       <section className="metrics">
         <div><Factory size={17} /><span>Assets<strong>{stid ? equipment.length : '—'}</strong><small>Lakehouse STID</small></span></div>
         <div><Gauge size={17} /><span>Instruments<strong>{stid ? stid.instruments.length : '—'}</strong><small>Mapped OPC UA nodes</small></span></div>
-        <div><Activity size={17} /><span>Recent signals<strong>{telemetry.length || '—'}</strong><small>Eventhouse · 15 min</small></span></div>
+        <div><Activity size={17} /><span>Recent signals<strong>{telemetry.length || '—'}</strong><small>Eventhouse · latest</small></span></div>
         <div><Wrench size={17} /><span>Open work orders<strong>{user ? openOrders.length : '—'}</strong><small>Rayfin SQL</small></span></div>
       </section>
 
