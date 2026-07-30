@@ -235,6 +235,9 @@ export default function App() {
   async function connectStid(opts?: { retries?: number }) {
     setSourceState('Connecting...'); setNotice(undefined)
     const retries = opts?.retries ?? 0
+    // Always rediscover on a manual click: a config cache captured before Seed & provision
+    // (when the GraphQL API item didn't yet exist) would otherwise keep this stuck for the whole session.
+    clearWorkspaceConfigCache()
     try {
       let data = await queryStid()
       // Right after Seed & provision the GraphQL API can take a moment to become queryable —
