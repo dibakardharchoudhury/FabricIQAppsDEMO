@@ -43,10 +43,10 @@
 # 1. Reads shared settings from `rti_demo_settings` (written by 001/002).
 # 2. Resolves the live `ontology_id` by name in the target folder.
 # 3. Builds the Data Agent item definition (`.platform` + `Files/Config/**`).
-# 4. Deploys it as a Fabric **DataAgent** item via REST (best-effort, with a
-#    manual-import fallback).
+# 4. Deploys it as a Fabric **DataAgent** item via REST, then **publishes** it
+#    (staging → published) so its agent + MCP endpoints go live (best-effort,
+#    with a manual-import fallback).
 # 5. Persists `data_agent_name` / `data_agent_id` back to `rti_demo_settings`.
-
 
 # CELL ********************
 
@@ -345,6 +345,28 @@ def update_item_definition(item_id: str, definition: dict) -> dict:
     raise RuntimeError(f"Failed to update item definition: {response.status_code} {response.text}")
 
 
+def publish_data_agent(item_id: str, published_description: str = "") -> None:
+    """Publish the DataAgent staging configuration so its endpoints go live.
+
+    POST /v1/workspaces/{ws}/dataAgents/{id}/staging/publish (Preview) promotes the
+    current staging (draft) config to the published environment. Once published, the
+    agent surfaces its agent (OpenAI-compatible) endpoint and MCP endpoint.
+    """
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/staging/publish"
+    body = {"publishedDescription": published_description[:256]} if published_description else {}
+    response = api_request("POST", url, data=body, timeout=120)
+    if response.status_code in (200, 201):
+        print("✅ Data Agent published (staging → published).")
+        return
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if operation_url:
+            wait_for_lro(operation_url)
+        print("✅ Data Agent published via LRO (staging → published).")
+        return
+    raise RuntimeError(f"Failed to publish Data Agent: {response.status_code} {response.text}")
+
+
 def upsert_part(parts: list, path: str, obj: dict) -> list:
     """Replace (or append) an InlineBase64 part at `path` with `obj`."""
     encoded = {"path": path, "payload": encode_payload(obj), "payloadType": "InlineBase64"}
@@ -470,7 +492,21 @@ try:
 
     update_item_definition(data_agent_item_id, {"parts": parts})
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
-    print("ℹ️ Draft only — open the Data Agent in Fabric and PUBLISH to go live.")
+
+    # 4) PUBLISH — promote staging → published so the agent's endpoints go live.
+    try:
+        publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
+        openai_endpoint = (
+            f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}"
+            f"/aiskills/{data_agent_item_id}/aiassistant/openai"
+        )
+        print("🌐 Published — consumption endpoints (also shown on the agent's page in Fabric):")
+        print(f"   • Agent (OpenAI-compatible): {openai_endpoint}")
+        print("   • MCP endpoint: shown on the Data Agent page in Fabric (Settings → Endpoints).")
+    except Exception as pub_exc:  # noqa: BLE001 - publish is best-effort; config already landed
+        print("⚠️ Data Agent configured but publish did not complete:")
+        print("   ", pub_exc)
+        print("   Open the Data Agent in Fabric and click Publish to finish going live.")
 except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
     print("⚠️ Automated Data Agent deployment did not complete:")
     print("   ", exc)
