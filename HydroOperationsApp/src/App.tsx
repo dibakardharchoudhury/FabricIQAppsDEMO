@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
@@ -17,6 +17,9 @@ const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'read
 const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].includes(format.toUpperCase()))
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unknown error'
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
+// Compact absolute + relative timestamps for live telemetry readings.
+const fmtClock = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+const fmtAgo = (iso: string) => { const ms = Date.now() - new Date(iso).getTime(); if (Number.isNaN(ms)) return ''; const m = Math.round(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`; const h = Math.round(m / 60); if (h < 24) return `${h}h ago`; return `${Math.round(h / 24)}d ago` }
 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
 // `kind` lets a reloaded page re-attach to the right long-running Fabric job.
@@ -94,6 +97,7 @@ export default function App() {
   const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
   const flaggedSignals = useMemo<FlaggedSignal[]>(() => telemetry
     .filter(reading => ['bad', 'uncertain'].includes((reading.quality ?? '').toLowerCase()))
+    .sort((a, b) => new Date(b.eventTime).getTime() - new Date(a.eventTime).getTime())
     .map(reading => {
       const instrument = instrumentByNode.get(reading.opcuaNodeId)
       return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
@@ -325,13 +329,6 @@ export default function App() {
     await awaitStream(() => startStreamingPipeline(s => updateJob('stream', humanStatus(s))))
   }
 
-  // Seed/provision and the telemetry stream are independent Fabric jobs (SQL+GraphQL+Data Agent
-  // vs. the OPC UA pipeline), so fire both together — the ~2 min stream shouldn't wait behind
-  // the ~6 min provision. Each keeps its own progress bar; allSettled so one failing doesn't abort the other.
-  async function startSetup() {
-    await Promise.allSettled([seedDemo(), startStream()])
-  }
-
   async function sendQuestion() {
     const text = question.trim(); if (!text || busy) return
     setQuestion(''); setBusy(true); setMessages(current => [...current, { role: 'user', text }])
@@ -360,14 +357,14 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
       </div>
-      <div className="top-actions"><button className="stream-button" onClick={() => void startSetup()} disabled={seeding || streamState === 'starting'} title="Steps 2 + 3 · Provision (RTI_011) and start the telemetry stream together — they run in parallel."><Play size={14} fill="currentColor" />2 + 3 · Provision + stream</button><button className="stream-button" onClick={() => void startStream()} disabled={streamState === 'starting'} title="Step 3 · Start the OPC UA telemetry pipeline (02_Pipe_Stream) so live signals flow into the Eventhouse."><Play size={14} fill="currentColor" />{streamState === 'starting' ? 'Starting' : streamState === 'started' ? 'Stream started' : '3 · Start stream'}</button><button className="seed-button" onClick={() => void seedDemo()} disabled={seeding} title="Step 2 · Seed demo SQL data and publish the STID GraphQL API + Data Agent (runs the RTI_011 notebook)."><Database size={14} />{seeding ? 'Seeding…' : '2 · Seed & provision'}</button><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
+      <div className="top-actions"><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
     </header>
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
       {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
       {!setupHidden && !setupComplete && <section className="setup">
-        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Steps 2 and 3 are independent — launch them together, then finish 4 and 5.</p><button className="step-action" onClick={() => void startSetup()} disabled={seeding || streamState === 'starting'} title="Run steps 2 and 3 in parallel">Run 2 + 3</button><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
+        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
         <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
           <span className="step-num">{step.done ? <Check size={14} /> : step.n}</span>
           <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
@@ -382,18 +379,19 @@ export default function App() {
         <div><MapPin size={17} /><span>Facilities<strong>{stid ? facilities.length : '—'}</strong><small>Lakehouse STID</small></span></div>
         <div><Factory size={17} /><span>Assets<strong>{stid ? equipment.length : '—'}</strong><small>This facility</small></span></div>
         <div><Gauge size={17} /><span>Instruments<strong>{stid ? facilityInstruments.length : '—'}</strong><small>Mapped OPC UA nodes</small></span></div>
-        <div><Activity size={17} /><span>Recent signals<strong>{telemetry.length || '—'}</strong><small>Eventhouse · latest</small></span></div>
+        <div><Activity size={17} /><span>Live signals<strong>{telemetry.length || '—'}</strong><small>Eventhouse · latest per node · last 24h</small></span></div>
         <div><Wrench size={17} /><span>Open work orders<strong>{user ? openOrders.length : '—'}</strong><small>Rayfin SQL</small></span></div>
       </section>
 
       {flaggedSignals.length > 0 && <section className="quality-alert">
-        <div className="quality-alert-head"><AlertTriangle size={16} /><div><strong>{flaggedSignals.length} live signal{flaggedSignals.length > 1 ? 's' : ''} reporting Bad / Uncertain quality</strong><small>OPC UA quality flags from the Eventhouse stream — raise a work order to investigate the affected asset.</small></div></div>
+        <div className="quality-alert-head"><AlertTriangle size={16} /><div><strong>{flaggedSignals.length} live signal{flaggedSignals.length > 1 ? 's' : ''} reporting Bad / Uncertain quality</strong><small>OPC UA quality flags from the Eventhouse stream over the last 24h, most recent event first — raise a work order to investigate the affected asset.</small></div></div>
         <ul className="quality-alert-list">{flaggedSignals.slice(0, 6).map(flagged => {
           const hasOrder = nodesWithOpenOrder.has(flagged.reading.opcuaNodeId)
           const quality = (flagged.reading.quality ?? '').toLowerCase()
           return <li key={flagged.reading.opcuaNodeId}>
             <span className={`q-badge ${quality}`}>{flagged.reading.quality}</span>
             <span className="q-sig"><strong>{flagged.instrument?.tag ?? flagged.reading.opcuaNodeId}</strong><small>{(flagged.asset?.tag ?? flagged.instrument?.equipment_id ?? 'Unmapped signal')} · {flagged.reading.value}{flagged.instrument?.unit ? ` ${flagged.instrument.unit}` : ''}</small></span>
+            <span className="q-time" title={new Date(flagged.reading.eventTime).toLocaleString()}><strong>{fmtAgo(flagged.reading.eventTime)}</strong><small>{fmtClock(flagged.reading.eventTime)}</small></span>
             <button className="q-action" disabled={hasOrder || raising === flagged.reading.opcuaNodeId} onClick={() => void raiseWorkOrderForSignal(flagged)}>{hasOrder ? 'WO open' : raising === flagged.reading.opcuaNodeId ? 'Raising…' : <><Plus size={12} /> Work order</>}</button>
           </li>
         })}</ul>
