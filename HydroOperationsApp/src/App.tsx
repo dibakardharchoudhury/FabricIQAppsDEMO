@@ -15,7 +15,7 @@ import {
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 // OPC UA node ids encode the equipment tag (ns=2;s=T004.inlet_pressure -> T004) so a work order
 // can be raised even before STID metadata maps the signal to an asset.
-const equipmentTagFromNode = (nodeId: string) => nodeId.split('s=')[1]?.split(/[.;]/)[0]?.trim() || undefined
+const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
 // model-viewer only renders glTF/GLB; other formats keep the thumbnail/link fallback.
 const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].includes(format.toUpperCase()))
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unknown error'
