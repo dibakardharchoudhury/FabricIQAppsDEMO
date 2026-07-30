@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Play, Plus, Radio, Send, Wrench, X } from 'lucide-react'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
@@ -13,6 +13,9 @@ import {
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unknown error'
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
+
+// One entry per concurrently-running Fabric job so each keeps its own progress bar.
+type ProgressJob = { label: string; status: string; pct: number; startedAt: number; etaMs: number }
 
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null)
@@ -29,10 +32,7 @@ export default function App() {
   const [telemetryState, setTelemetryState] = useState('Connect telemetry')
   const [streamState, setStreamState] = useState<'idle' | 'starting' | 'started' | 'error'>('idle')
   const [notice, setNotice] = useState<string>()
-  const [progress, setProgress] = useState<{ label: string; status: string } | null>(null)
-  const [progressPct, setProgressPct] = useState(0)
-  const jobStartRef = useRef(0)
-  const jobEtaRef = useRef(1)
+  const [jobs, setJobs] = useState<Record<string, ProgressJob>>({})
   const [provisioned, setProvisioned] = useState(false)
   const [setupHidden, setSetupHidden] = useState(false)
   const [copilotOpen, setCopilotOpen] = useState(false)
@@ -83,24 +83,40 @@ export default function App() {
   }, [])
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
-  // one from elapsed time — eases monotonically toward ~95% over the expected duration.
+  // each from its own elapsed time — eases monotonically toward ~95% over the expected duration.
+  const jobKeys = Object.keys(jobs).sort().join(',')
   useEffect(() => {
-    if (!progress) { setProgressPct(0); return }
-    const tick = () => {
-      const elapsed = Date.now() - jobStartRef.current
-      const frac = 1 - Math.exp((-2.5 * elapsed) / Math.max(1, jobEtaRef.current))
-      setProgressPct(prev => Math.max(prev, Math.min(95, Math.round(frac * 100))))
-    }
+    if (!jobKeys) return
+    const tick = () => setJobs(prev => {
+      let changed = false
+      const next: Record<string, ProgressJob> = {}
+      for (const [key, job] of Object.entries(prev)) {
+        const elapsed = Date.now() - job.startedAt
+        const frac = 1 - Math.exp((-2.5 * elapsed) / Math.max(1, job.etaMs))
+        const pct = Math.max(job.pct, Math.min(95, Math.round(frac * 100)))
+        if (pct !== job.pct) changed = true
+        next[key] = pct === job.pct ? job : { ...job, pct }
+      }
+      return changed ? next : prev
+    })
     tick()
     const id = window.setInterval(tick, 500)
     return () => window.clearInterval(id)
-  }, [progress])
+  }, [jobKeys])
 
-  function beginProgress(label: string, etaMs: number) {
-    jobStartRef.current = Date.now()
-    jobEtaRef.current = etaMs
-    setProgressPct(3)
-    setProgress({ label, status: 'Starting' })
+  function beginProgress(key: string, label: string, etaMs: number) {
+    setJobs(prev => ({ ...prev, [key]: { label, status: 'Starting', pct: 3, startedAt: Date.now(), etaMs } }))
+  }
+
+  function updateJob(key: string, status: string) {
+    setJobs(prev => prev[key] ? { ...prev, [key]: { ...prev[key], status } } : prev)
+  }
+
+  function endJob(key: string) {
+    setJobs(prev => {
+      if (!prev[key]) return prev
+      const next = { ...prev }; delete next[key]; return next
+    })
   }
 
   function applyStid(data: StidData) {
@@ -165,11 +181,10 @@ export default function App() {
         // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
         // every run, so skip the client-side insert-if-empty pre-seed.
         const label = 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)…'
-        beginProgress(label, 5 * 60_000)
+        beginProgress('seed', label, 5 * 60_000)
         try {
-          const status = await runPostSeedNotebook(s => setProgress({ label, status: humanStatus(s) }))
+          const status = await runPostSeedNotebook(s => updateJob('seed', humanStatus(s)))
           if (status === 'Completed') {
-            setProgressPct(100)
             setProvisioned(true)
             await loadOperationalData()
             setNotice('Operational data re-seeded and Fabric provisioning complete — connecting STID…')
@@ -178,7 +193,7 @@ export default function App() {
             setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
           }
         } catch (error) { setNotice(`Fabric provisioning failed: ${errorMessage(error)}`) }
-        finally { setProgress(null) }
+        finally { endJob('seed') }
       } else {
         // Fallback when RTI_011 isn't configured: client-side insert-if-empty seed.
         const result = await seedOperationalDataIfEmpty(activeUser)
@@ -206,13 +221,13 @@ export default function App() {
   async function startStream() {
     setStreamState('starting'); setNotice(undefined)
     const label = 'Starting the OPC UA telemetry pipeline (02_Pipe_Stream)…'
-    beginProgress(label, 90_000)
+    beginProgress('stream', label, 90_000)
     try {
-      await startStreamingPipeline(s => setProgress({ label, status: humanStatus(s) }))
+      await startStreamingPipeline(s => updateJob('stream', humanStatus(s)))
       setStreamState('started'); await connectTelemetry()
     }
     catch (error) { setStreamState('error'); setNotice(errorMessage(error)) }
-    finally { setProgress(null) }
+    finally { endJob('stream') }
   }
 
   async function sendQuestion() {
@@ -248,7 +263,7 @@ export default function App() {
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
-      {progress && <div className="progress"><div className="progress-head"><span>{progress.label}</span><em>{progress.status} · {progressPct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${progressPct}%`, marginLeft: 0, animation: 'none' }} /></div></div>}
+      {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}%</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
       {!setupHidden && !setupComplete && <section className="setup">
         <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Run these steps in order — each one unlocks the next.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
         <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
