@@ -142,11 +142,10 @@ Earlier versions required you to manually pin a default lakehouse on the orchest
 `RTI_Orchestrator_Setup` (Stage 2) runs this DAG in a single Spark session. Independent branches run in parallel (`concurrency = 4`). NB01 already ran in Stage 1 and is **not** in this DAG.
 
 ```
-NB02_eventhouse ─┬─► NB06_tsbind        (also depends on NB04)
+NB02_eventhouse ─┬─► NB06_tsbind        (also depends on NB04 + NB05)
                  └─► NB08_dashboard
 
-NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind
-                                  ├─► NB06_tsbind
+NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind ──► NB06_tsbind
                                   └─► NB09_dataagent ──► NB10_opsagent
 ```
 
