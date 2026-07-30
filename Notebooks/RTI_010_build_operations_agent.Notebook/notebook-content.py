@@ -497,10 +497,11 @@ def create_operations_agent(display_name: str, description: str = "") -> dict:
         return existing
 
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/OperationsAgents"
-    # The OperationsAgents create accepts ONLY displayName + description (NO folderId / type /
-    # definition) per the authoritative reference. Sending folderId can yield a shell whose
-    # definition endpoint 404s (EntityNotFound). The agent lands at the workspace root.
+    # folderId is an officially supported create-body field (per the Create Operations Agent
+    # reference); it places the agent in the target _V3 folder instead of the workspace root.
     body = {"displayName": display_name, "description": description}
+    if target_folder_id:
+        body["folderId"] = target_folder_id
     response = api_request("POST", url, data=body, timeout=120)
 
     if response.status_code in (200, 201):
@@ -691,7 +692,7 @@ try:
     print("   action (FabricJobAction): Send Email Alert! ->", resolved_pipeline_id, f"({PIPELINE_NAME})")
     print("   message dest.           : TeamsChannel", ops_agent_teams_team_id, "/", ops_agent_teams_channel_id)
 
-    # 1) Create (or reuse) the target Operations Agent — empty, no definition (NO folderId).
+    # 1) Create (or reuse) the target Operations Agent — empty, no definition (in the _V3 folder).
     ops_agent = create_operations_agent(ops_agent_name, OPS_AGENT_DESCRIPTION)
     ops_agent_item_id = ops_agent.get("id")
     if not ops_agent_item_id:
