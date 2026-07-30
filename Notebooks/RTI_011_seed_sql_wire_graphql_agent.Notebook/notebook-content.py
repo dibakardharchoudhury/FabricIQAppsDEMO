@@ -153,10 +153,14 @@ STAGE_CONFIG_SCHEMA_URL = (
 )
 DRAFT_STAGE_CONFIG_PATH = "Files/Config/draft/stage_config.json"
 
-# A Fabric SQL Database is added to a Data Agent as a `data_warehouse` source
-# (its SQL analytics endpoint), with `warehouse_tables.table` elements.
-SQL_DATASOURCE_TYPE = "data_warehouse"
-SQL_DATASOURCE_PATH = f"Files/Config/draft/{SQL_DATASOURCE_TYPE}-{sql_db_item_name}/datasource.json"
+# A Fabric SQL Database is added to a Data Agent as a `sql_database` source. Verified against
+# the portal's published datasource.json: the part lives under a `sql-database-<name>` folder
+# and carries a nested schema→table→column tree. (A flat table list is accepted by the REST
+# updateDefinition but 404s when the agent tries to load the source at runtime.)
+SQL_DATASOURCE_TYPE = "sql_database"
+SQL_DATASOURCE_FOLDER = SQL_DATASOURCE_TYPE.replace("_", "-")  # "sql-database"
+SQL_DATASOURCE_PATH = f"Files/Config/draft/{SQL_DATASOURCE_FOLDER}-{sql_db_item_name}/datasource.json"
+SQL_SCHEMA_NAME = "dbo"
 
 # Only the 5 operational tables the web app actually uses.
 SQL_TABLES = [
@@ -674,6 +678,42 @@ def resolve_sql_database() -> tuple:
     return item_id, server, database
 
 
+def fetch_sql_table_schema(server: str, database: str, tables: list) -> dict:
+    """Return {table: [(column, data_type), ...]} for the given dbo tables, ordered by
+    ORDINAL_POSITION — used to build the Data Agent's nested schema→table→column tree.
+    Read-only INFORMATION_SCHEMA query; it never touches the seed data."""
+    import pyodbc  # available in the Fabric Spark runtime
+
+    if not tables:
+        return {}
+    token = get_sql_token()
+    token_bytes = token.encode("utf-16-le")
+    token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+    SQL_COPT_SS_ACCESS_TOKEN = 1256  # driver attribute for AAD access-token auth
+    driver = "ODBC Driver 18 for SQL Server"
+    conn_str = (
+        f"Driver={{{driver}}};Server={server};Database={database};"
+        "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60"
+    )
+    placeholders = ",".join("?" for _ in tables)
+    connection = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            f"WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ({placeholders}) "
+            "ORDER BY TABLE_NAME, ORDINAL_POSITION",
+            SQL_SCHEMA_NAME, *tables,
+        )
+        schema = {t: [] for t in tables}
+        for table_name, column_name, data_type in cursor.fetchall():
+            schema.setdefault(table_name, []).append((column_name, data_type))
+        cursor.close()
+        return schema
+    finally:
+        connection.close()
+
+
 def seed_sql_database(server: str, database: str) -> None:
     """Run the embedded idempotent MERGE seed against the SQL DB using an SPN token."""
     import pyodbc  # available in the Fabric Spark runtime
@@ -711,6 +751,7 @@ def seed_sql_database(server: str, database: str) -> None:
 
 
 sql_db_item_id = None
+sql_server = sql_database = None
 print("\n=== STEP A — Seed the operational SQL Database ===")
 try:
     sql_db_item_id, sql_server, sql_database = resolve_sql_database()
@@ -811,26 +852,44 @@ def resolve_data_agent_id() -> str:
     )
 
 
-def build_sql_datasource_obj(existing: dict, artifact_id: str) -> dict:
+def _ds_element(type_name: str, display_name: str, is_selected: bool, children: list, **extra) -> dict:
+    node = {
+        "id": str(uuid.uuid4()),
+        "is_selected": is_selected,
+        "display_name": display_name,
+        "type": type_name,
+        "description": None,
+        "children": children,
+    }
+    node.update(extra)
+    return node
+
+
+def build_sql_datasource_obj(existing: dict, artifact_id: str, schema_map: dict) -> dict:
+    # Mirror the portal's published shape: a nested schema→table→column tree. The grouping and
+    # schema nodes are is_selected=False; the actual tables and their columns are is_selected=True.
     ds = dict(existing)
     ds["$schema"] = DATASOURCE_SCHEMA_URL
     ds["artifactId"] = artifact_id
     ds["workspaceId"] = workspace_id
+    ds["dataSourceInstructions"] = SQL_DS_INSTRUCTIONS
     ds["displayName"] = sql_db_item_name
     ds["type"] = SQL_DATASOURCE_TYPE
-    ds["dataSourceInstructions"] = SQL_DS_INSTRUCTIONS
-    ds.setdefault("userDescription", None)
-    ds.setdefault("metadata", {})
+    ds["userDescription"] = None
+    ds["metadata"] = None
+    table_nodes = []
+    for table, _desc in SQL_TABLES:
+        column_nodes = [
+            _ds_element("sql_database.column", col, True, [], data_type=dtype)
+            for col, dtype in (schema_map.get(table) or [])
+        ]
+        table_nodes.append(_ds_element("sql_database.table", table, True, column_nodes))
     ds["elements"] = [
-        {
-            "id": table,
-            "is_selected": True,
-            "display_name": table,
-            "type": "warehouse_tables.table",
-            "description": desc,
-            "children": [],
-        }
-        for table, desc in SQL_TABLES
+        _ds_element("schema_grouping", "Schemas", False, [
+            _ds_element(f"{SQL_DATASOURCE_TYPE}.schema", SQL_SCHEMA_NAME, False, [
+                _ds_element("table_grouping", "Tables", False, table_nodes),
+            ]),
+        ]),
     ]
     return ds
 
@@ -866,10 +925,18 @@ try:
     sql_source_artifact_id = sql_db_item_id
     print(f"✅ SQL Database source artifact id: {sql_source_artifact_id}")
 
+    # Enumerate the operational tables' columns so the source carries the same nested
+    # schema→table→column tree the portal writes (a flat table list 404s at load time).
+    if not sql_server or not sql_database:
+        _sid, sql_server, sql_database = resolve_sql_database()
+    schema_map = fetch_sql_table_schema(sql_server, sql_database, [t for t, _ in SQL_TABLES])
+    filled = sum(1 for t, _ in SQL_TABLES if schema_map.get(t))
+    print(f"✅ Enumerated columns for {filled}/{len(SQL_TABLES)} operational table(s)")
+
     definition = get_item_definition(agent_id)
     parts = definition.get("definition", {}).get("parts", []) or []
 
-    # Reuse/upgrade the existing data_warehouse datasource part (it may hold a stale
+    # Reuse/upgrade the existing sql_database datasource part (it may hold a stale
     # artifactId from a prior run) — there is only one SQL source, matched by type.
     sql_part_path = SQL_DATASOURCE_PATH
     for part in parts:
@@ -882,7 +949,7 @@ try:
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == sql_part_path),
         {},
     )
-    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_source_artifact_id))
+    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_source_artifact_id, schema_map))
 
     existing_stage = next(
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
@@ -891,7 +958,7 @@ try:
     parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, build_stage_obj(existing_stage))
 
     print(f"Applying definition: {len(parts)} part(s)")
-    print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table element(s))")
+    print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table(s), nested column tree)")
     update_item_definition(agent_id, {"parts": parts})
 
     publish_data_agent(agent_id, "Operational SQL source added.")
