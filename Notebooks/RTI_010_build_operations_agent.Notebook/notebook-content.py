@@ -706,26 +706,47 @@ try:
         raise RuntimeError("Operations Agent create returned no id.")
     time.sleep(RETRY_DELAY_SECONDS)  # let the new item settle before its definition is pushed
 
-    # 2) Push the git-exact working definition via updateDefinition. If the API rejects the full
-    #    config (400/404), fall back to an instructions-only push so the agent still lands and can
-    #    be finished in the portal.
-    def _minimal_config() -> dict:
+    # 2) Push the working definition via updateDefinition. The full config was 404ing (EntityNotFound
+    #    — a reference the service cannot resolve), so we ladder richest -> simplest AND try BOTH
+    #    ontology-id forms (the encoded "Knowledge" id vs the real ontology item id) to isolate the
+    #    one reference that breaks it. First 200 wins (richest deployable config). Each rejection
+    #    prints the status + response body — the 404 body from Fabric names the missing entity.
+    enc_ds_id = resolved_datasource_id          # 4cdeb9b3-... (encoded "Knowledge" form)
+    plain_ds_id = ontology_live_id              # 30f512c4-... (real ontology item id)
+
+    def _variant(ds_id=None, with_action=True, with_teams=True, with_playbook=True) -> dict:
+        """Build a Configurations.json variant, dropping any component we want to exclude so we can
+        isolate which reference the API rejects. ds_id=None drops the (stale) embedded ontology."""
         cfg = build_configurations(
-            should_run=ops_agent_should_run, copy_playbook=False,
-            datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)
-        cfg["configuration"]["dataSources"] = {}
-        cfg["configuration"]["actions"] = {}
-        cfg["configuration"].pop("messageDestination", None)
-        cfg.pop("playbook", None)
+            should_run=ops_agent_should_run,
+            copy_playbook=with_playbook,
+            team_id=(ops_agent_teams_team_id if with_teams else None),
+            channel_id=(ops_agent_teams_channel_id if with_teams else None),
+            datasource_id=ds_id,
+            pipeline_id=(resolved_pipeline_id if with_action else None))
+        conf = cfg["configuration"]
+        if not ds_id:
+            conf["dataSources"] = {}          # drop the embedded (stale) ontology reference
+        if not with_action:
+            conf["actions"] = {}              # drop the embedded (stale) pipeline action
+        if not with_teams:
+            conf.pop("messageDestination", None)
+        if not with_playbook:
+            cfg.pop("playbook", None)
         return cfg
 
+    # Ordered richest -> simplest. The boundary between the last 404 and the first 200 pinpoints the
+    # culprit (e.g. encoded-vs-plain id, the playbook, the action, or Teams).
     candidates = [
-        ("embedded working definition (Ontology + action + Teams + playbook)",
-         build_configurations(
-             should_run=ops_agent_should_run, copy_playbook=ops_agent_copy_playbook,
-             team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
-             datasource_id=resolved_datasource_id, pipeline_id=resolved_pipeline_id)),
-        ("instructions only (finish in portal)", _minimal_config()),
+        ("full: Ontology(encoded) + action + Teams + playbook", _variant(enc_ds_id)),
+        ("full: Ontology(plain) + action + Teams + playbook", _variant(plain_ds_id)),
+        ("Ontology(plain) + action + Teams (no playbook)", _variant(plain_ds_id, with_playbook=False)),
+        ("Ontology(plain) + action (no Teams, no playbook)", _variant(plain_ds_id, with_teams=False, with_playbook=False)),
+        ("Ontology(plain) only", _variant(plain_ds_id, with_action=False, with_teams=False, with_playbook=False)),
+        ("Ontology(encoded) only", _variant(enc_ds_id, with_action=False, with_teams=False, with_playbook=False)),
+        ("action only (no Ontology)", _variant(None, with_action=True, with_teams=False, with_playbook=False)),
+        ("Teams only (no Ontology, no action)", _variant(None, with_action=False, with_teams=True, with_playbook=False)),
+        ("instructions only (finish in portal)", _variant(None, with_action=False, with_teams=False, with_playbook=False)),
     ]
 
     applied_label = None
@@ -736,9 +757,11 @@ try:
         status, text = update_operations_agent_definition(ops_agent_item_id, cfg)
         if status == 200:
             applied_label, applied_cfg = label, cfg
+            print(f"✅ updateDefinition accepted '{label}'.")
             break
         last_status, last_text = status, text
-        print(f"↩️  updateDefinition rejected '{label}' ({status}). Trying the next candidate.")
+        snippet = " ".join((text or "").split())[:400]
+        print(f"↩️  rejected '{label}' → {status}. {snippet or '(no response body)'}")
         if status not in (400, 404):  # auth / 5xx won't be fixed by a simpler config
             raise RuntimeError(f"updateDefinition failed: {status} {text}")
 
