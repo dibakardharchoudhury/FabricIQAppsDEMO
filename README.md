@@ -1,692 +1,290 @@
-# Fabric IQ RTI Demo – Mock Energy Dataset & Ontology Pipeline
+# Fabric IQ RTI Demo – Mock Energy Dataset, Ontology & Real-Time Intelligence
 
 ## Purpose
 
-This repository contains a **fully synthetic energy dataset** and an **end-to-end Fabric pipeline** that demonstrates:
+This repository contains a **fully synthetic energy dataset** and an **end-to-end Microsoft Fabric solution** that demonstrates:
+
 - Ingestion from raw files and seeded telemetry
 - Transformation through a medallion architecture (Bronze/Silver/Gold)
-- Real-time streaming via Eventstream with OPC UA–like telemetry
-- Ontology binding with semantic relationships
-- Live time-series data integration with Eventhouse
+- Ontology binding with semantic relationships (Fabric IQ)
+- Real-time streaming via Eventstream with OPC UA–like telemetry into Eventhouse
+- Live time-series binding of telemetry to ontology entities
+- A Real-Time Dashboard, a Data Agent, and an Operations Agent (Teams alerts)
+- **One-click orchestrated setup** via a notebook DAG driven from a Data Pipeline
 
-The scenario is designed to test **Microsoft Fabric** and **Fabric IQ** end-to-end capabilities including:
-- Lakehouse (Bronze/Silver/Gold)
-- Streaming (Eventstream with OPC UA–like telemetry)
-- Eventhouse & KQL Database
-- Ontology (entity types, relationships, data bindings)
-- Graph (asset topology & relationships)
-- Data Agent & Operations Agent
-
-**All data is fully synthetic and mirrors common industrial data landscapes** (engineering, operations, maintenance, documents) while containing no real plant or customer data.
+**All data is fully synthetic** and mirrors common industrial data landscapes (engineering, operations, maintenance, documents) while containing no real plant or customer data.
 
 ---
 
-## Notebook Execution Order
+## Environment model (`env_suffix`) — read this first
 
-The complete pipeline is implemented across **9 notebooks (RTI_000–RTI_008)**, with each playing a specific role:
+The entire demo is **parameterised by a single lever, `env_suffix`** (e.g. `V5`). Every versioned artifact name derives from it, so you can stand up parallel environments (`V5`, `V6`, `DEV`, …) in the same or different workspaces without editing any notebook.
 
-| Notebook | Role |
-|----------|------|
-| **RTI_000** | Dataset / documentation notebook. Provides full context and architecture overview. |
-| **RTI_001** | Creates shared foundation and writes `rti_demo_settings` (single source of truth). |
-| **RTI_002** | Creates structured/static demo source data and seeds signal metadata. |
-| **RTI_003** | Transforms structured source data into Lakehouse silver tables. |
-| **RTI_004** | Builds and deploys ontology entity and relationship definitions. |
-| **RTI_005** | Adds static Lakehouse DataBindings and relationship contextualizations. |
-| **RTI_006** | Configures Eventstream/Eventhouse and generates OPC UA telemetry. |
-| **RTI_007** | Adds Eventhouse TimeSeries DataBinding to `signal_master`. |
-| **RTI_008** | Builds and deploys the Real-Time Dashboard over `OPCUAEvents` (telemetry stats). |
-| **OntologyAgent** | Uses the finished ontology as the semantic access layer for questions and analysis. |
+- `env_suffix` and the other environment values are **injected by the `Pipe_Setup` pipeline** — they are **not** hardcoded in the notebooks. The notebook parameter cells intentionally ship with **blank defaults** and a fail-fast guard.
+- **`RTI_001` is the single source of truth.** It derives every name from `env_suffix` and writes the shared **`rti_demo_settings`** Delta table. Notebooks `002`–`010` read everything from that table.
+
+### Derived artifact names (for `env_suffix = V5`)
+
+| Setting | Pattern | Example (`V5`) | Versioned? |
+|---|---|---|---|
+| Workspace folder | `RTI_DEMO_{env_suffix}` | `RTI_DEMO_V5` | ✅ |
+| Lakehouse | `Energy_IQ_LakehouseRTI_{env_suffix}` | `Energy_IQ_LakehouseRTI_V5` | ✅ |
+| Ontology | `RTI_Demo_Ontology_{env_suffix}` | `RTI_Demo_Ontology_V5` | ✅ |
+| Eventhouse | `RTI_Demo_Eventhouse_{env_suffix}` | `RTI_Demo_Eventhouse_V5` | ✅ |
+| KQL database | `RTI_Demo_Eventhouse_{env_suffix}` | `RTI_Demo_Eventhouse_V5` | ✅ |
+| Eventstream | `RTI_Demo_Eventstream_{env_suffix}` | `RTI_Demo_Eventstream_V5` | ✅ |
+| Data Agent | `RTI_Demo_Agent_{env_suffix}` | `RTI_Demo_Agent_V5` | ✅ |
+| Dashboard | `RTI_Demo_OPCUA_TelemetryStats_{env_suffix}` | `RTI_Demo_OPCUA_TelemetryStats_V5` | ✅ |
+| Operations Agent | `RTI_Demo_OpsAgent_{env_suffix}` | `RTI_Demo_OpsAgent_V5` | ✅ |
+| Eventhouse table | `OPCUAEvents` (fixed) | `OPCUAEvents` | ❌ |
+| Settings table | `rti_demo_settings` (fixed) | `rti_demo_settings` | ❌ |
+| Bronze shortcut | `Files/bronze` → ADLS | `Files/bronze` | ❌ |
+| Setup pipeline | `Pipe_Setup` (fixed) | `Pipe_Setup` | ❌ |
+| Stream pipeline | `Pipe_Stream` (fixed) | `Pipe_Stream` | ❌ |
+| Alert pipeline | `Pipe_SendEmailAlert` (fixed) | `Pipe_SendEmailAlert` | ❌ |
+
+> The three **pipeline names are intentionally not versioned** — one of each per workspace.
 
 ---
+
+## Artifacts & items inventory
+
+### Notebooks (`Notebooks/`)
+
+| Notebook | Role | Runs in `Pipe_Setup` DAG? |
+|----------|------|:---:|
+| **RTI_000_sampleEnergyDataset_Doc** | Documentation / architecture overview. Not executed by the orchestrator. | — |
+| **RTI_001_create_lakehouse_shortcut** | Foundation: resolves workspace/Lakehouse, creates the ADLS shortcut, derives all names, and writes `rti_demo_settings` (**single source of truth**). | ✅ |
+| **RTI_002_Setup_Eventhouse_Only** | Creates Eventhouse + KQL DB + `OPCUAEvents` table + Eventstream (Custom Endpoint → Eventhouse); seeds signal metadata into silver. | ✅ |
+| **RTI_003_ingest_transform_medallion** | Bronze → Silver → Gold transforms; produces `silver_signal_master` and the structured silver/gold tables. | ✅ |
+| **RTI_004_build_ontology_mapping_rti_structured** | Builds & deploys the ontology (5 entity types, 4 relationship types); adds time-series *properties* on `signal_master`. | ✅ |
+| **RTI_005_entity_DataBinding_rti_structured** | Static Lakehouse DataBindings + relationship contextualizations. | ✅ |
+| **RTI_006_TimeSeriesBinding_RTI_signal** | Adds the **Eventhouse TimeSeries DataBinding** from `OPCUAEvents` to `signal_master`. | ✅ |
+| **RTI_007_generate_and_ingest_OPCUA_Stream** | **On-demand OPC UA stream generator** (simulated telemetry → Custom Endpoint). Run via `Pipe_Stream`, **excluded** from the setup DAG. | ❌ |
+| **RTI_008_build_realtime_dashboard** | Builds & deploys the Real-Time Dashboard over `OPCUAEvents`. | ✅ |
+| **RTI_009_build_data_agent** | Builds & deploys the Data Agent over the ontology. | ✅ |
+| **RTI_010_build_operations_agent** | Builds the Operations Agent + `Pipe_SendEmailAlert` pipeline for Teams/email alerts. | ✅ |
+| **RTI_Orchestrator_Setup** | Runs the setup DAG (NB01–06, 08–10) in **one Spark session** via `notebookutils.notebook.runMultiple`. Launched by `Pipe_Setup`. | (is the driver) |
+
+### Data Pipelines (`Orchestrator_Pipelines/`)
+
+| Pipeline | Purpose |
+|----------|---------|
+| **`01_Pipe_Setup`** | Single Notebook activity → runs `RTI_Orchestrator_Setup`. **Supplies all environment values as Base parameters** (see next section). This is the one-click "build the environment" entry point. |
+| **`02_Pipe_Stream`** | Runs `RTI_007_generate_and_ingest_OPCUA_Stream` on demand to push a burst of live telemetry. Reads everything from `rti_demo_settings`. |
+| **`Pipe_SendEmailAlert`** | Created by `RTI_010`; triggered by the Operations Agent to send Teams/email alerts. Not run directly by users. |
+
+---
+
+## ⚙️ `Pipe_Setup` Base parameters (must be keyed in)
+
+`Pipe_Setup` runs a single Notebook activity that points at **`RTI_Orchestrator_Setup`**. The orchestrator's parameter cell ships **blank on purpose**, so **the pipeline is the single source of truth**. You must add the following rows under the Notebook activity's **Settings → Base parameters** (see the pipeline UI):
+
+> **Critical:** the **Name** must be the *full* notebook parameter variable name (the UI truncates long names visually — the stored value must be complete, e.g. `key_vault_tenant_id_secret_name`, not `key_vault_tenant_id_s…`).
+
+| # | Name (exact) | Type | Example value | Notes |
+|---|---|---|---|---|
+| 1 | `env_suffix` | String | `V5` | The one environment lever; drives every artifact name. |
+| 2 | `workspace_id` | String | `19f3d588-1585-4f3b-bb59-5abaf90c193a` | GUID from behind `/groups/` in the Fabric URL. |
+| 3 | `key_vault_uri` | String | `https://akvfabcapnew.vault.azure.net/` | SPN secrets live here (executing identity needs *get secret*). |
+| 4 | `key_vault_tenant_id_secret_name` | String | `tenantid` | Secret **name**, not value. |
+| 5 | `key_vault_client_id_secret_name` | String | `clientid` | Secret **name**, not value. |
+| 6 | `key_vault_client_secret_name` | String | `clientsecret` | Secret **name**, not value. |
+| 7 | `adls_account_url` | String | `https://didharchadlsg2.dfs.core.windows.net` | Seed dataset storage account. |
+| 8 | `adls_subpath` | String | `/dataiq/bronze` | Root that contains `bronze/stid`, `bronze/sap`, … |
+| 9 | `connection_name` | String | `ontologydidharch-connection` | Cloud connection feeding the bronze shortcut. |
+| 10 | `ops_agent_teams_team_id` | String | `c480320e-9204-474b-9b2c-54a53e94f220` | Teams team the Operations Agent posts to. |
+| 11 | `ops_agent_teams_channel_id` | String | `19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2` | Teams channel for alerts. |
+| 12 | `ops_agent_run_as_user` | String | `admin@mngenvmcap218279.onmicrosoft.com` | **Optional** — blank ⇒ the deploying user. |
+| 13 | `per_notebook_timeout_secs` | Int | `3600` | Orchestrator-only DAG knob (per-child timeout). **Not** forwarded to NB01. |
+
+**How the values flow:**
+
+```
+Pipe_Setup (Base parameters)
+        │  (injected at runtime, right below the tagged parameters cell)
+        ▼
+RTI_Orchestrator_Setup   ── forwards 12 params (nb01_args) via runMultiple ──►  RTI_001
+        │                                                                         │  writes
+        │                                                                         ▼
+        └───────── runs NB02–06, 08–10 in one Spark session ───────────►  rti_demo_settings
+                                                                                  ▲
+                                                             NB02–10 read everything here
+```
+
+- Only **NB01** receives parameters (`nb01_args`, the first 12 rows above). `per_notebook_timeout_secs` stays in the orchestrator (DAG timeout).
+- `NB02`–`NB10` read **only** from `rti_demo_settings`.
+- The orchestrator (and NB01) **fail fast** with `Missing required parameter(s): …` if any required value is blank (`ops_agent_run_as_user` is exempt).
+
+### 🔑 Required: attach a default lakehouse to the orchestrator
+
+`runMultiple` refuses to run child notebooks whose default lakehouse differs from the root's. The orchestrator therefore calls `runMultiple(..., {"useRootDefaultLakehouse": True})`, which makes **every child inherit the orchestrator's default lakehouse** (ignoring stale pins such as `…_V3`).
+
+For this to work, the orchestrator must itself be attached to the workspace lakehouse:
+
+1. Open **`RTI_Orchestrator_Setup`** in Fabric.
+2. In the Lakehouse explorer, **add / set the default lakehouse** to `Energy_IQ_LakehouseRTI_{env_suffix}` (e.g. `Energy_IQ_LakehouseRTI_V5`).
+3. Save. (The binding carries a workspace-specific GUID, so it is **not** committed to git — set it per workspace.)
+
+> On a brand-new workspace the lakehouse must exist before the orchestrated run (day-0 bootstrap). `RTI_001` is idempotent and will resolve/ensure it; create the lakehouse once, attach the orchestrator to it, then run `Pipe_Setup`.
+
+---
+
+## Setup DAG (dependency graph)
+
+`RTI_Orchestrator_Setup` runs this DAG in a single Spark session (VNet cold start paid once). Independent branches run in parallel (`concurrency = 4`).
+
+```
+NB01_lakehouse
+ ├─► NB02_eventhouse ─┬─► NB06_tsbind        (also depends on NB04)
+ │                    ├─► NB08_dashboard
+ │                    └─(NB06 needs NB02 + NB04)
+ └─► NB03_medallion ──► NB04_ontology ─┬─► NB05_entitybind
+                                       ├─► NB06_tsbind
+                                       └─► NB09_dataagent ──► NB10_opsagent
+```
+
+- **NB07 is excluded** from setup — run it on demand from `Pipe_Stream`.
+
+---
+
+## `rti_demo_settings` — the handoff contract
+
+`RTI_001` writes this Delta table (via an explicit OneLake ABFS path, so it does not depend on a default-lakehouse binding). Key columns:
+
+- **Identity / placement:** `env_suffix`, `workspace_id`, `workspace_folder_path`, `lakehouse_name`, `lakehouse_id`, `target_folder_id`
+- **Storage & shortcut:** `adls_account_url`, `adls_subpath`, `shortcut_name`, `shortcut_parent_path`, `connection_name`
+- **Key Vault (URI + secret NAMES only, never values):** `key_vault_uri`, `key_vault_tenant_id_secret`, `key_vault_client_id_secret`, `key_vault_client_secret_secret`
+- **Artifact names:** `ontology_name`, `eventhouse_name`, `kql_database_name`, `eventstream_name`, `eventhouse_table_name`, `data_agent_name`, `dashboard_name`, `ops_agent_name` (+ `fabric_*` aliases)
+- **Operations Agent:** `ops_agent_run_as_user`, `ops_agent_teams_team_id`, `ops_agent_teams_channel_id`, `ops_agent_copy_playbook`
+- **Silver tables:** `silver_facilities_table`, `silver_systems_table`, `silver_equipment_table`, `silver_instruments_table`, `silver_signal_master_table`, `silver_table_prefix`
+- **Data-model / time-series mapping:** `signal_master_entity_name`, `timeseries_timestamp_column` (`event_time`), `timeseries_key_column` (`opcua_node_id`), `timeseries_value_column` (`value`), `timeseries_quality_column` (`quality`)
+- **Eventstream components & pipelines:** `eventstream_source_name` (`OPCUA_CustomEndpoint`), `eventstream_stream_name` (`OPCUA_DefaultStream`), `eventstream_destination_name` (`Eventhouse`), `alert_pipeline_name`, `alert_pipeline_description`, `setup_pipeline_name`, `stream_pipeline_name`
+- Plus IDs added after creation: `lakehouse_id`, `cluster_query_uri`, `fabric_kql_db_id`, `dashboard_id`, etc.
+
+> **No secrets are stored in the table** — only Key Vault URIs and secret *names*.
+
+---
+
+## Notebook details
 
 ### RTI_000 – Documentation & Overview
-**Notebook:** `RTI_000_sampleEnergyDataset_Doc`
+Context for the whole solution: dataset layout, medallion architecture, ontology, and RTI flow. Not executed by the orchestrator.
 
-Provides context for the entire end-to-end process, dataset layout, and architecture overview.
+### RTI_001 – Foundation & settings (single source of truth)
+Derives all names from `env_suffix`; resolves/creates the workspace folder, Lakehouse, ADLS cloud connection, and the `Files/bronze` shortcut; authenticates the SPN from Key Vault; and writes `rti_demo_settings`. The parameters cell blanks the **12 injected** values and keeps static data-model config; a guard in the derive cell fails fast if a required injected value is missing.
 
----
+### RTI_002 – Streaming backbone + seed signal metadata
+Creates Eventhouse `RTI_Demo_Eventhouse_{env_suffix}`, its KQL DB, and the slim `OPCUAEvents` table (`event_time`, `opcua_node_id`, `value`, `quality`); creates Eventstream `RTI_Demo_Eventstream_{env_suffix}` with a Custom Endpoint (`OPCUA_CustomEndpoint`) → Eventhouse destination; seeds `silver_instruments` / `silver_signal_master`.
 
-### RTI_001 – Initialize Workspace & Lakehouse
-**Notebook:** `RTI_001_create_lakehouse_shortcut`
+### RTI_003 – Ingest & transform (Bronze → Silver → Gold)
+Transforms all bronze domains into conformed silver tables (`silver_facilities`, `silver_systems`, `silver_equipment`, `silver_instruments`, `silver_signal_master`, plus SAP/OPC UA history/common-library/SOLV/P&ID/documents) and derived gold tables. `silver_signal_master` (`opcua_node_id` identity) bridges static metadata to telemetry.
 
-**Goal:** Bootstrap the Fabric workspace and create a shared foundation that all later notebooks depend on.
-
-**Key concept:** Creates or resolves the core Fabric items and writes the shared settings table `rti_demo_settings`, which becomes the **single source of truth** for all subsequent notebooks. This avoids reintroducing hardcoded workspace, item, folder, or table names in notebooks 002–007.
-
-**Configuration written to `rti_demo_settings` table:**
-- `workspace_id`, `workspace_folder_path`, `target_folder_id`
-- `lakehouse_name`, `lakehouse_id`
-- `ontology_name`
-- `eventhouse_name`, `kql_database_name`, `eventhouse_table_name`
-- `eventstream_name`
-- Silver table names (silver_facilities, silver_systems, silver_equipment, silver_instruments, silver_signal_master)
-- Key Vault settings
-
-**Key steps:**
-1. **Configuration & settings table**
-   - Defines common names/IDs (Lakehouse, Eventhouse, Eventstream, ontology, table names, Key Vault secrets)
-   - Writes shared table `rti_demo_settings` in the Lakehouse (Delta table)
-
-2. **Service Principal auth via Key Vault**
-   - Uses `notebookutils.credentials.getSecret` to read SPN credentials
-   - Obtains Entra ID token for Fabric REST API (`https://api.fabric.microsoft.com/.default`)
-
-3. **Workspace & Lakehouse creation (Fabric REST)**
-   - Ensures workspace folder path `joa/RTI_Demo` exists (idempotent)
-   - Ensures Lakehouse `Energy_IQ_LakehouseRTI` exists and records its ID
-
-4. **ADLS Gen2 connection & shortcut**
-   - Creates cloud connection (Service Principal) to ADLS account
-   - Creates shortcut: `Files/bronze` → ADLS path `https://ontologyjoa.dfs.core.windows.net/dataiq/bronze`
-
-5. **Persist shared settings**
-   - Writes `rti_demo_settings` as Delta table (single source of truth)
-
-**Output:** Lakehouse ready with bronze data accessible via shortcut; all later notebooks read from `rti_demo_settings`.
-
----
-
-### RTI_002 – Setup Streaming Infrastructure
-**Notebook:** `RTI_002_Setup_Eventhouse_Only`
-
-**Goal:** Create the streaming backbone and seed the static plant metadata that becomes ontology entities.
-
-**Key concept:** The structured model hierarchy is: **facility → system → equipment → instrument → signal_master**. The `signal_master` table is critical because it acts as the **bridge between static asset metadata and RTI telemetry** through the `opcua_node_id` field.
-
-**Important:** Sensors/signals are defined in the metadata source files that feed this structured layer. To add sensors, add them to those metadata sources so they appear in `silver_signal_master` after RTI_003.
-
-**Signal identity:** `opcua_node_id`
-
-**Key steps:**
-
-1. **Load and extend shared settings**
-   - Reads `rti_demo_settings` and adds Key Vault secret names
-
-2. **Eventhouse & KQL DB (Fabric REST)**
-   - Creates Eventhouse `RTI_Demo_Eventhouse`
-   - Creates KQL database `RTI_Demo_Eventhouse` attached to Eventhouse
-   - Polls for Kusto query/ingest URIs
-   - Creates KQL table `OPCUAEvents` with slim schema:
-     - `event_time` (datetime)
-     - `opcua_node_id` (string)
-     - `value` (real)
-     - `quality` (string)
-
-3. **Eventstream & Custom Endpoint**
-   - Creates Eventstream `RTI_Demo_Eventstream`
-   - Adds `CustomEndpoint` source (`OPCUA_CustomEndpoint`)
-   - Wires to Eventhouse destination targeting `OPCUAEvents` table
-   - Retrieves connection string for later telemetry ingestion
-
-4. **Seed signal metadata into Silver**
-   - Generates synthetic signal metadata for devices T001–T005
-   - Writes `silver_instruments`: tall/slim instrument metadata
-   - Writes `silver_signal_master`: normalized signal master containing:
-     - `opcua_node_id` (unique identifier for each signal)
-     - `tag`, `instrument_id`, `equipment_id`, `system_id`, `facility_id`
-     - `unit`, `is_active`, `signal_type`
-
-**Output:** Streaming infrastructure ready with signal master model seeded; `silver_signal_master` ready for ontology binding.
-
----
-
-### RTI_003 – Ingest & Transform (Bronze → Silver → Gold)
-**Notebook:** `RTI_003_ingest_transform_medallion`
-
-**Goal:** Transform all bronze files into conformed silver tables that become the source for ontology generation.
-
-**Key concept:** This notebook creates the clean Lakehouse tables used by the ontology generation step. The most critical table is **`silver_signal_master`**, which contains the static signal metadata that bridges to RTI telemetry.
-
-**Core silver tables (essential for ontology):**
-- `silver_facilities`
-- `silver_systems`
-- `silver_equipment`
-- `silver_instruments`
-- `silver_signal_master` (each active sensor/signal = one row with `opcua_node_id` identity)
-
-**`silver_signal_master` schema:**
-- `opcua_node_id` (identity key)
-- `tag`, `instrument_id`, `equipment_id`, `system_id`, `facility_id`
-- `unit`, `is_active`, `signal_type`
-
-**Additional silver tables created:**
-
-From `bronze/sap/` (maintenance):
-- `silver_workorders` – SAP PM–like work orders
-- `silver_notifications` – SAP notification records
-
-From `bronze/opcua/` (historical telemetry):
-- `silver_opcua_measurements` – historical OPC UA time-series (Delta table)
-
-From `bronze/common_library/` (standards):
-- `silver_common_library_classes` – tag class definitions
-- `silver_common_library_tag_rules` – tag naming rules
-
-From `bronze/solv/` (design limits):
-- `silver_equipment_limits` – engineering envelopes for pressure, temperature, flow
-
-From `bronze/pid/` (P&ID topology):
-- `silver_pid_elements` – parsed elements (equipment/instruments)
-- `silver_pid_connections` – process connections
-
-From `bronze/documents/` (unstructured):
-- `silver_documents` – document index
-- `silver_annotations` – annotations
-- `silver_3d_model_metadata` – 3D model metadata
-
-**Key gold tables created (examples):**
-- `gold_limit_breaches` – equipment limit breaches
-- `gold_equipment_health` – latest measurement + open work orders
-- `gold_equipment_workorders_summary` – open/closed WO counts
-- `gold_equipment_notification_events` – notification analytics
-- `gold_opcua_quality_stats` – measurement quality distribution
-- `gold_instrument_classification` – signal-type distribution
-- `gold_pid_topology_stats` – connection statistics
-
-**Output:** All structured domains available as silver tables; operational KPIs in gold layer; `silver_signal_master` ready for ontology binding.
-
----
-
-### RTI_004 – Build Ontology from Structured Data
-**Notebook:** `RTI_004_build_ontology_mapping_rti_structured`
-
-**Goal:** Automatically generate and deploy a Fabric Ontology that models structured entities and relationships.
-
-**Entity identity keys (how each entity is uniquely identified):**
-- `facilities` → `facility_id`
-- `systems` → `system_id`
-- `equipment` → `equipment_id`
-- `instruments` → `instrument_id`
-- `signal_master` → `opcua_node_id` (special: used to connect to RTI telemetry)
-
-**Key steps:**
-
-1. **Entity type inference**
-   - Derives entity names from table names
-   - Resolves primary keys using naming heuristics + overrides (see table above)
-   - Creates EntityTypes with properties typed via Spark schema
-   - For `signal_master`: adds Eventhouse RTI **`timeseriesProperties`** (event_time, value, quality)
-
-2. **signal_master special configuration**
-   - Static properties from `silver_signal_master` (tag, instrument_id, equipment_id, system_id, facility_id, unit, is_active, signal_type)
-   - Time-series properties: `event_time`, `value`, `quality` (will be bound to Eventhouse in RTI_007)
-   - Uses `opcua_node_id` as identity key for connecting to telemetry
-
-3. **Relationship type generation**
-   - Implements hierarchy: systems → facilities, equipment → systems, instruments → equipment, signals → instruments
-   - Uses join keys based on identity properties
-   - Generates relationship audit for documentation
-   - Final relationship path: **signal_master → instruments → equipment → systems → facilities**
-
-4. **Deploy ontology via Fabric REST**
-   - Ensures ontology item `RTI_Demo_Ontology` exists
-   - Pushes definition in stages (EntityTypes first, then RelationshipTypes)
-   - Verifies 5 entity types and 4 relationship types
-
-5. **Audit tables written:**
-   - `ontology_parts_latest` – ontology parts and definitions
-   - `ontology_entity_audit` – entity → PK, ID parts, FK columns
-   - `ontology_relationship_audit` – relationship definitions and effective join keys
-
-**Output:** Clean structured ontology with 5 entity types and 4 relationship types; `signal_master` prepared for RTI time-series binding.
-
----
+### RTI_004 – Build ontology
+Generates & deploys the ontology: entity types `facilities`, `systems`, `equipment`, `instruments`, `signal_master`, with the hierarchy `signal_master → instruments → equipment → systems → facilities`. Adds time-series **properties** (`event_time`, `value`, `quality`) on `signal_master`. Verifies 5 entity types + 4 relationship types.
 
 ### RTI_005 – Static Lakehouse DataBindings
-**Notebook:** `RTI_005_entity_DataBinding_rti_structured`
+Binds silver tables to entities (NonTimeSeries DataBindings) and creates relationship contextualizations. Telemetry binding is added in NB06.
 
-**Goal:** Bind structured Lakehouse tables to ontology entities and create relationship contextualizations.
+### RTI_006 – Eventhouse TimeSeries DataBinding
+Adds the TimeSeries DataBinding from `OPCUAEvents` to `signal_master`: `opcua_node_id` (join key), `event_time` (timestamp), `value`, `quality`. Live telemetry becomes semantically bound to the full asset hierarchy.
 
-**Important:** This notebook adds **static Lakehouse DataBindings only**. Eventhouse telemetry binding is added in RTI_007.
+### RTI_007 – Generate & ingest live OPC UA stream (on-demand)
+Simulates OPC UA telemetry for `is_active` signals from `silver_signal_master` and pushes JSON events (`event_time`, `opcua_node_id`, `value`, `quality`) to the Custom Endpoint. **Excluded from setup**; run via `Pipe_Stream`. Simulation knobs (`SIM_DURATION_SECS`, `MAX_ITERATIONS`, `SLEEP_BETWEEN_ITERATIONS_SEC`) are set inside the notebook.
 
-**Static bindings (Lakehouse tables → Ontology entities):**
-- `facilities` → `silver_facilities`
-- `systems` → `silver_systems`
-- `equipment` → `silver_equipment`
-- `instruments` → `silver_instruments`
-- `signal_master` → `silver_signal_master` (bound by `opcua_node_id`)
+### RTI_008 – Real-Time Dashboard
+Deploys a Fabric Real-Time Dashboard over `OPCUAEvents`, parsing turbine/signal out of `opcua_node_id`. Persists `dashboard_name`/`dashboard_id` back to settings. A ready-to-import copy is checked in at `RTI_DEMO_V3/Dashboards/RTI_Demo_OPCUA_TelemetryStats.Dashboard.json`.
 
-**Key steps:**
+### RTI_009 – Data Agent
+Builds & deploys `RTI_Demo_Agent_{env_suffix}` over the ontology as the semantic access layer for natural-language questions.
 
-1. **Static DataBindings (Lakehouse tables)**
-   - Creates NonTimeSeries DataBindings from silver tables to entity properties
-   - Maps `sourceColumnName` → `targetPropertyId` for all static columns
-   - One DataBinding per entity
-
-2. **Relationship Contextualizations**
-   - Calculates join keys between source and target tables (shared ID columns)
-   - Generates Contextualizations describing how to join entities via Lakehouse tables
-   - Documents effective join keys in audit table
-
-3. **Push updated ontology**
-   - Merges DataBindings and Contextualizations with existing parts
-   - Verifies 5 static DataBindings and 4 relationship Contextualizations
-
-**Output:** All structured tables bound to ontology entities with relationship context established via Lakehouse joins.
-
----
-
-### RTI_006 – Generate & Ingest Live OPC UA Stream
-**Notebook:** `RTI_006_generate_and_ingest_OPCUA_Stream`
-
-**Goal:** Configure Eventstream/Eventhouse and generate OPC UA–like telemetry for signals defined in `silver_signal_master`.
-
-**Important:** The generated values come from the simulator code in this notebook, not from metadata files. Signals to simulate are read from `silver_signal_master` where `is_active = True`.
-
-**Eventhouse table schema (intentionally slim):**
-- `event_time` (timestamp)
-- `opcua_node_id` (signal identifier)
-- `value` (numeric telemetry value)
-- `quality` (GOOD/UNCERTAIN/BAD status)
-
-**Key steps:**
-
-1. **Configuration & Eventhouse/KQL validation**
-   - Confirms Eventhouse, KQL DB, and `OPCUAEvents` table
-   - Validates slim schema via Kusto `.create-merge` and `getschema`
-
-2. **Eventstream & Custom Endpoint**
-   - Ensures Eventstream `RTI_Demo_Eventstream` exists
-   - Updates definition to enforce: CustomEndpoint source → DefaultStream → Eventhouse destination
-   - Retrieves Custom Endpoint connection including primary SAS connection string
-
-3. **Simulation key set from signal_master**
-   - Reads `silver_signal_master` and builds key list (opcua_node_id + signal_type)
-   - Filters to `is_active = True` and deduplicates by `opcua_node_id`
-
-4. **OPC UA event generation & ingestion**
-   - Generates minimal JSON events:
-     - `event_time` – current UTC timestamp
-     - `opcua_node_id` – unique per signal
-     - `value` – synthetic numeric based on `signal_type` (temperature, pressure, vibration, etc.)
-     - `quality` – GOOD/UNCERTAIN/BAD with configurable probabilities
-   - Sends via HTTP/SAS to Custom Endpoint in multiple iterations
-   - Simulates short live run
-
-5. **Validation**
-   - Uses Kusto query against `OPCUAEvents` with `ingestion_time()` to verify new rows
-   - Prints summary: row count, first/last event_time, latest ingestion_time
-
-**To customize:** Update the simulator logic in notebook 006 section to add drift, spikes, stuck sensors, bad-quality windows, or other anomalies.
-
-**Output:** Live OPC UA–like events streaming into Eventhouse `OPCUAEvents` table, with each event linked to its signal via `opcua_node_id`.
-
----
-
-### RTI_007 – Bind Eventhouse RTI Stream to Signal Master
-**Notebook:** `RTI_007_TimeSeriesBinding_RTI_signal`
-
-**Goal:** Add a TimeSeries DataBinding from Eventhouse table `OPCUAEvents` to `signal_master` in ontology, connecting live telemetry to the static asset hierarchy.
-
-**Eventhouse source column → Ontology target mapping:**
-- `opcua_node_id` → `signal_master.opcua_node_id` (static property for joining)
-- `event_time` → `signal_master.event_time` (time-series property)
-- `value` → `signal_master.value` (time-series property)
-- `quality` → `signal_master.quality` (time-series property)
-
-**Key steps:**
-
-1. **Configuration & helpers**
-   - Reads `rti_demo_settings` for ontology, Eventhouse, KQL DB names
-   - Resolves ontology `RTI_Demo_Ontology` and its ID
-   - Confirms slim `OPCUAEvents` schema via Kusto
-
-2. **Validate ontology entity `signal_master`**
-   - Fetches live ontology definition via `getDefinition`
-   - Locates `signal_master` EntityType and verifies:
-     - Static key property `opcua_node_id` exists
-     - `entityIdParts` contain the `opcua_node_id` property ID
-     - `timeseriesProperties` include `event_time`, `value`, `quality`
-   - Builds property maps for DataBinding
-
-3. **Build & push TimeSeries DataBinding**
-   - Removes any existing Eventhouse TimeSeries DataBindings for `signal_master` (if `REPLACE_EXISTING_TIMESERIES_BINDING = True`)
-   - Constructs TimeSeries DataBinding:
-     - `dataBindingType = TimeSeries`
-     - `timestampColumnName = event_time`
-     - `sourceType = KustoTable`
-     - `clusterUri`, `databaseName`, `sourceTableName` pointing to Eventhouse `OPCUAEvents`
-     - Four property bindings (see mapping above)
-   - Adds binding part under `EntityTypes/{signal_entity_id}/DataBindings/<guid>.json`
-   - Pushes updated definition via `updateDefinition`
-
-4. **Verification**
-   - Re-reads `getDefinition` and inspects all TimeSeries DataBindings
-   - Confirms exact contract:
-     - SourceType = `KustoTable`, correct workspace/Eventhouse IDs
-     - `timestampColumnName = event_time`
-     - All four property bindings present and correct
-
-**Output:** `signal_master` has live TimeSeries DataBinding to Eventhouse `OPCUAEvents`; RTI events are semantically bound to:
-- The physical signal (opcua_node_id)
-- Its instrument, equipment, system, and facility (through ontology relationships)
-- Ready for downstream analytics and Agents
-
----
-
-### RTI_008 – Build & Deploy the Real-Time Dashboard
-**Notebook:** `RTI_008_build_realtime_dashboard`
-
-**Goal:** Replicate the reference RTI dashboard as a Fabric **Real-Time Dashboard** over the Eventhouse `OPCUAEvents` table, adapted to our slim schema.
-
-**Key concept:** The reference dashboard grouped by `facility_id` / `equipment_id`, columns that do **not** exist in our slim `OPCUAEvents` table (`event_time`, `opcua_node_id`, `value`, `quality`). Instead of adding a Kusto lookup table or shortcut, the notebook parses the hierarchy already encoded in `opcua_node_id` (`ns=2;s=T001.inlet_pressure`):
-- `Turbine = extract(@'s=([^.]+)\.', 1, opcua_node_id)` → `T001`..`T005`
-- `Signal  = extract(@'\.([^.]+)$', 1, opcua_node_id)` → `inlet_pressure`, `power_output`, ...
-
-Since the demo data is a single facility (`FACILITY_RTI_001`) with 5 turbines, the two hardcoded per-facility timecharts become per-turbine timecharts (T001, T002).
-
-**Tiles (schema_version 77):**
-1. Total Count of Events (card)
-2. Events per 30 minutes (table)
-3. Sample 1000 Rows (table)
-4. Equipment Health by Turbine (table — Good/Bad/Uncertain counts)
-5. Equipment Health by Turbine (stacked bar)
-6. Events per 30 minutes (timechart)
-7. Turbine T001 – Signal Values (timechart)
-8. Turbine T002 – Signal Values (timechart)
-
-All tiles honor a `Time range` duration parameter (`_startTime`/`_endTime`).
-
-**Key steps:**
-
-1. Reads `rti_demo_settings` for the live `cluster_query_uri`, `fabric_kql_db_id`, and KQL DB name (written by RTI_002).
-2. Injects those values into the dashboard definition so the data source points at this workspace's Eventhouse.
-3. Writes an importable copy to `Files/dashboards/` in the Lakehouse.
-4. Deploys it as a Fabric **KQLDashboard** item via REST (SPN auth from Key Vault). If the deploy call fails, it prints manual-import steps for the file it wrote (New → Real-Time Dashboard → Manage → Replace with file).
-5. Persists `dashboard_name` (and `dashboard_id` when deployed) back to `rti_demo_settings`.
-
-**Static artifact:** A ready-to-import copy is also checked in at `RTI_DEMO_V3/Dashboards/RTI_Demo_OPCUA_TelemetryStats.Dashboard.json` (with `__CLUSTER_QUERY_URI__` / `__KQL_DB_NAME__` / `__KQL_DB_ID__` placeholders resolved by the notebook, or re-pointed to your Eventhouse on manual import).
-
-**Output:** A Real-Time Dashboard in the `RTI_DEMO_V3` folder showing live OPC UA telemetry statistics.
+### RTI_010 – Operations Agent
+Builds `RTI_Demo_OpsAgent_{env_suffix}`, wires Teams targets (`ops_agent_teams_team_id` / `_channel_id`) and the run-as user, and creates the `Pipe_SendEmailAlert` pipeline used to send alerts.
 
 ---
 
 ## Dataset Layout in ADLS / OneLake
 
 ```
-fabric_iq_oilgas_mock/
-├── bronze/
-│   ├── stid/                    # Engineering master data
-│   ├── sap/                     # Maintenance & Work management
-│   ├── opcua/                   # Time-series telemetry (historical sample)
-│   ├── common_library/          # Standards & rules
-│   ├── solv/                    # Design & engineering limits
-│   ├── pid/                     # P&ID diagrams & parsed outputs
-│   └── documents/               # Engineering documents & metadata
-├── silver/                      # Cleaned & conformed data
-├── gold/                        # Derived operational signals
-├── scripts/
-└── docs/
+<adls_subpath>/              # e.g. /dataiq/bronze
+├── stid/                    # Engineering master data
+├── sap/                     # Maintenance & work management
+├── opcua/                   # Time-series telemetry (historical sample)
+├── common_library/          # Standards & rules
+├── solv/                    # Design & engineering limits
+├── pid/                     # P&ID diagrams & parsed outputs
+└── documents/               # Engineering documents & metadata
 ```
 
-All raw data lands under **`Files/bronze`** in the Lakehouse via shortcut created in RTI_001.
+All raw data lands under **`Files/bronze`** in the Lakehouse via the shortcut created in RTI_001.
 
 ---
 
 ## Medallion Architecture
 
-### Bronze Layer
-- Raw ingested data from all sources
-- Minimal transformation
-- Represents as-received data fidelity
-
-### Silver Layer
-- Cleaned and conformed tables
-- Stable IDs and relationships
-- Primary binding layer for Ontology
-- Ready for analytics and entity binding
-
-### Gold Layer
-- Derived operational signals
-- Latest measurements with status
-- Design-limit comparisons
-- Health indicators and aggregations
+- **Bronze** – raw ingested data (shortcut to ADLS); as-received fidelity.
+- **Silver** – cleaned/conformed tables with stable IDs; the binding layer for the ontology.
+- **Gold** – derived operational signals (latest measurements, limit comparisons, health/aggregations).
 
 ---
 
 ## Fabric IQ Semantic Model
 
-### Entity Types
-- **Facility** – physical locations
-- **System** – systems within facilities
-- **Equipment** – equipment master (pumps, valves, compressors)
-- **Instrument** – instruments/sensors on equipment
-- **Signal** – via `signal_master` (live OPC UA nodes)
-- **Measurement** – time-series data bound to signals
-- **WorkOrder** – maintenance work orders
-- **Notification** – operational notifications
-- **Document** – engineering documents
-- **Annotation** – human knowledge capture
+### Entity types
+`facilities`, `systems`, `equipment`, `instruments`, `signal_master` (identity `opcua_node_id`, carries the time-series properties).
 
-### Relationship Types
-- Facility **HAS_SYSTEM** System
-- System **HAS_EQUIPMENT** Equipment
-- Equipment **HAS_INSTRUMENT** Instrument
-- Instrument **EMITS** Measurement (via Eventhouse TimeSeries binding)
-- Equipment **HAS_WORKORDER** WorkOrder
-- Equipment **HAS_DOCUMENT** Document
-- Equipment **CONNECTS_TO** Equipment (P&ID topology)
+### Relationship path
+`signal_master → instruments → equipment → systems → facilities`
+(4 relationship types: instruments→equipment, equipment→systems, systems→facilities, signal_master→instruments).
+
+### Bindings
+- **Static** (NB05): silver tables → entity properties.
+- **TimeSeries** (NB06): `OPCUAEvents` → `signal_master` (`event_time`/`value`/`quality`, joined on `opcua_node_id`).
 
 ---
 
-## Validation & Use Case Scenarios
+## How to run
 
-Example queries enabled by this architecture:
+### One-click setup (recommended)
+1. Ensure the workspace lakehouse exists and **attach `RTI_Orchestrator_Setup` to it** (see "Required: attach a default lakehouse").
+2. Fill the **`Pipe_Setup` Base parameters** (table above).
+3. Run **`Pipe_Setup`** → orchestrator runs NB01–06, 08–10 in one Spark session.
+4. When you want live data, run **`Pipe_Stream`** (NB07).
 
-- **Which equipment shows abnormal vibration and has open work orders?**
-  - Join signal trends → equipment conditions → maintenance status
-
-- **Which pumps exceed 90% of design pressure?**
-  - Compare live measurements → equipment limits → identify at-risk assets
-
-- **Show all assets connected downstream of a failed valve.**
-  - Query P&ID topology → navigate graph relationships
-
-- **Which instruments violate tag naming standards?**
-  - Match `silver_instruments` → `silver_common_library_tag_rules`
-
-- **For a given signal, show its live trend, related equipment, work orders, and documents.**
-  - Traverse ontology: signal → instrument → equipment → facility + linked work orders + documents
+### Manual / notebook-by-notebook
+Run `RTI_001` first (fill its parameter cell for a standalone run), then `002`–`006`, `008`–`010`; run `007` whenever you want a telemetry burst.
 
 ---
 
-## Domain-Level Data References
+## Customization Guide
 
-### STID – Engineering Master Data
-**Files:** `facilities_stid.csv`, `systems_stid.csv`, `equipment_stid.csv`, `instruments_stid.csv`
+### Add or remove sensors
+1. Modify the metadata source files that feed `silver_signal_master` (STID instruments).
+2. Re-run **RTI_003** (regenerates `silver_signal_master`), then **RTI_004** (ontology), then **RTI_007** (simulator uses the new signals).
 
-Defines engineering hierarchy: Facility → System → Equipment → Instrument. Provides stable identifiers and tag names used across all domains.
+### Change generated telemetry values
+Edit the simulator logic in **RTI_007** (value ranges, quality probabilities, drift/spikes/stuck sensors).
 
-### SAP – Maintenance & Work Management
-**Files:** `sap_pm_workorders.csv`, `sap_pm_notifications.csv`
+### Modify the signal schema / properties
+Align all of: **RTI_004** (ontology `timeseriesProperties`) → **RTI_002** (`OPCUAEvents` schema) → **RTI_007** (event payload) → **RTI_006** (TimeSeries DataBinding).
 
-Simulates SAP PM extracts linking operational conditions to maintenance actions.
-
-### OPC UA – Time-Series Telemetry
-**Files:** `opcua_telemetry_2h.jsonl`
-
-Simulates historical sensor data (pressure, temperature, flow, vibration, position) including normal operation and injected anomalies.
-
-### Common Library – Standards & Rules
-**Files:** `common_library_classes.csv`, `common_library_tag_rules.csv`
-
-Represents engineering standards defining required/optional properties per equipment class and tag naming rules.
-
-### SOLV Sheet – Design & Engineering Limits
-**Files:** `solv_sheet_equipment_limits.xlsx`
-
-Stores design pressure, temperature, and flow limits linking each equipment to its datasheet.
-
-### P&ID Diagrams
-**Files:** `pid_sep_train_1.png`, `pid_sep_train_1.pdf`, `pid_parsed_elements.csv`, `pid_parsed_connections.csv`
-
-Visual engineering topology with mock parsed outputs representing diagram extraction.
-
-### Engineering Documents & Metadata
-**Files:** `system_overview_*.pdf`, `DOC-DS-*_datasheet.pdf`, `document_index.csv`, `annotations.csv`, `3d_model_metadata.json`
-
-Unstructured engineering context for document-to-asset linking and annotations.
-
----
-
-## Key Concepts
-
-### Ontology Binding
-Static Lakehouse tables are bound to ontology entities via DataBindings, while relationship contextualizations describe how to join entities through actual table columns.
-
-### Time-Series Binding
-The `OPCUAEvents` Eventhouse table is bound to the `signal_master` entity via a TimeSeries DataBinding, enabling live telemetry to be semantically associated with:
-- The physical signal (opcua_node_id)
-- Its instrument, equipment, system, and facility (through relationships)
-- Downstream analytics and Agents
-
-### Data Pipeline
-- Raw files → Bronze (ADLS shortcut)
-- Bronze → Silver (cleansed, conformed)
-- Silver → Gold (derived analytics)
-- Silver → Ontology (entity/relationship definitions)
-- Silver → Lakehouse DataBindings (static)
-- Eventhouse → TimeSeries DataBindings (live)
-
----
-
-## Setup & Configuration
-
-### Prerequisites
-- Microsoft Fabric workspace with Lakehouse and Eventhouse capabilities
-- Service Principal with appropriate permissions
-- Azure Key Vault containing SPN credentials
-- ADLS Gen2 account containing bronze dataset
-
-### Execution
-1. Run notebooks in order: RTI_001 → RTI_008
-2. Each notebook reads from `rti_demo_settings` for configuration
-3. All notebooks are idempotent where feasible (safe to rerun)
-
-### Best Practices
-- Run in clean demo workspace/folder for best reproducibility
-- Verify settings table after RTI_001
-- Monitor Eventhouse ingestion status during RTI_006
-- Validate ontology definition after each deployment step
-
----
-
-## Intended Audience
-
-- **Fabric IQ evaluations** – comprehensive end-to-end scenario
-- **Oil & Gas industry demos** – industrial asset & operations context
-- **Architecture workshops** – medallion, streaming, and ontology patterns
-- **Partner and customer proof-of-concepts** – production-ready example
+### Stand up a new environment
+Change **`env_suffix`** in the `Pipe_Setup` Base parameters (e.g. `V6`); re-attach the orchestrator to the new lakehouse; run `Pipe_Setup`.
 
 ---
 
 ## Notes & Limitations
 
-- All data is **fully synthetic**
-- P&ID parsing is simulated via prepared CSV outputs
-- 3D data is metadata-only (no geometry)
-- Many steps are idempotent but assume clean demo workspace
-- For production use: customize domain models, add data validation, implement monitoring
-
----
-
-## Customization Guide: Where to Change Things
-
-### Add or Remove Sensors
-
-**Where:** Update the metadata source files that feed `silver_signal_master`
-
-**Steps:**
-1. Modify the source files in `bronze/stid/` (especially instruments metadata)
-2. Re-run RTI_003 to regenerate `silver_signal_master`
-3. Re-run RTI_004 (ontology generation may pick up new signals)
-4. Re-run RTI_006 (simulator will use new signals)
-
----
-
-### Change Generated Telemetry Values
-
-**Where:** Simulator logic in RTI_006
-
-**Update:** The simulator code in notebook 006 section that generates value ranges and quality states
-
-**Current:** Signal-type-based normal ranges with random quality
-
-**To add:** Drift, spikes, stuck sensors, bad-quality windows, or other anomalies
-
----
-
-### Modify Signal Schema or Properties
-
-**Where:** Multiple notebooks need alignment
-
-**Change sequence:**
-1. Update `timeseriesProperties` in RTI_004 (ontology definition)
-2. Update OPCUAEvents table schema in RTI_002 (Eventhouse)
-3. Update event payload generation in RTI_006 (simulator)
-4. Update property bindings in RTI_007 (TimeSeries DataBinding)
-
----
-
-## Final Data Architecture
-
-### Lakehouse (Static Metadata)
-```
-silver_signal_master
-├── opcua_node_id (identity key)
-├── tag, instrument_id, equipment_id, system_id, facility_id
-├── unit, is_active, signal_type
-└── [bound to ontology entity: signal_master]
-```
-
-### Eventhouse (Streaming Telemetry)
-```
-OPCUAEvents
-├── event_time (timestamp)
-├── opcua_node_id (identity key, joins to silver_signal_master)
-├── value (telemetry numeric)
-└── quality (GOOD/UNCERTAIN/BAD)
-   [bound to ontology entity: signal_master via TimeSeries DataBinding]
-```
-
-### Ontology (Semantic Model)
-```
-signal_master
-├── Static properties: from silver_signal_master
-├── Time-series properties: event_time, value, quality (from OPCUAEvents)
-├── Identity: opcua_node_id
-└── Relationships:
-    └── EMITS Measurement (to instrument_id)
-        └── ON_INSTRUMENT (to instrument_id)
-            └── PART_OF_EQUIPMENT (to equipment_id)
-                └── IN_SYSTEM (to system_id)
-                    └── IN_FACILITY (to facility_id)
-```
-
-This architecture enables:
-- **Semantic queries:** "Show all vibration signals in System X with anomalies"
-- **Asset context:** Link any signal to its full equipment/system/facility hierarchy
-- **Live analytics:** Access to both static metadata and live time-series in one semantic model
-- **Agent reasoning:** Agents can traverse relationships and reason over structured + streaming data
-
----
-
-## Notes & Best Practices
-
-- **Idempotent execution:** Most notebooks are safe to rerun (they use create-or-replace semantics)
-- **Clean workspace:** For best reproducibility, run in a clean demo folder
-- **Settings table:** All notebooks read from `rti_demo_settings` – verify after RTI_001
-- **Production use:** Customize domain models, add data validation, implement monitoring
-- **Eventhouse schema:** Keep slim and focused on high-velocity telemetry; move computed analytics to Gold layer in Lakehouse
+- All data is **fully synthetic**; P&ID parsing is simulated via prepared CSVs; 3D data is metadata-only.
+- Notebooks are idempotent where feasible; run in a clean demo folder for best reproducibility.
+- Verify the `rti_demo_settings` table after RTI_001; monitor Eventhouse ingestion during RTI_007.
+- The `Pipe_Setup` / orchestrator parameter cells must show the **"parameters"** badge in Fabric for injection to work — verify after a git sync.
+- Pipeline Notebook activities reference notebooks by **GUID**, so pipelines do not auto-repoint across `env_suffix` workspaces.
 
 ---
 
 ## Related Resources
 
-- **RTI_000** – Full dataset and pipeline documentation (comprehensive notebook)
-- **RTI_001–RTI_008** – Detailed implementation notebooks with runnable code
-- **Fabric documentation** – Lakehouse, Eventhouse, Ontology APIs
-- **Eventhouse & KQL** – Time-series data modeling best practices
-- **Fabric IQ Agents** – Operationalization and semantic reasoning
-- **Word document** – `Raw/RTI_Ontology_Workflow_clean.docx` – Workflow overview and configuration details
+- **RTI_000** – full dataset & pipeline documentation notebook.
+- **`Raw/RTI_Notebooks/*.ipynb`** – readable mirrors of the Fabric notebooks (kept in sync with `Notebooks/…/notebook-content.py`).
+- Fabric docs – Lakehouse, Eventhouse/KQL, Eventstream, Ontology (Fabric IQ), Data/Operations Agents.

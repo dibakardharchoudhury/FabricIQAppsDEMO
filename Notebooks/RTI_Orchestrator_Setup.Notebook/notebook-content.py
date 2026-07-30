@@ -115,7 +115,12 @@ setup_dag = {
     "concurrency": 4,
 }
 
-results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+# useRootDefaultLakehouse => children inherit THIS notebook's default lakehouse instead of their
+# own (stale) pinned one, so a mismatch does not abort the run. Attach this orchestrator to the
+# workspace lakehouse (Energy_IQ_LakehouseRTI_{env_suffix}) before running via Pipe_Setup.
+results = notebookutils.notebook.runMultiple(
+    setup_dag, {"displayDAGViaGraphviz": True, "useRootDefaultLakehouse": True}
+)
 print("✅ Setup orchestration complete (NB01–06, 08–10).")
 results
 
