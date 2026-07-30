@@ -99,28 +99,26 @@ for _name, _value in nb01_args.items():
 
 # Setup DAG — one Spark session for all activities (VNet cold start paid once).
 # Edges are DATA dependencies resolved through rti_demo_settings; independent branches run in parallel.
+# useRootDefaultLakehouse must ride in EACH activity's args (the same slot as run()'s arguments map);
+# it tells the per-child check to inherit the root default lakehouse instead of the child's stale pin.
+_lh = {"useRootDefaultLakehouse": True}
 setup_dag = {
     "activities": [
-        {"name": "NB01_lakehouse",  "path": "RTI_001_create_lakehouse_shortcut",             "dependencies": [],                                   "args": nb01_args, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB02_eventhouse", "path": "RTI_002_Setup_Eventhouse_Only",                 "dependencies": ["NB01_lakehouse"],                   "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB03_medallion",  "path": "RTI_003_ingest_transform_medallion",            "dependencies": ["NB01_lakehouse"],                   "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB04_ontology",   "path": "RTI_004_build_ontology_mapping_rti_structured", "dependencies": ["NB03_medallion"],                   "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB05_entitybind", "path": "RTI_005_entity_DataBinding_rti_structured",     "dependencies": ["NB04_ontology"],                    "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB02_eventhouse"], "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse"],                  "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB01_lakehouse",  "path": "RTI_001_create_lakehouse_shortcut",             "dependencies": [],                                   "args": {**nb01_args, **_lh}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB02_eventhouse", "path": "RTI_002_Setup_Eventhouse_Only",                 "dependencies": ["NB01_lakehouse"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB03_medallion",  "path": "RTI_003_ingest_transform_medallion",            "dependencies": ["NB01_lakehouse"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB04_ontology",   "path": "RTI_004_build_ontology_mapping_rti_structured", "dependencies": ["NB03_medallion"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB05_entitybind", "path": "RTI_005_entity_DataBinding_rti_structured",     "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB02_eventhouse"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse"],                  "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,
 }
 
-# useRootDefaultLakehouse => children inherit THIS notebook's default lakehouse instead of their
-# own (stale) pinned one, so a mismatch does not abort the run. Attach this orchestrator to the
-# workspace lakehouse (Energy_IQ_LakehouseRTI_{env_suffix}) before running via Pipe_Setup.
-results = notebookutils.notebook.runMultiple(
-    setup_dag, {"displayDAGViaGraphviz": True, "useRootDefaultLakehouse": True}
-)
+results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
 print("✅ Setup orchestration complete (NB01–06, 08–10).")
 results
 
