@@ -421,7 +421,10 @@ EMBEDDED_PIPELINE_CONTENT = {
                 "typeProperties": {
                     "to": "admin@mngenvmcap218279.onmicrosoft.com",
                     "subject": {"value": _EMAIL_SUBJECT_EXPR, "type": "Expression"},
-                    "body": {"value": _EMAIL_BODY_EXPR, "type": "Expression"},
+                    # Body must be a PLAIN string expression (matches the git-synced working
+                    # pipeline). Wrapping it as {"value":..,"type":"Expression"} makes Office365Email
+                    # render the literal "[object]" instead of evaluating the @concat.
+                    "body": _EMAIL_BODY_EXPR,
                     "importance": "High",
                 },
                 "externalReferences": {"connection": "4a4d0899-8698-4a20-8229-989ca6562451"},
