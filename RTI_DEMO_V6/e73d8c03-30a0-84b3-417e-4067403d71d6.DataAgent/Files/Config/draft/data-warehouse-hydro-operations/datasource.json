@@ -1,0 +1,52 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/dataSource/1.0.0/schema.json",
+  "artifactId": "994da049-6eb0-42c6-b601-b80b35ce5ccf",
+  "workspaceId": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+  "dataSourceInstructions": "Operational system-of-record for the hydro fleet (Fabric SQL Database). Prefer THIS source for anything about maintenance and asset operations; use the ontology/KQL source for live telemetry values. Tables (dbo schema):\n- WorkOrders: planned/active maintenance. Filter status in (Draft, Planned, Scheduled, Ready, Approved, 'In progress', Completed) and priority in (Critical, High, Medium, Low); dueAt/completedAt are datetime2.\n- MaintenanceNotifications: raised alerts. severity in (Advisory, Warning, Critical), status in (Open, Acknowledged).\n- Inspections: inspectionType in (VISUAL, THERMOGRAPHIC, VIBRATION, LUBRICATION), result in (PASS, ATTENTION, FAIL); nextDueAt drives overdue checks.\n- SpareParts: inventory; flag rows where quantityOnHand <= reorderLevel as below reorder; category in (BEARING, SEAL, SENSOR, VALVE, ELECTRICAL).\n- Asset3DModels: one digital-twin model per asset (modelUrl, format, version).\nJOIN KEYS: equipmentId identifies the asset (e.g. 'EQUIP_RTI_T001') and matches the ontology equipment/signal_master equipment_id; opcuaNodeId (e.g. 'ns=2;s=T001.vibration_a') matches the ontology signal_master opcua_node_id, so operational rows can be correlated with live readings. All timestamps are datetime2 (UTC). Do NOT invent columns beyond those listed.",
+  "displayName": "hydro-operations",
+  "type": "data_warehouse",
+  "userDescription": null,
+  "metadata": {},
+  "elements": [
+    {
+      "id": "WorkOrders",
+      "is_selected": true,
+      "display_name": "WorkOrders",
+      "type": "warehouse_tables.table",
+      "description": "Maintenance work orders. Columns: id, workOrderNumber, equipmentId, instrumentId, opcuaNodeId, title, description, priority (Critical/High/Medium/Low), status (Draft/Planned/Scheduled/Ready/Approved/In progress/Completed), assignedToOid, createdByOid, createdAt, dueAt, completedAt.",
+      "children": []
+    },
+    {
+      "id": "MaintenanceNotifications",
+      "is_selected": true,
+      "display_name": "MaintenanceNotifications",
+      "type": "warehouse_tables.table",
+      "description": "Condition/alarm notifications raised against equipment. Columns: id, equipmentId, opcuaNodeId, summary, severity (Advisory/Warning/Critical), status (Open/Acknowledged), reportedByOid, reportedAt.",
+      "children": []
+    },
+    {
+      "id": "Inspections",
+      "is_selected": true,
+      "display_name": "Inspections",
+      "type": "warehouse_tables.table",
+      "description": "Field/condition inspection records. Columns: id, equipmentId, opcuaNodeId, inspectionType (VISUAL/THERMOGRAPHIC/VIBRATION/LUBRICATION), result (PASS/ATTENTION/FAIL), findings, inspectorOid, inspectedAt, nextDueAt.",
+      "children": []
+    },
+    {
+      "id": "SpareParts",
+      "is_selected": true,
+      "display_name": "SpareParts",
+      "type": "warehouse_tables.table",
+      "description": "Spare-part inventory for fleet readiness. Columns: id, partNumber, name, category (BEARING/SEAL/SENSOR/VALVE/ELECTRICAL), equipmentType, quantityOnHand, reorderLevel, storageLocation, unitCostUsd, lastRestockedAt.",
+      "children": []
+    },
+    {
+      "id": "Asset3DModels",
+      "is_selected": true,
+      "display_name": "Asset3DModels",
+      "type": "warehouse_tables.table",
+      "description": "Digital-twin / 3D model registry per equipment. Columns: id, equipmentId, modelName, format (GLB/IFC/OBJ/USDZ), modelUrl, thumbnailUrl, fileSizeMb, version, updatedByOid, updatedAt.",
+      "children": []
+    }
+  ]
+}
