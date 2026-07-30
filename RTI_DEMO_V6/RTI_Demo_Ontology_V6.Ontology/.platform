@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Ontology",
+    "displayName": "RTI_Demo_Ontology_V6",
+    "description": "Auto-generated structured RTI ontology."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "4b16fa16-38d7-a713-46b6-8b096eee4ee4"
+  }
+}

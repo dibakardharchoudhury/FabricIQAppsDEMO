@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Lakehouse",
+    "displayName": "Energy_IQ_LakehouseRTI_V6",
+    "description": "Lakehouse for Fabric IQ mock dataset (STID, SAP, OPC UA, SOLV, P&ID, Documents)."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "5c460aaf-ed0a-ac87-4fa1-abbcc42060fb"
+  }
+}

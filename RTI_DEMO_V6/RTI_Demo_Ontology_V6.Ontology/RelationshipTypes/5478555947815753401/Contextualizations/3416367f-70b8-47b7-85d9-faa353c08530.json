@@ -1,0 +1,23 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/ontology/contextualization/1.0.0/schema.json",
+  "id": "3416367f-70b8-47b7-85d9-faa353c08530",
+  "dataBindingTable": {
+    "workspaceId": "00000000-0000-0000-0000-000000000000",
+    "itemId": "5c460aaf-ed0a-ac87-4fa1-abbcc42060fb",
+    "sourceTableName": "silver_equipment",
+    "sourceSchema": null,
+    "sourceType": "LakehouseTable"
+  },
+  "sourceKeyRefBindings": [
+    {
+      "sourceColumnName": "equipment_id",
+      "targetPropertyId": "4497584892482295562"
+    }
+  ],
+  "targetKeyRefBindings": [
+    {
+      "sourceColumnName": "system_id",
+      "targetPropertyId": "6754165913257101419"
+    }
+  ]
+}

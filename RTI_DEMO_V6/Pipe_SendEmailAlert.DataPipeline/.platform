@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "Pipe_SendEmailAlert",
+    "description": "This will be triggered from Ops Agent!"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "aa840525-98ef-a9ae-4d13-268b4f546c3e"
+  }
+}

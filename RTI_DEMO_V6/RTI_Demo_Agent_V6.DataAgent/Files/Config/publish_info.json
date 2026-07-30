@@ -1,0 +1,4 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/publishInfo/1.0.0/schema.json",
+  "description": "Conversational agent over the RTI turbine telemetry ontology 'RTI_Demo_Ontology_V6': real-time OPC UA readings joined to equipment, facility, system and instrument context."
+}
