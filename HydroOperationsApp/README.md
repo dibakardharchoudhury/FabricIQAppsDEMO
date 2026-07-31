@@ -5,6 +5,10 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 **three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
+> Moving to a different tenant, workspace, or capacity region? See
+> [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
+> (reset `.deployments.json`, re-register the SPA, `rayfin up --workspace-id <guid> --yes`, and the
+> Fabric App Items preview feature/region gating).
 
 | Store | Owns | Accessed via |
 |---|---|---|

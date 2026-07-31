@@ -180,6 +180,113 @@ Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settin
 Run **`02_Pipe_Stream`** in Fabric (or click **"Start stream"** in the app) to push an OPC UA burst
 into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth is in place.
 
+## Redeploying to a different tenant, workspace, or region
+
+Moving the app to a **new tenant, workspace, or capacity** requires resetting Rayfin's per-workspace
+state and re-pointing every tenant-scoped identity — otherwise a stale `active` deployment pointer
+makes `rayfin up` target the old (now non-existent) workspace and fail with a 404.
+
+### 1. Reset local Rayfin state
+
+```powershell
+# from HydroOperationsApp/
+Move-Item   rayfin/.env rayfin/.env.<old>-old -Force                 # back up the old-tenant env
+Remove-Item rayfin/.deployments.json, rayfin/.env.local -ErrorAction SilentlyContinue
+```
+
+- `rayfin/.deployments.json` holds an `active` pointer to the previous workspace/backend. Left in
+  place, `rayfin up` calls the **old** endpoint and fails with **404 "The provided workspace was not
+  found."** Delete it (and `.env.local`) when switching tenants.
+- Recreate `rayfin/.env` from `.env.example` with the **new** `FABRIC_WORKSPACE_NAME`,
+  `RAYFIN_PUBLIC_WORKSPACE_ID`, `RAYFIN_PUBLIC_TENANT_ID`, and the new tenant's SPA
+  `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Resolve the workspace GUID by display name:
+
+  ```powershell
+  $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
+  (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/workspaces" -Headers @{Authorization="Bearer $tok"}).value |
+    Where-Object displayName -like '*<workspace-name>*' | Select-Object displayName,id,capacityId | Format-List
+  ```
+
+### 2. Register a fresh SPA in the new tenant
+
+App registrations are tenant-scoped — the old client id won't work. Create one (see
+[Identities → App SPA](#b-app-spa-created-once-then-automated)) and put its id in the new `.env`:
+
+```powershell
+az login --tenant <new-tenant-guid> --allow-no-subscriptions
+az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audience AzureADMyOrg --query appId -o tsv
+```
+
+### 3. Point Rayfin at the new tenant
+
+```powershell
+npx rayfin logout
+npx rayfin login --select     # pick the NEW tenant
+npx rayfin login status       # confirm tenant + user before deploying
+```
+
+### 4. Provision non-interactively
+
+Pass the workspace **GUID** and auto-accept so `rayfin up` never stops on the interactive
+*"Enter a Fabric workspace name"* prompt (its redraw UI is easy to mis-answer when scripted):
+
+```powershell
+rayfin up --workspace-id <workspace-guid> --yes
+```
+
+`rayfin up --help` also exposes `--workspace <name>`, `--workspace-uri <portal-url>`, `--tenant <id>`,
+`--dry-run`, and `--exclude-services staticHosting`. To repoint an **existing** deployment record
+without re-provisioning, use `rayfin switch <workspace-name>` (it rewrites `rayfin/.env`).
+
+Then continue at **Step 5** (`npm run rayfin:db`) → **Step 6** (`npm run deploy`) → update
+`rayfin.yml` `allowedRedirectUris` with the new hosting URL → `npm run up` → **Steps 7–9**.
+
+### Node 24 wrapper — gotchas
+
+If your default Node isn't 24, wrap **every** command; call the binary/script **directly** inside `-c`:
+
+```powershell
+npx -y -p node@24 -c "npm run up"                              # ✅
+npx -y -p node@24 -c "rayfin up --workspace-id <guid> --yes"  # ✅
+```
+
+- **Don't nest npx.** `npx -y -p node@24 -c "npx rayfin …"` fails with an npm **EUSAGE** error.
+- The `-c` string runs in its **own shell at an unspecified cwd**. If it can't find `rayfin.yml`,
+  put the directory inside the string: `-c "cd /d <abs-path>\HydroOperationsApp && rayfin up …"`.
+
+### Feature & region gating (Fabric App Items preview)
+
+Rayfin's backend is a **Fabric App Item** (preview). Creating it can fail with:
+
+```text
+Fabric API error: 403 Forbidden — The feature is not available
+```
+
+Work through these in order:
+
+1. **Tenant setting** — Admin portal → **Tenant settings → Microsoft Fabric → "Enable Fabric App
+   Items (preview)"** must be **On**. Verify it via the admin API (setting name `AppBackendTenant`):
+
+   ```powershell
+   $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
+   (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/admin/tenantsettings" -Headers @{Authorization="Bearer $tok"}).tenantSettings |
+     Where-Object settingName -eq 'AppBackendTenant' | Select-Object settingName,title,enabled
+   ```
+
+2. **Propagation** — after enabling, allow **~15 minutes** for the setting to take effect before
+   retrying. A create call issued too soon still sees the feature as disabled and returns `403`.
+3. **Region** — the preview is **not offered in every region**. If it keeps returning `403` while the
+   tenant setting reads `enabled = True`, host the workspace on a capacity in a **supported region**
+   (this solution has deployed successfully on **Sweden Central**; **North Europe** was rejected as
+   "feature not available"). List capacities + regions, activate one in a supported region, then
+   reassign the workspace (portal → **Workspace settings → License/Capacity**) and re-run `rayfin up`:
+
+   ```powershell
+   $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
+   (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/capacities" -Headers @{Authorization="Bearer $tok"}).value |
+     Select-Object displayName,sku,region,state | Sort-Object region | Format-Table -AutoSize
+   ```
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -191,9 +298,18 @@ into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth i
 | KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
 | Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |
 | Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env` — fix it and re‑run. |
+| **`rayfin up` → 404 "The provided workspace was not found"** | Stale `active` pointer in `rayfin/.deployments.json` from a previous tenant — delete it (and `.env.local`), then re‑run. See [Redeploying to a different tenant, workspace, or region](#redeploying-to-a-different-tenant-workspace-or-region). |
+| **`rayfin up` → 403 "The feature is not available"** | **Fabric App Items (preview)** not enabled/propagated, or the capacity's region doesn't support it. Enable tenant setting `AppBackendTenant`, wait ~15 min, else move the workspace to a supported‑region capacity (e.g. **Sweden Central**). See [Feature & region gating](#feature--region-gating-fabric-app-items-preview). |
+| **`npx … -c "npx rayfin …"` → npm EUSAGE** | Don't nest `npx`. Call `rayfin` / `npm run …` **directly** inside the `-c` string. |
+| `rayfin up` can't find `rayfin.yml` (wrong cwd) | The `-c` shell starts at an unspecified cwd — put the path in the string: `-c "cd /d <abs>\HydroOperationsApp && rayfin up …"`. |
 
 ## Reset
 
 Delete `rayfin/.env`, `rayfin/.env.local`, and `rayfin/.deployments.json`, then redo from Step 3.
 A fresh build gets a new hosting hostname — add it to `rayfin/rayfin.yml` (`allowedRedirectUris`) and
 re‑run `npm run up`, then `npm run setup-live-auth` (Step 8) after the first `npm run deploy`.
+
+> Switching **tenant/workspace/region** (not just rebuilding)? Follow
+> [Redeploying to a different tenant, workspace, or region](#redeploying-to-a-different-tenant-workspace-or-region)
+> — it covers resetting the `active` deployment pointer, re‑registering the SPA in the new tenant, and
+> the non‑interactive `rayfin up --workspace-id <guid> --yes` command.
