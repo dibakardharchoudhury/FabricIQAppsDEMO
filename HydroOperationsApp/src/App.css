@@ -509,3 +509,10 @@ body { font-family: var(--cp-font-body); letter-spacing: -.006em; }
   .sig-age.live i { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cp-success) 55%, transparent); }
 }
 @keyframes sig-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cp-success) 55%, transparent); } 70% { box-shadow: 0 0 0 5px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+/* Copilot panel: maximize/restore toggle — width only, so the chat flow is never interrupted. */
+.copilot-panel { transition: width .18s ease; }
+.copilot-panel.maximized { width: min(920px, 100vw); }
+.copilot-panel.maximized .messages { padding: 22px clamp(16px, 6vw, 64px); }
+.copilot-panel.maximized .message p, .copilot-panel.maximized .message .md { font-size: 12px; }
+.copilot-panel.maximized .prompt-box { margin-inline: clamp(12px, 6vw, 64px); }
+@media (prefers-reduced-motion: reduce) { .copilot-panel { transition: none; } }

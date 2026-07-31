@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, RefreshCw, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
@@ -102,6 +102,7 @@ export default function App() {
   const [provisioned, setProvisioned] = useState(false)
   const [setupHidden, setSetupHidden] = useState(false)
   const [copilotOpen, setCopilotOpen] = useState(false)
+  const [copilotMax, setCopilotMax] = useState(false)
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [seeding, setSeeding] = useState(false)
@@ -710,7 +711,7 @@ export default function App() {
       </div>
     </main>
 
-    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>{item.chart && <ChartFromMarkdown markdown={item.text} />}</div> : <p className="thinking"><span className="think-label">Thinking</span><span className="think-dots"><i /><i /><i /></span></p>) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
+    {copilotOpen && <aside className={`copilot-panel${copilotMax ? ' maximized' : ''}`}><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotMax(value => !value)} title={copilotMax ? 'Restore' : 'Maximize'}>{copilotMax ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>{item.chart && <ChartFromMarkdown markdown={item.text} />}</div> : <p className="thinking"><span className="think-label">Thinking</span><span className="think-dots"><i /><i /><i /></span></p>) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
   </div>
 }
 
