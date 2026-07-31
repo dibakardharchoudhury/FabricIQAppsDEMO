@@ -31,6 +31,42 @@
 # - Posts the alert to a **Teams channel** and triggers the **`Pipe_SendEmailAlert`** pipeline.
 # 
 # ---
+# ## ⚠️ ONE-TIME SETUP — Email alert connection (OAuth2 required)
+# 
+# The **`Pipe_SendEmailAlert`** pipeline uses the **Office 365 Outlook – “Send an email”** activity,
+# which sends mail **from a mailbox**. It therefore needs a connection created with **OAuth2**
+# (a signed-in work/school account). A **Service Principal (SPN)** Outlook connection tests as
+# *Online* but the activity **cannot load it** — a service principal has no mailbox — so the pipeline
+# fails with **“Failed to load the connection”**.
+# 
+# > You **cannot** convert an existing SPN connection to OAuth2: Fabric does not allow changing a
+# > connection’s credential type. Create a **new** OAuth2 connection (and optionally delete the SPN one).
+# 
+# **Create the connection once per tenant (Fabric portal, ~1 min):**
+# 
+# 1. Click the **gear (Settings)** → **Manage connections and gateways**.
+# 2. Open the **Connections** tab → **+ New**.
+# 3. **Connection type** = **Office 365 Outlook**.
+# 4. **Authentication method** = **OAuth 2.0** → click **Edit credentials / Sign in** and complete the
+#    sign-in with a **work/school account that has a mailbox** (use a **shared/service mailbox** so
+#    alerts keep working when a person leaves the org).
+# 5. **Name it `RTI_Office365_EmailAlert`** so this notebook auto-detects it (or set the
+#    `alert_email_connection_name` setting to whatever name you choose).
+# 6. Click **Create**. Fabric stores the refresh **token**, so the pipeline then runs **unattended** —
+#    you only sign in again if the password/MFA changes or the connection sits idle for a long time.
+# 
+# **Already have a connection that shows “Failed to load”?**
+# - If it’s an **OAuth2** connection whose token expired → open it in **Manage connections and
+#   gateways → Edit → Sign in** to refresh the token (no need to recreate it).
+# - If it’s a **Service Principal** connection → it will never work for email; create a new OAuth2 one
+#   as above and (optionally) delete the SPN connection.
+# 
+# **After the connection exists:** just re-run this notebook. It **auto-picks** the OAuth2 Outlook
+# connection (by the name above first, then any OAuth2 Outlook connection) and wires it into
+# `Pipe_SendEmailAlert`. To pin a specific one, set the `alert_email_connection_id` setting to its id.
+# Then open `Pipe_SendEmailAlert` in the portal and click **Run** to test — you should receive an email.
+# 
+# ---
 # ## How the Operations Agent is created
 # 
 # The agent is created and configured **entirely from this notebook**:
@@ -595,15 +631,30 @@ def resolve_email_connection_id() -> str:
         sp_note = (f" Found a non-OAuth2 Office 365 connection ('{sp[0].get('displayName')}', "
                    f"credential={_office365_cred_type(sp[0]) or 'unknown'}) but the Office 365 Email "
                    "activity cannot use it.")
+    bar = "=" * 78
     raise RuntimeError(
-        "No usable Office 365 Email connection found. The Office 365 Email pipeline activity requires "
-        "an OAuth2 (interactive sign-in) Outlook connection — a Service Principal has no mailbox and "
-        "cannot send mail." + sp_note + " ONE-TIME SETUP (do it once per tenant): in the Fabric portal, "
-        "Settings -> Manage connections and gateways -> New -> Connection type 'Office 365 Outlook' -> "
-        "Authentication OAuth2 -> Sign in with a work/school account that has a mailbox (use a shared "
-        "service mailbox so it doesn't break when a person leaves) -> Create. Then re-run this notebook: "
-        "it auto-picks that OAuth2 connection and the pipeline runs unattended thereafter. (Alternatively "
-        "set the `alert_email_connection_id` setting to the connection id.)")
+        "\n" + bar + "\n"
+        "❌  ACTION REQUIRED — create the email-alert connection (one-time, ~1 min)\n"
+        + bar + "\n"
+        "'Pipe_SendEmailAlert' uses the Office 365 Outlook 'Send an email' activity, which sends\n"
+        "FROM a mailbox and therefore needs an OAuth2 (signed-in user) connection. A Service\n"
+        "Principal Outlook connection tests as 'Online' but the activity CANNOT load it (a service\n"
+        "principal has no mailbox)." + ((" " + sp_note.strip()) if sp_note else "") + "\n\n"
+        "Do this once in the Fabric portal:\n"
+        "  1. Settings (gear) -> Manage connections and gateways -> Connections tab -> + New.\n"
+        "  2. Connection type = 'Office 365 Outlook'.\n"
+        "  3. Authentication method = OAuth 2.0 -> Edit credentials / Sign in, using a work or\n"
+        "     school account THAT HAS A MAILBOX (use a shared/service mailbox for durability).\n"
+        f"  4. Name it '{ALERT_EMAIL_CONNECTION_NAME}' (so this notebook auto-detects it) -> Create.\n"
+        "  5. Re-run this notebook: it auto-picks the OAuth2 connection and wires it into the\n"
+        "     pipeline, which then runs unattended (re-sign-in only if the password/MFA changes).\n\n"
+        "Notes:\n"
+        "  - You CANNOT convert an existing Service Principal connection to OAuth2 (Fabric does not\n"
+        "    allow changing a connection's credential type) — create a NEW OAuth2 connection.\n"
+        "  - If an OAuth2 connection exists but shows 'Failed to load', its token likely expired:\n"
+        "    open it in Manage connections and gateways -> Edit -> Sign in to refresh it.\n"
+        "  - To pin a specific connection, set the `alert_email_connection_id` setting to its id.\n"
+        + bar)
 
 
 def build_email_pipeline_content(connection_id: str, to_address: str) -> dict:
@@ -933,6 +984,10 @@ try:
         PIPELINE_DESCRIPTION).get("id")
     if not resolved_pipeline_id:
         raise RuntimeError(f"Could not create or resolve the '{PIPELINE_NAME}' Data Pipeline.")
+    print(f"✅ '{PIPELINE_NAME}' wired to the OAuth2 email connection {email_connection_id}; "
+          f"alerts go to {email_recipient}.")
+    print(f"   TEST NOW: open '{PIPELINE_NAME}' in the Fabric portal and click Run — you should "
+          "receive an email.")
 
     print("✅ Resolved references for the git-exact working definition:")
     print("   data source (Ontology)  :", resolved_datasource_id, f"({ontology_name})")
