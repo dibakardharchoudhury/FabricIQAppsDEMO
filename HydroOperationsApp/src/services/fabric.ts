@@ -326,11 +326,11 @@ export async function queryStid(): Promise<StidData | null> {
   if (!config?.graphqlUrl) return null
   const token = await silentToken([GRAPHQL_SCOPE])
   if (!token) return null
-  // Aliases (facilities/equipment/instruments) map to the real Lakehouse tables
-  // (silver_facilities / silver_equipment / silver_instruments) exposed by the GraphQL API.
+  // Aliases (facilities/equipment/instruments) map to the real Lakehouse tables exposed by the
+  // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
   const query = `query HydroStid {
     facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
-    equipment: silver_equipment(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
+    equipment: silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
     instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }
   }`
   const response = await fetch(config.graphqlUrl, {
