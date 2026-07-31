@@ -86,6 +86,25 @@ az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audie
 
 Two per-cluster grants stay manual either way: give the signed-in user **KQL Database Viewer** on the Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
 
+#### No admin rights? Hand this to your Entra admin
+
+If you can't register apps or grant consent, none of the above blocks you — a **directory admin does it once**, then the whole rest of the deploy is yours (no admin needed again unless the app registration must change). Generate the exact, copy‑pasteable list first:
+
+```powershell
+npm run setup-live-auth:dry   # writes nothing — prints every URI/scope/consent it WOULD apply
+```
+
+Send your admin this checklist (the dry run prints the concrete values for each `<…>`):
+
+| # | Action | On | Role the admin needs |
+|---|---|---|---|
+| 1 | **Create** the SPA app registration (single‑tenant, no secret) and give you the **Application (client) ID** | Entra ID → App registrations | **Application Administrator** (or self‑service app registration enabled) |
+| 2 | **Authentication → Single‑page application** → add every origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173` | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
+| 3 | **API permissions** → add the delegated scopes from the list above (ADX `user_impersonation`; Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` + `Item.Read.All` + `Item.Execute.All`) | that app | **Application Administrator** on the app |
+| 4 | **Grant admin consent** for the directory | that app | **Privileged Role Administrator / Global Administrator** |
+
+Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner** of the app — then you run `npm run setup-live-auth` yourself and it applies **2 and 3** (redirect URIs + permissions) with no further admin involvement. If the admin does all four by hand, you never run `setup-live-auth`; just make sure the hosting origins in step 2 match `rayfin/rayfin.yml` after each deploy that changes the hostname. If admin consent (step 4) is impossible but **user consent is allowed** in the tenant, skip it — each signer is prompted to consent on their first sign‑in instead.
+
 ## 1. Build the RTI Fabric environment (in Fabric)
 
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and

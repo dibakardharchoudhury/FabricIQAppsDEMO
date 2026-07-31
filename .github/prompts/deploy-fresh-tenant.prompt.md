@@ -82,7 +82,11 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
    (all `AllPrincipals`, tenant-wide). `Item.Read.All` is what lets the app read the Eventhouse
    query URI — without it live telemetry fails with "No Eventhouse found". If it lacks a role it
-   prints the exact portal action and continues.
+   prints the exact portal action and continues. **If the user has no admin rights at all**, run
+   `npm run setup-live-auth:dry` to print every URI/scope/consent, then point them to
+   [DEPLOY.md → "No admin rights? Hand this to your Entra admin"](../../HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin)
+   — fastest split: the admin creates the SPA + grants consent and makes the user an **Owner**, then
+   `setup-live-auth` applies redirect URIs + permissions with no further admin involvement.
 
 7. **Two per-cluster grants that stay manual** (no API for them here): give the signed-in user
    **KQL Database Viewer** on the Eventhouse, and add the app origin to the Eventhouse cluster's
