@@ -9,35 +9,35 @@
   "metadata": null,
   "elements": [
     {
-      "id": "a1355ad1-493a-493b-a591-bec3aa9264f5",
+      "id": "1e8b6a8f-a9e9-4ab3-a9e5-800c8db10943",
       "is_selected": false,
       "display_name": "Schemas",
       "type": "schema_grouping",
       "description": null,
       "children": [
         {
-          "id": "c76670d7-de15-4238-beb7-80a9f9afc143",
+          "id": "f17325ac-b6f9-4d97-8f9a-74d51e2d93a9",
           "is_selected": false,
           "display_name": "dbo",
           "type": "sql_database.schema",
           "description": null,
           "children": [
             {
-              "id": "cd0afe67-faa8-467f-bd0c-1dfaad22dc22",
+              "id": "85603e8f-ef02-41f0-90ee-cf99328a662d",
               "is_selected": false,
               "display_name": "Tables",
               "type": "table_grouping",
               "description": null,
               "children": [
                 {
-                  "id": "aa9025a8-2236-479b-8a5c-bacec58539cf",
+                  "id": "4fc33302-48c6-4908-b784-82a22db3fb2f",
                   "is_selected": true,
                   "display_name": "WorkOrders",
                   "type": "sql_database.table",
                   "description": null,
                   "children": [
                     {
-                      "id": "23e093b5-b5f2-428d-b218-f2ed6a56092f",
+                      "id": "a5e8e561-c9c4-4056-9fe7-bbc2eddb8aea",
                       "is_selected": true,
                       "display_name": "id",
                       "type": "sql_database.column",
@@ -46,7 +46,7 @@
                       "children": []
                     },
                     {
-                      "id": "0a1109ca-fd22-409b-9d8a-d7a061488aad",
+                      "id": "98a18b76-f451-4c42-affc-a9dc7db7941e",
                       "is_selected": true,
                       "display_name": "assignedToOid",
                       "type": "sql_database.column",
@@ -55,7 +55,7 @@
                       "children": []
                     },
                     {
-                      "id": "505caba4-ea18-4ee0-ad29-34a0edcb1b1d",
+                      "id": "6a4ee26d-7f33-4c47-9f76-45d03e53253b",
                       "is_selected": true,
                       "display_name": "completedAt",
                       "type": "sql_database.column",
@@ -64,7 +64,7 @@
                       "children": []
                     },
                     {
-                      "id": "04c7515a-e987-4f2b-9ce0-b2ea505bfb25",
+                      "id": "8753dcc7-b1ca-4885-a5aa-32387b041ca4",
                       "is_selected": true,
                       "display_name": "createdAt",
                       "type": "sql_database.column",
@@ -73,7 +73,7 @@
                       "children": []
                     },
                     {
-                      "id": "c994eb6f-059f-4c2e-8da8-77768a7fb7d4",
+                      "id": "ec93ebc1-31a1-4681-9add-241509903d2c",
                       "is_selected": true,
                       "display_name": "createdByOid",
                       "type": "sql_database.column",
@@ -82,7 +82,7 @@
                       "children": []
                     },
                     {
-                      "id": "0ec7bf6b-d2aa-4e12-b696-ed799aeb293f",
+                      "id": "8618589f-fbe4-4749-8fc8-91019cc1f2ba",
                       "is_selected": true,
                       "display_name": "description",
                       "type": "sql_database.column",
@@ -91,7 +91,7 @@
                       "children": []
                     },
                     {
-                      "id": "47054f64-e800-4b87-99a5-51d6cd457376",
+                      "id": "f9b90ae8-ca00-4cfd-b7d7-2081e29ab8a6",
                       "is_selected": true,
                       "display_name": "dueAt",
                       "type": "sql_database.column",
@@ -100,7 +100,7 @@
                       "children": []
                     },
                     {
-                      "id": "e0242986-6136-4366-9f3c-68921204db03",
+                      "id": "956ca13c-3702-4dcc-980e-feaed32a0aa0",
                       "is_selected": true,
                       "display_name": "equipmentId",
                       "type": "sql_database.column",
@@ -109,7 +109,7 @@
                       "children": []
                     },
                     {
-                      "id": "32304e02-a3e6-412a-a533-c732d50c0976",
+                      "id": "a67bdacf-bbf8-4cb7-863f-8d60025932c4",
                       "is_selected": true,
                       "display_name": "instrumentId",
                       "type": "sql_database.column",
@@ -118,7 +118,7 @@
                       "children": []
                     },
                     {
-                      "id": "01be37e2-662b-4aa4-ab5c-c0e2b3c262db",
+                      "id": "32b1f36b-7981-4ff0-bd87-b4d56eba36ac",
                       "is_selected": true,
                       "display_name": "opcuaNodeId",
                       "type": "sql_database.column",
@@ -127,7 +127,7 @@
                       "children": []
                     },
                     {
-                      "id": "4ec99a9b-26b3-47d2-8907-31a984f41a6c",
+                      "id": "d5b1bb51-41eb-46ea-b93f-67ee050c5606",
                       "is_selected": true,
                       "display_name": "priority",
                       "type": "sql_database.column",
@@ -136,7 +136,7 @@
                       "children": []
                     },
                     {
-                      "id": "7f9cf1ef-f29e-4cfb-bd25-0047053ea972",
+                      "id": "67a9be9b-3352-4f2d-b3eb-b31dea1406d6",
                       "is_selected": true,
                       "display_name": "status",
                       "type": "sql_database.column",
@@ -145,7 +145,7 @@
                       "children": []
                     },
                     {
-                      "id": "b9383dc5-b1f0-4523-aa2c-80ca8a1b25ea",
+                      "id": "bca4f29f-3899-4b72-9263-a5f572302026",
                       "is_selected": true,
                       "display_name": "title",
                       "type": "sql_database.column",
@@ -154,7 +154,7 @@
                       "children": []
                     },
                     {
-                      "id": "9d91671b-05d6-4869-acf5-653a43894ad4",
+                      "id": "c39d28ee-7691-4da8-8d5a-751fb64b5eba",
                       "is_selected": true,
                       "display_name": "workOrderNumber",
                       "type": "sql_database.column",
@@ -165,14 +165,14 @@
                   ]
                 },
                 {
-                  "id": "21875695-c0cc-4ed4-96db-13156929cf20",
+                  "id": "819c9482-6f58-4530-91bf-8d94c94ba78a",
                   "is_selected": true,
                   "display_name": "MaintenanceNotifications",
                   "type": "sql_database.table",
                   "description": null,
                   "children": [
                     {
-                      "id": "ee66ae52-5bc1-4c96-9968-0c1007b4e4f2",
+                      "id": "8ef64e85-447c-41e4-902a-86df51bacb04",
                       "is_selected": true,
                       "display_name": "id",
                       "type": "sql_database.column",
@@ -181,7 +181,7 @@
                       "children": []
                     },
                     {
-                      "id": "14903255-96cb-46a4-a076-ea79b14d6dd6",
+                      "id": "2cd42fcb-8ff0-45c3-a663-ef8251aef750",
                       "is_selected": true,
                       "display_name": "equipmentId",
                       "type": "sql_database.column",
@@ -190,7 +190,7 @@
                       "children": []
                     },
                     {
-                      "id": "c3bbce8e-06df-4b05-aa39-5a7dce599fb3",
+                      "id": "489207a8-6f0b-4ae2-ae73-2c2b10e2d716",
                       "is_selected": true,
                       "display_name": "opcuaNodeId",
                       "type": "sql_database.column",
@@ -199,7 +199,7 @@
                       "children": []
                     },
                     {
-                      "id": "2b289ba3-0311-4e8a-b53f-57656cfd813d",
+                      "id": "2dfc2e45-ea67-47a3-82e0-59d9a8c33af0",
                       "is_selected": true,
                       "display_name": "reportedAt",
                       "type": "sql_database.column",
@@ -208,7 +208,7 @@
                       "children": []
                     },
                     {
-                      "id": "ddd9a9de-079c-4552-9bac-43c70d83ef7e",
+                      "id": "4d54af6a-7e4e-4237-ab4b-a994f8bc1473",
                       "is_selected": true,
                       "display_name": "reportedByOid",
                       "type": "sql_database.column",
@@ -217,7 +217,7 @@
                       "children": []
                     },
                     {
-                      "id": "2c1c0cdc-2461-4d00-93c5-f213330b9cc8",
+                      "id": "1346719c-4865-4d03-a2aa-1699c9b0e6ff",
                       "is_selected": true,
                       "display_name": "severity",
                       "type": "sql_database.column",
@@ -226,7 +226,7 @@
                       "children": []
                     },
                     {
-                      "id": "bdcbbff1-5afd-4a9a-ac76-a8847cdee7db",
+                      "id": "75878b3e-fac7-44ef-b548-efbf6de2f451",
                       "is_selected": true,
                       "display_name": "status",
                       "type": "sql_database.column",
@@ -235,7 +235,7 @@
                       "children": []
                     },
                     {
-                      "id": "aa0fe093-1684-486c-9285-8b7c80692e40",
+                      "id": "66b19a44-f78a-469f-955c-e9d6c3f9e5d7",
                       "is_selected": true,
                       "display_name": "summary",
                       "type": "sql_database.column",
@@ -246,14 +246,14 @@
                   ]
                 },
                 {
-                  "id": "85c1cc6c-0343-4899-b40b-dc5c864d958c",
+                  "id": "60dc4b99-ac5d-49a6-bad6-5c3cecfcf3eb",
                   "is_selected": true,
                   "display_name": "Inspections",
                   "type": "sql_database.table",
                   "description": null,
                   "children": [
                     {
-                      "id": "a0bdf0dc-128f-46f2-8da8-4d29427b17ff",
+                      "id": "3c40e7d4-b059-47bd-bf9b-699ae510eed0",
                       "is_selected": true,
                       "display_name": "id",
                       "type": "sql_database.column",
@@ -262,7 +262,7 @@
                       "children": []
                     },
                     {
-                      "id": "923da0a4-5863-4021-b5f6-84d050224d8c",
+                      "id": "d21e9f2a-ff99-4517-9bad-2c31961127b0",
                       "is_selected": true,
                       "display_name": "equipmentId",
                       "type": "sql_database.column",
@@ -271,7 +271,7 @@
                       "children": []
                     },
                     {
-                      "id": "5f44b51f-0aeb-449b-a5ad-2a16332a9b72",
+                      "id": "bf6e512a-26d6-4a80-8181-f15bc2349ad8",
                       "is_selected": true,
                       "display_name": "findings",
                       "type": "sql_database.column",
@@ -280,7 +280,7 @@
                       "children": []
                     },
                     {
-                      "id": "2f7ce82c-b81e-4677-90bd-de4a8789d818",
+                      "id": "be3b075f-8217-4382-8868-5bf67b1cc66b",
                       "is_selected": true,
                       "display_name": "inspectedAt",
                       "type": "sql_database.column",
@@ -289,7 +289,7 @@
                       "children": []
                     },
                     {
-                      "id": "b595dce1-c9d5-4096-af30-68bd61977b8e",
+                      "id": "e764d2c7-1c2e-448f-9640-e952e6576086",
                       "is_selected": true,
                       "display_name": "inspectionType",
                       "type": "sql_database.column",
@@ -298,7 +298,7 @@
                       "children": []
                     },
                     {
-                      "id": "73c9c736-3102-4c02-b7ee-ef6024fde7e9",
+                      "id": "c18a3df9-4925-48a8-9d2e-efcc6aa9c162",
                       "is_selected": true,
                       "display_name": "inspectorOid",
                       "type": "sql_database.column",
@@ -307,7 +307,7 @@
                       "children": []
                     },
                     {
-                      "id": "4326bcf3-2b3b-4c9c-a966-bfa397533334",
+                      "id": "661383de-cdb5-4162-b07e-e6d7842fec83",
                       "is_selected": true,
                       "display_name": "nextDueAt",
                       "type": "sql_database.column",
@@ -316,7 +316,7 @@
                       "children": []
                     },
                     {
-                      "id": "406f139c-242f-43bc-bc22-19050d356094",
+                      "id": "0dccc652-6818-4864-9d30-77e4b7f1364f",
                       "is_selected": true,
                       "display_name": "opcuaNodeId",
                       "type": "sql_database.column",
@@ -325,7 +325,7 @@
                       "children": []
                     },
                     {
-                      "id": "d69ed01d-c4da-4d96-989f-2f5224df36fc",
+                      "id": "6bab2582-3a52-4343-8a1d-c98de1545e09",
                       "is_selected": true,
                       "display_name": "result",
                       "type": "sql_database.column",
@@ -336,14 +336,14 @@
                   ]
                 },
                 {
-                  "id": "ff4f4540-7235-491e-bd06-947438be6dd1",
+                  "id": "77b0d77d-30cc-42ae-b6e5-98865d3f7f6f",
                   "is_selected": true,
                   "display_name": "SpareParts",
                   "type": "sql_database.table",
                   "description": null,
                   "children": [
                     {
-                      "id": "7d58f941-edb7-4146-bf5d-3d09ed93dc07",
+                      "id": "2440cc7f-a3ec-4229-836a-047ed3102f52",
                       "is_selected": true,
                       "display_name": "id",
                       "type": "sql_database.column",
@@ -352,7 +352,7 @@
                       "children": []
                     },
                     {
-                      "id": "482c8916-e2e4-4412-ba60-91c4240788b5",
+                      "id": "75377acd-1675-4936-8eec-189854e63ecb",
                       "is_selected": true,
                       "display_name": "category",
                       "type": "sql_database.column",
@@ -361,7 +361,7 @@
                       "children": []
                     },
                     {
-                      "id": "bbc44744-df9a-4767-a53d-84fc261b540e",
+                      "id": "7490b5e7-282d-40e9-be89-7827779d0054",
                       "is_selected": true,
                       "display_name": "equipmentType",
                       "type": "sql_database.column",
@@ -370,7 +370,7 @@
                       "children": []
                     },
                     {
-                      "id": "bae045e8-e248-4926-b497-2ce8e4698a3c",
+                      "id": "070a82b1-5d7d-42bf-87c3-aa0299da712e",
                       "is_selected": true,
                       "display_name": "lastRestockedAt",
                       "type": "sql_database.column",
@@ -379,7 +379,7 @@
                       "children": []
                     },
                     {
-                      "id": "8f248bed-d6ec-4cf9-bdb5-8e989cc8cdc1",
+                      "id": "c80884e7-319c-4075-8838-fd86446ebf55",
                       "is_selected": true,
                       "display_name": "name",
                       "type": "sql_database.column",
@@ -388,7 +388,7 @@
                       "children": []
                     },
                     {
-                      "id": "05854b1b-5e8c-4ca1-b6fa-952ed971ab89",
+                      "id": "cece4cc8-b02b-40c8-8fb4-c493192724d3",
                       "is_selected": true,
                       "display_name": "partNumber",
                       "type": "sql_database.column",
@@ -397,7 +397,7 @@
                       "children": []
                     },
                     {
-                      "id": "d0feedc5-b661-458b-8371-ea68adb82f29",
+                      "id": "140dfee6-9ec6-4c37-b439-1268ea83655f",
                       "is_selected": true,
                       "display_name": "quantityOnHand",
                       "type": "sql_database.column",
@@ -406,7 +406,7 @@
                       "children": []
                     },
                     {
-                      "id": "4ce57b9e-f2d1-459c-9db4-a4296566f2f2",
+                      "id": "f079e22e-e223-4e71-8c38-ea39c8aa9c01",
                       "is_selected": true,
                       "display_name": "reorderLevel",
                       "type": "sql_database.column",
@@ -415,7 +415,7 @@
                       "children": []
                     },
                     {
-                      "id": "8db00546-a92f-4fb4-8616-d795fdf8c8fc",
+                      "id": "29e05419-3f86-43fb-b0f9-bc3b04b14516",
                       "is_selected": true,
                       "display_name": "storageLocation",
                       "type": "sql_database.column",
@@ -424,7 +424,7 @@
                       "children": []
                     },
                     {
-                      "id": "d1b99f16-0381-44ad-987d-6574d2473553",
+                      "id": "2a4c7dcc-0ba9-4159-9aa2-cb997b448ff8",
                       "is_selected": true,
                       "display_name": "unitCostUsd",
                       "type": "sql_database.column",
@@ -435,14 +435,14 @@
                   ]
                 },
                 {
-                  "id": "e4efa52d-8ee2-4032-9874-08cb477d5467",
+                  "id": "101b7b48-d5b1-4a0a-b3f5-0591b813f61e",
                   "is_selected": true,
                   "display_name": "Asset3DModels",
                   "type": "sql_database.table",
                   "description": null,
                   "children": [
                     {
-                      "id": "416d2124-1100-494b-8477-9be443c65190",
+                      "id": "06a80b83-91ae-46a7-a30a-b9df22663f3c",
                       "is_selected": true,
                       "display_name": "id",
                       "type": "sql_database.column",
@@ -451,7 +451,7 @@
                       "children": []
                     },
                     {
-                      "id": "1d94ccd3-f2c7-4ad1-abfd-531da9c3aa25",
+                      "id": "7fe9a830-5e67-4cfa-967f-61e9a8eb7ee1",
                       "is_selected": true,
                       "display_name": "equipmentId",
                       "type": "sql_database.column",
@@ -460,7 +460,7 @@
                       "children": []
                     },
                     {
-                      "id": "4f5cdee4-07b4-4720-97f8-c9e88e72ece7",
+                      "id": "681596df-945e-41be-9a7c-b476e93326ac",
                       "is_selected": true,
                       "display_name": "fileSizeMb",
                       "type": "sql_database.column",
@@ -469,7 +469,7 @@
                       "children": []
                     },
                     {
-                      "id": "1098dcb4-5dc2-4761-b587-43ccd72566ec",
+                      "id": "21df02da-10fa-4cf7-a1c7-43fa424f324b",
                       "is_selected": true,
                       "display_name": "format",
                       "type": "sql_database.column",
@@ -478,7 +478,7 @@
                       "children": []
                     },
                     {
-                      "id": "1775d7a2-775b-4de3-8041-73a61df9b6eb",
+                      "id": "1f1732d4-03ac-4418-9492-8aa14082b07e",
                       "is_selected": true,
                       "display_name": "modelName",
                       "type": "sql_database.column",
@@ -487,7 +487,7 @@
                       "children": []
                     },
                     {
-                      "id": "65410c55-b790-40ee-aada-2553e31581c9",
+                      "id": "3e6cd8f0-d3c5-4ccb-b886-100dcb5b0181",
                       "is_selected": true,
                       "display_name": "modelUrl",
                       "type": "sql_database.column",
@@ -496,7 +496,7 @@
                       "children": []
                     },
                     {
-                      "id": "115bccc2-6eb4-4ea9-9264-8d3ec2971a6f",
+                      "id": "775d9ddf-d8c5-44ee-b9fd-c5d9f192c679",
                       "is_selected": true,
                       "display_name": "thumbnailUrl",
                       "type": "sql_database.column",
@@ -505,7 +505,7 @@
                       "children": []
                     },
                     {
-                      "id": "812b2fe0-f1f8-4add-90ab-c3d71631454b",
+                      "id": "33bba579-80cb-4215-af5c-b5d83ae245af",
                       "is_selected": true,
                       "display_name": "updatedAt",
                       "type": "sql_database.column",
@@ -514,7 +514,7 @@
                       "children": []
                     },
                     {
-                      "id": "77c04216-c64a-4191-bb23-1450c58f6564",
+                      "id": "1084c7bd-aa87-492f-9376-5d7ec80ae92b",
                       "is_selected": true,
                       "display_name": "updatedByOid",
                       "type": "sql_database.column",
@@ -523,7 +523,7 @@
                       "children": []
                     },
                     {
-                      "id": "40cee634-6fdc-4b8b-bf60-9571d9bbfe87",
+                      "id": "715fc468-683d-4e01-b18f-255f3553769d",
                       "is_selected": true,
                       "display_name": "version",
                       "type": "sql_database.column",
