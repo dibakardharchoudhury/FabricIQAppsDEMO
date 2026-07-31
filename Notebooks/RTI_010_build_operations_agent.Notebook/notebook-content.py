@@ -378,11 +378,16 @@ def resolve_ontology_id() -> str:
     return (in_folder or matches)[0]["id"]
 
 
-# Name + definition of the git-synced Data Pipeline (RTI_DEMO_V3/Pipe_SendEmailAlert.DataPipeline).
-# Parameters equipment_id/facility_id/value/unit/quality/event_time mirror the alert context the
-# agent passes. The Office365 connection id + recipients are the RTI-demo values (override per env).
+# Name + definition of the git-synced Data Pipeline (Pipe_SendEmailAlert). Parameters
+# equipment_id/facility_id/value/unit/quality/event_time mirror the alert context the agent passes.
+# The Office365 connection id + recipient are PER-TENANT (the RTI-demo GUID is NOT portable — it 400s
+# "User does not have access to the connection" in any other tenant), so both are resolved at deploy
+# time (resolve_email_connection_id + ALERT_EMAIL_TO) and injected via build_email_pipeline_content.
 PIPELINE_NAME = settings.get("alert_pipeline_name", "Pipe_SendEmailAlert")
 PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be triggered from Ops Agent!")
+# Alert email recipient. Per-tenant: override with the `alert_email_to` setting; when blank the deploy
+# defaults it to the signed-in (deploying) user so the demo email has a valid, in-tenant recipient.
+ALERT_EMAIL_TO = first_setting("alert_email_to", "alert_recipient", default="")
 # Dynamic-content expressions for the Office365 email (evaluated at pipeline run from the alert
 # parameters the Ops Agent passes). Subject has no double quotes; body embeds HTML so it is stored
 # in a triple-single-quoted literal.
@@ -403,7 +408,8 @@ EMBEDDED_PIPELINE_CONTENT = {
                     "secureInput": False,
                 },
                 "typeProperties": {
-                    "to": "admin@mngenvmcap218279.onmicrosoft.com",
+                    # Placeholder — replaced per-tenant by build_email_pipeline_content(to_address).
+                    "to": "",
                     "subject": {"value": _EMAIL_SUBJECT_EXPR, "type": "Expression"},
                     # Body must be a PLAIN string expression (matches the git-synced working
                     # pipeline). Wrapping it as {"value":..,"type":"Expression"} makes Office365Email
@@ -411,7 +417,8 @@ EMBEDDED_PIPELINE_CONTENT = {
                     "body": _EMAIL_BODY_EXPR,
                     "importance": "High",
                 },
-                "externalReferences": {"connection": "4a4d0899-8698-4a20-8229-989ca6562451"},
+                # Placeholder — replaced per-tenant by build_email_pipeline_content(connection_id).
+                "externalReferences": {"connection": ""},
             }
         ],
         "parameters": {
@@ -424,6 +431,68 @@ EMBEDDED_PIPELINE_CONTENT = {
         },
     }
 }
+
+
+def get_signed_in_upn() -> str:
+    """Best-effort UPN of the user running this notebook (decoded from the pbi token, no Graph)."""
+    claims = _decode_jwt_claims(get_access_token_for_fabric())
+    return (claims.get("upn") or claims.get("unique_name")
+            or claims.get("preferred_username") or claims.get("email") or "").strip()
+
+
+def list_connections() -> list:
+    """List the connections the running user can see (paged)."""
+    connections, url = [], f"{FABRIC_API_BASE}/v1/connections"
+    while url:
+        response = api_request("GET", url)
+        if response.status_code != 200:
+            break
+        body = response.json()
+        connections.extend(body.get("value", []))
+        token = body.get("continuationToken")
+        url = f"{FABRIC_API_BASE}/v1/connections?continuationToken={token}" if token else None
+    return connections
+
+
+def _is_office365_connection(conn: dict) -> bool:
+    ctype = str((conn.get("connectionDetails") or {}).get("type", "")).lower().replace(" ", "")
+    return ctype.startswith("office365")
+
+
+def resolve_email_connection_id() -> str:
+    """Return an Office 365 (Outlook) connection id the running user can use for Office365Email.
+
+    Precedence: the `alert_email_connection_id` setting -> the first existing Office 365 connection
+    visible to the user -> RuntimeError with manual steps. An Office 365 Outlook connection uses
+    OAuth2 and CANNOT be created non-interactively via the Fabric Connections API (its create-
+    credential set has no OAuth2 type), so a one-time portal sign-in is required when none exists yet.
+    """
+    forced = first_setting("alert_email_connection_id", "alert_connection_id", default="")
+    if forced:
+        print(f"\u2139\ufe0f  Using Office365 connection id from settings: {forced}")
+        return forced
+    for conn in list_connections():
+        if _is_office365_connection(conn):
+            cid = conn.get("id")
+            print(f"\u2705 Reusing accessible Office365 connection '{conn.get('displayName')}' (id={cid}).")
+            return cid
+    raise RuntimeError(
+        "No Office 365 (Outlook) connection is available to you in this tenant. It cannot be created "
+        "non-interactively (Office 365 Outlook is OAuth2 and the Fabric Connections API has no OAuth2 "
+        "credential type), so create it once via a quick portal sign-in: Fabric -> Settings -> Manage "
+        "connections and gateways -> New -> Cloud -> 'Office 365 Outlook' -> Sign in / Create. Then "
+        "re-run this notebook (it auto-discovers the connection), or paste its id into the "
+        "`alert_email_connection_id` setting in rti_demo_settings."
+    )
+
+
+def build_email_pipeline_content(connection_id: str, to_address: str) -> dict:
+    """Return the Pipe_SendEmailAlert definition wired to a per-tenant connection + recipient."""
+    content = json.loads(json.dumps(EMBEDDED_PIPELINE_CONTENT))  # deep copy the template
+    activity = content["properties"]["activities"][0]
+    activity["externalReferences"]["connection"] = connection_id
+    activity["typeProperties"]["to"] = to_address
+    return content
 
 
 def create_data_pipeline(display_name: str, definition_obj: dict, description: str = "") -> dict:
@@ -716,10 +785,25 @@ try:
     ontology_live_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
     resolved_datasource_id = ontology_live_id
 
-    # Email pipeline: always create Pipe_SendEmailAlert in THIS workspace (or reuse the existing
-    # one with that name). Verified by name so the job action never points at a missing pipeline.
-    resolved_pipeline_id = create_data_pipeline(
-        PIPELINE_NAME, EMBEDDED_PIPELINE_CONTENT, PIPELINE_DESCRIPTION).get("id")
+    # Email pipeline: reuse the existing Pipe_SendEmailAlert if present; otherwise resolve an
+    # Office365 connection + recipient for THIS tenant (the RTI-demo values are not portable) and
+    # build the pipeline definition around them before creating it. Resolving only on create avoids
+    # requiring a connection when a valid pipeline already exists.
+    existing_pipeline = find_item_by_name(PIPELINE_NAME, "DataPipeline")
+    if existing_pipeline:
+        print(f"\u2705 Reusing existing Data Pipeline: {PIPELINE_NAME} (id={existing_pipeline.get('id')})")
+        resolved_pipeline_id = existing_pipeline.get("id")
+    else:
+        email_connection_id = resolve_email_connection_id()
+        email_recipient = ALERT_EMAIL_TO or get_signed_in_upn()
+        if not email_recipient:
+            raise RuntimeError(
+                "Could not determine an alert email recipient — set the `alert_email_to` setting.")
+        print(f"\u2139\ufe0f  Alert email recipient: {email_recipient}")
+        resolved_pipeline_id = create_data_pipeline(
+            PIPELINE_NAME,
+            build_email_pipeline_content(email_connection_id, email_recipient),
+            PIPELINE_DESCRIPTION).get("id")
     if not resolved_pipeline_id:
         raise RuntimeError(f"Could not create or resolve the '{PIPELINE_NAME}' Data Pipeline.")
 
@@ -818,6 +902,8 @@ except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallba
     print("   ", exc)
     print()
     print("Manual fallback:")
+    print("   0. Ensure an 'Office 365 Outlook' connection exists (Settings \u2192 Manage connections")
+    print("      and gateways \u2192 New \u2192 Cloud \u2192 Office 365 Outlook \u2192 Sign in) — the email pipeline needs it.")
     print("   1. In your Fabric workspace: New → Operations agent.")
     print(f"   2. Name it '{ops_agent_name}'.")
     print("   3. Paste the instructions from INSTRUCTIONS above, add Knowledge → the")
