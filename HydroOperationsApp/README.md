@@ -35,6 +35,7 @@ are copied into Rayfin SQL).
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
+- **Operations Agent email alerts** (`RTI_010` / `Pipe_SendEmailAlert`) need a one‑time **OAuth2 Office 365 Outlook** connection created in the Fabric portal (a Service Principal connection can’t send mail) — see [root README → Prerequisites](../README.md) and [DEPLOY.md → Prerequisites](DEPLOY.md#prerequisites).
 
 ## Rayfin SQL data model
 

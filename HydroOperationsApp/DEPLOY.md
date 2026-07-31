@@ -15,6 +15,7 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 - **Azure CLI** (`az`) for the one‑time live‑auth step (Step 8).
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
+- **Email‑alert connection (OAuth2, one‑time, portal)** — the `Pipe_SendEmailAlert` pipeline (Operations Agent alerts, `RTI_010`) uses the **Office 365 Outlook “Send an email”** activity, which sends **from a mailbox** and therefore needs an **OAuth2** connection. It **can’t** be created from a notebook or from a Service Principal (an SP connection tests as *Online* but the activity fails with “Failed to load the connection”). Create it **once** in the portal — see [root README → Prerequisites](../README.md) item 5. `RTI_010` then auto‑detects and reuses it.
 
 ## Identities and permissions
 
@@ -70,6 +71,14 @@ Two per-cluster grants stay manual either way: give the signed-in user **KQL Dat
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
 run it. This creates the Lakehouse, Eventhouse, ontology, dashboard, and agents. It does **not**
 create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
+
+> **Email alerts (one‑time):** for the Operations Agent’s email alerts to send, create an **OAuth2
+> Office 365 Outlook** connection once in the portal — *Settings → Manage connections and gateways →
+> Connections → **+ New** → type **Office 365 Outlook** → auth **OAuth 2.0** → **Sign in** with a
+> mailbox‑enabled **shared/service** account → name it **`RTI_Office365_EmailAlert`** → Create.*
+> `RTI_010` reuses it automatically (by that name, else any OAuth2 Outlook connection); a **Service
+> Principal** connection won’t work (“Failed to load the connection”). Full steps and rationale:
+> [root README → Prerequisites](../README.md).
 
 ## 2. Clone and install
 
