@@ -1,0 +1,15 @@
+{
+  "deployments": {
+    "ws-onthydroselfcontained": {
+      "fabricItemId": "e5d89d11-5b6c-4549-abcd-8de28436fcee",
+      "fabricApiUrl": "https://0f4dac6bad68483d80273d8bf9655d53.pbidedicated.windows.net/webapi/capacities/0f4dac6b-ad68-483d-8027-3d8bf9655d53/workloads/BaaS/BaaSService/automatic/v1/workspaces/a79a4b7e-e508-4fa4-8b6f-15deadca0f34/appbackends/e5d89d11-5b6c-4549-abcd-8de28436fcee/",
+      "fabricWorkspaceId": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+      "fabricTenantId": "ad340c84-1886-4202-a483-2da2cb9168eb",
+      "publishableKey": "pk-JfMNdqSOpk3c0CjeAeRE",
+      "hostingUrl": "https://plush-cove-d23da4865b-swedencentral.webapp.fabricapps.net",
+      "fabricDeepLink": "https://app.fabric.microsoft.com/groups/a79a4b7e-e508-4fa4-8b6f-15deadca0f34/appbackends/e5d89d11-5b6c-4549-abcd-8de28436fcee?ctid=ad340c84-1886-4202-a483-2da2cb9168eb",
+      "deployedAt": "2026-07-31T09:48:21.940Z"
+    }
+  },
+  "active": "ws-onthydroselfcontained"
+}
