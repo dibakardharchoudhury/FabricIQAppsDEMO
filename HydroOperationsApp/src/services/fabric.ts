@@ -390,13 +390,18 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
 
 // The published Fabric Data Agent exposes an OpenAI Assistants-compatible endpoint
 // (.../dataAgents/{id}/aiassistant/openai) that already fans out to its SQL DB + ontology sources.
+// Runtime guidance so answers come back as clean, professional, tabular Markdown.
+const AGENT_FORMAT_INSTRUCTIONS = 'You are the Operations Copilot for a hydropower operations team. Answer in concise, professional GitHub-flavored Markdown. Whenever you return more than one record (facilities, equipment/assets, instruments, signals, or work orders), present them as a Markdown table with clear human-readable column headers and include units where known. Lead with a one-line summary, then the table. Use short ISO-like dates. If the connected sources cannot answer, say so briefly and name the data that would be needed.'
+export type AgentUsage = { prompt: number; completion: number; total: number }
+export type AgentAnswer = { text: string; usage?: AgentUsage }
 // Parses an OpenAI Assistants SSE stream, surfacing incremental assistant text via onProgress.
-type StreamEvent = { object?: string; delta?: { content?: Array<{ text?: { value?: string } }> }; content?: Array<{ text?: { value?: string } }> }
-async function readAssistantStream(body: ReadableStream<Uint8Array>, onProgress?: (text: string) => void): Promise<string> {
+type StreamEvent = { object?: string; delta?: { content?: Array<{ text?: { value?: string } }> }; content?: Array<{ text?: { value?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+async function readAssistantStream(body: ReadableStream<Uint8Array>, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let answer = ''
+  let usage: AgentUsage | undefined
   for (;;) {
     const { value, done } = await reader.read()
     if (done) break
@@ -410,6 +415,9 @@ async function readAssistantStream(body: ReadableStream<Uint8Array>, onProgress?
       if (!data || data === '[DONE]') continue
       let event: StreamEvent
       try { event = JSON.parse(data) as StreamEvent } catch { continue }
+      if (event.usage && typeof event.usage.total_tokens === 'number') {
+        usage = { prompt: event.usage.prompt_tokens ?? 0, completion: event.usage.completion_tokens ?? 0, total: event.usage.total_tokens }
+      }
       const deltas = event.delta?.content
       if (Array.isArray(deltas)) {
         for (const part of deltas) { const chunk = part.text?.value; if (chunk) { answer += chunk; onProgress?.(answer) } }
@@ -419,15 +427,16 @@ async function readAssistantStream(body: ReadableStream<Uint8Array>, onProgress?
       }
     }
   }
-  return answer
+  return { text: answer, usage }
 }
 
-export async function askDataAgent(question: string, onProgress?: (text: string) => void) {
+export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   const base = config?.dataAgentUrl
-  if (!base) return 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.'
+  if (!base) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
+  let usage: AgentUsage | undefined
 
   const baseHeaders: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -443,7 +452,7 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     return res.json()
   }
 
-  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
+  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used', instructions: AGENT_FORMAT_INSTRUCTIONS }) }) as { id: string }
   // Threads are created through Fabric's private endpoint (get-or-create by tag), then driven by id.
   const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
   const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
@@ -462,23 +471,25 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
 
   if ((runRes.headers.get('content-type') ?? '').includes('text/event-stream') && runRes.body) {
     const streamed = await readAssistantStream(runRes.body, onProgress)
-    if (streamed) return streamed
+    usage = streamed.usage ?? usage
+    if (streamed.text) return { text: streamed.text, usage }
     // Stream closed without assistant text — fall through to fetch the final message list below.
   } else {
     // Endpoint ignored streaming and returned the run object as JSON — poll it to completion.
-    let run = await runRes.json() as { id: string; status: string }
+    let run = await runRes.json() as { id: string; status: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
     const deadline = Date.now() + 120_000
     while (['queued', 'in_progress', 'cancelling', 'requires_action'].includes(run.status) && Date.now() < deadline) {
       await delay(2000)
-      run = await oai(`/threads/${thread.id}/runs/${run.id}`) as { id: string; status: string }
+      run = await oai(`/threads/${thread.id}/runs/${run.id}`) as { id: string; status: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
     }
     if (run.status !== 'completed') throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}.`)
+    if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
   }
 
   const list = await oai(`/threads/${thread.id}/messages?order=desc`) as { data?: Array<{ role?: string; content?: Array<{ text?: { value?: string } }> }> }
   const answer = list.data?.find(message => message.role === 'assistant')
     ?.content?.map(part => part.text?.value ?? '').filter(Boolean).join('\n')
-  return answer || 'The Data Agent returned no answer.'
+  return { text: answer || 'The Data Agent returned no answer.', usage }
 }
 
 export type TelemetryReading = { opcuaNodeId: string; eventTime: string; value: number; quality: string }

@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, SquarePen, Wrench, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 import { FacilityMap } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
@@ -47,6 +49,12 @@ const isDoneStatus = (status: string) => status === 'Completed'
 const isTerminalJobStatus = (status: string) => isDoneStatus(status) || status === 'Failed' || status === 'Cancelled'
 // Compact elapsed-time label for a running or finished job (e.g. "3m 12s").
 const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(s / 60); const r = s % 60; return m ? `${m}m ${r}s` : `${r}s` }
+// Sub-minute precision for how long a single Copilot answer took.
+const fmtDuration = (ms: number) => ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : fmtElapsed(ms)
+
+// A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
+type ChatMessage = { role: 'user' | 'agent'; text: string; meta?: { elapsedMs: number; tokens?: number } }
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
 function readPersistedJobs(): Record<string, ProgressJob> {
@@ -87,7 +95,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [seeding, setSeeding] = useState(false)
   const [raising, setRaising] = useState<string>()
-  const [messages, setMessages] = useState([{ role: 'agent', text: 'Ask me about the operation — assets, work orders, ontology relationships or the operational SQL database. I query the published Fabric Data Agent across all its connected sources.' }])
+  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
 
   const facilities = useMemo(() => stid?.facilities ?? [], [stid])
   const facility = facilities.find(item => item.facility_id === selectedFacilityId) ?? facilities[0]
@@ -418,19 +426,25 @@ export default function App() {
   async function sendQuestion(override?: string) {
     const text = (override ?? question).trim(); if (!text || busy) return
     setQuestion(''); setBusy(true)
+    const startedAt = Date.now()
     // Append the user turn plus an empty agent bubble that streamed tokens fill in place.
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    const setLastAgent = (value: string) => setMessages(current => {
+    const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
       const copy = current.slice()
-      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value }; break } }
+      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, meta: meta ?? copy[i].meta }; break } }
       return copy
     })
     try {
-      const answer = await askDataAgent(text, partial => setLastAgent(partial))
-      setLastAgent(answer)
+      const { text: answer, usage } = await askDataAgent(text, partial => setLastAgent(partial))
+      setLastAgent(answer, { elapsedMs: Date.now() - startedAt, tokens: usage?.total })
     }
-    catch (error) { setLastAgent(errorMessage(error)) }
+    catch (error) { setLastAgent(errorMessage(error), { elapsedMs: Date.now() - startedAt }) }
     setBusy(false)
+  }
+
+  function resetChat() {
+    if (busy) return
+    setMessages([INITIAL_MESSAGE]); setQuestion('')
   }
 
   // Ordered first-run setup. Each step explains why it exists and unlocks the next.
@@ -442,12 +456,16 @@ export default function App() {
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
   const setupComplete = steps.every(step => step.done)
-  // Starter prompts grounded in the loaded data so users click questions the agent can actually answer.
+  // Starter prompts grounded in the loaded data (SQL DB + ontology) so users click questions the
+  // agent can actually answer, and phrased to encourage clean tabular output.
   const primaryFacilityId = facility?.facility_id ?? facilities[0]?.facility_id
+  const sampleAssetLabel = equipment[0]?.tag ?? equipment[0]?.equipment_id
   const suggestedPrompts = [
-    'Summarize the open work orders and which assets they affect.',
-    primaryFacilityId ? `Which turbines in ${primaryFacilityId} report Bad or Uncertain signal quality?` : 'Which turbines report Bad or Uncertain signal quality?',
-    'List the equipment and their instruments from the ontology.',
+    'Show all open work orders as a table with the affected asset, priority, and status.',
+    primaryFacilityId ? `List the equipment at ${primaryFacilityId} with manufacturer, model, and criticality.` : 'List all equipment with manufacturer, model, and criticality.',
+    'Which assets have the most open work orders? Give a ranked table.',
+    sampleAssetLabel ? `What instruments are mapped to ${sampleAssetLabel}, and what does each one measure?` : 'List the instruments and what each one measures.',
+    'Summarize the facilities with their type, country, and number of assets.',
   ]
 
   return <div className="app-shell">
@@ -519,7 +537,7 @@ export default function App() {
       </div>
     </main>
 
-    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}><p className={!item.text && item.role === 'agent' ? 'thinking' : undefined}>{item.text || (item.role === 'agent' ? 'Thinking' : '')}</p></div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} title="Send"><Send size={16} /></button></div></aside>}
+    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown></div> : <p className="thinking">Thinking</p>) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
   </div>
 }
 
