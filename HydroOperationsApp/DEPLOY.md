@@ -209,7 +209,14 @@ Remove-Item rayfin/.deployments.json, rayfin/.env.local -ErrorAction SilentlyCon
 
 ### 2. Register a fresh SPA in the new tenant
 
-App registrations are tenant-scoped — the old client id won't work. Create one (see
+> **Same tenant, only a different workspace/region?** The SPA app registration is **tenant‑scoped**, so
+> **reuse the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID`** — do **not** create a new one. Keep it (and
+> `RAYFIN_PUBLIC_TENANT_ID`) in the new `.env`; only `FABRIC_WORKSPACE_NAME` + `RAYFIN_PUBLIC_WORKSPACE_ID`
+> change. `npm run setup-live-auth` then just **adds the new hosting origin** to the existing app and
+> re‑confirms consent (already `AllPrincipals`, so it's a no‑op). Skip the `az ad app create` below.
+
+A **different tenant** is the only case that needs a new app. App registrations are tenant-scoped — the
+old client id won't work. Create one (see
 [Identities → App SPA](#b-app-spa-created-once-then-automated)) and put its id in the new `.env`:
 
 ```powershell
@@ -294,6 +301,8 @@ Work through these in order:
 | **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**) or re‑run `RTI_001`, then retry. |
 | **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
 | Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
+| **`rayfin up`/`deploy` → static deploy `401 Unauthorized`** (backend + DB apply succeed) | Rayfin's cached Fabric token is stale/expired. `npx rayfin login --select` (pick the target tenant), then retry just the static step: `rayfin up staticapp deploy`. The backend was already provisioned, so **don't re‑run the full `up`**. |
+| **Consent popup on Step 2 (Seed & provision)** | **Expected — click Accept.** These are the Fabric REST scopes (`Workspace.Read.All` = "View all workspaces", `Item.Execute.All` = "execute on all Fabric items") that `setup-live-auth` intentionally leaves to the in‑app popup on first use. One‑time per user; tick "Consent on behalf of your organisation" only if you're an admin. |
 | Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
 | KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
 | Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |

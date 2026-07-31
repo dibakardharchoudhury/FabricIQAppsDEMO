@@ -76,12 +76,28 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
 
 7. **Two per-cluster grants that stay manual** (no API for them here): give the signed-in user
    **KQL Database Viewer** on the Eventhouse, and add the app origin to the Eventhouse cluster's
-   **CORS** allow-list.
+   **CORS** allow-list. These only matter once `01_Pipe_Setup` has created the Eventhouse.
 
 8. **Finish** with DEPLOY.md Steps 1 (`01_Pipe_Setup` in Fabric), 7 (seed SQL + wire GraphQL via
    `RTI_011`), 8 (already covered by `setup-live-auth`), 9 (start the OPC-UA stream). A brand-new
    workspace is EMPTY of RTI artifacts, so live telemetry/STID panels stay blank until
    `01_Pipe_Setup` and the stream run.
+   - **Expected in-app consent popup** the first time the user clicks **Seed & provision**: it asks
+     for **Workspace.Read.All** ("View all workspaces") + **Item.Execute.All** ("execute on all
+     Fabric items"). This is BY DESIGN — `setup-live-auth` pre-grants ONLY the ADX + Power BI
+     scopes and leaves these Fabric REST scopes to the in-app popup. Tell the user to click
+     **Accept** (one-time per user). It is NOT an error.
+
+## Same tenant, different workspace/region (the common redeploy)
+If the target is the SAME tenant as a prior deploy (only the workspace or capacity region changed):
+- **REUSE the existing SPA** `RAYFIN_PUBLIC_AAD_CLIENT_ID` — an app registration is tenant-scoped, so
+  do NOT run `az ad app create`. Keep the same client id + `RAYFIN_PUBLIC_TENANT_ID` in `.env`; only
+  `FABRIC_WORKSPACE_NAME` + `RAYFIN_PUBLIC_WORKSPACE_ID` change.
+- Still reset local state (step 1) and re-point `.env` to the new workspace GUID (resolve by name via
+  `GET /v1/workspaces`). `setup-live-auth` just ADDS the new hosting origin to the existing app and
+  re-confirms consent (already `AllPrincipals` → no-op).
+- Verify the app afterwards: `az ad app show --id <appId> --query spa.redirectUris` and the SP's
+  `oauth2PermissionGrants` (both `GraphQLApi.Execute.All` + `user_impersonation` as `AllPrincipals`).
 
 ## Feature & region gating (Fabric App Items preview)
 `rayfin up` creating the Rayfin item needs the **"Enable Fabric App Items (preview)"** tenant
@@ -98,6 +114,9 @@ setting (`AppBackendTenant`). If it fails with **403 "The feature is not availab
 |---|---|
 | `rayfin up` 404 "workspace not found" | Stale `active` pointer in `.deployments.json` → delete it (step 1). |
 | `rayfin up` 403 "feature is not available" | AppBackendTenant off/propagating, or region-gated → verify setting; move to Sweden Central. |
+| `rayfin up`/`deploy` static step **401 Unauthorized** (backend + DB apply already succeeded) | Cached Fabric token stale → `rayfin login --select` (target tenant), then retry ONLY `rayfin up staticapp deploy`. Do NOT re-run full `up`. After it prints the new hosting URL, `rayfin up --exclude-services staticHosting --yes` to push the redirect to the backend, then `npm run setup-live-auth`. |
+| Consent popup on **Seed & provision** (Workspace.Read.All / Item.Execute.All) | Expected in-app Fabric consent → click **Accept**. Not covered by `setup-live-auth` by design. |
+| Deployed to the wrong workspace (e.g. a `*Test` ws) | `.env` `FABRIC_WORKSPACE_NAME`/`RAYFIN_PUBLIC_WORKSPACE_ID` pointed at the wrong ws → resolve the intended ws GUID by name via `GET /v1/workspaces`, fix `.env`, re-run `rayfin up --workspace-id <guid> --yes`. |
 | npm **EUSAGE** | Nested `npx` inside `-c` → call `rayfin`/`npm run` directly. |
 | "Project name not found in rayfin.yml" | `-c` shell ran from repo root → embed `cd /d …\HydroOperationsApp &&`. |
 | Connect popup **AADSTS50011** | Redirect URI missing → `npm run setup-live-auth` (don't add by hand). |
