@@ -2,7 +2,7 @@
 import '@google/model-viewer'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Asset3DModelRecord } from '../services/rayfin'
-import { twinStatus, twinValueText, type TwinSignal } from '../twin'
+import { twinStatus, twinValueText, ageLabel, freshnessOf, type TwinSignal } from '../twin'
 
 // `<model-viewer>` is a framework-agnostic web component; declare it so TSX accepts it.
 declare global {
@@ -90,6 +90,11 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
     return c
   }, [signals])
 
+  // Newest reading time across this asset's hotspots — drives the live/stale badge in the twin header.
+  const newestSignalMs = useMemo(() => signals.reduce((max, s) => { const t = s.eventTime ? Date.parse(s.eventTime) : NaN; return Number.isNaN(t) ? max : Math.max(max, t) }, 0), [signals])
+  const newestSignalIso = newestSignalMs ? new Date(newestSignalMs).toISOString() : undefined
+  const twinFresh = freshnessOf(newestSignalIso) === 'live'
+
   // Read the model's real bounds once loaded. The parent remounts this component per model
   // (keyed on modelUrl), so state starts fresh — no synchronous reset needed here.
   useEffect(() => {
@@ -125,7 +130,9 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
           <em className="warn" title="Uncertain">{counts.warn}</em>
           <em className="crit" title="Bad / open order">{counts.crit}</em>
         </span>
-        {updatedAt && <small title="Last telemetry refresh">{new Date(updatedAt).toLocaleTimeString()}</small>}
+        {newestSignalMs
+          ? <small className={`twin-live-age ${twinFresh ? 'fresh' : 'stale'}`} title={`Newest event ${new Date(newestSignalMs).toLocaleTimeString()}`}>{twinFresh ? 'Live' : 'Stale'} · {ageLabel(newestSignalIso)}</small>
+          : updatedAt && <small title="Last telemetry refresh">{new Date(updatedAt).toLocaleTimeString()}</small>}
       </div>
       <model-viewer
         ref={viewer as React.Ref<HTMLElement>}
@@ -177,6 +184,9 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
             <small>
               Quality: {active.quality ?? 'no recent event'}
               {active.hasOpenIssue ? ' · open work order' : ''}
+            </small>
+            <small className={`twin-detail-age ${freshnessOf(active.eventTime)}`}>
+              <i />Updated {ageLabel(active.eventTime)}
             </small>
           </div>
           <button className="twin-detail-close" onClick={() => setActiveId(null)} title="Close" aria-label="Close">

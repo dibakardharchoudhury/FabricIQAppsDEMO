@@ -13,7 +13,7 @@ import {
   updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
-import { twinStatus, type TwinSignal, type TwinStatus } from './twin'
+import { twinStatus, ageLabel, freshnessOf, type TwinSignal, type TwinStatus } from './twin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
@@ -28,7 +28,7 @@ const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : 
 // Compact absolute + relative timestamps for live telemetry readings.
 const fmtClock = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 const fmtAgo = (iso: string) => { const ms = Date.now() - new Date(iso).getTime(); if (Number.isNaN(ms)) return ''; const m = Math.round(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`; const h = Math.round(m / 60); if (h < 24) return `${h}h ago`; return `${Math.round(h / 24)}d ago` }
-// Seconds-granular freshness label for the live-telemetry indicator, which polls every 12s.
+// Seconds-granular freshness label for the live-telemetry indicator, which polls every 10s.
 const fmtSince = (ms: number) => { if (ms < 5000) return 'just now'; const s = Math.round(ms / 1000); if (s < 60) return `${s}s ago`; const m = Math.round(s / 60); if (m < 60) return `${m}m ago`; return `${Math.round(m / 60)}h ago` }
 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
@@ -119,6 +119,9 @@ export default function App() {
   const instruments = useMemo(() => stid?.instruments.filter(item => item.equipment_id === selected?.equipment_id) ?? [], [stid, selected])
   const facilityInstruments = useMemo(() => stid?.instruments.filter(item => !facility || item.facility_id === facility.facility_id) ?? [], [stid, facility])
   const readings = useMemo(() => new Map(telemetry.map(item => [item.opcuaNodeId, item])), [telemetry])
+  // Newest reading time across the whole stream — drives the "Live vs Stale" pill off the DATA age
+  // (not the fetch age), so a stopped stream reads as stale even while polling continues.
+  const newestEventMs = useMemo(() => telemetry.reduce((max, r) => { const t = Date.parse(r.eventTime); return Number.isNaN(t) ? max : Math.max(max, t) }, 0), [telemetry])
   const openOrders = orders.filter(order => openStatuses.has(order.status.toLowerCase()))
   const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
   // Open work orders narrowed to the selected facility (matched via each order's equipment → facility).
@@ -175,6 +178,7 @@ export default function App() {
       unit: instrument.unit,
       quality: reading?.quality,
       hasOpenIssue: nodesWithOpenOrder.has(instrument.opcua_node_id),
+      eventTime: reading?.eventTime,
     }
   }), [instruments, readings, nodesWithOpenOrder])
   const twinHealth = useMemo(() => {
@@ -208,7 +212,7 @@ export default function App() {
       const reading = readings.get(inst.opcua_node_id)
       const status = twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })
       health[status]++
-      return { label: inst.tag ?? inst.instrument_id, value: reading?.value, unit: inst.unit, quality: reading?.quality, status }
+      return { label: inst.tag ?? inst.instrument_id, value: reading?.value, unit: inst.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
     })
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return {
@@ -268,6 +272,8 @@ export default function App() {
 
   // Once telemetry is connected, re-poll the Eventhouse on a timer so the map markers and 3D twin
   // hotspots recolor/refresh to the latest OPC UA signal quality without a manual reconnect.
+  // 10s balances "visibly live" against Eventhouse/front-end load (one small arg_max query per poll,
+  // paused while the tab is hidden or a request is still in flight).
   const telemetryLive = telemetry.length > 0
   useEffect(() => {
     if (!telemetryLive) return
@@ -278,11 +284,11 @@ export default function App() {
       try { await refreshTelemetry() } catch { /* transient poll failure — keep the last good readings on screen */ }
       finally { inFlight = false }
     }
-    const id = window.setInterval(poll, 12_000)
+    const id = window.setInterval(poll, 10_000)
     return () => window.clearInterval(id)
   }, [telemetryLive, refreshTelemetry])
 
-  // A 1s ticker so the "updated Xs ago" freshness label counts up between the 12s data polls.
+  // A 1s ticker so the "updated Xs ago" freshness labels count up between the 10s data polls.
   const [, setTelemetryTick] = useState(0)
   useEffect(() => {
     if (!telemetryLive) return
@@ -290,6 +296,11 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [telemetryLive])
   const telemetryAgo = telemetryAt ? fmtSince(Date.now() - telemetryAt) : ''
+  // Data freshness for the topbar pill: green "Live" while readings arrive within a poll window,
+  // amber "Stale" (with the real age) once the newest event ages out — the stream has likely paused.
+  const dataAgeMs = newestEventMs ? Date.now() - newestEventMs : Infinity
+  const dataFresh = dataAgeMs < 30_000
+  const dataAgo = newestEventMs ? fmtSince(dataAgeMs) : ''
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
   // each from its own elapsed time — eases monotonically toward ~95% over the expected duration.
@@ -627,7 +638,7 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
           <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
-          {telemetryLive && <span className="live-pill" title={telemetryAt ? `Auto-refreshing every 12s · last updated ${new Date(telemetryAt).toLocaleTimeString()}` : 'Live telemetry'}><i className="live-dot" />Live<em>· {telemetryAgo}</em></span>}
+          {telemetryLive && <span className={`live-pill ${dataFresh ? 'fresh' : 'stale'}`} title={`Polling the Eventhouse every 10s${telemetryAt ? ` · last checked ${new Date(telemetryAt).toLocaleTimeString()}` : ''}${newestEventMs ? ` · newest event ${new Date(newestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataFresh ? 'Live' : 'Stale'}<em>· {dataAgo || telemetryAgo}</em></span>}
           {telemetryLive && <button className="refresh-btn" onClick={() => void manualRefreshTelemetry()} disabled={telemetryBusy} title="Refresh live telemetry now"><RefreshCw size={14} className={telemetryBusy ? 'spin' : undefined} /></button>}
         </div>
       </div>
@@ -678,7 +689,7 @@ export default function App() {
       </div>
 
       <div className="detail-grid">
-        <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span>{reading ? <>{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></> : 'No event'}</span><em className={reading?.quality ? reading.quality.toLowerCase() : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
+        <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); const fresh = freshnessOf(reading?.eventTime); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span className="sig-val">{reading ? <><span className="sig-num">{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></span><span className={`sig-age ${fresh}`} title={reading.eventTime ? `Event ${new Date(reading.eventTime).toLocaleString()}` : undefined}><i />{ageLabel(reading.eventTime)}</span></> : <span className="sig-num muted">No event</span>}</span><em className={reading?.quality ? reading.quality.toLowerCase() : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
         <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{user ? `${scopedOpenCount} open · ${scopedOrders.length} shown` : 'Rayfin operational SQL'}</p></div><div className="orders-head-actions"><div className="order-scope" role="group" aria-label="Work order scope"><button className={orderScope === 'asset' ? 'on' : ''} onClick={() => setOrderScope('asset')} disabled={!selected}>Asset</button><button className={orderScope === 'facility' ? 'on' : ''} onClick={() => setOrderScope('facility')}>Facility</button><button className={orderScope === 'all' ? 'on' : ''} onClick={() => setOrderScope('all')}>All</button></div><button className="icon-button" title="Create work order for the selected asset" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div></div><div className="order-list">{scopedOrders.map(order => <article className={order.equipmentId === selected?.equipment_id ? 'order current' : 'order'} key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber} · {order.equipmentId}</small><div className="order-controls"><select className="order-status" value={order.status} onChange={event => void changeOrderStatus(order.id, event.target.value)} aria-label="Work order status">{(orderStatuses.includes(order.status) ? orderStatuses : [order.status, ...orderStatuses]).map(status => <option key={status} value={status}>{status}</option>)}</select><span className={`priority-pill ${order.priority.toLowerCase()}`}>{order.priority}</span><button className="order-delete" title="Delete work order" onClick={() => void removeOrder(order)}><Trash2 size={13} /></button></div></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !scopedOrders.length && <div className="inline-empty">{orderScope === 'asset' ? 'No work orders for this asset. Raise one from a flagged signal above or with the + button.' : orderScope === 'facility' ? 'No work orders for this facility yet.' : 'No work orders yet.'}</div>}</div></section>
       </div>
 

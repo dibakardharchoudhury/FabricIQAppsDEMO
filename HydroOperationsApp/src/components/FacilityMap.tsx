@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import { LatLngBounds } from 'leaflet'
 import type { TwinStatus } from '../twin'
+import { ageLabel, freshnessOf } from '../twin'
 
 export type MapHealth = { ok: number; warn: number; crit: number; nodata: number }
 
@@ -27,7 +28,7 @@ export type AssetPin = {
   worst: TwinStatus
   health: MapHealth
   openOrders: number
-  signals: { label: string; value?: number | string; unit?: string; quality?: string; status: TwinStatus }[]
+  signals: { label: string; value?: number | string; unit?: string; quality?: string; status: TwinStatus; eventTime?: string }[]
 }
 
 const STATUS_COLOR: Record<TwinStatus, string> = { ok: '#16a34a', warn: '#f59e0b', crit: '#dc2626', nodata: '#94a3b8' }
@@ -162,6 +163,7 @@ export function FacilityMap({ facilities, assets, selectedId, selectedAssetId, o
                         <span className={`dot ${sig.status}`} />
                         <span className="map-sig-name">{sig.label}</span>
                         <span className="map-sig-val">{valueText(sig.value, sig.unit)}</span>
+                        <span className={`map-sig-age ${freshnessOf(sig.eventTime)}`} title={sig.eventTime ? new Date(sig.eventTime).toLocaleString() : undefined}>{ageLabel(sig.eventTime)}</span>
                       </div>
                     ))}
                     {!pin.signals.length && <div className="map-sig muted">No mapped signals.</div>}
