@@ -572,10 +572,29 @@ def build_email_pipeline_content(connection_id: str, to_address: str) -> dict:
 
 
 def create_data_pipeline(display_name: str, definition_obj: dict, description: str = "") -> dict:
-    """Create the Data Pipeline from the embedded definition (reuse if it already exists)."""
+    """Create the Data Pipeline, or REWIRE an existing one by pushing definition_obj via
+    updateDefinition. Always writes the definition so a stale connection id (from a prior deploy)
+    can never linger — the pipeline is guaranteed to reference the connection we just resolved."""
+    parts = [{
+        "path": "pipeline-content.json",
+        "payload": encode_payload(definition_obj),
+        "payloadType": "InlineBase64",
+    }]
     existing = find_item_by_name(display_name, "DataPipeline")
     if existing:
-        print(f"✅ Reusing existing Data Pipeline: {display_name} (id={existing.get('id')})")
+        item_id = existing.get("id")
+        url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/updateDefinition"
+        response = api_request("POST", url, data={"definition": {"parts": parts}}, timeout=180)
+        if response.status_code == 202:
+            operation_url = response.headers.get("Location")
+            if operation_url:
+                wait_for_lro(operation_url)
+        elif response.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to rewire Data Pipeline '{display_name}': "
+                f"{response.status_code} {response.text}")
+        print(f"\u267b\ufe0f  Rewired existing Data Pipeline to the resolved connection: "
+              f"{display_name} (id={item_id})")
         return existing
 
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
@@ -583,15 +602,7 @@ def create_data_pipeline(display_name: str, definition_obj: dict, description: s
         "displayName": display_name,
         "description": description,
         "type": "DataPipeline",
-        "definition": {
-            "parts": [
-                {
-                    "path": "pipeline-content.json",
-                    "payload": encode_payload(definition_obj),
-                    "payloadType": "InlineBase64",
-                }
-            ]
-        },
+        "definition": {"parts": parts},
     }
     if target_folder_id:
         body["folderId"] = target_folder_id
@@ -861,25 +872,21 @@ try:
     ontology_live_id = ops_agent_ontology_datasource_id or resolve_ontology_id()
     resolved_datasource_id = ontology_live_id
 
-    # Email pipeline: reuse the existing Pipe_SendEmailAlert if present; otherwise resolve an
-    # Office365 connection + recipient for THIS tenant (the RTI-demo values are not portable) and
-    # build the pipeline definition around them before creating it. Resolving only on create avoids
-    # requiring a connection when a valid pipeline already exists.
-    existing_pipeline = find_item_by_name(PIPELINE_NAME, "DataPipeline")
-    if existing_pipeline:
-        print(f"\u2705 Reusing existing Data Pipeline: {PIPELINE_NAME} (id={existing_pipeline.get('id')})")
-        resolved_pipeline_id = existing_pipeline.get("id")
-    else:
-        email_connection_id = resolve_email_connection_id()
-        email_recipient = ALERT_EMAIL_TO or get_signed_in_upn()
-        if not email_recipient:
-            raise RuntimeError(
-                "Could not determine an alert email recipient — set the `alert_email_to` setting.")
-        print(f"\u2139\ufe0f  Alert email recipient: {email_recipient}")
-        resolved_pipeline_id = create_data_pipeline(
-            PIPELINE_NAME,
-            build_email_pipeline_content(email_connection_id, email_recipient),
-            PIPELINE_DESCRIPTION).get("id")
+    # Email pipeline: resolve an Office365 connection + recipient for THIS tenant (the RTI-demo
+    # values are not portable), build the pipeline definition around them, and create-or-REWIRE
+    # Pipe_SendEmailAlert so it ALWAYS references the connection we just resolved (a reused pipeline
+    # from a prior deploy would otherwise keep a stale/invalid connection id).
+    email_connection_id = resolve_email_connection_id()
+    email_recipient = ALERT_EMAIL_TO or get_signed_in_upn()
+    if not email_recipient:
+        raise RuntimeError(
+            "Could not determine an alert email recipient — set the `alert_email_to` setting.")
+    print(f"\u2139\ufe0f  Alert email connection: {email_connection_id}")
+    print(f"\u2139\ufe0f  Alert email recipient: {email_recipient}")
+    resolved_pipeline_id = create_data_pipeline(
+        PIPELINE_NAME,
+        build_email_pipeline_content(email_connection_id, email_recipient),
+        PIPELINE_DESCRIPTION).get("id")
     if not resolved_pipeline_id:
         raise RuntimeError(f"Could not create or resolve the '{PIPELINE_NAME}' Data Pipeline.")
 
