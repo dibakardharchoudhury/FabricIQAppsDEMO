@@ -423,6 +423,9 @@ export default function App() {
 
   async function connectTelemetry() {
     setTelemetryState('Connecting...'); setNotice(undefined)
+    // Always rediscover on a manual click: a config cache captured before 01_Pipe_Setup
+    // (when the Eventhouse didn't yet exist) would otherwise report "No Eventhouse found" all session.
+    clearWorkspaceConfigCache()
     try {
       let data = await queryLatestTelemetry()
       if (data === null) { await beginInteractiveConnect('telemetry'); data = await queryLatestTelemetry() }
