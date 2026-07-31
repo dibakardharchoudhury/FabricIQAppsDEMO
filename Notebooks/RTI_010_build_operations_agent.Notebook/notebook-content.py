@@ -469,32 +469,64 @@ def _is_office365_connection(conn: dict) -> bool:
     return ctype.startswith("office365")
 
 
-def discover_office365_connection_type() -> tuple:
-    """Return (type, creationMethod) for the Office 365 connector that supports ServicePrincipal.
-
-    Discovered from GET /v1/connections/supportedConnectionTypes so the exact token isn't guessed;
-    falls back to ('Office365','Office365') if discovery is unavailable.
-    """
-    url = f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes?showAllCreationMethods=true"
+def _list_supported_connection_types() -> list:
+    """All connector metadata the API reports (GET /v1/connections/supportedConnectionTypes, paged)."""
+    entries, url = [], (f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes"
+                        "?showAllCreationMethods=true")
     while url:
         response = api_request("GET", url)
         if response.status_code != 200:
-            break
+            raise RuntimeError(
+                f"Could not list supported connection types: {response.status_code} {response.text}")
         body = response.json()
-        for entry in body.get("value", []):
-            ctype = str(entry.get("type", ""))
-            if ctype.lower().replace(" ", "").startswith("office365") \
-                    and "ServicePrincipal" in (entry.get("supportedCredentialTypes") or []):
-                methods = entry.get("creationMethods") or []
-                return ctype, (methods[0]["name"] if methods else ctype)
+        entries.extend(body.get("value", []))
         token = body.get("continuationToken")
         url = (f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes"
                f"?showAllCreationMethods=true&continuationToken={token}") if token else None
-    return "Office365", "Office365"
+    return entries
+
+
+def discover_office365_connection_type() -> tuple:
+    """Return (type, creationMethodName) for the connector the Office365Email activity binds to.
+
+    The connection TYPE is the pipeline activity's OWN kind (Office365Email) — the connection must
+    match the activity, so there is nothing to guess. supportedConnectionTypes is queried only to read
+    that kind's exact creationMethod name and confirm ServicePrincipal support; the email/Office365/
+    Outlook candidates are printed so the reported tokens are always visible.
+    """
+    kind = EMBEDDED_PIPELINE_CONTENT["properties"]["activities"][0]["type"]  # "Office365Email"
+    entries = _list_supported_connection_types()
+
+    def norm(value):
+        return str(value).lower().replace(" ", "").replace("-", "")
+
+    candidates = [e for e in entries
+                  if any(k in norm(e.get("type")) for k in ("office365", "outlook", "microsoft365", "m365"))]
+    if candidates:
+        print("🔎 Email/Office365 connector types the tenant reports:")
+        for e in candidates:
+            methods = ", ".join(m.get("name", "") for m in (e.get("creationMethods") or [])) or "-"
+            print(f"   • type={e.get('type')!r}  creationMethods=[{methods}]  "
+                  f"credentials={e.get('supportedCredentialTypes')}")
+
+    match = next((e for e in entries if norm(e.get("type")) == norm(kind)), None)
+    if match is None:
+        raise RuntimeError(
+            f"The Office365Email connector kind {kind!r} was not found in this tenant's "
+            "supportedConnectionTypes (see the candidates printed above). Set "
+            "`alert_email_connection_id` to an existing connection instead.")
+    if "ServicePrincipal" not in (match.get("supportedCredentialTypes") or []):
+        raise RuntimeError(
+            f"Connector {match.get('type')!r} does not support ServicePrincipal creds in this tenant "
+            f"(supports {match.get('supportedCredentialTypes')}). Create the connection in the portal "
+            "and set `alert_email_connection_id` instead.")
+    methods = match.get("creationMethods") or []
+    return match.get("type"), (methods[0].get("name") if methods else match.get("type"))
+
 
 
 def create_office365_service_principal_connection(display_name: str) -> str:
-    """Create a ShareableCloud Office 365 Email connection with Service Principal creds from Key Vault.
+    """Create a ShareableCloud Office 365 email connection with Service Principal creds from Key Vault.
 
     allowUsageInUserControlledCode=True is the 'Allow Code-First Artifacts like Notebooks to access
     this connection' preview flag from the New-connection dialog. Returns the new connection id.
