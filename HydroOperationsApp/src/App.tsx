@@ -117,6 +117,10 @@ export default function App() {
   const readings = useMemo(() => new Map(telemetry.map(item => [item.opcuaNodeId, item])), [telemetry])
   const openOrders = orders.filter(order => openStatuses.has(order.status.toLowerCase()))
   const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
+  // Open work orders narrowed to the selected facility (matched via each order's equipment → facility).
+  const facilityOpenOrders = facility
+    ? openOrders.filter(order => equipmentById.get(order.equipmentId)?.facility_id === facility.facility_id)
+    : openOrders
   // Work orders scoped to the selected asset, the whole facility, or everything. Selected asset's
   // orders float to the top; newest-first is preserved within each group (orders arrive sorted desc).
   const scopedOrders = useMemo(() => {
@@ -135,13 +139,25 @@ export default function App() {
   const lowStockParts = spareParts.filter(part => part.quantityOnHand <= part.reorderLevel)
   // OPC UA quality flags: surface Bad/Uncertain live signals and let the operator raise a work order.
   const instrumentByNode = useMemo(() => new Map((stid?.instruments ?? []).map(item => [item.opcua_node_id, item])), [stid])
-  const flaggedSignals = useMemo<FlaggedSignal[]>(() => telemetry
+  // Live telemetry narrowed to the selected facility: match each reading's instrument (or, for a
+  // still-unmapped node, the equipment tag encoded in the OPC UA node id) to this facility's assets.
+  const facilityTelemetry = useMemo(() => {
+    if (!stid || !facility) return telemetry
+    const facilityTags = new Set(equipment.map(asset => asset.tag).filter(Boolean))
+    return telemetry.filter(reading => {
+      const instrument = instrumentByNode.get(reading.opcuaNodeId)
+      if (instrument?.facility_id) return instrument.facility_id === facility.facility_id
+      const tag = equipmentTagFromNode(reading.opcuaNodeId)
+      return tag ? facilityTags.has(tag) : false
+    })
+  }, [telemetry, stid, facility, equipment, instrumentByNode])
+  const flaggedSignals = useMemo<FlaggedSignal[]>(() => facilityTelemetry
     .filter(reading => ['bad', 'uncertain'].includes((reading.quality ?? '').toLowerCase()))
     .sort((a, b) => new Date(b.eventTime).getTime() - new Date(a.eventTime).getTime())
     .map(reading => {
       const instrument = instrumentByNode.get(reading.opcuaNodeId)
       return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
-    }), [telemetry, instrumentByNode, equipmentById])
+    }), [facilityTelemetry, instrumentByNode, equipmentById])
   const nodesWithOpenOrder = useMemo(() => new Set(openOrders.map(order => order.opcuaNodeId)), [openOrders])
   // Live "digital twin" overlay: each instrument on the selected asset becomes a health-coded hotspot
   // on the 3D model — value + OPC UA quality from the Eventhouse, plus open-work-order state.
@@ -553,8 +569,8 @@ export default function App() {
         <div><MapPin size={17} /><span>Facilities<strong>{stid ? facilities.length : '—'}</strong><small>Lakehouse STID</small></span></div>
         <div><Factory size={17} /><span>Assets<strong>{stid ? equipment.length : '—'}</strong><small>This facility</small></span></div>
         <div><Gauge size={17} /><span>Instruments<strong>{stid ? facilityInstruments.length : '—'}</strong><small>Mapped OPC UA nodes</small></span></div>
-        <div><Activity size={17} /><span>Live signals<strong>{telemetry.length || '—'}</strong><small>Eventhouse · latest per node · last 24h</small></span></div>
-        <div><Wrench size={17} /><span>Open work orders<strong>{user ? openOrders.length : '—'}</strong><small>Rayfin SQL</small></span></div>
+        <div><Activity size={17} /><span>Live signals<strong>{stid ? (facilityTelemetry.length || '—') : (telemetry.length || '—')}</strong><small>Eventhouse · this facility · 24h</small></span></div>
+        <div><Wrench size={17} /><span>Open work orders<strong>{user ? facilityOpenOrders.length : '—'}</strong><small>This facility</small></span></div>
       </section>
 
       {flaggedSignals.length > 0 && <section className="quality-alert">

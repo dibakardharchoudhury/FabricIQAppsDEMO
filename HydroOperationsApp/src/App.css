@@ -128,6 +128,133 @@ main { padding-top: 26px; }
 .think-dots i:nth-child(3) { animation-delay: .3s; }
 @keyframes think-shimmer { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
 @keyframes think-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .45; } 40% { transform: translateY(-5px); opacity: 1; } }
+
+/* ============================================================================
+   Modern visual refresh — gradients, glass, elevation, motion. Additive layer;
+   overrides earlier rules by cascade order without changing markup structure.
+   ========================================================================== */
+:root {
+  --cp-grad-accent: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
+  --cp-grad-mark: linear-gradient(135deg, #14b8a6 0%, #0f766e 55%, #0e7490 100%);
+  --cp-grad-text: linear-gradient(120deg, var(--cp-ink) 0%, var(--cp-accent) 100%);
+}
+
+/* Ambient mesh background so the page reads as a product surface, not a form. */
+.app-shell {
+  background:
+    radial-gradient(1100px 460px at 10% -10%, rgba(20, 184, 166, .12), transparent 58%),
+    radial-gradient(900px 420px at 100% -6%, rgba(8, 145, 178, .10), transparent 55%),
+    var(--cp-bg);
+  background-attachment: fixed;
+}
+
+/* Glassy sticky topbar with a gradient brand mark. */
+.topbar {
+  background: color-mix(in srgb, var(--cp-surface) 78%, transparent);
+  backdrop-filter: saturate(1.35) blur(12px);
+  -webkit-backdrop-filter: saturate(1.35) blur(12px);
+  box-shadow: 0 1px 0 rgba(16, 24, 40, .04), 0 6px 22px rgba(15, 58, 58, .06);
+}
+.brand-mark, .copilot-icon { background: var(--cp-grad-mark); box-shadow: 0 6px 16px rgba(15, 118, 110, .32); }
+
+/* Hero header — the page's focal point. */
+.page-head {
+  position: relative; overflow: hidden;
+  padding: 24px 26px; margin-bottom: 22px;
+  border: 1px solid color-mix(in srgb, var(--cp-accent) 12%, var(--cp-border));
+  border-radius: 18px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--cp-accent) 11%, var(--cp-surface)) 0%, var(--cp-surface) 52%);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 14px 34px rgba(16, 24, 40, .07);
+}
+.page-head::after {
+  content: ''; position: absolute; right: -60px; top: -80px; width: 260px; height: 260px;
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, rgba(20, 184, 166, .20), transparent 70%);
+}
+.page-head > div { position: relative; z-index: 1; }
+.page-head h1 {
+  background: var(--cp-grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.copilot-button {
+  position: relative; z-index: 1;
+  background: var(--cp-grad-accent); box-shadow: 0 6px 16px rgba(15, 118, 110, .30);
+  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+.copilot-button:hover { transform: translateY(-1px); filter: brightness(1.05); background: var(--cp-grad-accent); box-shadow: 0 10px 22px rgba(15, 118, 110, .34); }
+
+/* Metric cards — individual elevated tiles with icon chips and gradient values. */
+.metrics {
+  border: 0; background: transparent; box-shadow: none; overflow: visible;
+  gap: 14px; margin-bottom: 20px;
+}
+.metrics > div {
+  position: relative; overflow: hidden;
+  padding: 16px 18px;
+  border: 1px solid var(--cp-border); border-radius: 15px;
+  background: var(--cp-surface);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px rgba(16, 24, 40, .05);
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+.metrics > div:last-child { border-right: 1px solid var(--cp-border); }
+.metrics > div::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--cp-grad-accent);
+}
+.metrics > div:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--cp-accent) 30%, var(--cp-border));
+  box-shadow: 0 2px 4px rgba(16, 24, 40, .06), 0 18px 34px rgba(16, 24, 40, .10);
+}
+.metrics svg {
+  width: 36px; height: 36px; padding: 8px; box-sizing: border-box; flex: 0 0 auto;
+  border-radius: 11px; color: var(--cp-accent);
+  background: color-mix(in srgb, var(--cp-accent) 12%, var(--cp-surface));
+}
+.metrics strong {
+  background: var(--cp-grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Facility switcher — make the active facility unmistakable. */
+.facility-chip {
+  border-radius: 12px;
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+}
+.facility-chip:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--cp-accent) 45%, var(--cp-border));
+  box-shadow: 0 6px 16px rgba(16, 24, 40, .09);
+}
+.facility-chip.active {
+  border-color: transparent;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--cp-accent) 14%, var(--cp-surface)), var(--cp-surface));
+  box-shadow: inset 0 0 0 1.5px var(--cp-accent), 0 8px 20px rgba(15, 118, 110, .16);
+}
+
+/* Panels — soft elevation, gradient header wash, lift on hover. */
+.panel {
+  border-radius: 14px; overflow: hidden;
+  transition: box-shadow .18s ease, transform .18s ease;
+}
+.panel:hover { box-shadow: 0 2px 6px rgba(16, 24, 40, .06), 0 18px 40px rgba(16, 24, 40, .09); }
+.panel-head {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cp-accent) 5%, var(--cp-surface)), var(--cp-surface));
+}
+
+/* Quality-alert banner — warmer, gradient framing. */
+.quality-alert {
+  border-color: color-mix(in srgb, var(--cp-warning) 38%, var(--cp-border));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--cp-warning) 13%, var(--cp-surface)), var(--cp-surface) 60%);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px rgba(245, 158, 11, .10);
+}
+.quality-alert-head > svg { flex: 0 0 auto; }
+
+/* Accent-filled prompt send + copilot avatar consistency. */
+.copilot-icon { color: #fff; }
+
+@media (max-width: 1080px) {
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .page-head { flex-direction: column; align-items: flex-start; gap: 14px; }
+}
 .copilot-suggestions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .copilot-suggestions .suggestion { text-align: left; font-size: 12px; line-height: 1.35; padding: 9px 11px; border: 1px solid var(--cp-border); border-radius: 10px; background: var(--cp-surface); color: var(--cp-text); cursor: pointer; }
 .copilot-suggestions .suggestion:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
