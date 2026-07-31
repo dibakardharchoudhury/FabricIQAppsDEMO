@@ -466,70 +466,28 @@ def list_connections() -> list:
 
 def _is_office365_connection(conn: dict) -> bool:
     ctype = str((conn.get("connectionDetails") or {}).get("type", "")).lower().replace(" ", "")
-    return ctype.startswith("office365")
+    return ctype.startswith("microsoftoutlook") or ctype.startswith("office365")
 
 
-def _list_supported_connection_types() -> list:
-    """All connector metadata the API reports (GET /v1/connections/supportedConnectionTypes, paged)."""
-    entries, url = [], (f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes"
-                        "?showAllCreationMethods=true")
-    while url:
-        response = api_request("GET", url)
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Could not list supported connection types: {response.status_code} {response.text}")
-        body = response.json()
-        entries.extend(body.get("value", []))
-        token = body.get("continuationToken")
-        url = (f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes"
-               f"?showAllCreationMethods=true&continuationToken={token}") if token else None
-    return entries
-
-
-def discover_office365_connection_type() -> tuple:
-    """Return (type, creationMethodName) for the connector the Office365Email activity binds to.
-
-    The connection TYPE is the pipeline activity's OWN kind (Office365Email) — the connection must
-    match the activity, so there is nothing to guess. supportedConnectionTypes is queried only to read
-    that kind's exact creationMethod name and confirm ServicePrincipal support; the email/Office365/
-    Outlook candidates are printed so the reported tokens are always visible.
-    """
-    kind = EMBEDDED_PIPELINE_CONTENT["properties"]["activities"][0]["type"]  # "Office365Email"
-    entries = _list_supported_connection_types()
-
-    def norm(value):
-        return str(value).lower().replace(" ", "").replace("-", "")
-
-    candidates = [e for e in entries
-                  if any(k in norm(e.get("type")) for k in ("office365", "outlook", "microsoft365", "m365"))]
-    if candidates:
-        print("🔎 Email/Office365 connector types the tenant reports:")
-        for e in candidates:
-            methods = ", ".join(m.get("name", "") for m in (e.get("creationMethods") or [])) or "-"
-            print(f"   • type={e.get('type')!r}  creationMethods=[{methods}]  "
-                  f"credentials={e.get('supportedCredentialTypes')}")
-
-    match = next((e for e in entries if norm(e.get("type")) == norm(kind)), None)
-    if match is None:
-        raise RuntimeError(
-            f"The Office365Email connector kind {kind!r} was not found in this tenant's "
-            "supportedConnectionTypes (see the candidates printed above). Set "
-            "`alert_email_connection_id` to an existing connection instead.")
-    if "ServicePrincipal" not in (match.get("supportedCredentialTypes") or []):
-        raise RuntimeError(
-            f"Connector {match.get('type')!r} does not support ServicePrincipal creds in this tenant "
-            f"(supports {match.get('supportedCredentialTypes')}). Create the connection in the portal "
-            "and set `alert_email_connection_id` instead.")
-    methods = match.get("creationMethods") or []
-    return match.get("type"), (methods[0].get("name") if methods else match.get("type"))
-
+# Reverse-engineered from a working demo email connection (GET /v1/connections and
+# /v1/connections/supportedConnectionTypes): the Office365Email pipeline activity binds to the
+# "MicrosoftOutlook" connector. These are fixed Fabric platform constants (identical across tenants),
+# so the notebook needs no runtime discovery — it only checks whether the connection exists (reuse)
+# or not (create with the values below).
+#   type / kind:    MicrosoftOutlook
+#   creationMethod: MicrosoftOutlook.Actions  (no parameters)
+#   encryption:     NotEncrypted only; supportsSkipTestConnection = false
+#   credentials:    OAuth2 or ServicePrincipal (SP secrets are pulled from Key Vault below)
+OFFICE365_CONNECTION_TYPE = "MicrosoftOutlook"
+OFFICE365_CREATION_METHOD = "MicrosoftOutlook.Actions"
 
 
 def create_office365_service_principal_connection(display_name: str) -> str:
-    """Create a ShareableCloud Office 365 email connection with Service Principal creds from Key Vault.
+    """Create a ShareableCloud MicrosoftOutlook (Office 365 email) connection with Service Principal
+    creds from Key Vault. Returns the new connection id.
 
-    allowUsageInUserControlledCode=True is the 'Allow Code-First Artifacts like Notebooks to access
-    this connection' preview flag from the New-connection dialog. Returns the new connection id.
+    allowUsageInUserControlledCode=True is the "Allow Code-First Artifacts like Notebooks to access
+    this connection" flag — enabled for the Service Principal credential we create here.
     """
     if not (_KV_URI and _KV_TENANT_SECRET and _KV_CLIENT_SECRET and _KV_SECRET_SECRET):
         raise RuntimeError(
@@ -540,7 +498,7 @@ def create_office365_service_principal_connection(display_name: str) -> str:
     client_id = notebookutils.credentials.getSecret(_KV_URI, _KV_CLIENT_SECRET)
     client_secret = notebookutils.credentials.getSecret(_KV_URI, _KV_SECRET_SECRET)
 
-    conn_type, creation_method = discover_office365_connection_type()
+    conn_type, creation_method = OFFICE365_CONNECTION_TYPE, OFFICE365_CREATION_METHOD
     payload = {
         "connectivityType": "ShareableCloud",
         "displayName": display_name,
