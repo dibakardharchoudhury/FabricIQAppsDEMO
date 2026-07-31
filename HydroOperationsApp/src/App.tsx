@@ -52,6 +52,9 @@ const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)
 // Sub-minute precision for how long a single Copilot answer took.
 const fmtDuration = (ms: number) => ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : fmtElapsed(ms)
 
+// Version + build timestamp injected by Vite at build time (see vite.config.ts).
+const BUILD_STAMP = `${new Date(__BUILD_TIME__).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+
 // A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
 type ChatMessage = { role: 'user' | 'agent'; text: string; meta?: { elapsedMs: number; tokens?: number } }
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
@@ -475,7 +478,7 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
       </div>
-      <div className="top-actions"><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
+      <div className="top-actions"><span className="app-version" title={`Version ${__APP_VERSION__} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small></span><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
     </header>
 
     <main>
