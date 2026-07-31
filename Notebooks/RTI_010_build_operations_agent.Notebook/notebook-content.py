@@ -425,10 +425,14 @@ PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be 
 # Alert email recipient. Per-tenant: override with the `alert_email_to` setting; when blank the deploy
 # defaults it to the signed-in (deploying) user so the demo email has a valid, in-tenant recipient.
 ALERT_EMAIL_TO = first_setting("alert_email_to", "alert_recipient", default="")
-# Office365 email connection. If none exists it is CREATED via REST using the Service Principal
-# secrets RTI_001 stored in Key Vault (Office 365 Email supports Service Principal auth). Name it via
-# `alert_email_connection_name`; the KV vault uri + secret NAMES come from the settings table (both
-# alias spellings RTI_001 writes are accepted).
+# Office365 email connection. The Office365Email ACTIVITY only accepts an OAuth2 (user-mailbox)
+# connection; a Service Principal connection is accepted by the connection API but the activity
+# CANNOT load it (an SPN has no mailbox), and OAuth2 connections can only be created through an
+# interactive sign-in — never via REST (verified: POST credentialType=OAuth2 returns 400 InvalidInput
+# "The CredentialType input is not supported for this API"). So the notebook only REUSES an existing
+# OAuth2 connection (see resolve_email_connection_id); the SP connection helper is opt-in for testing
+# only. Name the target connection via `alert_email_connection_name`; the KV vault uri + secret NAMES
+# come from the settings table (both alias spellings RTI_001 writes are accepted).
 ALERT_EMAIL_CONNECTION_NAME = first_setting(
     "alert_email_connection_name", "alert_connection_name", default="RTI_Office365_EmailAlert")
 _KV_URI = first_setting("key_vault_uri", default="")
