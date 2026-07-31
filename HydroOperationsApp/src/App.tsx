@@ -58,7 +58,8 @@ const fmtDuration = (ms: number) => ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` :
 const BUILD_STAMP = `${new Date(__BUILD_TIME__).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 // A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
-type ChatMessage = { role: 'user' | 'agent'; text: string; meta?: { elapsedMs: number; tokens?: number } }
+type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
+const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 
 // Read still-running jobs saved before a reload, dropping anything too old to still be live.
@@ -462,10 +463,11 @@ export default function App() {
     setQuestion(''); setBusy(true)
     const startedAt = Date.now()
     // Append the user turn plus an empty agent bubble that streamed tokens fill in place.
-    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
+    const chart = wantsChart(text)
+    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '', chart }])
     const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
       const copy = current.slice()
-      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, meta: meta ?? copy[i].meta }; break } }
+      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, chart: copy[i].chart, meta: meta ?? copy[i].meta }; break } }
       return copy
     })
     try {
@@ -571,10 +573,120 @@ export default function App() {
       </div>
     </main>
 
-    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown></div> : <p className="thinking"><span className="think-label">Thinking</span><span className="think-dots"><i /><i /><i /></span></p>) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
+    {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span className="copilot-icon"><Bot size={18} /></span><div><strong>Operations Copilot</strong><small>Data Agent preview</small></div><button className="icon-button" onClick={resetChat} disabled={busy || messages.length === 1} title="New chat"><SquarePen size={17} /></button><button className="icon-button" onClick={() => setCopilotOpen(false)} title="Close"><X size={18} /></button></div><div className="messages">{messages.map((item, index) => <div className={`message ${item.role}`} key={index}>{item.role === 'agent' ? (item.text ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>{item.chart && <ChartFromMarkdown markdown={item.text} />}</div> : <p className="thinking"><span className="think-label">Thinking</span><span className="think-dots"><i /><i /><i /></span></p>) : <p>{item.text}</p>}{item.meta && <small className="msg-meta">{fmtDuration(item.meta.elapsedMs)}{item.meta.tokens ? ` · ${item.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && !busy && <div className="copilot-suggestions">{suggestedPrompts.map(s => <button key={s} className="suggestion" onClick={() => void sendQuestion(s)}>{s}</button>)}</div>}</div><div className="prompt-box"><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendQuestion() } }} placeholder="Ask about connected Fabric data" /><button onClick={() => void sendQuestion()} disabled={busy || !question.trim()} title="Send"><Send size={16} /></button></div></aside>}
   </div>
 }
 
 function EmptyState({ title, action, onClick }: { title: string; action: string; onClick: () => void }) {
   return <div className="empty-state"><Database size={20} /><p>{title}</p><button onClick={onClick}>{action}</button></div>
+}
+
+// The Fabric Data Agent answers in text/Markdown only — it cannot emit an image chart over this
+// REST flow. So we parse the data table it returns and render the chart client-side.
+type ParsedTable = { headers: string[]; rows: string[][] }
+function parseFirstTable(md: string): ParsedTable | null {
+  const lines = md.split('\n')
+  const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
+  for (let i = 0; i < lines.length - 1; i++) {
+    const isRow = /^\s*\|.*\|\s*$/.test(lines[i])
+    const isSep = /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')
+    if (!isRow || !isSep) continue
+    const headers = cells(lines[i])
+    const rows: string[][] = []
+    for (let j = i + 2; j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j]); j++) rows.push(cells(lines[j]))
+    if (headers.length >= 2 && rows.length) return { headers, rows }
+  }
+  return null
+}
+
+const toNumber = (raw: string) => { const value = parseFloat(raw.replace(/[^0-9.eE+-]/g, '')); return Number.isFinite(value) ? value : NaN }
+type ChartSeries = { labelHeader: string; valueHeader: string; points: { label: string; value: number }[] }
+function extractSeries(table: ParsedTable): ChartSeries | null {
+  const width = table.headers.length
+  const numericScore = (col: number) => table.rows.filter(row => Number.isFinite(toNumber(row[col] ?? ''))).length
+  let valueCol = -1
+  for (let col = width - 1; col >= 0; col--) { if (numericScore(col) >= Math.ceil(table.rows.length / 2)) { valueCol = col; break } }
+  if (valueCol < 0) return null
+  const labelCol = table.headers.findIndex((_, col) => col !== valueCol && numericScore(col) < Math.ceil(table.rows.length / 2))
+  const label = labelCol >= 0 ? labelCol : (valueCol === 0 ? 1 : 0)
+  const points = table.rows
+    .map(row => ({ label: row[label] ?? '', value: toNumber(row[valueCol] ?? '') }))
+    .filter(point => Number.isFinite(point.value) && point.label)
+  if (!points.length) return null
+  return { labelHeader: table.headers[label] ?? '', valueHeader: table.headers[valueCol] ?? 'Value', points: points.slice(0, 16) }
+}
+
+function ChartFromMarkdown({ markdown }: { markdown: string }) {
+  const series = useMemo(() => { const table = parseFirstTable(markdown); return table ? extractSeries(table) : null }, [markdown])
+  const [kind, setKind] = useState<'bar' | 'line' | 'pie'>('bar')
+  if (!series) return null
+  return (
+    <div className="chart-block">
+      <div className="chart-tabs" role="group" aria-label="Chart type">
+        <button className={kind === 'bar' ? 'on' : ''} onClick={() => setKind('bar')}>Bar</button>
+        <button className={kind === 'line' ? 'on' : ''} onClick={() => setKind('line')}>Line</button>
+        <button className={kind === 'pie' ? 'on' : ''} onClick={() => setKind('pie')}>Pie</button>
+      </div>
+      <ChartSvg series={series} kind={kind} />
+    </div>
+  )
+}
+
+const CHART_COLORS = ['#2f9e8f', '#4c8bf5', '#f5a623', '#e0554e', '#7b61ff', '#12a150', '#e879a6', '#8a94a6', '#d98b2b', '#5bb3d1']
+function ChartSvg({ series, kind }: { series: ChartSeries; kind: 'bar' | 'line' | 'pie' }) {
+  const W = 320, H = 190, padL = 34, padR = 12, padT = 10, padB = 46
+  const max = Math.max(...series.points.map(p => p.value), 0) || 1
+  const plotW = W - padL - padR, plotH = H - padT - padB
+  const short = (text: string) => text.length > 10 ? `${text.slice(0, 9)}…` : text
+
+  if (kind === 'pie') {
+    const total = series.points.reduce((sum, p) => sum + Math.max(p.value, 0), 0) || 1
+    const cx = 95, cy = H / 2, r = 72
+    let angle = -Math.PI / 2
+    const slices = series.points.map((point, index) => {
+      const frac = Math.max(point.value, 0) / total
+      const end = angle + frac * Math.PI * 2
+      const p = (a: number) => `${cx + r * Math.cos(a)} ${cy + r * Math.sin(a)}`
+      const large = end - angle > Math.PI ? 1 : 0
+      const d = frac >= 0.9999 ? `M ${cx - r} ${cy} A ${r} ${r} 0 1 1 ${cx + r} ${cy} A ${r} ${r} 0 1 1 ${cx - r} ${cy} Z` : `M ${cx} ${cy} L ${p(angle)} A ${r} ${r} 0 ${large} 1 ${p(end)} Z`
+      angle = end
+      return { d, color: CHART_COLORS[index % CHART_COLORS.length], point, pct: frac * 100 }
+    })
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label="Pie chart">
+        {slices.map((slice, index) => <path key={index} d={slice.d} fill={slice.color} stroke="var(--cp-surface)" strokeWidth={1} />)}
+        {slices.map((slice, index) => (
+          <g key={`l${index}`} transform={`translate(${W - 118} ${padT + index * 15})`}>
+            <rect width={9} height={9} rx={2} fill={slice.color} />
+            <text x={13} y={8} className="chart-legend">{short(slice.point.label)} {slice.pct.toFixed(0)}%</text>
+          </g>
+        ))}
+      </svg>
+    )
+  }
+
+  const n = series.points.length
+  const x = (index: number) => padL + (n === 1 ? plotW / 2 : (index * plotW) / (n - 1))
+  const y = (value: number) => padT + plotH - (value / max) * plotH
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label={`${kind} chart`}>
+      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} className="chart-axis" />
+      <line x1={padL} y1={padT + plotH} x2={W - padR} y2={padT + plotH} className="chart-axis" />
+      <text x={padL - 6} y={padT + 4} className="chart-tick" textAnchor="end">{max % 1 === 0 ? max : max.toFixed(1)}</text>
+      <text x={padL - 6} y={padT + plotH} className="chart-tick" textAnchor="end">0</text>
+      {kind === 'bar' && series.points.map((point, index) => {
+        const bw = Math.max(6, Math.min(30, (plotW / n) * 0.6))
+        const cx = padL + (plotW / n) * (index + 0.5)
+        const h = (point.value / max) * plotH
+        return <rect key={index} x={cx - bw / 2} y={padT + plotH - h} width={bw} height={h} rx={2} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+      })}
+      {kind === 'line' && <polyline className="chart-line" points={series.points.map((point, index) => `${x(index)},${y(point.value)}`).join(' ')} />}
+      {kind === 'line' && series.points.map((point, index) => <circle key={index} cx={x(index)} cy={y(point.value)} r={2.5} fill={CHART_COLORS[0]} />)}
+      {series.points.map((point, index) => {
+        const cx = kind === 'bar' ? padL + (plotW / n) * (index + 0.5) : x(index)
+        return <text key={`x${index}`} x={cx} y={padT + plotH + 12} className="chart-tick" textAnchor="end" transform={`rotate(-35 ${cx} ${padT + plotH + 12})`}>{short(point.label)}</text>
+      })}
+      <text x={padL + plotW / 2} y={H - 4} className="chart-axis-label" textAnchor="middle">{series.valueHeader}</text>
+    </svg>
+  )
 }

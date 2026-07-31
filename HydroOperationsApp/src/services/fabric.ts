@@ -391,7 +391,7 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
 // The published Fabric Data Agent exposes an OpenAI Assistants-compatible endpoint
 // (.../dataAgents/{id}/aiassistant/openai) that already fans out to its SQL DB + ontology sources.
 // Runtime guidance so answers come back as clean, professional, tabular Markdown.
-const AGENT_FORMAT_INSTRUCTIONS = 'You are the Operations Copilot for a hydropower operations team. Answer in concise, professional GitHub-flavored Markdown. Whenever you return more than one record (facilities, equipment/assets, instruments, signals, or work orders), present them as a Markdown table with clear human-readable column headers and include units where known. Lead with a one-line summary, then the table. Use short ISO-like dates. If the connected sources cannot answer, say so briefly and name the data that would be needed.'
+const AGENT_FORMAT_INSTRUCTIONS = 'You are the Operations Copilot for a hydropower operations team. Answer in concise, professional GitHub-flavored Markdown. Whenever you return more than one record (facilities, equipment/assets, instruments, signals, or work orders), present them as a Markdown table with clear human-readable column headers and include units where known. Lead with a one-line summary, then the table. Use short ISO-like dates. You cannot draw images or charts; if the user asks for a chart, graph, plot, trend, or visual, ALWAYS return the underlying data as a Markdown table (a label/category column plus a numeric value column) — the client app renders the chart from that table. Never say "the chart below" without a data table. If the connected sources cannot answer, say so briefly and name the data that would be needed.'
 
 // Fabric Data Agents apply their own system prompt and largely ignore the assistant-level
 // `instructions`, so the formatting contract is also injected into the user turn to force it.
@@ -403,6 +403,7 @@ const FORMAT_DIRECTIVE = [
   '4. Put a single short summary sentence ABOVE the table (e.g. "15 turbines across 3 facilities:"). No prose after the table unless a caveat is needed.',
   '5. For a single scalar answer, reply in one short bolded sentence — no table.',
   '6. Use short ISO-like dates (YYYY-MM-DD). Keep language crisp and professional.',
+  '7. You cannot render images. If asked for a chart, graph, plot, trend line, bar, or pie, you MUST still return the data as a Markdown table with one category/label column and one numeric value column — the app draws the chart from that table. Do not reference "the chart below" unless the table is present.',
   '',
   'QUESTION: ',
 ].join('\n')
