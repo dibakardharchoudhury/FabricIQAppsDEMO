@@ -57,6 +57,7 @@ main { padding-top: 26px; }
 .order strong { font-size: 12px; }
 .order small { font-size: 10px; }
 .order p { font-size: 10.5px; }
+.order.current { background: color-mix(in srgb, var(--cp-accent) 6%, transparent); box-shadow: inset 3px 0 0 var(--cp-accent); }
 .spare-row { font-size: 12px; }
 .spare-row strong { font-size: 12px; }
 .spare-row small { font-size: 10px; }

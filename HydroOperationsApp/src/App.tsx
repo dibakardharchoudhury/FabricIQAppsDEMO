@@ -112,6 +112,10 @@ export default function App() {
   const readings = useMemo(() => new Map(telemetry.map(item => [item.opcuaNodeId, item])), [telemetry])
   const openOrders = orders.filter(order => openStatuses.has(order.status.toLowerCase()))
   const selectedOrders = openOrders.filter(order => order.equipmentId === selected?.equipment_id)
+  // Show every open work order (so ones raised from quality alerts on other assets are visible),
+  // with the selected asset's orders floated to the top. Stable sort keeps newest-first within groups.
+  const visibleOrders = [...openOrders].sort((a, b) =>
+    (a.equipmentId === selected?.equipment_id ? 0 : 1) - (b.equipmentId === selected?.equipment_id ? 0 : 1))
   const selectedInspections = inspections.filter(item => item.equipmentId === selected?.equipment_id)
   const selectedModel = models.find(item => item.equipmentId === selected?.equipment_id)
   const selectedNotifications = notifications.filter(item => item.equipmentId === selected?.equipment_id)
@@ -412,7 +416,7 @@ export default function App() {
       if (!equipmentId) { setNotice(`Could not identify an asset for ${node}; cannot raise a work order.`); return }
       const record = await createWorkOrder(activeUser, equipmentId, instrument?.instrument_id, node)
       setOrders(current => [record, ...current])
-      setNotice(`Work order ${record.workOrderNumber} raised for ${instrument?.tag ?? tag ?? node} on ${equipmentId} (${flagged.reading.quality} quality).`)
+      setNotice(`Work order ${record.workOrderNumber} raised for ${instrument?.tag ?? tag ?? node} on ${equipmentId} (${flagged.reading.quality} quality). See the Work orders card below.`)
     } catch (error) { setNotice(errorMessage(error)) }
     finally { setRaising(undefined) }
   }
@@ -526,7 +530,7 @@ export default function App() {
 
       <div className="detail-grid">
         <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span>{reading ? <>{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></> : 'No event'}</span><em className={reading?.quality ? reading.quality.toLowerCase() : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
-        <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{selected ? `${selectedOrders.length} open for this asset` : 'Rayfin operational SQL'}</p></div><button className="icon-button" title="Create work order" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div><div className="order-list">{selectedOrders.map(order => <article className="order" key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber}</small><p>{order.status} · {order.priority}</p></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !selectedOrders.length && <div className="inline-empty">No open work orders for this asset.</div>}</div></section>
+        <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{user ? `${openOrders.length} open${selected ? ` · ${selectedOrders.length} on this asset` : ''}` : 'Rayfin operational SQL'}</p></div><button className="icon-button" title="Create work order for the selected asset" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div><div className="order-list">{visibleOrders.map(order => <article className={order.equipmentId === selected?.equipment_id ? 'order current' : 'order'} key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber} · {order.equipmentId}</small><p>{order.status} · {order.priority}</p></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !openOrders.length && <div className="inline-empty">No open work orders yet. Raise one from a flagged signal above or with the + button.</div>}</div></section>
       </div>
 
       <div className="detail-grid">
