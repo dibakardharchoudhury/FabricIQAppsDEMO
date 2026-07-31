@@ -13,6 +13,7 @@ import {
   updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
+import { twinStatus, type TwinSignal } from './twin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
@@ -142,6 +143,25 @@ export default function App() {
       return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
     }), [telemetry, instrumentByNode, equipmentById])
   const nodesWithOpenOrder = useMemo(() => new Set(openOrders.map(order => order.opcuaNodeId)), [openOrders])
+  // Live "digital twin" overlay: each instrument on the selected asset becomes a health-coded hotspot
+  // on the 3D model — value + OPC UA quality from the Eventhouse, plus open-work-order state.
+  const twinSignals = useMemo<TwinSignal[]>(() => instruments.map(instrument => {
+    const reading = readings.get(instrument.opcua_node_id)
+    return {
+      id: instrument.instrument_id,
+      label: instrument.tag ?? instrument.instrument_id,
+      nodeId: instrument.opcua_node_id,
+      value: reading?.value,
+      unit: instrument.unit,
+      quality: reading?.quality,
+      hasOpenIssue: nodesWithOpenOrder.has(instrument.opcua_node_id),
+    }
+  }), [instruments, readings, nodesWithOpenOrder])
+  const twinHealth = useMemo(() => {
+    const counts = { crit: 0, warn: 0, ok: 0, nodata: 0 }
+    for (const signal of twinSignals) counts[twinStatus(signal)]++
+    return counts
+  }, [twinSignals])
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a
@@ -563,7 +583,7 @@ export default function App() {
       </div>
 
       <div className="detail-grid">
-        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `3D model for ${selected.tag ?? selected.equipment_id}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin SQL</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? <><div className={canRenderModel(selectedModel.format) ? 'twin-thumb twin-thumb-3d' : 'twin-thumb'}>{canRenderModel(selectedModel.format) ? <Suspense fallback={<Box size={40} />}><AssetModelViewer model={selectedModel} /></Suspense> : selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
+        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `${selected.tag ?? selected.equipment_id} · ${twinSignals.length} live signal${twinSignals.length === 1 ? '' : 's'}${twinHealth.crit ? ` · ${twinHealth.crit} critical` : ''}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin · Eventhouse · STID</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? (canRenderModel(selectedModel.format) ? <><Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model…</div></div>}><AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} /></Suspense><div className="twin-legend"><span><i className="ok" />OK {twinHealth.ok}</span><span><i className="warn" />Uncertain {twinHealth.warn}</span><span><i className="crit" />Bad / open order {twinHealth.crit}</span><span><i className="nodata" />No data {twinHealth.nodata}</span></div><div className="twin-meta twin-meta-inline"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''} · click a hotspot for detail</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <><div className="twin-thumb">{selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></>) : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
         <section className="inspections-panel panel"><div className="panel-head"><div><h2>Inspections</h2><p>{selected ? `${selectedInspections.length} record(s) for this asset` : 'Condition inspections'}</p></div><ClipboardCheck size={18} /></div><div className="order-list">{selectedInspections.map(item => <article className="order" key={item.id}><span className={`insp-result ${item.result.toLowerCase()}`}><ClipboardCheck size={14} /></span><div><strong>{item.inspectionType}</strong><small>{new Date(item.inspectedAt).toLocaleDateString()} · {item.result}</small><p>{item.findings ?? 'No findings recorded.'}</p></div></article>)}{!user && <EmptyState title="Inspection records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !selectedInspections.length && <div className="inline-empty">No inspections for this asset.</div>}</div></section>
       </div>
 
