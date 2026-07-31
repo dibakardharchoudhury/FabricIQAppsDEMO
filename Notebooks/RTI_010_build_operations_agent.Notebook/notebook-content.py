@@ -469,6 +469,14 @@ def _is_office365_connection(conn: dict) -> bool:
     return ctype.startswith("microsoftoutlook") or ctype.startswith("office365")
 
 
+def _office365_cred_type(conn: dict) -> str:
+    return str((conn.get("credentialDetails") or {}).get("credentialType", "")).lower()
+
+
+def _truthy(value: str) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 # Reverse-engineered from a working demo email connection (GET /v1/connections and
 # /v1/connections/supportedConnectionTypes): the Office365Email pipeline activity binds to the
 # "MicrosoftOutlook" connector. These are fixed Fabric platform constants (identical across tenants),
@@ -477,14 +485,21 @@ def _is_office365_connection(conn: dict) -> bool:
 #   type / kind:    MicrosoftOutlook
 #   creationMethod: MicrosoftOutlook.Actions  (no parameters)
 #   encryption:     NotEncrypted only; supportsSkipTestConnection = false
-#   credentials:    OAuth2 or ServicePrincipal (SP secrets are pulled from Key Vault below)
+#   credentials:    the Office365Email ACTIVITY only accepts OAuth2 (user mailbox). A Service
+#                   Principal connection is accepted by the connection API but the activity cannot
+#                   load it — create the OAuth2 connection interactively once (see resolve_email_connection_id).
 OFFICE365_CONNECTION_TYPE = "MicrosoftOutlook"
 OFFICE365_CREATION_METHOD = "MicrosoftOutlook.Actions"
 
 
 def create_office365_service_principal_connection(display_name: str) -> str:
-    """Create a ShareableCloud MicrosoftOutlook (Office 365 email) connection with Service Principal
-    creds from Key Vault. Returns the new connection id.
+    """Create a ShareableCloud MicrosoftOutlook connection with Service Principal creds from Key
+    Vault. Returns the new connection id.
+
+    WARNING: this connection type is NOT usable by the Office 365 Email pipeline activity — that
+    activity sends mail from a mailbox and a service principal has no mailbox, so the pipeline shows
+    "Failed to load the connection". Only called when opted in via `alert_email_allow_service_principal`.
+    Prefer an OAuth2 (interactive sign-in) Outlook connection instead (see resolve_email_connection_id).
 
     allowUsageInUserControlledCode=True is the "Allow Code-First Artifacts like Notebooks to access
     this connection" flag — enabled for the Service Principal credential we create here.
@@ -538,28 +553,57 @@ def create_office365_service_principal_connection(display_name: str) -> str:
 
 
 def resolve_email_connection_id() -> str:
-    """Return an Office 365 Email connection id the running user can use for Office365Email.
+    """Return an Office 365 Email connection id USABLE by the Office365Email pipeline activity.
 
-    Precedence: the `alert_email_connection_id` setting -> an existing Office 365 connection (the
-    configured name first, then any) -> CREATE one via REST using the Service Principal secrets in
-    Key Vault (Office 365 Email supports Service Principal auth). Creation raises with actionable
-    detail if the KV settings are missing or the API rejects the credentials.
+    The activity sends mail from a mailbox, so it requires an **OAuth2** (interactive user sign-in)
+    MicrosoftOutlook connection. A ServicePrincipal-credentialed Outlook connection is accepted by
+    the connection API and shows "Online", but the pipeline activity CANNOT load or use it (a service
+    principal has no mailbox) -> "Failed to load the connection". So we prefer an OAuth2 Outlook
+    connection and, if none exists, fail fast with instructions to create one interactively (OAuth2
+    connections cannot be created head-less from a notebook).
+
+    Precedence: `alert_email_connection_id` setting -> an OAuth2 Office 365 connection (configured
+    name first, then any) -> [opt-in only] a ServicePrincipal connection.
     """
     forced = first_setting("alert_email_connection_id", "alert_connection_id", default="")
     if forced:
         print(f"\u2139\ufe0f  Using Office365 connection id from settings: {forced}")
         return forced
+
     conns = list_connections()
-    for conn in conns:  # prefer the configured connection name
-        if conn.get("displayName") == ALERT_EMAIL_CONNECTION_NAME and _is_office365_connection(conn):
-            print(f"\u2705 Reusing Office365 connection '{ALERT_EMAIL_CONNECTION_NAME}' (id={conn.get('id')}).")
+    office = [c for c in conns if _is_office365_connection(c)]
+    oauth = [c for c in office if _office365_cred_type(c) == "oauth2"]
+
+    for conn in oauth:  # prefer the configured name among OAuth2 connections
+        if conn.get("displayName") == ALERT_EMAIL_CONNECTION_NAME:
+            print(f"\u2705 Reusing OAuth2 Office365 connection '{ALERT_EMAIL_CONNECTION_NAME}' (id={conn.get('id')}).")
             return conn.get("id")
-    for conn in conns:  # else any accessible Office365 connection
-        if _is_office365_connection(conn):
-            print(f"\u2705 Reusing accessible Office365 connection '{conn.get('displayName')}' (id={conn.get('id')}).")
-            return conn.get("id")
-    print(f"\u2139\ufe0f  No Office365 connection found — creating '{ALERT_EMAIL_CONNECTION_NAME}' with Service Principal creds.")
-    return create_office365_service_principal_connection(ALERT_EMAIL_CONNECTION_NAME)
+    if oauth:  # else any accessible OAuth2 Office365 connection
+        conn = oauth[0]
+        print(f"\u2705 Reusing OAuth2 Office365 connection '{conn.get('displayName')}' (id={conn.get('id')}).")
+        return conn.get("id")
+
+    if _truthy(first_setting("alert_email_allow_service_principal", default="")):
+        print("\u26a0\ufe0f  No OAuth2 Office365 connection found — creating a Service Principal connection "
+              "(alert_email_allow_service_principal=true). NOTE: the Office 365 Email pipeline activity "
+              "cannot use a Service Principal connection; it will show 'Failed to load'.")
+        return create_office365_service_principal_connection(ALERT_EMAIL_CONNECTION_NAME)
+
+    sp = [c for c in office if _office365_cred_type(c) != "oauth2"]
+    sp_note = ""
+    if sp:
+        sp_note = (f" Found a non-OAuth2 Office 365 connection ('{sp[0].get('displayName')}', "
+                   f"credential={_office365_cred_type(sp[0]) or 'unknown'}) but the Office 365 Email "
+                   "activity cannot use it.")
+    raise RuntimeError(
+        "No usable Office 365 Email connection found. The Office 365 Email pipeline activity requires "
+        "an OAuth2 (interactive sign-in) Outlook connection — a Service Principal has no mailbox and "
+        "cannot send mail." + sp_note + " ONE-TIME SETUP (do it once per tenant): in the Fabric portal, "
+        "Settings -> Manage connections and gateways -> New -> Connection type 'Office 365 Outlook' -> "
+        "Authentication OAuth2 -> Sign in with a work/school account that has a mailbox (use a shared "
+        "service mailbox so it doesn't break when a person leaves) -> Create. Then re-run this notebook: "
+        "it auto-picks that OAuth2 connection and the pipeline runs unattended thereafter. (Alternatively "
+        "set the `alert_email_connection_id` setting to the connection id.)")
 
 
 def build_email_pipeline_content(connection_id: str, to_address: str) -> dict:
