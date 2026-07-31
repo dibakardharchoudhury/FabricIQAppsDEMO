@@ -47,11 +47,12 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 
 ## Prerequisites (one‑time)
 
-Give the executing **Service Principal (SPN)** access — the demo is otherwise self‑contained (no ADLS, shortcut, or cloud connection):
+The demo is otherwise self‑contained (no ADLS, shortcut, or cloud connection) — you only grant the executing **Service Principal (SPN)** access and flip a couple of tenant switches:
 
 1. **Key Vault secrets** — SPN has **Key Vault Secrets User** (Get on `tenantid`, `clientid`, `clientsecret`).
 2. **Workspace access** — SPN has **Contributor** (or higher) on the Fabric workspace.
-3. **Private endpoint to Key Vault** — only if the vault blocks public network access (add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault).
+3. **Tenant settings** (Admin portal, one‑time) — the notebooks call Fabric REST with the SPN and build a Data Agent, so a fresh tenant needs **Service principals can use Fabric APIs** (with the SPN in the allowed security group) and **Copilot / AI** enabled on a capacity that supports it (required by `RTI_009`/`RTI_010`).
+4. **Private endpoint to Key Vault** — only if the vault blocks public network access (add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault).
 
 ## Deploy
 
@@ -70,7 +71,7 @@ Give the executing **Service Principal (SPN)** access — the demo is otherwise 
    | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Optional — blank ⇒ deploying user. |
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
-   > Enter each **full** name (the UI truncates long names visually). The notebook parameter cells ship blank and fail fast if a required value is missing.
+   > The pipeline ships with the author's **example defaults** — replace **every** value for a new tenant. Enter each **full** name (the UI truncates long names visually); the child notebooks' own parameter cells ship blank and fail fast if a required value is missing.
 
 2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.

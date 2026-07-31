@@ -14,6 +14,7 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 - A **Fabric workspace** on a usable capacity, with permission to deploy.
 - **Azure CLI** (`az`) for the one‑time live‑auth step (Step 8).
 - An **Entra SPA app registration** (delegated, no secret) for browser sign‑in.
+- **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
 
 ## 1. Build the RTI Fabric environment (in Fabric)
 
@@ -71,7 +72,10 @@ npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (crea
 npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploys the static app
 ```
 
-The deploy prints the hosting URL. The app is now live with empty operational tables and no STID binding yet.
+The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
+`services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run
+`npm run up` — both Rayfin sign‑in and Step 8 read the allowed origins from there. The app is now live
+with empty operational tables and no STID binding yet.
 
 ## 7. Seed & provision (RTI_011)
 
@@ -102,8 +106,9 @@ az login                  # as an owner / Application Administrator
 npm run setup-live-auth   # or setup-live-auth:dry to preview
 ```
 
-`scripts/setup-live-auth.mjs` is idempotent: (1) registers the Fabric origin + `localhost:5173` as
-**SPA redirect URIs** (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation`
+`scripts/setup-live-auth.mjs` is idempotent: (1) reads the hosting origins from `rayfin/rayfin.yml`
+(`allowedRedirectUris`) plus `localhost:5173` and registers them as **SPA redirect URIs** on the Entra
+app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation`
 and **Power BI Service** `GraphQLApi.Execute.All`, then grants consent (fixes **AADSTS650057 / 65001**).
 
 Two things stay manual (per user/cluster): grant the signed‑in user **KQL Database Viewer** on the
@@ -121,7 +126,7 @@ into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth i
 | **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**) or re‑run `RTI_001`, then retry. |
 | **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
 | Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
-| Sign‑in fails with **AADSTS** | Run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
+| Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
 | KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
 | Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |
 | Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env` — fix it and re‑run. |
@@ -129,5 +134,5 @@ into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth i
 ## Reset
 
 Delete `rayfin/.env`, `rayfin/.env.local`, and `rayfin/.deployments.json`, then redo from Step 3.
-A fresh build gets a new hosting hostname, so re‑run `npm run setup-live-auth` (Step 8) after the
-first `npm run deploy`.
+A fresh build gets a new hosting hostname — add it to `rayfin/rayfin.yml` (`allowedRedirectUris`) and
+re‑run `npm run up`, then `npm run setup-live-auth` (Step 8) after the first `npm run deploy`.
