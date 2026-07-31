@@ -57,10 +57,38 @@ function hotspotPlacement(bounds: { center: Vec; dims: Vec }, index: number, cou
 
 // Renders the GLB with live, health-coded telemetry hotspots pinned to the model. Other formats
 // fall back to a thumbnail/link in App.tsx.
-export function AssetModelViewer({ model, signals }: { model: Asset3DModelRecord; signals: TwinSignal[] }) {
+const TREND: Record<'up' | 'down' | 'flat', string> = { up: '▲', down: '▼', flat: '→' }
+
+export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { model: Asset3DModelRecord; signals: TwinSignal[]; assetLabel?: string; updatedAt?: number }) {
   const viewer = useRef<ModelViewerEl>(null)
   const [bounds, setBounds] = useState<{ center: Vec; dims: Vec } | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Track the previous poll's values so each hotspot can show a live rising/falling trend. We shift the
+  // snapshot one poll behind by adjusting state during render when the incoming values change — the
+  // React-recommended alternative to a ref (which can't be read during render) or a cascading effect.
+  const [history, setHistory] = useState<{ key: string; prev: Map<string, number>; latest: Map<string, number> }>({ key: '', prev: new Map(), latest: new Map() })
+  const signalsKey = signals.map((s) => `${s.nodeId}=${s.value ?? ''}`).join('|')
+  if (history.key !== signalsKey) {
+    const next = new Map<string, number>()
+    for (const signal of signals) if (typeof signal.value === 'number') next.set(signal.nodeId, signal.value)
+    setHistory((current) => ({ key: signalsKey, prev: current.latest, latest: next }))
+  }
+  const trends = useMemo(() => {
+    const map = new Map<string, 'up' | 'down' | 'flat'>()
+    for (const signal of signals) {
+      const current = history.latest.get(signal.nodeId)
+      const prev = history.prev.get(signal.nodeId)
+      if (current !== undefined && prev !== undefined) map.set(signal.id, current > prev ? 'up' : current < prev ? 'down' : 'flat')
+    }
+    return map
+  }, [signals, history])
+
+  const counts = useMemo(() => {
+    const c = { ok: 0, warn: 0, crit: 0, nodata: 0 }
+    for (const signal of signals) c[twinStatus(signal)]++
+    return c
+  }, [signals])
 
   // Read the model's real bounds once loaded. The parent remounts this component per model
   // (keyed on modelUrl), so state starts fresh — no synchronous reset needed here.
@@ -89,6 +117,16 @@ export function AssetModelViewer({ model, signals }: { model: Asset3DModelRecord
 
   return (
     <div className="twin-stage">
+      <div className="twin-live-head">
+        <span className="twin-live-dot" />
+        <strong>{assetLabel ?? 'Live twin'}</strong>
+        <span className="twin-live-chips">
+          <em className="ok" title="Healthy">{counts.ok}</em>
+          <em className="warn" title="Uncertain">{counts.warn}</em>
+          <em className="crit" title="Bad / open order">{counts.crit}</em>
+        </span>
+        {updatedAt && <small title="Last telemetry refresh">{new Date(updatedAt).toLocaleTimeString()}</small>}
+      </div>
       <model-viewer
         ref={viewer as React.Ref<HTMLElement>}
         className="asset-model-viewer"
@@ -96,7 +134,7 @@ export function AssetModelViewer({ model, signals }: { model: Asset3DModelRecord
         alt={model.modelName}
         poster={model.thumbnailUrl}
         camera-controls
-        auto-rotate
+        {...(activeId ? {} : { 'auto-rotate': true })}
         auto-rotate-delay={0}
         rotation-per-second="16deg"
         shadow-intensity="1"
@@ -131,7 +169,10 @@ export function AssetModelViewer({ model, signals }: { model: Asset3DModelRecord
           <span className={`twin-detail-mark ${twinStatus(active)}`} />
           <div className="twin-detail-body">
             <strong>{active.label}</strong>
-            <span className="twin-detail-val">{twinValueText(active)}</span>
+            <span className="twin-detail-val">
+              {twinValueText(active)}
+              {trends.get(active.id) && <span className={`twin-trend ${trends.get(active.id)}`}>{TREND[trends.get(active.id)!]}</span>}
+            </span>
             <small>{active.nodeId}</small>
             <small>
               Quality: {active.quality ?? 'no recent event'}

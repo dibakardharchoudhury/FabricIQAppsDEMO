@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Fac
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
-import { FacilityMap } from './components/FacilityMap'
+import { FacilityMap, type FacilityStat, type AssetPin } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
 const AssetModelViewer = lazy(() => import('./components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
 import { askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
@@ -13,7 +13,7 @@ import {
   updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
-import { twinStatus, type TwinSignal } from './twin'
+import { twinStatus, type TwinSignal, type TwinStatus } from './twin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
@@ -87,6 +87,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<MaintenanceNotificationRecord[]>([])
   const [stid, setStid] = useState<StidData | null>(null)
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
+  const [telemetryAt, setTelemetryAt] = useState<number>()
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>()
   const [selectedId, setSelectedId] = useState<string>()
   const [sourceState, setSourceState] = useState('Connect STID')
@@ -178,6 +179,40 @@ export default function App() {
     for (const signal of twinSignals) counts[twinStatus(signal)]++
     return counts
   }, [twinSignals])
+  // Per-facility health rolled up live from each facility's signal quality — drives the map markers.
+  const facilityStats = useMemo<FacilityStat[]>(() => facilities.map(item => {
+    const insts = (stid?.instruments ?? []).filter(i => i.facility_id === item.facility_id)
+    const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
+    for (const inst of insts) {
+      const reading = readings.get(inst.opcua_node_id)
+      health[twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })]++
+    }
+    const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
+    return {
+      facility_id: item.facility_id, facility_name: item.facility_name, type: item.type, country: item.country,
+      lat: Number(item.lat), lon: Number(item.lon),
+      assetCount: (stid?.equipment ?? []).filter(e => e.facility_id === item.facility_id).length,
+      instrumentCount: insts.length,
+      openOrders: openOrders.filter(o => equipmentById.get(o.equipmentId)?.facility_id === item.facility_id).length,
+      health, worst,
+    }
+  }), [facilities, stid, readings, nodesWithOpenOrder, openOrders, equipmentById])
+  // The selected facility's assets, each with live per-signal quality, for the on-map asset ring.
+  const assetPins = useMemo<AssetPin[]>(() => equipment.map(asset => {
+    const insts = (stid?.instruments ?? []).filter(i => i.equipment_id === asset.equipment_id)
+    const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
+    const signals = insts.map(inst => {
+      const reading = readings.get(inst.opcua_node_id)
+      const status = twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })
+      health[status]++
+      return { label: inst.tag ?? inst.instrument_id, value: reading?.value, unit: inst.unit, quality: reading?.quality, status }
+    })
+    const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
+    return {
+      equipment_id: asset.equipment_id, tag: asset.tag ?? asset.equipment_id, worst, health,
+      openOrders: openOrders.filter(o => o.equipmentId === asset.equipment_id).length, signals,
+    }
+  }), [equipment, stid, readings, nodesWithOpenOrder, openOrders])
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a
@@ -210,6 +245,28 @@ export default function App() {
     void initialize()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, [])
+
+  // Once telemetry is connected, re-poll the Eventhouse on a timer so the map markers and 3D twin
+  // hotspots recolor/refresh to the latest OPC UA signal quality without a manual reconnect.
+  const telemetryLive = telemetry.length > 0
+  useEffect(() => {
+    if (!telemetryLive) return
+    let cancelled = false, inFlight = false
+    const poll = async () => {
+      if (inFlight || document.hidden) return
+      inFlight = true
+      try {
+        const data = await queryLatestTelemetry()
+        if (!cancelled && data) {
+          setTelemetry(data); setTelemetryAt(Date.now())
+          setTelemetryState(data.length ? `${data.length} signals` : 'No recent events')
+        }
+      } catch { /* transient poll failure — keep the last good readings on screen */ }
+      finally { inFlight = false }
+    }
+    const id = window.setInterval(poll, 12_000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [telemetryLive])
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
   // each from its own elapsed time — eases monotonically toward ~95% over the expected duration.
@@ -327,7 +384,7 @@ export default function App() {
     try {
       let data = await queryLatestTelemetry()
       if (data === null) { await beginInteractiveConnect('telemetry'); data = await queryLatestTelemetry() }
-      if (data) { setTelemetry(data); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
+      if (data) { setTelemetry(data); setTelemetryAt(Date.now()); setTelemetryState(data.length ? `${data.length} signals` : 'No recent events') }
       else setTelemetryState('Connect telemetry')
     } catch (error) { setTelemetryState('Connect telemetry'); setNotice(errorMessage(error)) }
   }
@@ -589,7 +646,7 @@ export default function App() {
       </section>}
 
       <div className="workspace-grid">
-        <section className="map-panel panel"><div className="panel-head"><div><h2>Facility network</h2><p>{facilities.length > 1 ? `${facilities.length} facilities from silver_facilities` : 'Facility coordinates from silver_facilities'}</p></div><MapPin size={18} /></div>{facilities.length ? <FacilityMap facilities={facilities} selectedId={facility?.facility_id} onSelect={selectFacility} /> : <EmptyState title="No facility loaded" action="Connect STID" onClick={() => void connectStid()} />}</section>
+        <section className="map-panel panel"><div className="panel-head"><div><h2>Facility network</h2><p>{stid ? `${facilityStats.reduce((n, f) => n + f.assetCount, 0)} assets · ${facilityStats.reduce((n, f) => n + f.openOrders, 0)} open WO · ${facilities.length} site${facilities.length === 1 ? '' : 's'}` : 'Facility coordinates from silver_facilities'}</p></div><MapPin size={18} /></div>{facilities.length ? <FacilityMap facilities={facilityStats} assets={assetPins} selectedId={facility?.facility_id} selectedAssetId={selected?.equipment_id} onSelect={selectFacility} onSelectAsset={setSelectedId} updatedAt={telemetryAt} /> : <EmptyState title="No facility loaded" action="Connect STID" onClick={() => void connectStid()} />}</section>
         <section className="assets-panel panel"><div className="panel-head"><div><h2>Asset registry</h2><p>{stid ? `${equipment.length} equipment records` : 'Authoritative STID source'}</p></div></div><div className="asset-list">{equipment.map(asset => <button key={asset.equipment_id} className={selected?.equipment_id === asset.equipment_id ? 'asset-row selected' : 'asset-row'} onClick={() => setSelectedId(asset.equipment_id)}><span className="asset-index">{asset.tag?.replace(/\D/g, '').padStart(2, '0') || '—'}</span><span><strong>{asset.tag ?? asset.equipment_id}</strong><small>{asset.manufacturer ?? 'Manufacturer unavailable'} · {asset.model ?? 'Model unavailable'}</small></span><em>{asset.status ?? 'Unknown'}</em></button>)}{!equipment.length && <EmptyState title="No assets loaded" action="Connect STID" onClick={() => void connectStid()} />}</div></section>
       </div>
 
@@ -599,7 +656,7 @@ export default function App() {
       </div>
 
       <div className="detail-grid">
-        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `${selected.tag ?? selected.equipment_id} · ${twinSignals.length} live signal${twinSignals.length === 1 ? '' : 's'}${twinHealth.crit ? ` · ${twinHealth.crit} critical` : ''}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin · Eventhouse · STID</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? (canRenderModel(selectedModel.format) ? <><Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model…</div></div>}><AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} /></Suspense><div className="twin-legend"><span><i className="ok" />OK {twinHealth.ok}</span><span><i className="warn" />Uncertain {twinHealth.warn}</span><span><i className="crit" />Bad / open order {twinHealth.crit}</span><span><i className="nodata" />No data {twinHealth.nodata}</span></div><div className="twin-meta twin-meta-inline"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''} · click a hotspot for detail</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <><div className="twin-thumb">{selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></>) : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
+        <section className="twin-panel panel"><div className="panel-head"><div><h2>Digital twin</h2><p>{selected ? `${selected.tag ?? selected.equipment_id} · ${twinSignals.length} live signal${twinSignals.length === 1 ? '' : 's'}${twinHealth.crit ? ` · ${twinHealth.crit} critical` : ''}` : 'Asset 3D model'}</p></div><span className="provenance">Rayfin · Eventhouse · STID</span></div><div className="twin-body">{!user ? <EmptyState title="3D models are protected" action="Connect operations" onClick={() => void authenticate()} /> : selectedModel ? (canRenderModel(selectedModel.format) ? <><Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading 3D model…</div></div>}><AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selected?.tag ?? selected?.equipment_id} updatedAt={telemetryAt} /></Suspense><div className="twin-legend"><span><i className="ok" />OK {twinHealth.ok}</span><span><i className="warn" />Uncertain {twinHealth.warn}</span><span><i className="crit" />Bad / open order {twinHealth.crit}</span><span><i className="nodata" />No data {twinHealth.nodata}</span></div><div className="twin-meta twin-meta-inline"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''} · click a hotspot for detail</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></> : <><div className="twin-thumb">{selectedModel.thumbnailUrl ? <img src={selectedModel.thumbnailUrl} alt={selectedModel.modelName} /> : <Box size={40} />}</div><div className="twin-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer">Open model ↗</a></div></>) : <div className="inline-empty">No 3D model registered for this asset.</div>}</div></section>
         <section className="inspections-panel panel"><div className="panel-head"><div><h2>Inspections</h2><p>{selected ? `${selectedInspections.length} record(s) for this asset` : 'Condition inspections'}</p></div><ClipboardCheck size={18} /></div><div className="order-list">{selectedInspections.map(item => <article className="order" key={item.id}><span className={`insp-result ${item.result.toLowerCase()}`}><ClipboardCheck size={14} /></span><div><strong>{item.inspectionType}</strong><small>{new Date(item.inspectedAt).toLocaleDateString()} · {item.result}</small><p>{item.findings ?? 'No findings recorded.'}</p></div></article>)}{!user && <EmptyState title="Inspection records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !selectedInspections.length && <div className="inline-empty">No inspections for this asset.</div>}</div></section>
       </div>
 
