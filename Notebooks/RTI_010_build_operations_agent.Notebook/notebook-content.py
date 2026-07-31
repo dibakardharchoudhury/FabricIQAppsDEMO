@@ -388,6 +388,16 @@ PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be 
 # Alert email recipient. Per-tenant: override with the `alert_email_to` setting; when blank the deploy
 # defaults it to the signed-in (deploying) user so the demo email has a valid, in-tenant recipient.
 ALERT_EMAIL_TO = first_setting("alert_email_to", "alert_recipient", default="")
+# Office365 email connection. If none exists it is CREATED via REST using the Service Principal
+# secrets RTI_001 stored in Key Vault (Office 365 Email supports Service Principal auth). Name it via
+# `alert_email_connection_name`; the KV vault uri + secret NAMES come from the settings table (both
+# alias spellings RTI_001 writes are accepted).
+ALERT_EMAIL_CONNECTION_NAME = first_setting(
+    "alert_email_connection_name", "alert_connection_name", default="RTI_Office365_EmailAlert")
+_KV_URI = first_setting("key_vault_uri", default="")
+_KV_TENANT_SECRET = first_setting("key_vault_tenant_id_secret_name", "key_vault_tenant_id_secret", default="")
+_KV_CLIENT_SECRET = first_setting("key_vault_client_id_secret_name", "key_vault_client_id_secret", default="")
+_KV_SECRET_SECRET = first_setting("key_vault_client_secret_name", "key_vault_client_secret_secret", default="")
 # Dynamic-content expressions for the Office365 email (evaluated at pipeline run from the alert
 # parameters the Ops Agent passes). Subject has no double quotes; body embeds HTML so it is stored
 # in a triple-single-quoted literal.
@@ -459,31 +469,107 @@ def _is_office365_connection(conn: dict) -> bool:
     return ctype.startswith("office365")
 
 
-def resolve_email_connection_id() -> str:
-    """Return an Office 365 (Outlook) connection id the running user can use for Office365Email.
+def discover_office365_connection_type() -> tuple:
+    """Return (type, creationMethod) for the Office 365 connector that supports ServicePrincipal.
 
-    Precedence: the `alert_email_connection_id` setting -> the first existing Office 365 connection
-    visible to the user -> RuntimeError with manual steps. An Office 365 Outlook connection uses
-    OAuth2 and CANNOT be created non-interactively via the Fabric Connections API (its create-
-    credential set has no OAuth2 type), so a one-time portal sign-in is required when none exists yet.
+    Discovered from GET /v1/connections/supportedConnectionTypes so the exact token isn't guessed;
+    falls back to ('Office365','Office365') if discovery is unavailable.
+    """
+    url = f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes?showAllCreationMethods=true"
+    while url:
+        response = api_request("GET", url)
+        if response.status_code != 200:
+            break
+        body = response.json()
+        for entry in body.get("value", []):
+            ctype = str(entry.get("type", ""))
+            if ctype.lower().replace(" ", "").startswith("office365") \
+                    and "ServicePrincipal" in (entry.get("supportedCredentialTypes") or []):
+                methods = entry.get("creationMethods") or []
+                return ctype, (methods[0]["name"] if methods else ctype)
+        token = body.get("continuationToken")
+        url = (f"{FABRIC_API_BASE}/v1/connections/supportedConnectionTypes"
+               f"?showAllCreationMethods=true&continuationToken={token}") if token else None
+    return "Office365", "Office365"
+
+
+def create_office365_service_principal_connection(display_name: str) -> str:
+    """Create a ShareableCloud Office 365 Email connection with Service Principal creds from Key Vault.
+
+    allowUsageInUserControlledCode=True is the 'Allow Code-First Artifacts like Notebooks to access
+    this connection' preview flag from the New-connection dialog. Returns the new connection id.
+    """
+    if not (_KV_URI and _KV_TENANT_SECRET and _KV_CLIENT_SECRET and _KV_SECRET_SECRET):
+        raise RuntimeError(
+            "Cannot create the Office 365 connection: Key Vault SPN settings are missing "
+            "(key_vault_uri + tenant/client/secret secret names). Set `alert_email_connection_id` to "
+            "an existing Office 365 connection, or run RTI_001 with the Key Vault settings first.")
+    tenant_id = notebookutils.credentials.getSecret(_KV_URI, _KV_TENANT_SECRET)
+    client_id = notebookutils.credentials.getSecret(_KV_URI, _KV_CLIENT_SECRET)
+    client_secret = notebookutils.credentials.getSecret(_KV_URI, _KV_SECRET_SECRET)
+
+    conn_type, creation_method = discover_office365_connection_type()
+    payload = {
+        "connectivityType": "ShareableCloud",
+        "displayName": display_name,
+        "connectionDetails": {
+            "type": conn_type,
+            "creationMethod": creation_method,
+            "parameters": [],
+        },
+        "privacyLevel": "Organizational",
+        "allowUsageInUserControlledCode": True,
+        "credentialDetails": {
+            "singleSignOnType": "None",
+            "connectionEncryption": "NotEncrypted",
+            "skipTestConnection": False,
+            "credentials": {
+                "credentialType": "ServicePrincipal",
+                "tenantId": tenant_id,
+                "servicePrincipalClientId": client_id,
+                "servicePrincipalSecret": client_secret,
+            },
+        },
+    }
+    print(f"\U0001f680 Creating Office365 connection '{display_name}' (type={conn_type}) with Service Principal creds…")
+    response = api_request("POST", f"{FABRIC_API_BASE}/v1/connections", data=payload)
+    if response.status_code == 409:  # DuplicateConnectionName — reuse by name
+        for conn in list_connections():
+            if conn.get("displayName") == display_name:
+                print(f"\u267b\ufe0f  Connection '{display_name}' already exists (id={conn.get('id')}).")
+                return conn.get("id")
+    if response.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Failed to create Office365 connection '{display_name}': "
+            f"{response.status_code} {response.text}")
+    cid = response.json().get("id")
+    print(f"\u2705 Created Office365 connection '{display_name}' (id={cid}).")
+    return cid
+
+
+def resolve_email_connection_id() -> str:
+    """Return an Office 365 Email connection id the running user can use for Office365Email.
+
+    Precedence: the `alert_email_connection_id` setting -> an existing Office 365 connection (the
+    configured name first, then any) -> CREATE one via REST using the Service Principal secrets in
+    Key Vault (Office 365 Email supports Service Principal auth). Creation raises with actionable
+    detail if the KV settings are missing or the API rejects the credentials.
     """
     forced = first_setting("alert_email_connection_id", "alert_connection_id", default="")
     if forced:
         print(f"\u2139\ufe0f  Using Office365 connection id from settings: {forced}")
         return forced
-    for conn in list_connections():
+    conns = list_connections()
+    for conn in conns:  # prefer the configured connection name
+        if conn.get("displayName") == ALERT_EMAIL_CONNECTION_NAME and _is_office365_connection(conn):
+            print(f"\u2705 Reusing Office365 connection '{ALERT_EMAIL_CONNECTION_NAME}' (id={conn.get('id')}).")
+            return conn.get("id")
+    for conn in conns:  # else any accessible Office365 connection
         if _is_office365_connection(conn):
-            cid = conn.get("id")
-            print(f"\u2705 Reusing accessible Office365 connection '{conn.get('displayName')}' (id={cid}).")
-            return cid
-    raise RuntimeError(
-        "No Office 365 (Outlook) connection is available to you in this tenant. It cannot be created "
-        "non-interactively (Office 365 Outlook is OAuth2 and the Fabric Connections API has no OAuth2 "
-        "credential type), so create it once via a quick portal sign-in: Fabric -> Settings -> Manage "
-        "connections and gateways -> New -> Cloud -> 'Office 365 Outlook' -> Sign in / Create. Then "
-        "re-run this notebook (it auto-discovers the connection), or paste its id into the "
-        "`alert_email_connection_id` setting in rti_demo_settings."
-    )
+            print(f"\u2705 Reusing accessible Office365 connection '{conn.get('displayName')}' (id={conn.get('id')}).")
+            return conn.get("id")
+    print(f"\u2139\ufe0f  No Office365 connection found — creating '{ALERT_EMAIL_CONNECTION_NAME}' with Service Principal creds.")
+    return create_office365_service_principal_connection(ALERT_EMAIL_CONNECTION_NAME)
 
 
 def build_email_pipeline_content(connection_id: str, to_address: str) -> dict:
