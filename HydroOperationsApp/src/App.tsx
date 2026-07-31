@@ -302,10 +302,11 @@ export default function App() {
   }, [telemetryLive])
   const telemetryAgo = telemetryAt ? fmtSince(Date.now() - telemetryAt) : ''
   // Data freshness for the topbar pill: judged off the MEDIAN reading age (representative of the whole
-  // stream) rather than the single newest, so a lone fresh row can't mask a stalled stream. "Live"
-  // while most readings arrive within ~a minute; "Stale" (with the real age) once the bulk ages out.
+  // stream) rather than the single newest, so a lone fresh row can't mask a stalled stream. Live < 60s;
+  // Delayed 60s–5min (transient lag); Stale > 5min (the bulk has aged out — investigate).
   const dataAgeMs = medianEventMs ? Date.now() - medianEventMs : Infinity
-  const dataFresh = dataAgeMs < 60_000
+  const dataStatus: 'live' | 'delayed' | 'stale' = dataAgeMs < 60_000 ? 'live' : dataAgeMs < 300_000 ? 'delayed' : 'stale'
+  const dataLabel = dataStatus === 'live' ? 'Live' : dataStatus === 'delayed' ? 'Delayed' : 'Stale'
   const dataAgo = medianEventMs ? fmtSince(dataAgeMs) : ''
   const freshCount = eventTimesSorted.filter(t => Date.now() - t < 60_000).length
 
@@ -645,7 +646,7 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
           <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
-          {telemetryLive && <span className={`live-pill ${dataFresh ? 'fresh' : 'stale'}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataFresh ? 'Live' : 'Stale'}<em>· {dataAgo || telemetryAgo}</em></span>}
+          {telemetryLive && <span className={`live-pill ${dataStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataLabel}<em>· {dataAgo || telemetryAgo}</em></span>}
           {telemetryLive && <button className="refresh-btn" onClick={() => void manualRefreshTelemetry()} disabled={telemetryBusy} title="Refresh live telemetry now"><RefreshCw size={14} className={telemetryBusy ? 'spin' : undefined} /></button>}
         </div>
       </div>
