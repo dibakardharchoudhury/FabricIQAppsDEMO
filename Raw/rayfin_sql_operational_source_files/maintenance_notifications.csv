@@ -1,0 +1,7 @@
+id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt
+20000000-0000-0000-0000-000000000001,EQUIP_RTI_T001,ns=2;s=T001.vibration_a,Guide bearing vibration exceeded advisory threshold,Warning,Open,00000000-0000-0000-0000-000000000000,2026-07-30T07:42:00
+20000000-0000-0000-0000-000000000002,EQUIP_RTI_T002,ns=2;s=T002.inlet_pressure,Inlet pressure variance requires review,Advisory,Open,00000000-0000-0000-0000-000000000000,2026-07-30T06:15:00
+20000000-0000-0000-0000-000000000003,EQUIP_RTI_T006,ns=2;s=T006.vibration_d,Driven-end vibration trending upward,Warning,Open,00000000-0000-0000-0000-000000000000,2026-07-29T18:05:00
+20000000-0000-0000-0000-000000000004,EQUIP_RTI_T008,ns=2;s=T008.power_output,Power output below expected for head,Advisory,Acknowledged,00000000-0000-0000-0000-000000000000,2026-07-29T12:40:00
+20000000-0000-0000-0000-000000000005,EQUIP_RTI_T011,ns=2;s=T011.turbine_temp,Bearing temperature above normal band,Warning,Open,00000000-0000-0000-0000-000000000000,2026-07-30T10:20:00
+20000000-0000-0000-0000-000000000006,EQUIP_RTI_T013,ns=2;s=T013.vibration_a,Vibration advisory on guide bearing,Critical,Open,00000000-0000-0000-0000-000000000000,2026-07-30T13:55:00
