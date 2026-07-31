@@ -2,40 +2,24 @@
 
 <!-- markdownlint-disable MD029 MD033 -->
 
-Follow these steps **in order** to deploy the Hydro Operations app to Microsoft Fabric. Each step is
-a copy-paste command with a one-line note. For how it all fits together, see [README.md](README.md)
-and the [root README](../README.md).
+Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
+`HydroOperationsApp/` on **Node 24** (if your default Node differs, prefix with
+`npx -y -p node@24 -c "<cmd>"`). Architecture: [README.md](README.md) · [root README](../README.md).
 
-**The path:** build the RTI environment → install → configure env → provision the backend → deploy →
-seed & provision (RTI_011, which auto-binds the STID GraphQL API) → switch on live auth → start the stream.
-
-The app composes **three Fabric data stores** on one screen:
-
-| Store | Source | Auth path |
-| --- | --- | --- |
-| **STID** (facilities/equipment/instruments) | Lakehouse **GraphQL API** item (created **and auto-bound** by `RTI_011`) | Power BI Service — `GraphQLApi.Execute.All` |
-| **Telemetry** (live signals) | Eventhouse `OPCUAEvents` (KQL) | Azure Data Explorer — `user_impersonation` |
-| **Operational** (work orders, inspections, spare parts, 3D models) | Rayfin-managed SQL database | Rayfin data client (delegated) |
+**Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
 ## Prerequisites
 
-- **Node.js 24** (the app pins `>=24 <25`). If your default Node differs, prefix any command with
-  `npx -y -p node@24 -c "<cmd>"` (e.g. `npx -y -p node@24 -c "npm run build"`).
-- A **Microsoft Fabric workspace** on a capacity you can use, plus permission to deploy to it and to
-  sign in to the owning tenant.
-- **Azure CLI** (`az`) for the one-time live-auth setup in Step 8.
-- An **Entra SPA app registration** (delegated, no secret) for browser sign-in.
+- **Node.js 24** (the app pins `>=24 <25`).
+- A **Fabric workspace** on a usable capacity, with permission to deploy.
+- **Azure CLI** (`az`) for the one‑time live‑auth step (Step 8).
+- An **Entra SPA app registration** (delegated, no secret) for browser sign‑in.
 
-## 1. Build the RTI Fabric environment (once, in Fabric)
+## 1. Build the RTI Fabric environment (in Fabric)
 
-The Lakehouse, Eventhouse, ontology, Real-Time Dashboard, and agents are produced by the RTI
-notebooks, orchestrated by the **`01_Pipe_Setup`** data pipeline. In your Fabric workspace, open
-`01_Pipe_Setup`, fill in its parameters, and run it. See the [root README](../README.md) for the
-full parameter list and notebook inventory.
-
-> This is the one part that must happen **in Fabric** — the app cannot build the Lakehouse/Eventhouse
-> for you. `Pipe_Setup` does **not** create the STID GraphQL API item or seed the operational SQL DB;
-> those happen in Step 7 via `RTI_011`.
+Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
+run it. This creates the Lakehouse, Eventhouse, ontology, dashboard, and agents. It does **not**
+create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
 
 ## 2. Clone and install
 
@@ -45,132 +29,105 @@ cd FabricOntologyHydro/HydroOperationsApp
 npm install
 ```
 
-`npm install` also installs the pinned Rayfin CLI, so every `rayfin` command below just works. Don't
-install the CLI globally — a global copy can drift out of sync with the project.
+`npm install` installs the pinned Rayfin CLI — don't install it globally.
 
-## 3. Configure the environment
+## 3. Configure
 
 ```powershell
 Copy-Item rayfin/.env.example rayfin/.env
 ```
 
-Fill in the **REQUIRED** values in `rayfin/.env`:
+Fill the four **required** values in `rayfin/.env` (no secrets belong here):
 
 ```ini
-FABRIC_WORKSPACE_NAME=<your Fabric workspace display name>
-RAYFIN_PUBLIC_WORKSPACE_ID=<your Fabric workspace GUID>
-RAYFIN_PUBLIC_AAD_CLIENT_ID=<your Entra SPA app (client) id>
-RAYFIN_PUBLIC_TENANT_ID=<your Entra tenant id>
+FABRIC_WORKSPACE_NAME=<Fabric workspace display name>
+RAYFIN_PUBLIC_WORKSPACE_ID=<Fabric workspace GUID>
+RAYFIN_PUBLIC_AAD_CLIENT_ID=<Entra SPA app (client) id>
+RAYFIN_PUBLIC_TENANT_ID=<Entra tenant id>
 ```
 
-The app **discovers** most artifact ids/URIs at runtime from the workspace by display name
-(`src/services/fabric.ts` → `ensureConfig`), so the `AUTO-DISCOVERED FALLBACKS` only need values if
-you want to pin a specific artifact or run without runtime discovery. Never edit `.env.local` — the
-build projects `RAYFIN_PUBLIC_*` into it as `VITE_RAYFIN_*` automatically. No secrets belong in this
-file.
+Most artifact ids/URIs are **discovered at runtime** by workspace display name; the
+`AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
+(the build writes `VITE_RAYFIN_*` into it automatically).
 
 ## 4. Sign in to Rayfin
 
 ```powershell
 npx rayfin logout
-npx rayfin login --select
+npx rayfin login --select   # pick the tenant that owns your workspace
 npx rayfin login status
 ```
 
-Pick the tenant that owns your Fabric workspace, then confirm the active identity.
-
-## 5. Provision the Rayfin backend and SQL schema
+## 5. Provision the backend and SQL schema
 
 ```powershell
-npm run up          # create/update AppBackend + auth + data services (workspace from FABRIC_WORKSPACE_NAME)
-npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (creates/updates tables)
+npm run up          # create/update AppBackend + auth + data services
+npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (creates tables, no rows)
 ```
-
-`rayfin:db` generates a Data API Builder config from `schema.ts` and pushes it to the remote Rayfin
-item. It **creates the tables but does not insert rows** — seeding happens in Step 7 via `RTI_011`.
 
 ## 6. Deploy the app
 
 ```powershell
-npm run deploy      # builds (tsc + vite, rayfin env auto-injected) and deploys the static app
+npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploys the static app
 ```
 
-The `prebuild` hook runs `rayfin env --framework vite` to inject `VITE_*` from the deployment before
-`vite build`. When it finishes your app is **live** — with empty operational tables and no STID
-GraphQL binding yet. The next steps add data and wire the live stores.
+The deploy prints the hosting URL. The app is now live with empty operational tables and no STID binding yet.
 
-## 7. Seed & provision (RTI_011) — seeds SQL and auto-binds the STID GraphQL API
+## 7. Seed & provision (RTI_011)
 
-`RTI_011_seed_sql_wire_graphql_agent` is the **authoritative seeder**. Its `SEED_SQL` step is a T-SQL
-`MERGE` (upsert) that **re-seeds and updates** all five operational tables every run.
+`RTI_011` is the authoritative seeder — its `MERGE` re‑seeds all five tables safely on every run.
 
 1. Open the deployed app and sign in (avatar button).
 2. Click **"Seed & provision"** in the header.
 
-The app runs `RTI_011` in your workspace, which:
+It runs `RTI_011` in your workspace, which upserts the operational tables, creates + **auto‑binds**
+the STID **GraphQL API** to the Lakehouse SQL endpoint, and adds the SQL DB as a Data Agent source.
+The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
 
-- MERGE-upserts WorkOrders / MaintenanceNotifications / Inspections / SpareParts / Asset3DModels,
-- creates the STID **GraphQL API** item **and auto-binds it** to the Lakehouse SQL analytics endpoint
-  (exposing `silver_facilities`, `silver_equipment`, `silver_instruments`), and
-- adds the hydro-operations SQL database's **SQL analytics endpoint** as a source on the Data Agent.
+> **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric
+> portal once and add the STID tables (`Facilities`, `Systems`, `Equipment`, `Instruments`).
+>
+> **Fallback (no RTI_011):** if `RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME` is blank, the app self‑seeds
+> demo rows only when a table is empty. For direct SQL, run
+> [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql) (`-v ActorOid=<your-oid>`) and
+> verify with [`sql/validate-seed.sql`](sql/validate-seed.sql).
 
-The app then discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
+## 8. Switch on live auth (once per fresh deploy)
 
-### If the auto-bind fails (fallback only)
-
-RTI_011 prints the bind result in its STEP B output. Only if it reports a failure, open the GraphQL
-API item in the Fabric portal once and add the STID Lakehouse tables (`Facilities`, `Systems`,
-`Equipment`, `Instruments`) as its data source.
-
-> **Fallback (no RTI_011):** if `RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME` is blank, the app runs an
-> idempotent client-side self-seeder that inserts demo rows only when a table is empty. For direct
-> SQL, run [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql) with `sqlcmd`
-> (`-v ActorOid=<your-oid>`) and verify with [`sql/validate-seed.sql`](sql/validate-seed.sql).
-
-## 8. Switch on live auth (telemetry + STID GraphQL)
-
-The browser queries the Eventhouse (KQL) and the STID GraphQL API directly, each needing a delegated
-Entra permission that interactive consent can fail to establish cleanly. Do this **once** per fresh
-deploy (a from-scratch rebuild gets a new hosting hostname):
+The browser calls the Eventhouse (KQL) and STID GraphQL directly, each needing a delegated Entra
+permission. Run once after the first deploy of a fresh build (a rebuild gets a new hosting hostname):
 
 ```powershell
-az login                  # as an owner / Application Administrator (privileged role for consent)
-npm run setup-live-auth   # or: npm run setup-live-auth:dry  to preview first
+az login                  # as an owner / Application Administrator
+npm run setup-live-auth   # or setup-live-auth:dry to preview
 ```
 
-`scripts/setup-live-auth.mjs` is idempotent and does two steps:
+`scripts/setup-live-auth.mjs` is idempotent: (1) registers the Fabric origin + `localhost:5173` as
+**SPA redirect URIs** (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation`
+and **Power BI Service** `GraphQLApi.Execute.All`, then grants consent (fixes **AADSTS650057 / 65001**).
 
-| Step | What it fixes |
-| --- | --- |
-| **1. SPA redirect URIs** | Registers the Fabric hosting origin(s) from `rayfin/rayfin.yml` + `localhost:5173` as **SPA redirect URIs**. Prevents **AADSTS50011** (redirect mismatch). |
-| **2. Delegated permissions + consent** | Adds **Azure Data Explorer** `user_impersonation` (telemetry) and **Power BI Service** `GraphQLApi.Execute.All` (STID GraphQL), then creates the tenant consent grant. Prevents **AADSTS650057** (invalid resource) / **AADSTS65001** (not consented). |
-
-Two things stay **manual** (per user/cluster, not per deploy): grant the signed-in user a **KQL
-Database Viewer** role on the Eventhouse, and allow the app origin in the Eventhouse cluster's
-**CORS** settings. Use `--redirect-only` / `--grant-only` to run a single step.
+Two things stay manual (per user/cluster): grant the signed‑in user **KQL Database Viewer** on the
+Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
 
 ## 9. Start the telemetry stream
 
-Run the **`02_Pipe_Stream`** pipeline (wraps `RTI_007`) in Fabric to push an OPC UA telemetry burst
-into the Eventhouse. In the app you can also click **"Start stream"** in the header, which triggers
-the same pipeline. Live asset gauges populate once telemetry lands and Step 8 auth is in place.
+Run **`02_Pipe_Stream`** in Fabric (or click **"Start stream"** in the app) to push an OPC UA burst
+into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth is in place.
 
 ## Troubleshooting
 
 | Problem | Fix |
 | --- | --- |
-| **"System cancelled the Spark session"** when running RTI_011 | RTI_011's lakehouse binding is stale. The repo binds it to the correct lakehouse and NB01 re-binds it at setup time — re-import RTI_011 (Fabric **source control → Update**) or re-run Stage 1 (`RTI_001`) so the binding refreshes, then retry. |
-| **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7) so `RTI_011` creates and auto-binds the GraphQL API item. If the notebook's STEP B output reports the auto-bind failed, bind the STID tables to it manually in the portal. |
-| Live asset signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live-auth must be in place. |
-| **"Connect"** / sign-in popup fails with an `AADSTS` error | Run `npm run setup-live-auth` (after `az login`). **AADSTS50011** = origin not a registered SPA redirect URI (step 1). **AADSTS650057** = app lacks the ADX or Power BI delegated permission (step 2). **AADSTS65001** = no admin consent (step 2 grants it). Entra edge-caches config — hard-refresh (Ctrl+F5) after. |
-| Telemetry in KQL but app shows "no live readings" | Browser reaches KQL but the query fails. Open **F12 → Console** and look for `[kql]` / `[fabricToken]`. `HTTP 401` = wrong token audience — re-connect so the popup consents to the cluster scope. `HTTP 403` = grant the user **KQL Database Viewer** on the Eventhouse. A network/`catch` error with no HTTP status = **CORS** isn't allowing the app origin on the Eventhouse cluster. |
-| Operational writes fail with an **Internal server error** | A `@text()` column without a `max` maps to `NVARCHAR(MAX)`, which some operations reject. Only `partNumber` is bounded today — bound the offending column in `rayfin/data/schema.ts` and re-run `npm run rayfin:db`. |
-| Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env`. Fix it there and re-run. |
+| **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**) or re‑run `RTI_001`, then retry. |
+| **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
+| Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
+| Sign‑in fails with **AADSTS** | Run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
+| KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
+| Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |
+| Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env` — fix it and re‑run. |
 
-## Reset and start over
+## Reset
 
-Delete `rayfin/.env`, `rayfin/.env.local`, and `rayfin/.deployments.json` for a true from-scratch
-build, then redo from Step 3. `npm run up` re-writes the `RAYFIN_PUBLIC_*` deployment keys; you
-re-add the required values from your workspace/Entra app. Because a fresh build gets a **new hosting
-hostname**, re-run `npm run setup-live-auth` (Step 8) after the first `npm run deploy` of every fresh
-deploy to re-register the redirect URI and re-grant the delegated permissions.
+Delete `rayfin/.env`, `rayfin/.env.local`, and `rayfin/.deployments.json`, then redo from Step 3.
+A fresh build gets a new hosting hostname, so re‑run `npm run setup-live-auth` (Step 8) after the
+first `npm run deploy`.

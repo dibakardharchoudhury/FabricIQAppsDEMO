@@ -92,7 +92,7 @@ export default function App() {
   const [telemetryState, setTelemetryState] = useState('Connect telemetry')
   const [streamState, setStreamState] = useState<'idle' | 'starting' | 'started' | 'error'>('idle')
   const [notice, setNotice] = useState<string>()
-  const [jobs, setJobs] = useState<Record<string, ProgressJob>>({})
+  const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [provisioned, setProvisioned] = useState(false)
   const [setupHidden, setSetupHidden] = useState(false)
@@ -145,9 +145,9 @@ export default function App() {
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a
-    // refresh visibly keeps the in-flight work instead of dropping it.
+    // refresh visibly keeps the in-flight work instead of dropping it. State is seeded lazily
+    // from the same source (see useState initializer); here we re-attach and drive them.
     const resumable = readPersistedJobs()
-    if (Object.keys(resumable).length) setJobs(resumable)
 
     const initialize = async () => {
       if (isRayfinConfigured()) {
@@ -642,14 +642,15 @@ function ChartSvg({ series, kind }: { series: ChartSeries; kind: 'bar' | 'line' 
   if (kind === 'pie') {
     const total = series.points.reduce((sum, p) => sum + Math.max(p.value, 0), 0) || 1
     const cx = 95, cy = H / 2, r = 72
-    let angle = -Math.PI / 2
+    const start = -Math.PI / 2
+    const fracs = series.points.map(point => Math.max(point.value, 0) / total)
     const slices = series.points.map((point, index) => {
-      const frac = Math.max(point.value, 0) / total
+      const angle = start + fracs.slice(0, index).reduce((sum, f) => sum + f, 0) * Math.PI * 2
+      const frac = fracs[index]
       const end = angle + frac * Math.PI * 2
       const p = (a: number) => `${cx + r * Math.cos(a)} ${cy + r * Math.sin(a)}`
       const large = end - angle > Math.PI ? 1 : 0
       const d = frac >= 0.9999 ? `M ${cx - r} ${cy} A ${r} ${r} 0 1 1 ${cx + r} ${cy} A ${r} ${r} 0 1 1 ${cx - r} ${cy} Z` : `M ${cx} ${cy} L ${p(angle)} A ${r} ${r} 0 ${large} 1 ${p(end)} Z`
-      angle = end
       return { d, color: CHART_COLORS[index % CHART_COLORS.length], point, pct: frac * 100 }
     })
     return (

@@ -1,7 +1,6 @@
 -- Idempotent sample operational data for the Hydro Operations app (3 facilities).
 -- App-owned mutable records only. Every equipmentId / opcua_node_id resolves to an
 -- existing STID Lakehouse row seeded by RTI_001_create_lakehouse_SelfContained.
--- Regenerate with: python _gen_seed.py  (repo root).
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
