@@ -13,8 +13,57 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 - **Node.js 24** (the app pins `>=24 <25`).
 - A **Fabric workspace** on a usable capacity, with permission to deploy.
 - **Azure CLI** (`az`) for the one‑time live‑auth step (Step 8).
-- An **Entra SPA app registration** (delegated, no secret) for browser sign‑in.
+- **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
+
+## Identities and permissions
+
+This solution uses **two separate Entra identities** — they are not interchangeable, and each is created and configured differently.
+
+| | **Notebook SPN** (provisioning) | **App SPA** (runtime sign-in) |
+|---|---|---|
+| Entra app type | Confidential client — **has a secret** | Public client / **single-page app — no secret** |
+| Auth mode | **App-only** (client credentials) | **Delegated** (the signed-in user's token) |
+| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, STID GraphQL, Fabric REST |
+| Secret storage | **Azure Key Vault** (3 secrets) | none — no secret is ever stored |
+| Who provisions it | Platform/security admin, **before** Step 1 | Deployer, **once** (portal or `az`), then Step 8 configures it |
+| Recorded in repo | KV secret **names** in `Pipe_Setup` params (not values) | `RAYFIN_PUBLIC_AAD_CLIENT_ID` in `rayfin/.env` |
+
+### A. Notebook SPN (pre-provision first)
+
+The pipeline only asks for **Key Vault coordinates** (vault URI + three secret *names*), so the SPN and its secrets must already exist. One-time, by an admin who can register apps and manage the vault:
+
+1. **Register an Entra app** (or reuse one) and create a **client secret**.
+2. Store three secrets in the vault — e.g. `tenantid`, `clientid`, `clientsecret` (values = the SPN's tenant id, application/client id, and client secret).
+3. Grant the SPN **Key Vault Secrets User** (Get) on those secrets, **Contributor** on the Fabric workspace, and add it to the **"Service principals can use Fabric APIs"** allowed group. Full list + private-endpoint note: [root README → Prerequisites](../README.md).
+4. Enter the vault URI + the three secret **names** into the `Pipe_Setup` parameters (Step 1). Notebooks read the secret *values* at run time via `notebookutils.credentials.getSecret` — **no secret enters the repo**.
+
+### B. App SPA (created once, then automated)
+
+The browser app signs the **user** in through a delegated SPA registration (no secret). Creating that registration is the one manual step; Step 8 (`npm run setup-live-auth`) automates everything after it.
+
+**Create the SPA** — `az` one-liner or portal:
+
+```powershell
+az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audience AzureADMyOrg --query appId -o tsv
+```
+
+…or Entra portal → **App registrations → New registration** → name it, *Accounts in this organizational directory only* → **Register**. Copy the **Application (client) ID** into `rayfin/.env` → `RAYFIN_PUBLIC_AAD_CLIENT_ID` (Step 3). Creating an app registration needs **Application Administrator** (or tenant self-service app registration enabled).
+
+**Step 8 then configures that app automatically:** SPA redirect URIs, the two delegated permissions, and admin consent.
+
+**If the tenant blocks the script** (missing role or restricted consent), it prints the exact action and continues — complete these in the Entra portal on that app registration:
+
+1. **Authentication → Add a platform → Single-page application** → add every hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
+2. **API permissions → Add a permission → APIs my organization uses** → add these **Delegated** scopes:
+   - **Azure Data Explorer** → `user_impersonation` — Eventhouse telemetry (resource app id `2746ea77-4702-4b45-80ca-3c97e680e8b7`).
+   - **Power BI Service** → `GraphQLApi.Execute.All` — STID Lakehouse GraphQL (resource app id `00000009-0000-0000-c000-000000000000`).
+
+   *Fixes AADSTS650057.*
+3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Privileged Role Administrator / Global Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead.
+4. The Fabric REST scopes (`Workspace.Read.All`, `Item.Execute.All`) are **consented in-app** on first use, so they need no pre-grant — optionally add them under **Microsoft Fabric** to pre-consent.
+
+Two per-cluster grants stay manual either way: give the signed-in user **KQL Database Viewer** on the Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
 
 ## 1. Build the RTI Fabric environment (in Fabric)
 
@@ -110,6 +159,9 @@ npm run setup-live-auth   # or setup-live-auth:dry to preview
 (`allowedRedirectUris`) plus `localhost:5173` and registers them as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation`
 and **Power BI Service** `GraphQLApi.Execute.All`, then grants consent (fixes **AADSTS650057 / 65001**).
+
+Where the signed‑in identity lacks a role, the script **prints the exact manual action and continues** —
+complete those on the app registration in the Entra portal (see [Identities and permissions → App SPA](#b-app-spa-created-once-then-automated)).
 
 Two things stay manual (per user/cluster): grant the signed‑in user **KQL Database Viewer** on the
 Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.

@@ -54,6 +54,8 @@ The demo is otherwise self‑contained (no ADLS, shortcut, or cloud connection) 
 3. **Tenant settings** (Admin portal, one‑time) — the notebooks call Fabric REST with the SPN and build a Data Agent, so a fresh tenant needs **Service principals can use Fabric APIs** (with the SPN in the allowed security group) and **Copilot / AI** enabled on a capacity that supports it (required by `RTI_009`/`RTI_010`).
 4. **Private endpoint to Key Vault** — only if the vault blocks public network access (add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault).
 
+> The **Hydro Operations web app** signs users in with a **second, separate identity** — a delegated **SPA app registration** (no secret), distinct from this notebook SPN. Its creation, redirect URIs, delegated scopes, and admin consent (with manual fallbacks for locked-down tenants) are documented in [`HydroOperationsApp/DEPLOY.md` → Identities and permissions](HydroOperationsApp/DEPLOY.md#identities-and-permissions).
+
 ## Deploy
 
 1. Open **`01_Pipe_Setup`** and fill its **pipeline parameters**:
