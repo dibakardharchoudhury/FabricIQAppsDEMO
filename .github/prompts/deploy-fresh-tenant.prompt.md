@@ -10,6 +10,13 @@ tenant, workspace, or region. This repo already automates almost everything. **F
 existing scripts and docs — do not reinvent the wheel or click through the Entra portal by
 hand when a script does it.**
 
+## Which scenario (pick one)
+- **New / different tenant** → create a new SPA (step 2) + reset local state (step 1) → full **Canonical flow** below.
+- **Same tenant, new workspace or region** → **reuse** the SPA client id, reset local state, read
+  [Same tenant, different workspace/region](#same-tenant-different-workspaceregion), then run Canonical-flow steps 3–8.
+- **Same tenant, same workspace (iterating on code)** → no reset, no SPA change: `npm run deploy`;
+  re-run `npm run setup-live-auth` only if the hosting hostname changed.
+
 ## Source of truth — READ THESE FIRST, then follow them
 - [HydroOperationsApp/DEPLOY.md](../../HydroOperationsApp/DEPLOY.md) — the 9-step guide + the
   "Redeploying to a different tenant, workspace, or region" section + Troubleshooting.
@@ -71,7 +78,10 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    ```
    It reads `RAYFIN_PUBLIC_AAD_CLIENT_ID` / `TENANT_ID` from `rayfin/.env` and the hosting
    origins from `rayfin/rayfin.yml`, then registers `localhost:5173` + each hosting origin and
-   grants ADX `user_impersonation` + Power BI `GraphQLApi.Execute.All`. If it lacks a role it
+   grants ADX `user_impersonation` + the Power BI / Microsoft Fabric scopes
+   `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
+   (all `AllPrincipals`, tenant-wide). `Item.Read.All` is what lets the app read the Eventhouse
+   query URI — without it live telemetry fails with "No Eventhouse found". If it lacks a role it
    prints the exact portal action and continues.
 
 7. **Two per-cluster grants that stay manual** (no API for them here): give the signed-in user
@@ -82,11 +92,11 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    `RTI_011`), 8 (already covered by `setup-live-auth`), 9 (start the OPC-UA stream). A brand-new
    workspace is EMPTY of RTI artifacts, so live telemetry/STID panels stay blank until
    `01_Pipe_Setup` and the stream run.
-   - **Expected in-app consent popup** the first time the user clicks **Seed & provision**: it asks
-     for **Workspace.Read.All** ("View all workspaces") + **Item.Execute.All** ("execute on all
-     Fabric items"). This is BY DESIGN — `setup-live-auth` pre-grants ONLY the ADX + Power BI
-     scopes and leaves these Fabric REST scopes to the in-app popup. Tell the user to click
-     **Accept** (one-time per user). It is NOT an error.
+   - **No in-app consent popup** should appear on **Seed & provision** or **Connect telemetry** —
+     `setup-live-auth` pre-grants all Fabric REST scopes (`GraphQLApi.Execute.All`,
+     `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) tenant-wide. If one still shows
+     (Entra edge-cached the config for a minute or two), tell the user to click **Accept**; it's
+     harmless, NOT an error.
 
 ## Same tenant, different workspace/region (the common redeploy)
 If the target is the SAME tenant as a prior deploy (only the workspace or capacity region changed):
@@ -97,7 +107,8 @@ If the target is the SAME tenant as a prior deploy (only the workspace or capaci
   `GET /v1/workspaces`). `setup-live-auth` just ADDS the new hosting origin to the existing app and
   re-confirms consent (already `AllPrincipals` → no-op).
 - Verify the app afterwards: `az ad app show --id <appId> --query spa.redirectUris` and the SP's
-  `oauth2PermissionGrants` (both `GraphQLApi.Execute.All` + `user_impersonation` as `AllPrincipals`).
+  `oauth2PermissionGrants` — Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` +
+  `Item.Read.All` + `Item.Execute.All`, and ADX `user_impersonation`, all as `AllPrincipals`.
 
 ## Feature & region gating (Fabric App Items preview)
 `rayfin up` creating the Rayfin item needs the **"Enable Fabric App Items (preview)"** tenant
@@ -115,7 +126,8 @@ setting (`AppBackendTenant`). If it fails with **403 "The feature is not availab
 | `rayfin up` 404 "workspace not found" | Stale `active` pointer in `.deployments.json` → delete it (step 1). |
 | `rayfin up` 403 "feature is not available" | AppBackendTenant off/propagating, or region-gated → verify setting; move to Sweden Central. |
 | `rayfin up`/`deploy` static step **401 Unauthorized** (backend + DB apply already succeeded) | Cached Fabric token stale → `rayfin login --select` (target tenant), then retry ONLY `rayfin up staticapp deploy`. Do NOT re-run full `up`. After it prints the new hosting URL, `rayfin up --exclude-services staticHosting --yes` to push the redirect to the backend, then `npm run setup-live-auth`. |
-| Consent popup on **Seed & provision** (Workspace.Read.All / Item.Execute.All) | Expected in-app Fabric consent → click **Accept**. Not covered by `setup-live-auth` by design. |
+| Consent popup on **Seed & provision** / **Connect telemetry** | Should NOT appear — `setup-live-auth` pre-grants all Fabric scopes tenant-wide. If it does (edge-cached config), click **Accept**; harmless. |
+| **Connect telemetry → "No Eventhouse found"** (STID works) | Token lacks **`Item.Read.All`** → `GET /eventhouses/{id}` returns **403 InsufficientScopes**. Fix: redeploy the app (it now requests `Item.Read.All` in `FABRIC_SCOPES`) **and** `npm run setup-live-auth` (pre-grants it). RBAC admin ≠ OAuth scope. |
 | Deployed to the wrong workspace (e.g. a `*Test` ws) | `.env` `FABRIC_WORKSPACE_NAME`/`RAYFIN_PUBLIC_WORKSPACE_ID` pointed at the wrong ws → resolve the intended ws GUID by name via `GET /v1/workspaces`, fix `.env`, re-run `rayfin up --workspace-id <guid> --yes`. |
 | npm **EUSAGE** | Nested `npx` inside `-c` → call `rayfin`/`npm run` directly. |
 | "Project name not found in rayfin.yml" | `-c` shell ran from repo root → embed `cd /d …\HydroOperationsApp &&`. |

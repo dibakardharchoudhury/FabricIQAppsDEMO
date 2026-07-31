@@ -1,12 +1,31 @@
 # Hydro Operations — Deployment Guide
 
-<!-- markdownlint-disable MD029 MD033 -->
+<!-- markdownlint-disable MD029 MD033 MD060 -->
 
 Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 `HydroOperationsApp/` on **Node 24** (if your default Node differs, prefix with
 `npx -y -p node@24 -c "<cmd>"`). Architecture: [README.md](README.md) · [root README](../README.md).
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
+
+## Which scenario am I in?
+
+Find your row — it tells you exactly what to run. A workspace always belongs to one tenant, so
+“new tenant” means its workspaces are new to you as well. The only two things that change between
+scenarios are **whether the SPA app registration already exists** (app regs are tenant‑scoped) and
+**whether Rayfin's local state must be reset** (when the target workspace changes).
+
+| Your situation | SPA app registration | Local Rayfin state | Do this |
+|---|---|---|---|
+| **First‑ever deploy — new tenant, new workspace** | **Create** it once — [§App SPA](#b-app-spa-created-once-then-automated) | fresh (nothing to reset) | Run **Steps 1–9** in order. |
+| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | **Reset** — [Redeploying §1](#1-reset-local-rayfin-state) | Reset → re‑point `.env` → [Redeploying §4](#4-provision-non-interactively) (`rayfin up --workspace-id <guid> --yes`) → **Steps 5–9**. |
+| **Different tenant** (move the whole app elsewhere) | **Create** a new SPA in that tenant — [§App SPA](#b-app-spa-created-once-then-automated) | **Reset** — [Redeploying §1](#1-reset-local-rayfin-state) | Reset → create SPA → new `.env` → [Redeploying §2–4](#redeploying-to-a-different-tenant-workspace-or-region) → **Steps 5–9**. |
+| **Same tenant, same workspace — iterating on code** | already set up | keep as‑is | Just `npm run deploy`. If the hosting hostname changed, also re‑run `npm run setup-live-auth` (Step 8). |
+
+> **Agents:** the canonical automated runbook is
+> [`.github/prompts/deploy-fresh-tenant.prompt.md`](../.github/prompts/deploy-fresh-tenant.prompt.md).
+> The golden rule everywhere: **SPA redirect URIs, delegated permissions, and admin consent are done
+> by `npm run setup-live-auth` — never by hand in the Entra portal.**
 
 ## Prerequisites
 
@@ -58,11 +77,12 @@ az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audie
 1. **Authentication → Add a platform → Single-page application** → add every hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
 2. **API permissions → Add a permission → APIs my organization uses** → add these **Delegated** scopes:
    - **Azure Data Explorer** → `user_impersonation` — Eventhouse telemetry (resource app id `2746ea77-4702-4b45-80ca-3c97e680e8b7`).
-   - **Power BI Service** → `GraphQLApi.Execute.All` — STID Lakehouse GraphQL (resource app id `00000009-0000-0000-c000-000000000000`).
+   - **Power BI Service** (resource app id `00000009-0000-0000-c000-000000000000`) → `GraphQLApi.Execute.All` (STID Lakehouse GraphQL), `Workspace.Read.All` (workspace item discovery), **`Item.Read.All`** (read the Eventhouse query URI — **required for live telemetry**; without it the app reports “No Eventhouse found”), and `Item.Execute.All` (run notebooks/pipelines from the app).
 
    *Fixes AADSTS650057.*
 3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Privileged Role Administrator / Global Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead.
-4. The Fabric REST scopes (`Workspace.Read.All`, `Item.Execute.All`) are **consented in-app** on first use, so they need no pre-grant — optionally add them under **Microsoft Fabric** to pre-consent.
+
+`setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`), so **no in‑app consent popup appears** — do these by hand only for the exact grant the script prints it couldn't make.
 
 Two per-cluster grants stay manual either way: give the signed-in user **KQL Database Viewer** on the Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
 
@@ -166,8 +186,11 @@ npm run setup-live-auth   # or setup-live-auth:dry to preview
 
 `scripts/setup-live-auth.mjs` is idempotent: (1) reads the hosting origins from `rayfin/rayfin.yml`
 (`allowedRedirectUris`) plus `localhost:5173` and registers them as **SPA redirect URIs** on the Entra
-app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation`
-and **Power BI Service** `GraphQLApi.Execute.All`, then grants consent (fixes **AADSTS650057 / 65001**).
+app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
+**Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
+**`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
+then grants admin consent tenant‑wide (fixes **AADSTS650057 / 65001**). Because these are pre‑granted,
+**no in‑app consent popup appears** on Seed & provision or Connect telemetry.
 
 Where the signed‑in identity lacks a role, the script **prints the exact manual action and continues** —
 complete those on the app registration in the Entra portal (see [Identities and permissions → App SPA](#b-app-spa-created-once-then-automated)).
