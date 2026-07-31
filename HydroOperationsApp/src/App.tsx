@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, RefreshCw, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
@@ -28,6 +28,8 @@ const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : 
 // Compact absolute + relative timestamps for live telemetry readings.
 const fmtClock = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 const fmtAgo = (iso: string) => { const ms = Date.now() - new Date(iso).getTime(); if (Number.isNaN(ms)) return ''; const m = Math.round(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`; const h = Math.round(m / 60); if (h < 24) return `${h}h ago`; return `${Math.round(h / 24)}d ago` }
+// Seconds-granular freshness label for the live-telemetry indicator, which polls every 12s.
+const fmtSince = (ms: number) => { if (ms < 5000) return 'just now'; const s = Math.round(ms / 1000); if (s < 60) return `${s}s ago`; const m = Math.round(s / 60); if (m < 60) return `${m}m ago`; return `${Math.round(m / 60)}h ago` }
 
 // One entry per concurrently-running Fabric job so each keeps its own progress bar.
 // `kind` lets a reloaded page re-attach to the right long-running Fabric job.
@@ -88,6 +90,7 @@ export default function App() {
   const [stid, setStid] = useState<StidData | null>(null)
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
   const [telemetryAt, setTelemetryAt] = useState<number>()
+  const [telemetryBusy, setTelemetryBusy] = useState(false)
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>()
   const [selectedId, setSelectedId] = useState<string>()
   const [sourceState, setSourceState] = useState('Connect STID')
@@ -246,27 +249,47 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, [])
 
+  // Shared latest-telemetry fetch used by both the auto-refresh timer and the manual Refresh button.
+  const refreshTelemetry = useCallback(async () => {
+    const data = await queryLatestTelemetry()
+    if (data) {
+      setTelemetry(data); setTelemetryAt(Date.now())
+      setTelemetryState(data.length ? `${data.length} signals` : 'No recent events')
+    }
+    return data
+  }, [])
+  // Manual refresh: surface a spinner + error toast (the silent timer keeps the last good readings on error).
+  const manualRefreshTelemetry = async () => {
+    setTelemetryBusy(true); setNotice(undefined)
+    try { await refreshTelemetry() }
+    catch (error) { setNotice(`Telemetry: ${errorMessage(error)}`) }
+    finally { setTelemetryBusy(false) }
+  }
+
   // Once telemetry is connected, re-poll the Eventhouse on a timer so the map markers and 3D twin
   // hotspots recolor/refresh to the latest OPC UA signal quality without a manual reconnect.
   const telemetryLive = telemetry.length > 0
   useEffect(() => {
     if (!telemetryLive) return
-    let cancelled = false, inFlight = false
+    let inFlight = false
     const poll = async () => {
       if (inFlight || document.hidden) return
       inFlight = true
-      try {
-        const data = await queryLatestTelemetry()
-        if (!cancelled && data) {
-          setTelemetry(data); setTelemetryAt(Date.now())
-          setTelemetryState(data.length ? `${data.length} signals` : 'No recent events')
-        }
-      } catch { /* transient poll failure — keep the last good readings on screen */ }
+      try { await refreshTelemetry() } catch { /* transient poll failure — keep the last good readings on screen */ }
       finally { inFlight = false }
     }
     const id = window.setInterval(poll, 12_000)
-    return () => { cancelled = true; window.clearInterval(id) }
+    return () => window.clearInterval(id)
+  }, [telemetryLive, refreshTelemetry])
+
+  // A 1s ticker so the "updated Xs ago" freshness label counts up between the 12s data polls.
+  const [, setTelemetryTick] = useState(0)
+  useEffect(() => {
+    if (!telemetryLive) return
+    const id = window.setInterval(() => setTelemetryTick(t => t + 1), 1000)
+    return () => window.clearInterval(id)
   }, [telemetryLive])
+  const telemetryAgo = telemetryAt ? fmtSince(Date.now() - telemetryAt) : ''
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
   // each from its own elapsed time — eases monotonically toward ~95% over the expected duration.
@@ -602,7 +625,11 @@ export default function App() {
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
-        <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
+        <div className="telemetry-source">
+          <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
+          {telemetryLive && <span className="live-pill" title={telemetryAt ? `Auto-refreshing every 12s · last updated ${new Date(telemetryAt).toLocaleTimeString()}` : 'Live telemetry'}><i className="live-dot" />Live<em>· {telemetryAgo}</em></span>}
+          {telemetryLive && <button className="refresh-btn" onClick={() => void manualRefreshTelemetry()} disabled={telemetryBusy} title="Refresh live telemetry now"><RefreshCw size={14} className={telemetryBusy ? 'spin' : undefined} /></button>}
+        </div>
       </div>
       <div className="top-actions"><span className="app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small></span><button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button></div>
     </header>
