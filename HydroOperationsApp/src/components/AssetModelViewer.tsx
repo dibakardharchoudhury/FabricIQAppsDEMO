@@ -90,10 +90,12 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
     return c
   }, [signals])
 
-  // Newest reading time across this asset's hotspots — drives the live/stale badge in the twin header.
-  const newestSignalMs = useMemo(() => signals.reduce((max, s) => { const t = s.eventTime ? Date.parse(s.eventTime) : NaN; return Number.isNaN(t) ? max : Math.max(max, t) }, 0), [signals])
-  const newestSignalIso = newestSignalMs ? new Date(newestSignalMs).toISOString() : undefined
-  const twinFresh = freshnessOf(newestSignalIso) === 'live'
+  // Median reading time across this asset's hotspots — drives the live/stale badge in the twin header
+  // (median, not newest, so one fresh hotspot can't hide a stalled asset). Fresh = within ~2 min.
+  const eventMsSorted = useMemo(() => signals.map(s => (s.eventTime ? Date.parse(s.eventTime) : NaN)).filter(t => !Number.isNaN(t)).sort((a, b) => a - b), [signals])
+  const medianSignalMs = eventMsSorted.length ? eventMsSorted[Math.floor((eventMsSorted.length - 1) / 2)] : 0
+  const medianSignalIso = medianSignalMs ? new Date(medianSignalMs).toISOString() : undefined
+  const twinFresh = ['live', 'recent'].includes(freshnessOf(medianSignalIso))
 
   // Read the model's real bounds once loaded. The parent remounts this component per model
   // (keyed on modelUrl), so state starts fresh — no synchronous reset needed here.
@@ -130,8 +132,8 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
           <em className="warn" title="Uncertain">{counts.warn}</em>
           <em className="crit" title="Bad / open order">{counts.crit}</em>
         </span>
-        {newestSignalMs
-          ? <small className={`twin-live-age ${twinFresh ? 'fresh' : 'stale'}`} title={`Newest event ${new Date(newestSignalMs).toLocaleTimeString()}`}>{twinFresh ? 'Live' : 'Stale'} · {ageLabel(newestSignalIso)}</small>
+        {medianSignalMs
+          ? <small className={`twin-live-age ${twinFresh ? 'fresh' : 'stale'}`} title={`Median reading ${new Date(medianSignalMs).toLocaleTimeString()}`}>{twinFresh ? 'Live' : 'Stale'} · {ageLabel(medianSignalIso)}</small>
           : updatedAt && <small title="Last telemetry refresh">{new Date(updatedAt).toLocaleTimeString()}</small>}
       </div>
       <model-viewer

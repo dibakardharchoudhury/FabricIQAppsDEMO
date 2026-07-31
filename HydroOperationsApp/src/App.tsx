@@ -119,9 +119,13 @@ export default function App() {
   const instruments = useMemo(() => stid?.instruments.filter(item => item.equipment_id === selected?.equipment_id) ?? [], [stid, selected])
   const facilityInstruments = useMemo(() => stid?.instruments.filter(item => !facility || item.facility_id === facility.facility_id) ?? [], [stid, facility])
   const readings = useMemo(() => new Map(telemetry.map(item => [item.opcuaNodeId, item])), [telemetry])
-  // Newest reading time across the whole stream — drives the "Live vs Stale" pill off the DATA age
-  // (not the fetch age), so a stopped stream reads as stale even while polling continues.
-  const newestEventMs = useMemo(() => telemetry.reduce((max, r) => { const t = Date.parse(r.eventTime); return Number.isNaN(t) ? max : Math.max(max, t) }, 0), [telemetry])
+  // Sorted reading times across the whole stream. The topbar pill judges freshness off the MEDIAN
+  // event age (not the single newest), so one stray fresh row — a heartbeat or a late-arriving event —
+  // can't make the pill claim "Live" while the bulk of the telemetry is actually stale.
+  const eventTimesSorted = useMemo(() => telemetry.map(r => Date.parse(r.eventTime)).filter(t => !Number.isNaN(t)).sort((a, b) => a - b), [telemetry])
+  const medianEventMs = eventTimesSorted.length ? eventTimesSorted[Math.floor((eventTimesSorted.length - 1) / 2)] : 0
+  const newestEventMs = eventTimesSorted.length ? eventTimesSorted[eventTimesSorted.length - 1] : 0
+  const oldestEventMs = eventTimesSorted.length ? eventTimesSorted[0] : 0
   const openOrders = orders.filter(order => openStatuses.has(order.status.toLowerCase()))
   const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
   // Open work orders narrowed to the selected facility (matched via each order's equipment → facility).
@@ -296,11 +300,13 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [telemetryLive])
   const telemetryAgo = telemetryAt ? fmtSince(Date.now() - telemetryAt) : ''
-  // Data freshness for the topbar pill: green "Live" while readings arrive within a poll window,
-  // amber "Stale" (with the real age) once the newest event ages out — the stream has likely paused.
-  const dataAgeMs = newestEventMs ? Date.now() - newestEventMs : Infinity
-  const dataFresh = dataAgeMs < 30_000
-  const dataAgo = newestEventMs ? fmtSince(dataAgeMs) : ''
+  // Data freshness for the topbar pill: judged off the MEDIAN reading age (representative of the whole
+  // stream) rather than the single newest, so a lone fresh row can't mask a stalled stream. "Live"
+  // while most readings arrive within ~a minute; "Stale" (with the real age) once the bulk ages out.
+  const dataAgeMs = medianEventMs ? Date.now() - medianEventMs : Infinity
+  const dataFresh = dataAgeMs < 60_000
+  const dataAgo = medianEventMs ? fmtSince(dataAgeMs) : ''
+  const freshCount = eventTimesSorted.filter(t => Date.now() - t < 60_000).length
 
   // Long Fabric jobs (notebook/pipeline runs) don't report real percentages, so estimate
   // each from its own elapsed time — eases monotonically toward ~95% over the expected duration.
@@ -638,7 +644,7 @@ export default function App() {
         <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
           <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
-          {telemetryLive && <span className={`live-pill ${dataFresh ? 'fresh' : 'stale'}`} title={`Polling the Eventhouse every 10s${telemetryAt ? ` · last checked ${new Date(telemetryAt).toLocaleTimeString()}` : ''}${newestEventMs ? ` · newest event ${new Date(newestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataFresh ? 'Live' : 'Stale'}<em>· {dataAgo || telemetryAgo}</em></span>}
+          {telemetryLive && <span className={`live-pill ${dataFresh ? 'fresh' : 'stale'}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataFresh ? 'Live' : 'Stale'}<em>· {dataAgo || telemetryAgo}</em></span>}
           {telemetryLive && <button className="refresh-btn" onClick={() => void manualRefreshTelemetry()} disabled={telemetryBusy} title="Refresh live telemetry now"><RefreshCw size={14} className={telemetryBusy ? 'spin' : undefined} /></button>}
         </div>
       </div>
