@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "GraphQLApi",
+    "displayName": "Hydro_STID_API"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "436cc4cb-2158-94bb-4e91-895e341f42b4"
+  }
+}
