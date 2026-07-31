@@ -165,16 +165,24 @@ w("VALUES (source.id,source.partNumber,source.name,source.category,source.equipm
 w("")
 
 # ---------------- Asset 3D Models (1 per turbine) ----------------
-SAMPLE_GLB = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
+# Per-manufacturer turbine GLBs (Poly Pizza, CC0/CC-BY, CORS-clean, small).
+# Geometry is keyed on manufacturer/model — same make shares a twin across facilities.
+TURBINE_MAKES = [
+    ("Andritz", "RTI-Turbine-A", "https://static.poly.pizza/754e9358-fff8-4285-b80f-09b68c2f3c71.glb", 0.06),
+    ("Voith", "RTI-Turbine-B", "https://static.poly.pizza/e9fc0901-7600-48f4-881d-b546f3df4cec.glb", 0.03),
+    ("GE Vernova", "RTI-Turbine-C", "https://static.poly.pizza/e81145eb-091e-4803-9523-8611bd7e24e4.glb", 0.57),
+    ("Toshiba", "RTI-Turbine-D", "https://static.poly.pizza/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb", 2.76),
+    ("Hitachi Energy", "RTI-Turbine-E", "https://static.poly.pizza/e6b02958-8f16-423e-8322-036b5379ef0b.glb", 0.02),
+]
 w("MERGE dbo.Asset3DModels AS target")
 w("USING (VALUES")
 rows = []
 for i, (tag, fac) in enumerate(TURBINES, start=1):
-    name = f"Turbine {tag} digital twin"
-    size = round(8.0 + (i % 5) * 1.5, 1)
+    mfr, model, glb, size = TURBINE_MAKES[(i - 1) % 5]
+    name = f"{mfr} {model} twin ({tag})"
     ver = f"v1.{i}"
     updated = f"2026-07-{10 + (i % 15):02d}T12:00:00"
-    rows.append(f"    ({q(guid('80000000', i))},{q(eq(tag))},{q(name)},{q('GLB')},{q(SAMPLE_GLB)},NULL,{size},{q(ver)},@ActorOid,{q(updated)})")
+    rows.append(f"    ({q(guid('80000000', i))},{q(eq(tag))},{q(name)},{q('GLB')},{q(glb)},NULL,{size},{q(ver)},@ActorOid,{q(updated)})")
 w(",\n".join(rows))
 w(") AS source(id,equipmentId,modelName,format,modelUrl,thumbnailUrl,fileSizeMb,version,updatedByOid,updatedAt)")
 w("ON target.id = source.id")

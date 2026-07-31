@@ -250,19 +250,29 @@ export async function seedOperationalDataIfEmpty(user: AppUser): Promise<SeedSum
     summary.push({ entity: 'SparePart', created: 0, skipped: true })
   }
 
-  const existingModels = await client.data.Asset3DModel.select(['id']).execute() as { id: string }[]
-  if (existingModels.length === 0) {
-    for (const m of seedAsset3DModels) {
+  // Asset3Dmodels are refreshed (not just seeded-if-empty) so redeploys can swap the
+  // per-manufacturer GLBs onto rows created by an earlier seed.
+  const existingModels = await client.data.Asset3DModel.select(['id', 'equipmentId', 'modelUrl']).execute() as { id: string; equipmentId: string; modelUrl: string }[]
+  const modelByEquipment = new Map(existingModels.map(m => [m.equipmentId, m]))
+  let modelChanges = 0
+  for (const m of seedAsset3DModels) {
+    const existing = modelByEquipment.get(m.equipmentId)
+    if (!existing) {
       await client.data.Asset3DModel.create({
         equipmentId: m.equipmentId, modelName: m.modelName, format: m.format, modelUrl: m.modelUrl,
         thumbnailUrl: m.thumbnailUrl, fileSizeMb: m.fileSizeMb, version: m.version,
         updatedByOid: oid, updatedAt: new Date(m.updatedAt),
       })
+      modelChanges++
+    } else if (existing.modelUrl !== m.modelUrl) {
+      await client.data.Asset3DModel.update({ id: existing.id }, {
+        modelName: m.modelName, format: m.format, modelUrl: m.modelUrl,
+        fileSizeMb: m.fileSizeMb, version: m.version, updatedByOid: oid, updatedAt: new Date(m.updatedAt),
+      })
+      modelChanges++
     }
-    summary.push({ entity: 'Asset3DModel', created: seedAsset3DModels.length, skipped: false })
-  } else {
-    summary.push({ entity: 'Asset3DModel', created: 0, skipped: true })
   }
+  summary.push({ entity: 'Asset3DModel', created: modelChanges, skipped: modelChanges === 0 })
 
   return summary
 }

@@ -95,21 +95,42 @@ export interface SeedAsset3DModel {
   equipmentId: string; modelName: string; format: string; modelUrl: string
   thumbnailUrl?: string; fileSizeMb?: number; version?: string; updatedAt: string
 }
-export const seedAsset3DModels: SeedAsset3DModel[] = [
-  { equipmentId: "EQUIP_RTI_T001", modelName: "Turbine T001 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 9.5, version: "v1.1", updatedAt: "2026-07-11T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T002", modelName: "Turbine T002 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 11.0, version: "v1.2", updatedAt: "2026-07-12T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T003", modelName: "Turbine T003 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 12.5, version: "v1.3", updatedAt: "2026-07-13T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T004", modelName: "Turbine T004 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 14.0, version: "v1.4", updatedAt: "2026-07-14T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T005", modelName: "Turbine T005 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 8.0, version: "v1.5", updatedAt: "2026-07-15T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T006", modelName: "Turbine T006 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 9.5, version: "v1.6", updatedAt: "2026-07-16T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T007", modelName: "Turbine T007 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 11.0, version: "v1.7", updatedAt: "2026-07-17T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T008", modelName: "Turbine T008 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 12.5, version: "v1.8", updatedAt: "2026-07-18T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T009", modelName: "Turbine T009 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 14.0, version: "v1.9", updatedAt: "2026-07-19T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T010", modelName: "Turbine T010 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 8.0, version: "v1.10", updatedAt: "2026-07-20T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T011", modelName: "Turbine T011 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 9.5, version: "v1.11", updatedAt: "2026-07-21T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T012", modelName: "Turbine T012 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 11.0, version: "v1.12", updatedAt: "2026-07-22T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T013", modelName: "Turbine T013 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 12.5, version: "v1.13", updatedAt: "2026-07-23T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T014", modelName: "Turbine T014 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 14.0, version: "v1.14", updatedAt: "2026-07-24T12:00:00" },
-  { equipmentId: "EQUIP_RTI_T015", modelName: "Turbine T015 digital twin", format: "GLB", modelUrl: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb", fileSizeMb: 8.0, version: "v1.15", updatedAt: "2026-07-10T12:00:00" },
-]
+// Each turbine make/model has its own digital-twin geometry. The GLB is keyed on
+// manufacturer + model (the real driver of turbine geometry), so two units of the same
+// make share a model regardless of facility, while different makes look visibly different.
+// Models: CC0 / CC-BY power-generation assets from poly.pizza (Cloudflare CDN, CORS *):
+//   Turbine — Kay Lousberg (CC0); Generator — KolosStudios (CC-BY); Large Electric
+//   Generator — miro_art_studio (CC-BY); Space engine & Wind turbine — Poly by Google (CC-BY).
+const POLY = "https://static.poly.pizza"
+const TURBINE_MODEL_GLB: Record<string, { url: string; sizeMb: number }> = {
+  "RTI-Turbine-A": { url: `${POLY}/754e9358-fff8-4285-b80f-09b68c2f3c71.glb`, sizeMb: 0.06 }, // Andritz — Turbine
+  "RTI-Turbine-B": { url: `${POLY}/e9fc0901-7600-48f4-881d-b546f3df4cec.glb`, sizeMb: 0.03 }, // Voith — Generator
+  "RTI-Turbine-C": { url: `${POLY}/e81145eb-091e-4803-9523-8611bd7e24e4.glb`, sizeMb: 0.57 }, // GE Vernova — Large Electric Generator
+  "RTI-Turbine-D": { url: `${POLY}/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb`, sizeMb: 2.76 }, // Toshiba — Space engine
+  "RTI-Turbine-E": { url: `${POLY}/e6b02958-8f16-423e-8322-036b5379ef0b.glb`, sizeMb: 0.02 }, // Hitachi Energy — Wind turbine
+}
+// equipmentId -> { manufacturer, model } derived from the STID equipment table (NB01).
+const TURBINE_MAKE: Record<string, { mfr: string; model: keyof typeof TURBINE_MODEL_GLB }> = {
+  EQUIP_RTI_T001: { mfr: "Andritz", model: "RTI-Turbine-A" }, EQUIP_RTI_T002: { mfr: "Voith", model: "RTI-Turbine-B" },
+  EQUIP_RTI_T003: { mfr: "GE Vernova", model: "RTI-Turbine-C" }, EQUIP_RTI_T004: { mfr: "Toshiba", model: "RTI-Turbine-D" },
+  EQUIP_RTI_T005: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" }, EQUIP_RTI_T006: { mfr: "Andritz", model: "RTI-Turbine-A" },
+  EQUIP_RTI_T007: { mfr: "Voith", model: "RTI-Turbine-B" }, EQUIP_RTI_T008: { mfr: "GE Vernova", model: "RTI-Turbine-C" },
+  EQUIP_RTI_T009: { mfr: "Toshiba", model: "RTI-Turbine-D" }, EQUIP_RTI_T010: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" },
+  EQUIP_RTI_T011: { mfr: "Andritz", model: "RTI-Turbine-A" }, EQUIP_RTI_T012: { mfr: "Voith", model: "RTI-Turbine-B" },
+  EQUIP_RTI_T013: { mfr: "GE Vernova", model: "RTI-Turbine-C" }, EQUIP_RTI_T014: { mfr: "Toshiba", model: "RTI-Turbine-D" },
+  EQUIP_RTI_T015: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" },
+}
+export const seedAsset3DModels: SeedAsset3DModel[] = Object.entries(TURBINE_MAKE).map(([equipmentId, { mfr, model }], i) => {
+  const glb = TURBINE_MODEL_GLB[model]
+  const tag = equipmentId.replace("EQUIP_RTI_", "")
+  return {
+    equipmentId,
+    modelName: `${mfr} ${model} twin — ${tag}`,
+    format: "GLB",
+    modelUrl: glb.url,
+    fileSizeMb: glb.sizeMb,
+    version: `v1.${i + 1}`,
+    updatedAt: `2026-07-${String(11 + i).padStart(2, "0")}T12:00:00`,
+  }
+})
 
