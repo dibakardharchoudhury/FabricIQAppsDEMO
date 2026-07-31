@@ -101,8 +101,7 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 
 ## Notes
 
-- All data is synthetic; P&ID parsing and 3D data are simulated/metadata‑only.
-- Verify `rti_demo_settings` after `RTI_001`; the orchestrator's `%%configure` must stay the first code cell.
+- All data is synthetic (P&ID parsing and 3D data are simulated/metadata‑only). **Where it lives:** STID master data + medallion silver/gold tables in the **Lakehouse** (`Energy_IQ_LakehouseRTI_V6`); live OPC UA telemetry in the **Eventhouse** KQL DB (`OPCUAEvents`); the app's operational records — work orders, maintenance notifications, inspections, spare parts, 3D‑model metadata — in the **Fabric SQL Database** (seeded by `RTI_011`).
 - Pipeline notebook activities reference notebooks by **GUID** — pipelines don't auto‑repoint across workspaces.
 
 ## Companion app
