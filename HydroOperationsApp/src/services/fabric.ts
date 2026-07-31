@@ -17,7 +17,9 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
-const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
+// Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
+// Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
+const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
@@ -126,6 +128,9 @@ async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null
         eventhouseQueryUri = props?.queryServiceUri
         const dbId = props?.databasesItemIds?.[0]
         kqlDatabase = items.find(i => i.id === dbId)?.displayName ?? eh.displayName
+      } else {
+        // 401/403 here usually means the token lacks Item.Read.All / Eventhouse.Read.All.
+        console.warn(`Get Eventhouse failed (${res.status}) — telemetry query URI unresolved.`, (await res.text()).slice(0, 300))
       }
     }
     // Fabric doesn't expose a GraphQL item's endpoint, but api.fabric.microsoft.com serves

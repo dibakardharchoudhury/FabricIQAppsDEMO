@@ -29,9 +29,12 @@
 //           get AADSTS650057 (Invalid resource); without consent, AADSTS65001
 //           (not consented).
 //
-// The Fabric REST scopes the app uses for runtime discovery + job triggering
-// (Workspace.Read.All, Item.Execute.All) are consented interactively by the
-// in-app popup on first use, so they are intentionally NOT pre-granted here.
+// The Fabric REST scopes the app uses for runtime discovery + job triggering are
+// pre-granted here too (served by the Power BI Service resource behind
+// api.fabric.microsoft.com): Workspace.Read.All (List Items), Item.Read.All
+// (Get Eventhouse -> queryServiceUri, required for telemetry), Item.Execute.All
+// (run pipelines/notebooks). Item.Read.All is essential: without it Get Eventhouse
+// returns 403 InsufficientScopes and the app reports "No Eventhouse found".
 //
 // WHY THIS EXISTS:
 //   A from-scratch deploy (new Rayfin item / workspace) gets a NEW random
@@ -85,10 +88,12 @@ const REQUIRED_DELEGATED = [
     scopeValues: ['user_impersonation'],
   },
   {
-    label: 'Power BI Service (STID Lakehouse GraphQL)',
-    // Resource behind *.graphql.fabric.microsoft.com / analysis.windows.net/powerbi/api.
+    label: 'Power BI Service / Microsoft Fabric (STID GraphQL + workspace discovery)',
+    // Resource behind *.graphql.fabric.microsoft.com and api.fabric.microsoft.com.
     resourceAppId: '00000009-0000-0000-c000-000000000000',
-    scopeValues: ['GraphQLApi.Execute.All'],
+    // GraphQLApi.Execute.All = STID GraphQL query. Workspace.Read.All = List Items.
+    // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
+    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All'],
   },
 ]
 
