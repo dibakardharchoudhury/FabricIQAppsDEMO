@@ -148,6 +148,18 @@ export async function createWorkOrder(user: AppUser, equipmentId: string, instru
   }) as WorkOrderRecord
 }
 
+export async function updateWorkOrderStatus(id: string, status: string): Promise<void> {
+  if (!client) throw new Error('Rayfin backend is not configured.')
+  const patch: { status: string; completedAt?: Date | null } = { status }
+  patch.completedAt = ['completed', 'closed', 'done'].includes(status.toLowerCase()) ? new Date() : null
+  await client.data.WorkOrder.update({ id }, patch)
+}
+
+export async function deleteWorkOrder(id: string): Promise<void> {
+  if (!client) throw new Error('Rayfin backend is not configured.')
+  await client.data.WorkOrder.delete({ id })
+}
+
 export async function listInspections(): Promise<InspectionRecord[]> {
   if (!client) return []
   return await client.data.Inspection.select([

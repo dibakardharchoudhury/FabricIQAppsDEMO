@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, SquarePen, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Package, Plus, Radio, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
@@ -8,13 +8,15 @@ import { FacilityMap } from './components/FacilityMap'
 const AssetModelViewer = lazy(() => import('./components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
 import { askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured, type JobStatus, queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook, startStreamingPipeline, type StidData, type TelemetryReading } from './services/fabric'
 import {
-  createWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
+  createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
-  type AppUser, type Asset3DModelRecord, type InspectionRecord, type MaintenanceNotificationRecord,
-  type SparePartRecord, type WorkOrderRecord,
+  updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
+  type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
+const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
+type OrderScope = 'asset' | 'facility' | 'all'
 // OPC UA node ids encode the equipment tag (ns=2;s=T004.inlet_pressure -> T004) so a work order
 // can be raised even before STID metadata maps the signal to an asset.
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -98,6 +100,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [seeding, setSeeding] = useState(false)
   const [raising, setRaising] = useState<string>()
+  const [orderScope, setOrderScope] = useState<OrderScope>('facility')
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
 
   const facilities = useMemo(() => stid?.facilities ?? [], [stid])
@@ -111,18 +114,25 @@ export default function App() {
   const facilityInstruments = useMemo(() => stid?.instruments.filter(item => !facility || item.facility_id === facility.facility_id) ?? [], [stid, facility])
   const readings = useMemo(() => new Map(telemetry.map(item => [item.opcuaNodeId, item])), [telemetry])
   const openOrders = orders.filter(order => openStatuses.has(order.status.toLowerCase()))
-  const selectedOrders = openOrders.filter(order => order.equipmentId === selected?.equipment_id)
-  // Show every open work order (so ones raised from quality alerts on other assets are visible),
-  // with the selected asset's orders floated to the top. Stable sort keeps newest-first within groups.
-  const visibleOrders = [...openOrders].sort((a, b) =>
-    (a.equipmentId === selected?.equipment_id ? 0 : 1) - (b.equipmentId === selected?.equipment_id ? 0 : 1))
+  const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
+  // Work orders scoped to the selected asset, the whole facility, or everything. Selected asset's
+  // orders float to the top; newest-first is preserved within each group (orders arrive sorted desc).
+  const scopedOrders = useMemo(() => {
+    const inScope = orderScope === 'asset'
+      ? orders.filter(order => order.equipmentId === selected?.equipment_id)
+      : orderScope === 'facility'
+        ? orders.filter(order => !facility || equipmentById.get(order.equipmentId)?.facility_id === facility.facility_id)
+        : orders
+    return [...inScope].sort((a, b) =>
+      (a.equipmentId === selected?.equipment_id ? 0 : 1) - (b.equipmentId === selected?.equipment_id ? 0 : 1))
+  }, [orders, orderScope, selected, facility, equipmentById])
+  const scopedOpenCount = scopedOrders.filter(order => openStatuses.has(order.status.toLowerCase())).length
   const selectedInspections = inspections.filter(item => item.equipmentId === selected?.equipment_id)
   const selectedModel = models.find(item => item.equipmentId === selected?.equipment_id)
   const selectedNotifications = notifications.filter(item => item.equipmentId === selected?.equipment_id)
   const lowStockParts = spareParts.filter(part => part.quantityOnHand <= part.reorderLevel)
   // OPC UA quality flags: surface Bad/Uncertain live signals and let the operator raise a work order.
   const instrumentByNode = useMemo(() => new Map((stid?.instruments ?? []).map(item => [item.opcua_node_id, item])), [stid])
-  const equipmentById = useMemo(() => new Map((stid?.equipment ?? []).map(item => [item.equipment_id, item])), [stid])
   const flaggedSignals = useMemo<FlaggedSignal[]>(() => telemetry
     .filter(reading => ['bad', 'uncertain'].includes((reading.quality ?? '').toLowerCase()))
     .sort((a, b) => new Date(b.eventTime).getTime() - new Date(a.eventTime).getTime())
@@ -394,6 +404,23 @@ export default function App() {
     } catch (error) { setNotice(errorMessage(error)) }
   }
 
+  async function changeOrderStatus(id: string, status: string) {
+    const previous = orders
+    setOrders(current => current.map(order => order.id === id ? { ...order, status } : order))
+    try {
+      await updateWorkOrderStatus(id, status)
+    } catch (error) { setOrders(previous); setNotice(errorMessage(error)) }
+  }
+
+  async function removeOrder(order: WorkOrderRecord) {
+    if (!confirm(`Delete work order ${order.workOrderNumber}? This cannot be undone.`)) return
+    const previous = orders
+    setOrders(current => current.filter(item => item.id !== order.id))
+    try {
+      await deleteWorkOrder(order.id)
+    } catch (error) { setOrders(previous); setNotice(errorMessage(error)) }
+  }
+
   // Raise a work order straight from a Bad/Uncertain telemetry signal.
   async function raiseWorkOrderForSignal(flagged: FlaggedSignal) {
     const node = flagged.reading.opcuaNodeId
@@ -530,7 +557,7 @@ export default function App() {
 
       <div className="detail-grid">
         <section className="signals-panel panel"><div className="panel-head"><div><h2>{selected?.tag ?? 'Asset signals'}</h2><p>{selected ? `${selected.equipment_id} · ${selected.equipment_type_name ?? 'Equipment'}` : 'Select an asset'}</p></div><span className="provenance">STID + Eventhouse</span></div><div className="signal-table"><div className="table-head"><span>Signal</span><span>Latest value</span><span>Quality</span></div>{instruments.map(instrument => { const reading = readings.get(instrument.opcua_node_id); return <div className="signal-row" key={instrument.instrument_id}><span><strong>{instrument.tag ?? instrument.instrument_id}</strong><small>{instrument.opcua_node_id}</small></span><span>{reading ? <>{reading.value}<small>{instrument.unit ? ` ${instrument.unit}` : ''}</small></> : 'No event'}</span><em className={reading?.quality ? reading.quality.toLowerCase() : ''}>{reading?.quality ?? '—'}</em></div>})}{selected && !instruments.length && <div className="inline-empty">No instruments are mapped to this asset.</div>}</div></section>
-        <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{user ? `${openOrders.length} open${selected ? ` · ${selectedOrders.length} on this asset` : ''}` : 'Rayfin operational SQL'}</p></div><button className="icon-button" title="Create work order for the selected asset" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div><div className="order-list">{visibleOrders.map(order => <article className={order.equipmentId === selected?.equipment_id ? 'order current' : 'order'} key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber} · {order.equipmentId}</small><p>{order.status} · {order.priority}</p></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !openOrders.length && <div className="inline-empty">No open work orders yet. Raise one from a flagged signal above or with the + button.</div>}</div></section>
+        <section className="orders-panel panel"><div className="panel-head"><div><h2>Work orders</h2><p>{user ? `${scopedOpenCount} open · ${scopedOrders.length} shown` : 'Rayfin operational SQL'}</p></div><div className="orders-head-actions"><div className="order-scope" role="group" aria-label="Work order scope"><button className={orderScope === 'asset' ? 'on' : ''} onClick={() => setOrderScope('asset')} disabled={!selected}>Asset</button><button className={orderScope === 'facility' ? 'on' : ''} onClick={() => setOrderScope('facility')}>Facility</button><button className={orderScope === 'all' ? 'on' : ''} onClick={() => setOrderScope('all')}>All</button></div><button className="icon-button" title="Create work order for the selected asset" onClick={() => void addWorkOrder()} disabled={!selected}><Plus size={18} /></button></div></div><div className="order-list">{scopedOrders.map(order => <article className={order.equipmentId === selected?.equipment_id ? 'order current' : 'order'} key={order.id}><span className={`priority ${order.priority.toLowerCase()}`}><Wrench size={14} /></span><div><strong>{order.title}</strong><small>{order.workOrderNumber} · {order.equipmentId}</small><div className="order-controls"><select className="order-status" value={order.status} onChange={event => void changeOrderStatus(order.id, event.target.value)} aria-label="Work order status">{(orderStatuses.includes(order.status) ? orderStatuses : [order.status, ...orderStatuses]).map(status => <option key={status} value={status}>{status}</option>)}</select><span className={`priority-pill ${order.priority.toLowerCase()}`}>{order.priority}</span><button className="order-delete" title="Delete work order" onClick={() => void removeOrder(order)}><Trash2 size={13} /></button></div></div></article>)}{!user && <EmptyState title="Operational records are protected" action="Connect operations" onClick={() => void authenticate()} />}{user && !scopedOrders.length && <div className="inline-empty">{orderScope === 'asset' ? 'No work orders for this asset. Raise one from a flagged signal above or with the + button.' : orderScope === 'facility' ? 'No work orders for this facility yet.' : 'No work orders yet.'}</div>}</div></section>
       </div>
 
       <div className="detail-grid">
