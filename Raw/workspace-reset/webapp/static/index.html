@@ -24,7 +24,7 @@
       linear-gradient(180deg,var(--bg),var(--bg2));
     background-attachment:fixed;
   }
-  .page { max-width:940px; margin:0 auto; padding:2.5rem 1.25rem 3rem; }
+  .page { max-width:1180px; margin:0 auto; padding:2.2rem 1.25rem 3rem; }
   code { background:rgba(148,163,184,.16); padding:.12em .42em; border-radius:6px; font-size:.9em; }
 
   /* header */
@@ -124,87 +124,133 @@
   .phases li.active { color:#0b1020; font-weight:750; background:linear-gradient(135deg,var(--warn),#f59e0b); border-color:transparent; }
   .phases li.active::before { content:"\25D0"; }
 
+  /* shell: left sidebar + content pane */
+  .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
+  .side { position:sticky; top:1.4rem; display:flex; flex-direction:column; gap:1.15rem; }
+  .side .brand { align-items:flex-start; margin-bottom:.15rem; }
+  .side-card { background:var(--card); border:1px solid var(--card-border); border-radius:14px; padding:1rem 1.05rem;
+    backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%); box-shadow:var(--shadow);
+    display:flex; flex-direction:column; gap:.85rem; }
+  .idlabel { display:flex; align-items:center; gap:.5rem; font-size:.68rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--muted); }
+  .idlabel svg { width:16px; height:16px; }
+  .idfield { display:flex; flex-direction:column; gap:.34rem; }
+  .idfield span { font-size:.62rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+
+  /* vertical nav */
+  .nav { display:flex; flex-direction:column; gap:.45rem; }
+  .tab { margin:0; width:100%; justify-content:flex-start; background:rgba(148,163,184,.06); border:1px solid var(--border);
+    color:var(--muted); font-weight:640; font-size:.92rem; padding:.7rem .9rem; border-radius:11px;
+    display:inline-flex; align-items:center; gap:.6rem; box-shadow:none; }
+  .tab svg { width:18px; height:18px; flex:0 0 auto; }
+  .tab:not(:disabled):hover { color:#fff; border-color:var(--primary); background:rgba(59,130,246,.12); }
+  .tab.active { color:#fff; border-color:transparent; background:linear-gradient(135deg,#3b82f6,#2563eb); box-shadow:0 10px 24px -12px rgba(59,130,246,.9); }
+  .tab.danger:not(.active):hover { border-color:var(--destructive); background:rgba(239,68,68,.12); }
+  .tab.danger.active { background:linear-gradient(135deg,var(--destructive),#dc2626); box-shadow:0 10px 24px -12px rgba(239,68,68,.9); }
+
+  .side-foot { display:flex; flex-direction:column; gap:.65rem; align-items:stretch; margin-top:.1rem; }
+  .side-foot .badge { align-self:flex-start; }
+  .side-foot button.ghost { width:100%; justify-content:center; display:inline-flex; }
+
+  /* panes */
+  .pane { display:none; }
+  .pane.active { display:block; animation:fade .25s ease; }
+  .pane .card { margin-bottom:0; }
+  @keyframes fade { from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+
   .foot { text-align:center; color:var(--muted); font-size:.76rem; margin-top:2.2rem; opacity:.75; }
   .foot code { font-size:.85em; }
 
+  @media (max-width:900px) {
+    .shell { grid-template-columns:1fr; }
+    .side { position:static; }
+  }
   @media (max-width:640px) {
     .grid { grid-template-columns:1fr; }
     .page { padding:1.6rem 1rem 2.5rem; }
-    .top { flex-direction:column; align-items:flex-start; }
   }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="top">
-    <div class="brand">
-      <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.6 12.6a.6.6 0 0 0 .47.98H11l-1 8.4 8.4-11.06a.6.6 0 0 0-.48-.96H12l1-8Z"/></svg>
+  <div class="shell">
+    <aside class="side">
+      <div class="brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.6 12.6a.6.6 0 0 0 .47.98H11l-1 8.4 8.4-11.06a.6.6 0 0 0-.48-.96H12l1-8Z"/></svg>
+        </div>
+        <div>
+          <h1>Initialize Your Fabric Demo</h1>
+          <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+        </div>
       </div>
-      <div>
-        <h1>Initialize Your Fabric Demo</h1>
-        <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+
+      <div class="side-card">
+        <span class="idlabel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="2.2"/><path d="M14.5 8.5H18M14.5 12H18M6.6 15.8c.5-1.5 1.9-2.3 2.4-2.3s1.9.8 2.4 2.3"/></svg> Identity</span>
+        <label class="idfield"><span>Tenant id or domain</span>
+          <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
+        <label class="idfield"><span>Workspace (GUID or name)</span>
+          <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
       </div>
+
+      <nav class="nav" role="tablist">
+        <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
+        <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
+      </nav>
+
+      <div class="side-foot">
+        <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
+        <button id="restartBtn" class="ghost" title="Re-exec the local server to pick up code changes">&#x21bb; Restart server</button>
+      </div>
+    </aside>
+
+    <main class="main">
+
+  <section id="paneSync" class="pane active">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
+        <h2>Sync workspace from GitHub</h2>
+      </div>
+      <p class="hint">Imports every item from a branch, then disconnects. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo (it tests the moment you tick it); otherwise a temporary connection is created from your PAT and removed afterward.</p>
+      <div class="grid">
+        <label>Repository (owner/repo or URL)
+          <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
+        <label>Branch
+          <input id="branch" type="text" value="main" /></label>
+        <label>Directory (workspace root)
+          <input id="directory" type="text" value="/" /></label>
+        <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
+        <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
+        <label id="patWrap" style="display:none">GitHub PAT <span id="patNote"></span>
+          <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
+      </div>
+      <div class="testrow">
+        <button id="testBtn" type="button" class="ghost" disabled>Test connection</button>
+        <span id="connTestResult" class="testresult"></span>
+      </div>
+      <div id="testPanel"></div>
+      <button id="syncBtn" class="primary" disabled>Run sync</button>
+      <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
-    <div class="cluster">
-      <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
-      <button id="restartBtn" class="ghost" title="Re-exec the local server to pick up code changes">&#x21bb; Restart server</button>
+  </section>
+
+  <section id="paneDelete" class="pane">
+    <div class="card danger">
+      <div class="card-head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg></span>
+        <h2>Delete all workspace items</h2>
+      </div>
+      <p class="hint">Removes every item in the workspace so you can redeploy cleanly. Destructive &mdash; keep dry run on until you're sure.</p>
+      <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
+      <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
+        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
+      <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
+      <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
+  </section>
+    </main>
   </div>
-
-  <section class="card">
-    <div class="card-head">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="2.2"/><path d="M14.5 8.5H18M14.5 12H18M6.6 15.8c.5-1.5 1.9-2.3 2.4-2.3s1.9.8 2.4 2.3"/></svg></span>
-      <h2>Identity</h2>
-    </div>
-    <p class="hint">Which tenant and workspace every action below targets.</p>
-    <div class="grid">
-      <label>Tenant id or domain
-        <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
-      <label>Workspace (GUID or name)
-        <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
-      <h2>Sync workspace from GitHub</h2>
-    </div>
-    <p class="hint">Imports every item from a branch, then disconnects. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo (it tests the moment you tick it); otherwise a temporary connection is created from your PAT and removed afterward.</p>
-    <div class="grid">
-      <label>Repository (owner/repo or URL)
-        <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
-      <label>Branch
-        <input id="branch" type="text" value="main" /></label>
-      <label>Directory (workspace root)
-        <input id="directory" type="text" value="/" /></label>
-      <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
-      <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
-      <label id="patWrap" style="display:none">GitHub PAT <span id="patNote"></span>
-        <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
-    </div>
-    <div class="testrow">
-      <button id="testBtn" type="button" class="ghost" disabled>Test connection</button>
-      <span id="connTestResult" class="testresult"></span>
-    </div>
-    <div id="testPanel"></div>
-    <button id="syncBtn" class="primary" disabled>Run sync</button>
-    <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
-  </section>
-
-  <section class="card danger">
-    <div class="card-head">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg></span>
-      <h2>Delete all workspace items</h2>
-    </div>
-    <p class="hint">Removes every item in the workspace so you can redeploy cleanly. Destructive &mdash; keep dry run on until you're sure.</p>
-    <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
-    <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
-      <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
-    <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
-    <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
-  </section>
 
   <p class="foot">No build step &middot; secrets stay local &middot; run with <code>python webapp\server.py</code></p>
 </div>
@@ -407,6 +453,14 @@ $("restartBtn").addEventListener("click", async () => {
   };
   setTimeout(waitForServer, 1000);
 });
+
+// ---- tab switching ----
+function activateTab(name) {
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $("paneSync").classList.toggle("active", name === "sync");
+  $("paneDelete").classList.toggle("active", name === "delete");
+}
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));
 
 refresh();
 </script>
