@@ -18,6 +18,7 @@ services:
       - https://firm-wren-d5bfdbede5-swedencentral.webapp.fabricapps.net
       - https://plush-cove-d23da4865b-swedencentral.webapp.fabricapps.net
       - https://proof-raven-70b6020da8-swedencentral.webapp.fabricapps.net
+      - https://plush-star-8b71058dbc-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
