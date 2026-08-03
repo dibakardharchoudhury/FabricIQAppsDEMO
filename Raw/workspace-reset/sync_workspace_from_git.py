@@ -243,8 +243,11 @@ def main() -> int:
     args.branch = args.branch or os.environ.get("FABRIC_BRANCH")
     args.directory = args.directory or os.environ.get("FABRIC_DIRECTORY")
 
-    # Interactively collect anything still not supplied.
-    print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
+    # Interactively collect anything still not supplied. Only show the "press Enter"
+    # banner when we're actually attached to a terminal; when driven by CLI flags/env
+    # vars (e.g. from the web app) every value is already set and nothing prompts.
+    if sys.stdin.isatty():
+        print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
     args.tenant = prompt_required("Tenant id or domain", args.tenant)
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
     # Accept either "owner/repo" in one field or a bare repo name; only ask for
