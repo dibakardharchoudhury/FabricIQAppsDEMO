@@ -131,6 +131,11 @@ class Job:
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 
+# The server can run without a console (detached launch / after Restart); on
+# Windows a child process would then pop its own window, so suppress it. Output
+# is still captured through the pipe.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             timeout: int, markers: list[tuple[int, tuple[str, ...]]],
@@ -154,6 +159,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            creationflags=NO_WINDOW,
         )
     except OSError as exc:
         with job.lock:
@@ -510,7 +516,7 @@ def api_whoami():
     # az.cmd on PATH) is safe here.
     cmd = "az account show -o json" if os.name == "nt" else ["az", "account", "show", "-o", "json"]
     try:
-        proc = subprocess.run(cmd, shell=(os.name == "nt"), capture_output=True, text=True, timeout=40)
+        proc = subprocess.run(cmd, shell=(os.name == "nt"), capture_output=True, text=True, timeout=40, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         return jsonify(signedIn=False, error=str(exc))
     if proc.returncode != 0:
