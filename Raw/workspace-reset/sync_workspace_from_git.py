@@ -226,6 +226,11 @@ class Fabric:
             retry = int(status.headers.get("Retry-After", str(retry)))
 
 
+# Whether we may prompt the user. Set in main(): false under --yes or without a
+# TTY, so CLI/web-driven runs never block on input()/getpass.
+_INTERACTIVE = True
+
+
 def confirm(name: str, ws_id: str) -> bool:
     print(
         f"\nAbout to OVERWRITE workspace '{name}' ({ws_id}) with the Git branch "
@@ -238,6 +243,8 @@ def confirm(name: str, ws_id: str) -> bool:
 def prompt_required(label: str, current: str | None) -> str:
     """Return a non-empty value, asking the user until one is given."""
     value = (current or "").strip()
+    if not value and not _INTERACTIVE:
+        raise SystemExit(f"ERROR: {label} is required but was not supplied (non-interactive run).")
     while not value:
         value = input(f"  {label}: ").strip()
     return value
@@ -247,6 +254,8 @@ def prompt_default(label: str, current: str | None, default: str) -> str:
     """Return the provided value, or ask (offering a default on blank input)."""
     if current and current.strip():
         return current.strip()
+    if not _INTERACTIVE:
+        return default
     entered = input(f"  {label} [{default}]: ").strip()
     return entered or default
 
@@ -374,10 +383,12 @@ def main() -> int:
     args.branch = args.branch or os.environ.get("FABRIC_BRANCH")
     args.directory = args.directory or os.environ.get("FABRIC_DIRECTORY")
 
-    # Interactively collect anything still not supplied. Only show the "press Enter"
-    # banner when we're actually attached to a terminal; when driven by CLI flags/env
-    # vars (e.g. from the web app) every value is already set and nothing prompts.
-    if sys.stdin.isatty():
+    # Prompting is allowed only for a genuine interactive run: a TTY and no --yes.
+    # CLI/web-driven runs pass --yes, so they never prompt and can't block on
+    # hidden input() / getpass (isatty alone is unreliable across Windows consoles).
+    global _INTERACTIVE
+    _INTERACTIVE = not args.yes and sys.stdin.isatty()
+    if _INTERACTIVE:
         print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
     args.tenant = prompt_required("Tenant id or domain", args.tenant)
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
@@ -410,17 +421,17 @@ def main() -> int:
             pass  # test mode never prompts; the UI supplies a PAT on retry
         elif reuse_auto:
             # Reuse mode: the PAT is optional -- only used if no existing connection works.
-            if sys.stdin.isatty():
+            if _INTERACTIVE:
                 print("  Reuse mode: paste a PAT to allow creating a new connection if no")
                 print("  existing one works, or press Enter to try reuse only.")
                 pat = getpass.getpass("  GitHub PAT (optional, input hidden): ").strip()
         else:
             print("  No --connection-id and no FABRIC_GIT_PAT/GITHUB_PAT env var;")
             print("  a new GitHub connection will be created from a PAT.")
-            if not sys.stdin.isatty():
+            if not _INTERACTIVE:
                 print(
                     "ERROR: a GitHub PAT is required to create a connection but none was "
-                    "supplied (set FABRIC_GIT_PAT) and no terminal is available to prompt.",
+                    "supplied (set FABRIC_GIT_PAT) in this non-interactive run.",
                     file=sys.stderr,
                 )
                 return 2
