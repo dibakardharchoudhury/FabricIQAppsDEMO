@@ -97,6 +97,12 @@
   .testresult.error { color:var(--destructive); }
   #testPanel:empty { display:none; }
 
+  .notice { margin:1rem 0 1.15rem; padding:.85rem 1rem; border:1px solid rgba(251,191,36,.4); border-left:4px solid var(--warn);
+    border-radius:8px; background:rgba(251,191,36,.08); color:#fde68a; font-size:.8rem; line-height:1.55; }
+  .notice strong, .notice code { color:#fff; }
+  .notice ul { margin:.45rem 0 0; padding-left:1.15rem; }
+  .notice li + li { margin-top:.25rem; }
+
   /* output + progress */
   .output { margin:1.25rem 0 0; background:rgba(3,8,20,.78); border:1px solid var(--border); border-radius:12px; padding:.9rem 1rem;
     font-family:"Cascadia Code",ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; line-height:1.55;
@@ -327,6 +333,18 @@
         <h2>Deploy Hydro Operations app</h2>
       </div>
       <p class="hint">Deploys the Rayfin backend, SQL schema, static app, redirect origins, and delegated Entra permissions to the target workspace. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <aside class="notice" aria-label="Entra administrator prerequisite">
+        <strong>Tenant administrator rights may be required.</strong> Runtime sign-in uses the
+        single-tenant SPA <code>Hydro Operations Fabric Client</code>. This deployer attempts setup
+        automatically, but tenant policy can block it.
+        <ul>
+          <li><strong>Application Administrator / Cloud Application Administrator:</strong> create the SPA and add its generated Fabric hosting redirect plus delegated API permissions.</li>
+          <li><strong>Privileged Role Administrator / Global Administrator:</strong> grant tenant-wide admin consent.</li>
+        </ul>
+        If deployment reports insufficient privileges, give the SPA client ID and job log to your
+        Entra administrator, have them complete those actions, enter the client ID below, and retry.
+        The operation is idempotent. Full steps: <code>HydroOperationsApp/DEPLOY.md</code>.
+      </aside>
       <div class="grid">
         <label>SPA client id (optional)
           <input id="deployClientId" type="text" placeholder="Auto-reuse or create Hydro Operations Fabric Client" /></label>

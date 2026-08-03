@@ -9,6 +9,13 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
 > (reset `.deployments.json`, re-register the SPA, `rayfin up --workspace-id <guid> --yes`, and the
 > Fabric App Items preview feature/region gating).
+>
+> **Entra prerequisite:** runtime sign-in uses the single-tenant SPA
+> **`Hydro Operations Fabric Client`**. Automated deployment can fail when the operator cannot create/configure app
+> registrations or grant admin consent. Use the role split and portal fallback in
+> [DEPLOY.md → No admin rights?](DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin): an
+> Application Administrator configures the SPA and a Privileged Role Administrator or Global
+> Administrator grants tenant-wide consent.
 
 | Store | Owns | Accessed via |
 |---|---|---|

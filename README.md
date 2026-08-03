@@ -79,7 +79,14 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > expired — open it and **Edit → Sign in** to refresh.
 
 > [!NOTE]
-> The **Hydro Operations web app** signs users in with a **second, separate identity** — a delegated **SPA app registration** (no secret), distinct from this notebook SPN. Its creation, redirect URIs, delegated scopes, and admin consent (with manual fallbacks for locked‑down tenants) are documented in [`HydroOperationsApp/DEPLOY.md` → Identities and permissions](HydroOperationsApp/DEPLOY.md#identities-and-permissions).
+> The **Hydro Operations web app** signs users in with a **second, separate identity** — the
+> single-tenant SPA app registration **`Hydro Operations Fabric Client`** (no secret), distinct
+> from this notebook SPN. The local deployer attempts to create and configure it, but ordinary
+> users in locked-down tenants commonly cannot create app registrations, add SPA redirect URIs
+> or delegated permissions, or grant tenant-wide admin consent. An **Application Administrator /
+> Cloud Application Administrator** must create/configure the app, and a **Privileged Role
+> Administrator / Global Administrator** must grant admin consent. Use the copy-pasteable handoff
+> in [`HydroOperationsApp/DEPLOY.md` → No admin rights?](HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin).
 
 ## Deploy
 

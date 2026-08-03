@@ -33,6 +33,14 @@ API permissions, or grant consent manually in the Entra portal, and **do NOT** h
 hosting origin into `rayfin.yml`, and `setup-live-auth` reads it from there. Only fall back to
 manual portal steps for the exact action the script prints it lacks a role to perform.
 
+> **Do not hide an Entra authorization failure.** The required single-tenant SPA is **`Hydro
+> Operations Fabric Client`**. If the operator cannot create/configure it, stop and print the
+> administrator handoff from DEPLOY.md. An **Application Administrator / Cloud Application
+> Administrator** must create the app and add SPA redirects/delegated permissions; a **Privileged
+> Role Administrator / Global Administrator** must grant tenant-wide admin consent. Run
+> `npm run setup-live-auth:dry` to print the concrete hosting origins and scopes. After the admin
+> supplies the client ID, set `RAYFIN_PUBLIC_AAD_CLIENT_ID` and resume the idempotent flow.
+
 ## Node 24 wrapper (Windows) — gotchas
 Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
 `npx -y -p node@24 -c "<cmd>"`. Inside `-c`:

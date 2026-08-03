@@ -8,6 +8,16 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
+> [!IMPORTANT]
+> **The app requires a tenant-scoped Entra SPA named `Hydro Operations Fabric Client`.** The local
+> deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot bypass
+> tenant policy or directory roles. If automation reports insufficient privileges, use
+> [No admin rights? Hand this to your Entra admin](#no-admin-rights-hand-this-to-your-entra-admin):
+> an **Application Administrator / Cloud Application Administrator** creates the app and adds its
+> SPA redirects and delegated permissions; a **Privileged Role Administrator / Global
+> Administrator** grants tenant-wide admin consent. Register the deployed
+> `*.webapp.fabricapps.net` origin recorded in `rayfin/rayfin.yml` `allowedRedirectUris`.
+
 ## Which scenario am I in?
 
 Find your row — it tells you exactly what to run. A workspace always belongs to one tenant, so
@@ -25,7 +35,8 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
 > **Agents:** the canonical automated runbook is
 > [`.github/prompts/deploy-fresh-tenant.prompt.md`](../.github/prompts/deploy-fresh-tenant.prompt.md).
 > The golden rule everywhere: **SPA redirect URIs, delegated permissions, and admin consent are done
-> by `npm run setup-live-auth` — never by hand in the Entra portal.**
+> by `npm run setup-live-auth` first. Use the documented portal fallback only for actions the
+> operator lacks directory rights to perform.**
 
 ## Prerequisites
 

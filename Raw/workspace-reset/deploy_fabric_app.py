@@ -219,21 +219,33 @@ def resolve_spa(client_id: str | None) -> str:
         )
 
     print(f"Creating tenant SPA app registration '{APP_DISPLAY_NAME}'...", flush=True)
-    app_id = run_capture(
-        az(
-            "ad",
-            "app",
-            "create",
-            "--display-name",
-            APP_DISPLAY_NAME,
-            "--sign-in-audience",
-            "AzureADMyOrg",
-            "--query",
-            "appId",
-            "-o",
-            "tsv",
+    try:
+        app_id = run_capture(
+            az(
+                "ad",
+                "app",
+                "create",
+                "--display-name",
+                APP_DISPLAY_NAME,
+                "--sign-in-audience",
+                "AzureADMyOrg",
+                "--query",
+                "appId",
+                "-o",
+                "tsv",
+            )
         )
-    )
+    except DeployError as exc:
+        raise DeployError(
+            f"Could not create the single-tenant SPA '{APP_DISPLAY_NAME}'.\n"
+            "Ask an Application Administrator / Cloud Application Administrator to create it "
+            "and configure its SPA redirect URIs and delegated permissions. Ask a Privileged "
+            "Role Administrator / Global Administrator to grant tenant-wide admin consent.\n"
+            "Then enter the supplied Application (client) ID in the local app's SPA client id "
+            "field and retry. Full checklist: HydroOperationsApp/DEPLOY.md, section "
+            "'No admin rights? Hand this to your Entra admin'.\n"
+            f"Underlying Azure CLI error: {exc}"
+        ) from exc
     if not GUID_RE.fullmatch(app_id):
         raise DeployError(f"Azure CLI returned an invalid SPA client id: {app_id!r}")
     print(f"Created SPA app registration: {app_id}", flush=True)

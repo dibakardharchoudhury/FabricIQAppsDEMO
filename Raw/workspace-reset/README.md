@@ -62,6 +62,10 @@ situation.
 - Permission to create an Entra app registration when the target tenant does not already
   contain `Hydro Operations Fabric Client`. The deploy action reuses the existing SPA
   registration when exactly one is present.
+- Directory rights to configure that SPA: **Application Administrator / Cloud Application
+  Administrator** for creation, SPA redirect URIs, and delegated API permissions; **Privileged
+  Role Administrator / Global Administrator** for tenant-wide admin consent. These rights cannot
+  be automated away. Without them, use the administrator handoff below.
 - **GitHub PAT** for the sync (unless you reuse an existing connection) with **`repo`**
   scope (classic) or fine-grained **Contents: Read** on the repo. The PAT is never a
   CLI flag and never logged — it comes from an env var or a hidden prompt.
@@ -174,6 +178,35 @@ python deploy_fabric_app.py `
 ```
 
 Add `--client-id <spa-app-guid>` when more than one matching SPA registration exists.
+
+### If SPA automation fails: Entra administrator handoff
+
+The required registration is the single-tenant, no-secret SPA **`Hydro Operations Fabric Client`**.
+The deploy log prints its Application (client) ID and generated hosting origin. Give those values
+to the tenant administrator and ask them to complete these actions on that registration:
+
+1. **Application Administrator / Cloud Application Administrator:** create the registration if it
+  does not exist, and add a **Single-page application** platform containing the generated
+  `https://<host>.webapp.fabricapps.net` origin plus `http://localhost:5173`.
+2. **Application Administrator / Cloud Application Administrator:** add delegated Azure Data
+  Explorer `user_impersonation` and Power BI Service `GraphQLApi.Execute.All`,
+  `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
+3. **Privileged Role Administrator / Global Administrator:** select **Grant admin consent for the
+  directory**. Per-user `Principal` consent works only for that user; enterprise rollout requires
+  tenant-wide `AllPrincipals` consent.
+4. Enter the administrator-provided Application (client) ID in the local app's optional **SPA
+  client id** field and retry. The workflow is idempotent and validates redirects, scopes, and
+  consent after redeployment.
+
+Preview the concrete redirects and scopes without writing changes:
+
+```powershell
+cd ..\..\HydroOperationsApp
+npm run setup-live-auth:dry
+```
+
+See the authoritative detailed procedure in
+[HydroOperationsApp/DEPLOY.md → No admin rights?](../../HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin).
 
 ## Web UI (zero build)
 
