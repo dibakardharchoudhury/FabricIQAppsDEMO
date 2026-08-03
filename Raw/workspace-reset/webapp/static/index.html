@@ -137,18 +137,28 @@
   .idfield { display:flex; flex-direction:column; gap:.34rem; }
   .idfield span { font-size:.62rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
 
-  /* vertical nav */
-  .nav { display:flex; flex-direction:column; gap:.45rem; }
-  .tab { margin:0; width:100%; justify-content:flex-start; background:rgba(148,163,184,.06); border:1px solid var(--border);
-    color:var(--muted); font-weight:640; font-size:.92rem; padding:.7rem .9rem; border-radius:11px;
-    display:inline-flex; align-items:center; gap:.6rem; box-shadow:none; }
-  .tab svg { width:18px; height:18px; flex:0 0 auto; }
-  .tab:not(:disabled):hover { color:#fff; border-color:var(--primary); background:rgba(59,130,246,.12); }
-  .tab.active { color:#fff; border-color:transparent; background:linear-gradient(135deg,#3b82f6,#2563eb); box-shadow:0 10px 24px -12px rgba(59,130,246,.9); }
-  .tab.danger:not(.active):hover { border-color:var(--destructive); background:rgba(239,68,68,.12); }
-  .tab.danger.active { background:linear-gradient(135deg,var(--destructive),#dc2626); box-shadow:0 10px 24px -12px rgba(239,68,68,.9); }
-  .tab.run:not(.active):hover { border-color:var(--violet); background:rgba(139,92,246,.12); }
-  .tab.run.active { background:linear-gradient(135deg,var(--violet),#6d28d9); box-shadow:0 10px 24px -12px rgba(139,92,246,.9); }
+  /* vertical list nav — flat, browser-style grouped tabs */
+  .nav { display:flex; flex-direction:column; gap:.16rem; }
+  .nav-group { display:flex; align-items:center; gap:.5rem; padding:.15rem .3rem .4rem; font-size:.63rem; font-weight:750;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+  .nav-group .tag { width:11px; height:11px; border-radius:3px; flex:0 0 auto;
+    background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 0 0 1px rgba(148,163,184,.18); }
+  .tab { margin:0; width:100%; justify-content:flex-start; background:transparent; border:1px solid transparent;
+    color:var(--muted); font-weight:600; font-size:.9rem; padding:.52rem .7rem; border-radius:9px;
+    display:inline-flex; align-items:center; gap:.62rem; box-shadow:none; position:relative; transition:background .15s, color .15s, border-color .15s; }
+  .tab svg { width:17px; height:17px; flex:0 0 auto; opacity:.85; }
+  .tab::before { content:""; position:absolute; left:0; top:50%; transform:translateY(-50%); width:3px; height:0;
+    border-radius:0 3px 3px 0; background:var(--primary); transition:height .18s ease; }
+  .tab:not(:disabled):hover { color:#e7ecff; background:rgba(148,163,184,.08); }
+  .tab.active { color:#fff; background:rgba(59,130,246,.14); border-color:rgba(59,130,246,.28); }
+  .tab.active svg { opacity:1; }
+  .tab.active::before { height:56%; }
+  .tab.run:not(.active):hover { background:rgba(139,92,246,.1); }
+  .tab.run.active { color:#fff; background:rgba(139,92,246,.15); border-color:rgba(139,92,246,.3); }
+  .tab.run.active::before { background:var(--violet); }
+  .tab.danger:not(.active):hover { background:rgba(239,68,68,.1); }
+  .tab.danger.active { color:#fff; background:rgba(239,68,68,.15); border-color:rgba(239,68,68,.3); }
+  .tab.danger.active::before { background:var(--destructive); }
 
   /* pipeline parameter fields (dynamically rendered) */
   .params { display:grid; grid-template-columns:repeat(2,1fr); gap:1.15rem 1.2rem; }
@@ -205,6 +215,7 @@
       </div>
 
       <nav class="nav" role="tablist">
+        <div class="nav-group"><span class="tag"></span> Actions</div>
         <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
