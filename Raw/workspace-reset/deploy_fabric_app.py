@@ -31,6 +31,15 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
+REQUIRED_DELEGATED = {
+    "2746ea77-4702-4b45-80ca-3c97e680e8b7": {"user_impersonation"},
+    "00000009-0000-0000-c000-000000000000": {
+        "GraphQLApi.Execute.All",
+        "Workspace.Read.All",
+        "Item.Read.All",
+        "Item.Execute.All",
+    },
+}
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -287,6 +296,108 @@ def prepare_rayfin_env(tenant: str, workspace_id: str, workspace_name: str, clie
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
 
 
+def validate_deployed_app(workspace_id: str, client_id: str, hosting_url: str) -> None:
+    """Fail unless Fabric and Entra reflect every required deployment contract."""
+    _, deployment = current_rayfin_target()
+    item_id = str((deployment or {}).get("fabricItemId") or "")
+    if not GUID_RE.fullmatch(item_id):
+        raise DeployError("Rayfin deployment state does not contain a valid Fabric AppBackend item id.")
+    item = fabric_get(f"workspaces/{workspace_id}/items/{item_id}", fabric_headers())
+    if item.get("type") != "AppBackend" or str(item.get("workspaceId")) != workspace_id:
+        raise DeployError(
+            f"Fabric item validation failed for {item_id}: expected AppBackend in workspace {workspace_id}."
+        )
+
+    app = json.loads(run_capture(az("ad", "app", "show", "--id", client_id, "-o", "json")))
+    redirect_uris = set((app.get("spa") or {}).get("redirectUris") or [])
+    if hosting_url not in redirect_uris:
+        raise DeployError(f"SPA redirect validation failed: {hosting_url} is not registered on {client_id}.")
+
+    required_access = {
+        str(block.get("resourceAppId")): {
+            str(access.get("id"))
+            for access in block.get("resourceAccess") or []
+            if access.get("type") == "Scope"
+        }
+        for block in app.get("requiredResourceAccess") or []
+    }
+    resource_sp_ids: dict[str, str] = {}
+    for resource_app_id, scope_values in REQUIRED_DELEGATED.items():
+        resource = json.loads(
+            run_capture(az("ad", "sp", "show", "--id", resource_app_id, "-o", "json"))
+        )
+        resource_sp_ids[resource_app_id] = str(resource.get("id") or "")
+        scope_ids = {
+            str(scope.get("id"))
+            for scope in resource.get("oauth2PermissionScopes") or []
+            if scope.get("value") in scope_values
+        }
+        if len(scope_ids) != len(scope_values) or not scope_ids.issubset(required_access.get(resource_app_id, set())):
+            raise DeployError(
+                f"Delegated permission validation failed for resource {resource_app_id}: "
+                f"required scopes are {', '.join(sorted(scope_values))}."
+            )
+
+    client_sp_id = run_capture(az("ad", "sp", "show", "--id", client_id, "--query", "id", "-o", "tsv"))
+    grants = json.loads(
+        run_capture(
+            az(
+                "rest",
+                "--method",
+                "GET",
+                "--uri",
+                f"https://graph.microsoft.com/v1.0/servicePrincipals/{client_sp_id}/oauth2PermissionGrants",
+                "--query",
+                "value",
+                "-o",
+                "json",
+            )
+        )
+    )
+    current_user_id = run_capture(az("ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"))
+    principal_fallbacks: list[str] = []
+    for resource_app_id, scope_values in REQUIRED_DELEGATED.items():
+        tenant_grants = [
+            grant
+            for grant in grants
+            if grant.get("resourceId") == resource_sp_ids[resource_app_id]
+            and grant.get("consentType") == "AllPrincipals"
+        ]
+        tenant_scopes = {
+            scope
+            for grant in tenant_grants
+            for scope in str(grant.get("scope") or "").split()
+        }
+        missing = scope_values - tenant_scopes
+        if not missing:
+            continue
+
+        principal_scopes = {
+            scope
+            for grant in grants
+            if grant.get("resourceId") == resource_sp_ids[resource_app_id]
+            and grant.get("consentType") == "Principal"
+            and grant.get("principalId") == current_user_id
+            for scope in str(grant.get("scope") or "").split()
+        }
+        principal_missing = scope_values - principal_scopes
+        if principal_missing:
+            raise DeployError(
+                f"Delegated consent validation failed for resource {resource_app_id}; "
+                f"missing for the current user: {', '.join(sorted(principal_missing))}."
+            )
+        principal_fallbacks.append(resource_app_id)
+    if principal_fallbacks:
+        print(
+            "WARNING: live-auth consent is current-user only for resources "
+            f"{', '.join(principal_fallbacks)}. The app works for this operator, but an enterprise "
+            "rollout requires Privileged Role Administrator / Global Administrator to grant "
+            "tenant-wide admin consent (AllPrincipals).",
+            flush=True,
+        )
+    print(f"Validated Fabric AppBackend {item_id} and all Entra live-auth contracts.", flush=True)
+
+
 def ensure_rayfin_login(tenant: str) -> None:
     try:
         status = run_stream(node24("rayfin login status"))
@@ -390,6 +501,7 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
+    validate_deployed_app(workspace_id, client_id, hosting_url)
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:

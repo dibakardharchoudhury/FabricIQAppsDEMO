@@ -130,12 +130,27 @@ def clean_repo(repository: str) -> str:
 
 
 app = Flask(__name__, static_folder=None)
+ALLOWED_WEB_ORIGINS = {"http://127.0.0.1:5000", "http://localhost:5000"}
+
+
+@app.before_request
+def enforce_local_request():
+    """Reject remote, DNS-rebound, and cross-origin browser requests."""
+    if request.remote_addr not in {"127.0.0.1", "::1"}:
+        return jsonify(error="this service accepts loopback requests only."), 403
+    host = request.host.lower()
+    if host not in {"127.0.0.1", "127.0.0.1:5000", "localhost", "localhost:5000"}:
+        return jsonify(error="invalid local Host header."), 403
+    origin = request.headers.get("Origin")
+    if origin and origin.lower() not in ALLOWED_WEB_ORIGINS:
+        return jsonify(error="cross-origin requests are not allowed."), 403
+    return None
 
 
 class Job:
     """In-memory record of one running/finished script invocation."""
 
-    def __init__(self, phases: list[str]) -> None:
+    def __init__(self, phases: list[str], exclusive: bool = False) -> None:
         self.id = uuid.uuid4().hex
         self.lock = threading.Lock()
         self.lines: list[str] = []
@@ -143,6 +158,7 @@ class Job:
         self.phase_index = 0
         self.status = "running"  # running | succeeded | failed
         self.returncode: int | None = None
+        self.exclusive = exclusive
 
 
 JOBS: dict[str, Job] = {}
@@ -209,14 +225,23 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
 
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
            phases: list[str], markers: list[tuple[int, tuple[str, ...]]],
-           python: bool = True) -> str:
-    job = Job(phases)
+           python: bool = True, exclusive: bool = False) -> str | None:
+    job = Job(phases, exclusive=exclusive)
     with JOBS_LOCK:
+        running = [existing for existing in JOBS.values() if existing.status == "running"]
+        if any(existing.exclusive for existing in running) or (exclusive and running):
+            return None
         JOBS[job.id] = job
     threading.Thread(
         target=_worker, args=(job, argv, env_extra, timeout, markers, python), daemon=True
     ).start()
     return job.id
+
+
+def job_response(job_id: str | None):
+    if job_id is None:
+        return jsonify(error="another initializer job is running; wait for it to finish."), 409
+    return jsonify(jobId=job_id)
 
 
 @app.post("/api/sync")
@@ -262,7 +287,7 @@ def api_sync():
         argv += ["--keep-connected"]
 
     job_id = _start(argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS)
-    return jsonify(jobId=job_id)
+    return job_response(job_id)
 
 
 @app.post("/api/test-connection")
@@ -302,7 +327,7 @@ def api_test_connection():
         env_extra["FABRIC_GIT_PAT"] = pat
 
     job_id = _start(argv, env_extra, TEST_TIMEOUT_S, TEST_PHASES, TEST_MARKERS)
-    return jsonify(jobId=job_id)
+    return job_response(job_id)
 
 
 @app.post("/api/delete")
@@ -322,7 +347,7 @@ def api_delete():
         "--dry-run" if dry_run else "--yes",
     ]
     job_id = _start(argv, None, DELETE_TIMEOUT_S, DELETE_PHASES, DELETE_MARKERS)
-    return jsonify(jobId=job_id)
+    return job_response(job_id)
 
 
 # Declared parameters of the 01_Pipe_Setup pipeline, in display order. Each entry
@@ -413,7 +438,7 @@ def api_run_pipeline():
     # Teams channel id) never need shell escaping and stay off the command line.
     env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
     job_id = _start(argv, env_extra, PIPELINE_TIMEOUT_S, PIPELINE_PHASES, PIPELINE_MARKERS)
-    return jsonify(jobId=job_id)
+    return job_response(job_id)
 
 
 @app.post("/api/deploy-app")
@@ -444,8 +469,10 @@ def api_deploy_app():
         argv += ["--client-id", client_id]
     if push_config:
         argv.append("--push-config")
-    job_id = _start(argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS)
-    return jsonify(jobId=job_id)
+    job_id = _start(
+        argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
+    )
+    return job_response(job_id)
 
 
 @app.get("/api/jobs/<job_id>")
@@ -554,7 +581,7 @@ def api_login():
     if tenant:
         cmd += ["--tenant", tenant]
     job_id = _start(cmd, None, LOGIN_TIMEOUT_S, LOGIN_PHASES, LOGIN_MARKERS, python=False)
-    return jsonify(jobId=job_id)
+    return job_response(job_id)
 
 
 @app.get("/api/whoami")

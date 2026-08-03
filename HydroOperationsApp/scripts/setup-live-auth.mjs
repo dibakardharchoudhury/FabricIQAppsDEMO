@@ -434,7 +434,12 @@ function grantDelegatedPermissions(clientId) {
         ]),
       )
       const wantScopes = req.scopeValues
-      const grant = (Array.isArray(existing) ? existing : []).find((g) => g.resourceId === resourceSpId)
+      // A per-user (Principal) grant proves only that one operator consented. It
+      // must not be mistaken for the tenant-wide AllPrincipals grant promised by
+      // this script and required for an enterprise rollout with no user prompts.
+      const grant = (Array.isArray(existing) ? existing : []).find(
+        (g) => g.resourceId === resourceSpId && g.consentType === 'AllPrincipals',
+      )
       const haveScopes = new Set((grant?.scope ?? '').split(/\s+/).filter(Boolean))
       const missing = wantScopes.filter((s) => !haveScopes.has(s))
 

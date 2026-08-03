@@ -147,7 +147,10 @@ tenant and workspace selected in the sidebar:
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, and apply the generated hosting origin to backend auth.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
-   and consent, then verify the live app returns HTML over HTTP 200.
+  and consent, then verify the live app returns HTML over HTTP 200. The final check
+  also reads the AppBackend from Fabric and verifies the SPA redirect, every delegated
+  scope, and its consent grant from Microsoft Graph. Per-user consent is reported as
+  a degraded fallback; enterprise rollout requires tenant-wide `AllPrincipals` consent.
 6. When **Commit generated hosting origin** is selected, fetch Fabric commit-back,
    commit only `HydroOperationsApp/rayfin/rayfin.yml`, and push `main`. This option
    requires a clean checkout and refuses divergent/unpushed local commits.
@@ -155,6 +158,11 @@ tenant and workspace selected in the sidebar:
 Rayfin may open a browser account picker during the job. The setup pipeline and app
 deployment remain separate actions so the pipeline's Key Vault and Teams parameters
 can be reviewed before execution.
+
+Deployment is exclusive: while it runs, the local server rejects sync, delete,
+pipeline, login, and additional deploy jobs with HTTP 409. The server accepts only
+loopback clients and validates local Host/Origin headers to prevent remote use,
+cross-origin invocation, and DNS-rebinding through a non-local host name.
 
 The same workflow is available from the CLI:
 
