@@ -88,7 +88,8 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    npm run setup-live-auth:dry      # preview only; --redirect-only / --grant-only to scope
    ```
    It reads `RAYFIN_PUBLIC_AAD_CLIENT_ID` / `TENANT_ID` from `rayfin/.env` and the hosting
-   origins from `rayfin/rayfin.yml`, then registers `localhost:5173` + each hosting origin and
+  current origin from `rayfin/rayfin.yml`, then registers it + `localhost:5173`, removes stale
+  Fabric-hosting origins, and
    grants ADX `user_impersonation` + the Power BI / Microsoft Fabric scopes
    `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
    (all `AllPrincipals`, tenant-wide). `Item.Read.All` is what lets the app read the Eventhouse

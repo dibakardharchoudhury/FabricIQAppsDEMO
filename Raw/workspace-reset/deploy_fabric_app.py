@@ -549,6 +549,32 @@ def persist_generated_origin(workspace_name: str) -> None:
     run_stream(command_argv("git", "push", "origin", "main"), cwd=REPO_ROOT)
 
 
+def set_current_rayfin_redirect(hosting_url: str) -> None:
+    """Replace Rayfin's accumulated hosting origins with the current deployment."""
+    config = RAYFIN_DIR / "rayfin.yml"
+    lines = config.read_text(encoding="utf-8").splitlines(keepends=True)
+    key_index = next(
+        (index for index, line in enumerate(lines) if line.strip() == "allowedRedirectUris:"),
+        None,
+    )
+    if key_index is None:
+        raise DeployError("rayfin.yml does not contain services.auth.allowedRedirectUris.")
+
+    key_indent = len(lines[key_index]) - len(lines[key_index].lstrip())
+    end_index = key_index + 1
+    while end_index < len(lines):
+        line = lines[end_index]
+        if line.strip():
+            indent = len(line) - len(line.lstrip())
+            if indent <= key_indent:
+                break
+        end_index += 1
+
+    newline = "\r\n" if lines[key_index].endswith("\r\n") else "\n"
+    replacement = [lines[key_index], f"{' ' * (key_indent + 2)}- {hosting_url}{newline}"]
+    config.write_text("".join(lines[:key_index] + replacement + lines[end_index:]), encoding="utf-8")
+
+
 def deploy(args: argparse.Namespace) -> None:
     print("[1/8] Validating Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
@@ -574,6 +600,7 @@ def deploy(args: argparse.Namespace) -> None:
     hosting_url = urls[-1]
 
     print("[6/8] Applying the generated hosting origin to backend auth", flush=True)
+    set_current_rayfin_redirect(hosting_url)
     run_stream(
         node24(
             f"rayfin up --workspace-id {workspace_id} "

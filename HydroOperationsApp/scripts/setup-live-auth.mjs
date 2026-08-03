@@ -15,7 +15,7 @@
 //
 // It performs the one-time Azure steps that path needs, in order:
 //
-//   STEP 1  Redirect URIs — register the Fabric static-hosting origin(s) +
+//   STEP 1  Redirect URIs — register the current Fabric static-hosting origin +
 //           localhost:5173 as **Single-page application** redirect URIs on the
 //           app (RAYFIN_PUBLIC_AAD_CLIENT_ID). Without this the connect popup
 //           fails with AADSTS50011 (redirect URI mismatch).
@@ -44,8 +44,8 @@
 //
 // SOURCES (all local, no scraping of deploy output):
 //   - rayfin/.env       → RAYFIN_PUBLIC_AAD_CLIENT_ID, RAYFIN_PUBLIC_TENANT_ID
-//   - rayfin/rayfin.yml → services.auth.allowedRedirectUris (hosting origins;
-//                         `rayfin up` records the current one here)
+//   - rayfin/rayfin.yml → services.auth.allowedRedirectUris (`rayfin up` records
+//                         the current origin last; older origins are replaced)
 //
 // PREREQUISITE THAT CANNOT BE AUTOMATED AWAY:
 //   Sign in to the Azure CLI (`az login`) as an identity allowed to update the
@@ -231,19 +231,35 @@ function toOrigin(value) {
   }
 }
 
+function isFabricHostingOrigin(value) {
+  try {
+    return new URL(value).hostname.endsWith('.webapp.fabricapps.net')
+  } catch {
+    return false
+  }
+}
+
+export function synchronizeRedirectUris(current, desired) {
+  const retained = current.filter((uri) => !isFabricHostingOrigin(uri) || desired.includes(toOrigin(uri)))
+  return [...new Set([...retained, ...desired])]
+}
+
 // ─── STEP 1: SPA redirect URIs ───────────────────────────────────────────────
 
 function registerRedirectUris(clientId) {
   console.log('\n\u2500\u2500 STEP 1: SPA redirect URIs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500')
 
-  const hostingOrigins = readAllowedRedirectUris(files.rayfinYml).map(toOrigin)
-  if (hostingOrigins.length === 0) {
+  const recordedHostingOrigins = readAllowedRedirectUris(files.rayfinYml)
+    .map(toOrigin)
+    .filter(isFabricHostingOrigin)
+  const currentHostingOrigin = recordedHostingOrigins.at(-1)
+  if (!currentHostingOrigin) {
     console.warn(
       '\u26a0 No allowedRedirectUris found in rayfin/rayfin.yml. Deploy once with ' +
         '`npx rayfin up` so it records the hosting origin, then re-run this script.',
     )
   }
-  const desired = [...new Set([...hostingOrigins, ...DEV_ORIGINS])]
+  const desired = [...new Set([...(currentHostingOrigin ? [currentHostingOrigin] : []), ...DEV_ORIGINS])]
 
   console.log('Desired SPA origins   :')
   for (const o of desired) console.log('  -', o)
@@ -267,16 +283,19 @@ function registerRedirectUris(clientId) {
   }
 
   const current = Array.isArray(app.spa) ? app.spa : []
-  const merged = [...new Set([...current, ...desired])]
-  const added = merged.filter((u) => !current.includes(u))
+  const synchronized = synchronizeRedirectUris(current, desired)
+  const added = synchronized.filter((uri) => !current.includes(uri))
+  const removed = current.filter((uri) => !synchronized.includes(uri))
 
-  if (added.length === 0) {
+  if (added.length === 0 && removed.length === 0) {
     console.log('\u2713 All required SPA redirect URIs are already registered. Nothing to do.')
     return
   }
 
-  console.log('Will ADD these SPA redirect URIs:')
+  if (added.length > 0) console.log('Will ADD these SPA redirect URIs:')
   for (const u of added) console.log('  +', u)
+  if (removed.length > 0) console.log('Will REMOVE stale Fabric SPA redirect URIs:')
+  for (const u of removed) console.log('  -', u)
 
   if (dryRun) {
     console.log('(dry run \u2014 no changes written)')
@@ -284,7 +303,7 @@ function registerRedirectUris(clientId) {
   }
 
   const bodyFile = path.join(os.tmpdir(), `spa-redirect-${process.pid}.json`)
-  fs.writeFileSync(bodyFile, JSON.stringify({ spa: { redirectUris: merged } }), 'utf8')
+  fs.writeFileSync(bodyFile, JSON.stringify({ spa: { redirectUris: synchronized } }), 'utf8')
   try {
     az([
       'rest',
@@ -527,4 +546,4 @@ function main() {
   )
 }
 
-main()
+if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) main()
