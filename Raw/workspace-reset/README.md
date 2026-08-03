@@ -194,6 +194,11 @@ grants. The SPA still runs as the signed-in user, has no secret, and the service
 need a Fabric workspace role. Without the service principal, consent cannot be recorded and
 `az ad sp show --id <spa-client-id>` returns “does not exist.”
 
+The permission rows alone do not prove consent. In the app registration's **API permissions** page,
+the **Status** column must show **Granted for &lt;tenant&gt;**. Blank Status means the scopes are only
+configured, not consented. A disabled **Grant admin consent** button means the current administrator
+lacks a consent-granting directory role. A per-user grant for one person does not authorize others.
+
 1. **Application Administrator / Cloud Application Administrator:** create the registration if it
   does not exist, ensure its **enterprise application/service principal** exists, and add a
   **Single-page application** platform containing the generated

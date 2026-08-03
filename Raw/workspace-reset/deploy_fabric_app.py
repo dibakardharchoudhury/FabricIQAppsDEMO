@@ -46,6 +46,10 @@ REQUIRED_DELEGATED = {
         "Item.Execute.All",
     },
 }
+RESOURCE_NAMES = {
+    "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
+    "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
+}
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -402,6 +406,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
     redirect_uris = set((app.get("spa") or {}).get("redirectUris") or [])
     if hosting_url not in redirect_uris:
         raise DeployError(f"SPA redirect validation failed: {hosting_url} is not registered on {client_id}.")
+    print(f"Entra redirect check passed: {hosting_url}", flush=True)
 
     required_access = {
         str(block.get("resourceAppId")): {
@@ -412,21 +417,34 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
         for block in app.get("requiredResourceAccess") or []
     }
     resource_sp_ids: dict[str, str] = {}
+    permission_issues: list[str] = []
     for resource_app_id, scope_values in REQUIRED_DELEGATED.items():
         resource = json.loads(
             run_capture(az("ad", "sp", "show", "--id", resource_app_id, "-o", "json"))
         )
         resource_sp_ids[resource_app_id] = str(resource.get("id") or "")
         scope_ids = {
-            str(scope.get("id"))
+            str(scope.get("value")): str(scope.get("id"))
             for scope in resource.get("oauth2PermissionScopes") or []
             if scope.get("value") in scope_values
         }
-        if len(scope_ids) != len(scope_values) or not scope_ids.issubset(required_access.get(resource_app_id, set())):
-            raise DeployError(
-                f"Delegated permission validation failed for resource {resource_app_id}: "
-                f"required scopes are {', '.join(sorted(scope_values))}."
+        configured_ids = required_access.get(resource_app_id, set())
+        missing_configured = {
+            scope for scope, scope_id in scope_ids.items() if scope_id not in configured_ids
+        } | (scope_values - set(scope_ids))
+        if missing_configured:
+            permission_issues.append(
+                f"- {RESOURCE_NAMES[resource_app_id]}: app registration is missing requested "
+                f"scope(s): {', '.join(sorted(missing_configured))}."
             )
+    if permission_issues:
+        raise DeployError(
+            "Delegated API permission configuration is incomplete:\n"
+            + "\n".join(permission_issues)
+            + "\nFix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            "API permissions > Add a permission."
+        )
+    print("Entra API permission check passed: all required delegated scopes are configured.", flush=True)
 
     client_sp_id = run_capture(az("ad", "sp", "show", "--id", client_id, "--query", "id", "-o", "tsv"))
     grants = json.loads(
@@ -444,8 +462,11 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             )
         )
     )
-    current_user_id = run_capture(az("ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"))
+    current_user = json.loads(run_capture(az("ad", "signed-in-user", "show", "-o", "json")))
+    current_user_id = str(current_user.get("id") or "")
+    current_user_name = str(current_user.get("userPrincipalName") or current_user_id)
     principal_fallbacks: list[str] = []
+    consent_issues: list[str] = []
     for resource_app_id, scope_values in REQUIRED_DELEGATED.items():
         tenant_grants = [
             grant
@@ -472,11 +493,36 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
         }
         principal_missing = scope_values - principal_scopes
         if principal_missing:
-            raise DeployError(
-                f"Delegated consent validation failed for resource {resource_app_id}; "
-                f"missing for the current user: {', '.join(sorted(principal_missing))}."
+            other_user_grants = [
+                grant
+                for grant in grants
+                if grant.get("resourceId") == resource_sp_ids[resource_app_id]
+                and grant.get("consentType") == "Principal"
+                and grant.get("principalId") != current_user_id
+            ]
+            found = "no consent grant"
+            if tenant_scopes or principal_scopes:
+                found = "partial consent"
+            elif other_user_grants:
+                found = f"per-user consent for {len(other_user_grants)} other user(s), not {current_user_name}"
+            consent_issues.append(
+                f"- {RESOURCE_NAMES[resource_app_id]}: missing consent for "
+                f"{', '.join(sorted(principal_missing))}; found {found}."
             )
-        principal_fallbacks.append(resource_app_id)
+            continue
+        principal_fallbacks.append(RESOURCE_NAMES[resource_app_id])
+    if consent_issues:
+        raise DeployError(
+            "Delegated API scopes are configured, but OAuth consent is not granted:\n"
+            + "\n".join(consent_issues)
+            + "\nThe API permissions list declares requested scopes; it is not proof of consent. "
+            "In its Status column, each API must show 'Granted for <tenant>'.\n"
+            "Fix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            "API permissions > Grant admin consent for <tenant>. A disabled button means the "
+            "signed-in administrator lacks a consent-granting directory role. Alternatively, if "
+            "tenant policy allows user consent, sign in to the deployed app as the intended user "
+            "and accept the prompt, then rerun verification."
+        )
     if principal_fallbacks:
         print(
             "WARNING: live-auth consent is current-user only for resources "
@@ -632,9 +678,7 @@ def deploy(args: argparse.Namespace) -> None:
             validate_entra_live_auth(client_id, hosting_url)
         except (DeployError, json.JSONDecodeError) as exc:
             warn_live_auth(
-                f"Entra validation did not pass for SPA {client_id}: {exc}. "
-                f"Ensure {hosting_url} is registered as a SPA redirect and grant the documented "
-                "delegated permissions and consent."
+                f"Browser sign-in readiness check did not pass for SPA {client_id}:\n{exc}"
             )
     else:
         warn_live_auth(

@@ -120,6 +120,14 @@ The complete live-auth contract is:
   Eventhouse and allow each deployed hosting origin in Eventhouse CORS. These are not permissions
   granted to the SPA service principal.
 
+> **Configured does not mean consented.** The API permissions page can list all five delegated
+> scopes while runtime tokens still cannot contain them. The app registration's list only declares
+> what the SPA may request. Consent is a separate `oauth2PermissionGrant` on the enterprise
+> application. In Entra, the **Status** column must show **Granted for &lt;tenant&gt;** for tenant-wide
+> readiness. A blank Status means consent is missing; a disabled **Grant admin consent** button means
+> the signed-in administrator lacks a consent-granting directory role. Per-user consent may exist for
+> someone else and still fail verification for the deployment operator or other users.
+
 **If the tenant blocks the script** (missing role or restricted consent), it prints the exact action and continues — complete these in the Entra portal on that app registration:
 
 1. **Authentication → Add a platform → Single-page application** → add the current hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`; remove old `*.webapp.fabricapps.net` origins. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
@@ -395,6 +403,7 @@ Work through these in order:
 | **Consent popup on Step 2 (Seed & provision)** | Should **not** appear anymore — `setup-live-auth` now pre‑grants all Fabric REST scopes (`GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) AllPrincipals (tenant‑wide) on the Power BI Service resource. If you still see it (edge‑cached config), click **Accept** once; it's harmless. |
 | **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it — so **redeploy** (`npm run deploy`) *and* run `npm run setup-live-auth`. Then hard‑refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed‑in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow‑list. |
 | Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
+| Verification says scopes are configured but consent is missing | On **App registrations → Hydro Operations Fabric Client → API permissions**, inspect **Status**, not just the permission rows. It must say **Granted for &lt;tenant&gt;**. Use **Grant admin consent for &lt;tenant&gt;** with a consent-granting admin role, or allow the intended user to consent in-app if tenant policy permits. |
 | KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
 | Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |
 | Deployed into the wrong workspace | `npm run up` reads `FABRIC_WORKSPACE_NAME` from `rayfin/.env` — fix it and re‑run. |
