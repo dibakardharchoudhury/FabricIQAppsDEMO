@@ -145,7 +145,8 @@ tenant and workspace selected in the sidebar:
 
 1. Validate the active Azure CLI tenant and resolve the exact workspace GUID/name.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
-   or use the optional client ID entered in the form.
+  or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
+  continue without working browser authentication and print an administrator handoff.
 3. Reuse matching active Rayfin state for idempotent redeploys; otherwise back up and
   reset stale state, then generate a fresh ignored `rayfin/.env`.
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
@@ -153,8 +154,9 @@ tenant and workspace selected in the sidebar:
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final check
   also reads the AppBackend from Fabric and verifies the SPA redirect, every delegated
-  scope, and its consent grant from Microsoft Graph. Per-user consent is reported as
-  a degraded fallback; enterprise rollout requires tenant-wide `AllPrincipals` consent.
+  scope, and its consent grant from Microsoft Graph. Missing SPA access, redirects,
+  permissions, or consent are reported as **degraded-success warnings and do not fail the Fabric
+  app deployment**. Browser sign-in and live Fabric data remain unavailable until corrected.
 6. Leave generated hosting-origin changes local. The web UI never commits or pushes Git changes.
   For an intentional CLI-driven persistence step, use `--push-config`; it requires a clean
   checkout and refuses divergent or unpushed local commits.
@@ -182,12 +184,21 @@ Add `--client-id <spa-app-guid>` when more than one matching SPA registration ex
 ### If SPA automation fails: Entra administrator handoff
 
 The required registration is the single-tenant, no-secret SPA **`Hydro Operations Fabric Client`**.
-The deploy log prints its Application (client) ID and generated hosting origin. Give those values
-to the tenant administrator and ask them to complete these actions on that registration:
+The Fabric AppBackend and static host are deployed even when this registration cannot be created or
+configured. The successful job log prints the generated hosting origin and warnings. Give those
+values to the tenant administrator and ask them to complete these actions on that registration:
+
+The **app registration** defines the client ID, redirect URIs, and requested delegated scopes. Its
+tenant-local **enterprise application/service principal** stores the actual delegated consent
+grants. The SPA still runs as the signed-in user, has no secret, and the service principal does not
+need a Fabric workspace role. Without the service principal, consent cannot be recorded and
+`az ad sp show --id <spa-client-id>` returns “does not exist.”
 
 1. **Application Administrator / Cloud Application Administrator:** create the registration if it
-  does not exist, and add a **Single-page application** platform containing the generated
-  `https://<host>.webapp.fabricapps.net` origin plus `http://localhost:5173`.
+  does not exist, ensure its **enterprise application/service principal** exists, and add a
+  **Single-page application** platform containing the generated
+  `https://<host>.webapp.fabricapps.net` origin plus `http://localhost:5173`. CLI equivalent for
+  the missing enterprise application: `az ad sp create --id <spa-client-id>`.
 2. **Application Administrator / Cloud Application Administrator:** add delegated Azure Data
   Explorer `user_impersonation` and Power BI Service `GraphQLApi.Execute.All`,
   `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
@@ -195,8 +206,11 @@ to the tenant administrator and ask them to complete these actions on that regis
   directory**. Per-user `Principal` consent works only for that user; enterprise rollout requires
   tenant-wide `AllPrincipals` consent.
 4. Enter the administrator-provided Application (client) ID in the local app's optional **SPA
-  client id** field and retry. The workflow is idempotent and validates redirects, scopes, and
-  consent after redeployment.
+  client id** field and redeploy, or put it in `rayfin/.env` and run `npm run setup-live-auth`.
+  The workflow is idempotent and validates redirects, scopes, and consent after redeployment.
+
+KQL Database Viewer is granted to the signed-in **user**, not this service principal. Eventhouse
+CORS separately allows the deployed hosting origin; neither setting is an OAuth consent grant.
 
 Preview the concrete redirects and scopes without writing changes:
 

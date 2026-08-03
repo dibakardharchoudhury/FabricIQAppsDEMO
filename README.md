@@ -83,7 +83,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > single-tenant SPA app registration **`Hydro Operations Fabric Client`** (no secret), distinct
 > from this notebook SPN. The local deployer attempts to create and configure it, but ordinary
 > users in locked-down tenants commonly cannot create app registrations, add SPA redirect URIs
-> or delegated permissions, or grant tenant-wide admin consent. An **Application Administrator /
+> or delegated permissions, or grant tenant-wide admin consent. This does **not** fail AppBackend
+> or static-host deployment; it produces degraded-auth warnings, and browser sign-in/live Fabric
+> data remain unavailable until configured. An **Application Administrator /
 > Cloud Application Administrator** must create/configure the app, and a **Privileged Role
 > Administrator / Global Administrator** must grant admin consent. Use the copy-pasteable handoff
 > in [`HydroOperationsApp/DEPLOY.md` → No admin rights?](HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin).

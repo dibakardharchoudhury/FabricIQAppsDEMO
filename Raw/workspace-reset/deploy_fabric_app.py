@@ -186,37 +186,100 @@ def resolve_workspace(workspace: str) -> tuple[str, str]:
     return str(matches[0]["id"]), str(matches[0]["displayName"])
 
 
-def resolve_spa(client_id: str | None) -> str:
+def warn_live_auth(message: str) -> None:
+    print(
+        f"WARNING: {message}\n"
+        "Fabric app deployment will continue, but browser sign-in and live Fabric data features "
+        "may remain unavailable until an Entra administrator completes the SPA setup.",
+        flush=True,
+    )
+
+
+def existing_spa_candidate(tenant: str) -> str | None:
+    values, _ = current_rayfin_target()
+    candidate = values.get("RAYFIN_PUBLIC_AAD_CLIENT_ID", "")
+    configured_tenant = values.get("RAYFIN_PUBLIC_TENANT_ID", "")
+    if configured_tenant.casefold() == tenant.casefold() and GUID_RE.fullmatch(candidate):
+        return candidate
+    return None
+
+
+def ensure_spa_service_principal(client_id: str) -> None:
+    try:
+        run_capture(az("ad", "sp", "show", "--id", client_id, "--output", "none"))
+        return
+    except DeployError:
+        pass
+
+    try:
+        run_capture(az("ad", "sp", "create", "--id", client_id, "--output", "none"))
+        print(f"Created tenant service principal for SPA {client_id}.", flush=True)
+    except DeployError as exc:
+        warn_live_auth(
+            f"The enterprise application/service principal for SPA {client_id} is missing and "
+            f"could not be created ({exc}). Consent can be granted after an Entra administrator "
+            "creates the enterprise application."
+        )
+
+
+def resolve_spa(client_id: str | None, tenant: str) -> str | None:
     if client_id:
         if not GUID_RE.fullmatch(client_id):
             raise DeployError("SPA client id must be a GUID.")
-        run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
-        print(f"Using requested SPA app registration: {client_id}", flush=True)
+        try:
+            run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
+            print(f"Using requested SPA app registration: {client_id}", flush=True)
+        except DeployError as exc:
+            warn_live_auth(
+                f"The requested SPA {client_id} could not be verified ({exc}). "
+                "It will still be included in the deployed app configuration."
+            )
+        ensure_spa_service_principal(client_id)
         return client_id
 
-    apps = json.loads(
-        run_capture(
-            az(
-                "ad",
-                "app",
-                "list",
-                "--display-name",
-                APP_DISPLAY_NAME,
-                "--query",
-                "[].appId",
-                "-o",
-                "json",
+    fallback = existing_spa_candidate(tenant)
+    try:
+        apps = json.loads(
+            run_capture(
+                az(
+                    "ad",
+                    "app",
+                    "list",
+                    "--display-name",
+                    APP_DISPLAY_NAME,
+                    "--query",
+                    "[].appId",
+                    "-o",
+                    "json",
+                )
             )
         )
-    )
+    except (DeployError, json.JSONDecodeError) as exc:
+        if fallback:
+            warn_live_auth(
+                f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
+                f"from the existing Rayfin environment: {fallback}."
+            )
+            return fallback
+        warn_live_auth(f"Tenant SPA discovery failed and no existing client ID is available ({exc}).")
+        return None
     if len(apps) == 1:
         print(f"Reusing tenant SPA app registration: {apps[0]}", flush=True)
-        return str(apps[0])
+        app_id = str(apps[0])
+        ensure_spa_service_principal(app_id)
+        return app_id
     if len(apps) > 1:
-        raise DeployError(
-            f"Multiple app registrations are named '{APP_DISPLAY_NAME}'. "
-            "Enter the intended SPA client id in the deploy form."
+        if fallback and fallback in apps:
+            warn_live_auth(
+                f"Multiple app registrations are named '{APP_DISPLAY_NAME}'; reusing the "
+                f"existing Rayfin client ID {fallback}."
+            )
+            return fallback
+        warn_live_auth(
+            f"Multiple app registrations are named '{APP_DISPLAY_NAME}' and none can be "
+            "selected safely. Enter the intended SPA client ID on a later deployment."
         )
+        return None
 
     print(f"Creating tenant SPA app registration '{APP_DISPLAY_NAME}'...", flush=True)
     try:
@@ -236,19 +299,20 @@ def resolve_spa(client_id: str | None) -> str:
             )
         )
     except DeployError as exc:
-        raise DeployError(
-            f"Could not create the single-tenant SPA '{APP_DISPLAY_NAME}'.\n"
+        warn_live_auth(
+            f"Could not create the single-tenant SPA '{APP_DISPLAY_NAME}'. "
             "Ask an Application Administrator / Cloud Application Administrator to create it "
             "and configure its SPA redirect URIs and delegated permissions. Ask a Privileged "
-            "Role Administrator / Global Administrator to grant tenant-wide admin consent.\n"
-            "Then enter the supplied Application (client) ID in the local app's SPA client id "
-            "field and retry. Full checklist: HydroOperationsApp/DEPLOY.md, section "
-            "'No admin rights? Hand this to your Entra admin'.\n"
+            "Role Administrator / Global Administrator to grant tenant-wide admin consent. "
+            "The deployed hosting URL can be added afterward. "
             f"Underlying Azure CLI error: {exc}"
-        ) from exc
+        )
+        return None
     if not GUID_RE.fullmatch(app_id):
-        raise DeployError(f"Azure CLI returned an invalid SPA client id: {app_id!r}")
+        warn_live_auth(f"Azure CLI returned an invalid SPA client ID: {app_id!r}.")
+        return None
     print(f"Created SPA app registration: {app_id}", flush=True)
+    ensure_spa_service_principal(app_id)
     return app_id
 
 
@@ -274,14 +338,17 @@ def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
         return values, None
 
 
-def prepare_rayfin_env(tenant: str, workspace_id: str, workspace_name: str, client_id: str) -> None:
+def prepare_rayfin_env(
+    tenant: str, workspace_id: str, workspace_name: str, client_id: str | None
+) -> None:
     values, deployment = current_rayfin_target()
     if deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
             values.get("RAYFIN_PUBLIC_WORKSPACE_ID", "").casefold() == workspace_id.casefold(),
             values.get("RAYFIN_PUBLIC_TENANT_ID", "").casefold() == tenant.casefold(),
-            values.get("RAYFIN_PUBLIC_AAD_CLIENT_ID", "").casefold() == client_id.casefold(),
+            values.get("RAYFIN_PUBLIC_AAD_CLIENT_ID", "").casefold()
+            == (client_id or "").casefold(),
             str(deployment.get("fabricWorkspaceId") or "").casefold() == workspace_id.casefold(),
             str(deployment.get("fabricTenantId") or "").casefold() == tenant.casefold(),
         )
@@ -303,7 +370,7 @@ def prepare_rayfin_env(tenant: str, workspace_id: str, workspace_name: str, clie
     replacements = {
         "<your Fabric workspace display name>": workspace_name,
         "<your Fabric workspace GUID>": workspace_id,
-        "<your Entra SPA app (client) id>": client_id,
+        "<your Entra SPA app (client) id>": client_id or "",
         "<your Entra tenant id>": tenant,
     }
     for placeholder, value in replacements.items():
@@ -314,8 +381,8 @@ def prepare_rayfin_env(tenant: str, workspace_id: str, workspace_name: str, clie
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
 
 
-def validate_deployed_app(workspace_id: str, client_id: str, hosting_url: str) -> None:
-    """Fail unless Fabric and Entra reflect every required deployment contract."""
+def validate_fabric_app(workspace_id: str) -> str:
+    """Fail unless the expected Fabric AppBackend exists in the target workspace."""
     _, deployment = current_rayfin_target()
     item_id = str((deployment or {}).get("fabricItemId") or "")
     if not GUID_RE.fullmatch(item_id):
@@ -325,7 +392,12 @@ def validate_deployed_app(workspace_id: str, client_id: str, hosting_url: str) -
         raise DeployError(
             f"Fabric item validation failed for {item_id}: expected AppBackend in workspace {workspace_id}."
         )
+    print(f"Validated Fabric AppBackend {item_id}.", flush=True)
+    return item_id
 
+
+def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
+    """Validate Entra runtime contracts; callers decide whether failures are fatal."""
     app = json.loads(run_capture(az("ad", "app", "show", "--id", client_id, "-o", "json")))
     redirect_uris = set((app.get("spa") or {}).get("redirectUris") or [])
     if hosting_url not in redirect_uris:
@@ -413,7 +485,7 @@ def validate_deployed_app(workspace_id: str, client_id: str, hosting_url: str) -
             "tenant-wide admin consent (AllPrincipals).",
             flush=True,
         )
-    print(f"Validated Fabric AppBackend {item_id} and all Entra live-auth contracts.", flush=True)
+    print(f"Validated all Entra live-auth contracts for SPA {client_id}.", flush=True)
 
 
 def ensure_rayfin_login(tenant: str) -> None:
@@ -486,7 +558,7 @@ def deploy(args: argparse.Namespace) -> None:
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
-    client_id = resolve_spa(args.client_id)
+    client_id = resolve_spa(args.client_id, args.tenant)
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
     prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
@@ -510,7 +582,15 @@ def deploy(args: argparse.Namespace) -> None:
     )
 
     print("[7/8] Configuring SPA redirects, delegated permissions, and consent", flush=True)
-    run_stream(node24("npm run setup-live-auth"))
+    if client_id:
+        try:
+            run_stream(node24("npm run setup-live-auth"))
+        except DeployError as exc:
+            warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
+    else:
+        warn_live_auth(
+            "SPA configuration was skipped because no usable Application (client) ID is available."
+        )
 
     print("[8/8] Verifying the deployed app", flush=True)
     response = requests.get(hosting_url, timeout=60)
@@ -519,7 +599,21 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    validate_deployed_app(workspace_id, client_id, hosting_url)
+    validate_fabric_app(workspace_id)
+    if client_id:
+        try:
+            validate_entra_live_auth(client_id, hosting_url)
+        except (DeployError, json.JSONDecodeError) as exc:
+            warn_live_auth(
+                f"Entra validation did not pass for SPA {client_id}: {exc}. "
+                f"Ensure {hosting_url} is registered as a SPA redirect and grant the documented "
+                "delegated permissions and consent."
+            )
+    else:
+        warn_live_auth(
+            f"Entra validation was skipped. After an administrator creates the SPA, register "
+            f"{hosting_url} as its redirect URI and run npm run setup-live-auth."
+        )
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:

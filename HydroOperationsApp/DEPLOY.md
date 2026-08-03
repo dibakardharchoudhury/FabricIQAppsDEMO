@@ -9,9 +9,11 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
 > [!IMPORTANT]
-> **The app requires a tenant-scoped Entra SPA named `Hydro Operations Fabric Client`.** The local
-> deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot bypass
-> tenant policy or directory roles. If automation reports insufficient privileges, use
+> **Browser sign-in requires a tenant-scoped Entra SPA named `Hydro Operations Fabric Client`.**
+> The local deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot
+> bypass tenant policy or directory roles. A missing or incomplete SPA does **not** fail Fabric
+> AppBackend/static-host deployment; the job succeeds with degraded-auth warnings, while browser
+> sign-in and live Fabric data remain unavailable. Use
 > [No admin rights? Hand this to your Entra admin](#no-admin-rights-hand-this-to-your-entra-admin):
 > an **Application Administrator / Cloud Application Administrator** creates the app and adds its
 > SPA redirects and delegated permissions; a **Privileged Role Administrator / Global
@@ -83,6 +85,40 @@ az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audie
 
 **Step 8 then configures that app automatically:** SPA redirect URIs, the two delegated permissions, and admin consent.
 
+#### Why the enterprise application / service principal is required
+
+The SPA has two related Entra objects with different jobs:
+
+| Object | Purpose | Configuration stored there |
+|---|---|---|
+| **App registration (application object)** | Defines the browser application's identity and OAuth contract | Application (client) ID, single-tenant audience, SPA redirect URIs, and requested delegated API permissions |
+| **Enterprise application (service principal)** | Tenant-local instance of that application | Tenant-wide or per-user delegated consent grants linking this client to the Azure Data Explorer and Power BI/Fabric resource service principals |
+
+The browser authenticates as the signed-in **user**, not as an app-only daemon. The SPA has no
+secret and the service principal gets no Fabric workspace role. It is required because Microsoft
+Graph stores `oauth2PermissionGrants` against the client service principal. Without it,
+`az ad sp show --id <client-id>` and consent creation fail even if the app registration exists.
+Create the missing tenant instance with:
+
+```powershell
+az ad sp create --id <spa-client-id>
+```
+
+The complete live-auth contract is:
+
+- **SPA redirect URIs on the app registration:** every deployed
+  `https://<host>.webapp.fabricapps.net` origin in `rayfin/rayfin.yml`
+  `services.auth.allowedRedirectUris`, plus `http://localhost:5173` for local development.
+- **Requested delegated permissions on the app registration:** Azure Data Explorer
+  `user_impersonation`; Power BI Service/Microsoft Fabric `GraphQLApi.Execute.All`,
+  `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
+- **Consent on the enterprise application/service principal:** tenant-wide `AllPrincipals`
+  admin consent is the enterprise target. If tenant policy allows user consent, a per-user
+  `Principal` grant works only for that consenting user.
+- **Separate user/cluster controls:** grant each signed-in user KQL Database Viewer on the
+  Eventhouse and allow each deployed hosting origin in Eventhouse CORS. These are not permissions
+  granted to the SPA service principal.
+
 **If the tenant blocks the script** (missing role or restricted consent), it prints the exact action and continues — complete these in the Entra portal on that app registration:
 
 1. **Authentication → Add a platform → Single-page application** → add every hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
@@ -109,7 +145,7 @@ Send your admin this checklist (the dry run prints the concrete values for each 
 
 | # | Action | On | Role the admin needs |
 |---|---|---|---|
-| 1 | **Create** the SPA app registration (single‑tenant, no secret) and give you the **Application (client) ID** | Entra ID → App registrations | **Application Administrator** (or self‑service app registration enabled) |
+| 1 | **Create** the SPA app registration (single‑tenant, no secret), ensure its **enterprise application/service principal** exists (`az ad sp create --id <spa-client-id>`), and give you the **Application (client) ID** | Entra ID → App registrations / Enterprise applications | **Application Administrator** (or self‑service app registration enabled) |
 | 2 | **Authentication → Single‑page application** → add every origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173` | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
 | 3 | **API permissions** → add the delegated scopes from the list above (ADX `user_impersonation`; Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` + `Item.Read.All` + `Item.Execute.All`) | that app | **Application Administrator** on the app |
 | 4 | **Grant admin consent** for the directory | that app | **Privileged Role Administrator / Global Administrator** |

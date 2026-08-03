@@ -338,12 +338,20 @@
         single-tenant SPA <code>Hydro Operations Fabric Client</code>. This deployer attempts setup
         automatically, but tenant policy can block it.
         <ul>
-          <li><strong>Application Administrator / Cloud Application Administrator:</strong> create the SPA and add its generated Fabric hosting redirect plus delegated API permissions.</li>
+          <li><strong>Application Administrator / Cloud Application Administrator:</strong> create the SPA and its enterprise application/service principal, then add the generated Fabric hosting redirect plus delegated API permissions.</li>
           <li><strong>Privileged Role Administrator / Global Administrator:</strong> grant tenant-wide admin consent.</li>
         </ul>
-        If deployment reports insufficient privileges, give the SPA client ID and job log to your
-        Entra administrator, have them complete those actions, enter the client ID below, and retry.
-        The operation is idempotent. Full steps: <code>HydroOperationsApp/DEPLOY.md</code>.
+        The app registration holds the client ID, redirects, and requested scopes. Its enterprise
+        application/service principal stores the tenant's consent grants; it has no secret and does
+        not receive a Fabric workspace role. Required scopes are ADX <code>user_impersonation</code>
+        and Fabric <code>GraphQLApi.Execute.All</code>, <code>Workspace.Read.All</code>,
+        <code>Item.Read.All</code>, and <code>Item.Execute.All</code>. Redirects are the deployed
+        Fabric app URL plus <code>http://localhost:5173</code>.
+        SPA failures do <strong>not</strong> fail Fabric deployment: the AppBackend and static site
+        are still created, with warnings in the job log. Browser sign-in and live Fabric data will
+        remain unavailable. Give the hosting URL, SPA client ID (if any), and job warnings to your
+        Entra administrator; after setup, enter the client ID below and redeploy. Full steps:
+        <code>HydroOperationsApp/DEPLOY.md</code>.
       </aside>
       <div class="grid">
         <label>SPA client id (optional)

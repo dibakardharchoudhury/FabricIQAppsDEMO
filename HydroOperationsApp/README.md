@@ -11,8 +11,9 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > Fabric App Items preview feature/region gating).
 >
 > **Entra prerequisite:** runtime sign-in uses the single-tenant SPA
-> **`Hydro Operations Fabric Client`**. Automated deployment can fail when the operator cannot create/configure app
-> registrations or grant admin consent. Use the role split and portal fallback in
+> **`Hydro Operations Fabric Client`**. When the operator cannot create/configure app registrations
+> or grant admin consent, AppBackend/static-host deployment still succeeds with degraded-auth
+> warnings; browser sign-in and live Fabric data remain unavailable. Use the role split and portal fallback in
 > [DEPLOY.md → No admin rights?](DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin): an
 > Application Administrator configures the SPA and a Privileged Role Administrator or Global
 > Administrator grants tenant-wide consent.
