@@ -137,6 +137,30 @@
   .idfield { display:flex; flex-direction:column; gap:.34rem; }
   .idfield span { font-size:.62rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
 
+  /* signed-in user chip (from the az login session) */
+  .userchip { display:flex; align-items:center; gap:.6rem; padding:.5rem .65rem; border-radius:12px;
+    background:var(--card); border:1px solid var(--card-border); box-shadow:var(--shadow); }
+  .userchip .avatar { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; flex:0 0 auto;
+    font-size:.78rem; font-weight:750; color:#fff; background:linear-gradient(135deg,var(--primary),var(--violet)); }
+  .userchip .uinfo { display:flex; flex-direction:column; min-width:0; line-height:1.25; }
+  .userchip .uname { font-size:.8rem; font-weight:650; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .userchip .usub { font-size:.66rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .userchip.warn { border-color:rgba(251,191,36,.42); background:rgba(251,191,36,.08); }
+  .userchip.warn .avatar { background:linear-gradient(135deg,var(--warn),#f59e0b); color:#0b1020; }
+  .userchip .chipbtn { margin-left:auto; flex:0 0 auto; font-size:.68rem; font-weight:650; color:var(--text);
+    background:rgba(59,130,246,.16); border:1px solid rgba(59,130,246,.42); border-radius:999px;
+    padding:.28rem .6rem; cursor:pointer; white-space:nowrap; transition:background .15s, border-color .15s; }
+  .userchip .chipbtn:hover { background:rgba(59,130,246,.28); border-color:var(--primary); }
+  .userchip .chipbtn:disabled { opacity:.55; cursor:default; }
+  .userchip.warn .chipbtn { background:rgba(251,191,36,.18); border-color:rgba(251,191,36,.5); color:#fde68a; }
+  .userchip.warn .chipbtn:hover { background:rgba(251,191,36,.3); }
+  .loginpanel { margin-top:-.2rem; }
+
+  /* target card: clearly a form, not part of the nav below it */
+  .side-card.target { border-color:rgba(59,130,246,.22); }
+  .side-card .cardcap { font-size:.66rem; color:#7c8ab0; font-weight:400; text-transform:none; letter-spacing:normal;
+    margin:-.5rem 0 .1rem; line-height:1.4; }
+
   /* vertical list nav — flat, browser-style grouped tabs */
   .nav { display:flex; flex-direction:column; gap:.16rem; }
   .nav-group { display:flex; align-items:center; gap:.5rem; padding:.15rem .3rem .4rem; font-size:.63rem; font-weight:750;
@@ -206,8 +230,19 @@
         </div>
       </div>
 
-      <div class="side-card">
-        <span class="idlabel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="2.2"/><path d="M14.5 8.5H18M14.5 12H18M6.6 15.8c.5-1.5 1.9-2.3 2.4-2.3s1.9.8 2.4 2.3"/></svg> Identity</span>
+      <div id="userChip" class="userchip" title="Signed in via az login">
+        <span class="avatar" id="userAvatar">&hellip;</span>
+        <span class="uinfo">
+          <span class="uname" id="userName">Checking sign-in&hellip;</span>
+          <span class="usub" id="userSub"></span>
+        </span>
+        <button id="signInBtn" class="chipbtn" type="button" hidden>Sign in</button>
+      </div>
+      <div id="loginPanel" class="loginpanel" hidden></div>
+
+      <div class="side-card target">
+        <span class="idlabel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.4"/><path d="M12 1.5V5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg> Target workspace</span>
+        <p class="cardcap">Tenant &amp; workspace the actions below run against.</p>
         <label class="idfield"><span>Tenant id or domain</span>
           <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
         <label class="idfield"><span>Workspace (GUID or name)</span>
@@ -545,8 +580,65 @@ $("pipelineBtn").addEventListener("click", async () => {
   }, $("pipelinePanel"), () => refresh());
 });
 
+// ---- signed-in identity (az login) ----
+function initialsFor(name) {
+  const s = String(name || "").trim();
+  if (!s) return "?";
+  const at = s.split("@")[0];
+  const parts = at.split(/[.\-_ ]+/).filter(Boolean);
+  const a = (parts[0] || "")[0] || "";
+  const b = (parts[1] || "")[0] || "";
+  return ((a + b) || at.slice(0, 2) || "?").toUpperCase();
+}
+async function loadWhoAmI() {
+  const chip = $("userChip"), name = $("userName"), sub = $("userSub"), av = $("userAvatar"), btn = $("signInBtn");
+  try {
+    const res = await fetch("/api/whoami");
+    const d = await res.json();
+    if (d.signedIn) {
+      chip.classList.remove("warn");
+      name.textContent = d.user || "Signed in";
+      sub.textContent = d.subscription ? d.subscription : (d.tenantId || "");
+      chip.title = `Signed in as ${d.user || "?"}\nTenant ${d.tenantId || "?"}` + (d.subscription ? `\nSubscription ${d.subscription}` : "");
+      av.textContent = initialsFor(d.user);
+      btn.textContent = "Switch"; btn.title = "Sign in as a different account"; btn.hidden = false;
+      // Prefill the tenant target from the active session when the field is empty.
+      if (!$("tenant").value.trim() && d.tenantId) { $("tenant").value = d.tenantId; refresh(); maybeAutoTest(); }
+    } else {
+      chip.classList.add("warn");
+      name.textContent = "Not signed in";
+      sub.textContent = "sign in to continue";
+      chip.title = d.detail || d.error || "sign in required";
+      av.textContent = "!";
+      btn.textContent = "Sign in"; btn.title = "Sign in with Microsoft"; btn.hidden = false;
+    }
+  } catch (e) {
+    chip.classList.add("warn");
+    name.textContent = "Sign-in unknown"; sub.textContent = "couldn't reach az"; av.textContent = "!";
+    btn.textContent = "Sign in"; btn.hidden = false;
+  }
+}
+
+// Browser-integrated Microsoft sign-in (opens the Entra account picker via az login).
+let loggingIn = false;
+async function signIn() {
+  if (loggingIn) return;
+  loggingIn = true;
+  const btn = $("signInBtn"), panel = $("loginPanel");
+  btn.disabled = true; panel.hidden = false;
+  // A specific tenant is optional; when set, sign in scoped to it, otherwise the
+  // account picker lets you choose any identity.
+  const tenant = $("tenant").value.trim();
+  await runJob("/api/login", { tenant }, panel, async (job) => {
+    loggingIn = false; btn.disabled = false;
+    await loadWhoAmI();
+    if (job && job.returncode === 0) setTimeout(() => { panel.hidden = true; }, 4000);
+  });
+}
+$("signInBtn").addEventListener("click", signIn);
+
+loadWhoAmI();
 loadPipelineParams();
-refresh();
-</script>
+refresh();</script>
 </body>
 </html>

@@ -40,14 +40,16 @@ def main() -> int:
     print("  ===================================================\n")
 
     # 1. Install / update Python dependencies (quiet).
-    print("  [1/3] Checking dependencies...")
+    print("  [1/2] Checking dependencies...")
     deps = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)]
     )
     if deps.returncode != 0:
         fail("Could not install dependencies. Check your internet connection and try again.")
 
-    # 2. Azure CLI present?
+    # 2. Azure CLI present? (needed by the in-app sign-in.) We no longer force
+    #    `az login` here -- signing in is the first step inside the app, where you
+    #    pick your account in the browser and your tenant is detected for you.
     az = shutil.which("az")
     if not az:
         fail(
@@ -55,19 +57,11 @@ def main() -> int:
             "      Install it from https://aka.ms/installazurecli then run this again."
         )
 
-    # 3. Signed in? If not, sign in (opens a browser).
-    print("  [2/3] Checking Azure sign-in...")
-    signed_in = subprocess.run(
-        [az, "account", "show"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False
-    ).returncode == 0
-    if not signed_in:
-        print("        You are not signed in. A browser window will open for sign-in...")
-        if subprocess.run([az, "login"], shell=False).returncode != 0:
-            fail("Sign-in failed. Please run this again.")
-
-    # 4. Start the app. server.py opens your browser automatically.
-    print("  [3/3] Starting the app...\n")
+    # 3. Start the app. server.py opens your browser automatically; sign-in
+    #    happens there with a browser-integrated Microsoft sign-in.
+    print("  [2/2] Starting the app...\n")
     print("   Your browser will open at http://127.0.0.1:5000")
+    print("   Sign in with Microsoft on the page, then use the tools.")
     print("   Keep this window open while you use the app. Press Ctrl+C to stop.\n")
     try:
         return subprocess.run([sys.executable, str(SERVER)]).returncode

@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -81,6 +82,18 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (2, ("Starting pipeline", "run queued", "job status:")),
 ]
 
+# Interactive `az login` run from the UI so sign-in is the app's first step
+# (no tenant/az-login prerequisite before launch). Gives the user 5 minutes to
+# finish in the browser.
+LOGIN_TIMEOUT_S = 300
+LOGIN_PHASES = ["Starting", "Waiting for browser sign-in", "Done"]
+LOGIN_MARKERS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("web browser has been opened", "opened at", "To sign in, use", "enter the code")),
+]
+# Tenant is used to scope `az login --tenant`; allow only GUIDs / domain names so
+# the value is safe to place on a command line.
+TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+
 app = Flask(__name__, static_folder=None)
 
 
@@ -102,16 +115,20 @@ JOBS_LOCK = threading.Lock()
 
 
 def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
-            timeout: int, markers: list[tuple[int, tuple[str, ...]]]) -> None:
+            timeout: int, markers: list[tuple[int, tuple[str, ...]]],
+            python: bool = True) -> None:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     if env_extra:
         env.update(env_extra)
+    # Python scripts run unbuffered via the current interpreter; non-python argv
+    # (e.g. `az login`) is executed as-is.
+    cmd = [sys.executable, "-u", *argv] if python else list(argv)
     try:
         # -u forces the child's stdout to be unbuffered so lines arrive live.
         # DEVNULL stdin makes the child non-interactive (isatty()==False) so it never
         # blocks on a hidden prompt reading the server's own terminal.
         proc = subprocess.Popen(
-            [sys.executable, "-u", *argv],
+            cmd,
             cwd=str(SCRIPT_DIR),
             env=env,
             stdin=subprocess.DEVNULL,
@@ -150,12 +167,13 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
 
 
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
-           phases: list[str], markers: list[tuple[int, tuple[str, ...]]]) -> str:
+           phases: list[str], markers: list[tuple[int, tuple[str, ...]]],
+           python: bool = True) -> str:
     job = Job(phases)
     with JOBS_LOCK:
         JOBS[job.id] = job
     threading.Thread(
-        target=_worker, args=(job, argv, env_extra, timeout, markers), daemon=True
+        target=_worker, args=(job, argv, env_extra, timeout, markers, python), daemon=True
     ).start()
     return job.id
 
@@ -399,6 +417,59 @@ def api_restart():
     os.environ["FABRIC_UI_NO_BROWSER"] = "1"
     threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable, *sys.argv])).start()
     return jsonify(ok=True)
+
+
+@app.post("/api/login")
+def api_login():
+    """Start an interactive `az login` (opens the browser Entra account picker).
+
+    Runs as a streamed job so the UI can show 'waiting for browser sign-in'. An
+    optional tenant scopes the login to a single tenant; otherwise az shows the
+    normal account picker so the user can choose which identity to sign in as.
+    """
+    az = shutil.which("az")
+    if not az:
+        return jsonify(error="Azure CLI (az) is not installed. Install it from https://aka.ms/installazurecli."), 400
+    data = request.get_json(silent=True) or {}
+    tenant = (data.get("tenant") or "").strip()
+    if tenant and not TENANT_RE.match(tenant):
+        return jsonify(error="tenant must be a GUID or a domain like contoso.onmicrosoft.com."), 400
+    # On Windows `az` resolves to az.cmd, which CreateProcess can't launch directly,
+    # so route it through cmd.exe. The arg list (never a shell string) plus the
+    # validated tenant keeps this free of shell-injection.
+    cmd = ["cmd", "/c", az, "login"] if os.name == "nt" else [az, "login"]
+    if tenant:
+        cmd += ["--tenant", tenant]
+    job_id = _start(cmd, None, LOGIN_TIMEOUT_S, LOGIN_PHASES, LOGIN_MARKERS, python=False)
+    return jsonify(jobId=job_id)
+
+
+@app.get("/api/whoami")
+def api_whoami():
+    """Report the identity of the current `az login` session (best-effort, cached)."""
+    # `az account show` returns the signed-in user (UPN) and the active tenant. A
+    # static command with no user input, so shell=True on Windows (to resolve
+    # az.cmd on PATH) is safe here.
+    cmd = "az account show -o json" if os.name == "nt" else ["az", "account", "show", "-o", "json"]
+    try:
+        proc = subprocess.run(cmd, shell=(os.name == "nt"), capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return jsonify(signedIn=False, error=str(exc))
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        return jsonify(signedIn=False, error="not signed in", detail=detail[:300])
+    try:
+        acct = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return jsonify(signedIn=False, error="could not parse az output")
+    user = acct.get("user") or {}
+    return jsonify(
+        signedIn=True,
+        user=user.get("name"),
+        userType=user.get("type"),
+        tenantId=acct.get("tenantId"),
+        subscription=acct.get("name"),
+    )
 
 
 @app.get("/")
