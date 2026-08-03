@@ -30,6 +30,7 @@
   /* header */
   .top { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:2rem; }
   .brand { display:flex; align-items:center; gap:.95rem; }
+  .brand > div { min-width:0; }
   .logo { width:48px; height:48px; border-radius:14px; display:grid; place-items:center; color:#fff; flex:0 0 auto;
     background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 10px 26px -8px rgba(99,102,241,.7); }
   .logo svg { width:25px; height:25px; }
@@ -66,6 +67,7 @@
   #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
   input[type=text],input[type=password],input:not([type]) { background:var(--field); border:1px solid var(--border); color:var(--text);
     border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
+    width:100%; min-width:0;
     transition:border-color .15s, box-shadow .15s, background .15s; }
   input::placeholder { color:#5c6a90; }
   input:hover:not(:disabled) { border-color:#3a4a7c; }
@@ -133,6 +135,7 @@
   /* shell: left sidebar + content pane */
   .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
   .side { position:sticky; top:1.4rem; display:flex; flex-direction:column; gap:1.15rem; }
+  .side, .main { min-width:0; }
   .side .brand { align-items:flex-start; margin-bottom:.15rem; }
   .side-card { background:var(--card); border:1px solid var(--card-border); border-radius:14px; padding:1rem 1.05rem;
     backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%); box-shadow:var(--shadow);
@@ -186,6 +189,9 @@
   .tab.run:not(.active):hover { background:rgba(139,92,246,.1); }
   .tab.run.active { color:#fff; background:rgba(139,92,246,.15); border-color:rgba(139,92,246,.3); }
   .tab.run.active::before { background:var(--violet); }
+  .tab.deploy:not(.active):hover { background:rgba(52,211,153,.1); }
+  .tab.deploy.active { color:#fff; background:rgba(52,211,153,.13); border-color:rgba(52,211,153,.3); }
+  .tab.deploy.active::before { background:var(--ok); }
   .tab.danger:not(.active):hover { background:rgba(239,68,68,.1); }
   .tab.danger.active { color:#fff; background:rgba(239,68,68,.15); border-color:rgba(239,68,68,.3); }
   .tab.danger.active::before { background:var(--destructive); }
@@ -259,6 +265,7 @@
         <div class="nav-group"><span class="tag"></span> Actions</div>
         <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
+        <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
       </nav>
 
@@ -310,6 +317,23 @@
       <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
       <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run pipeline</button>
       <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneDeploy" class="pane">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
+        <h2>Deploy Hydro Operations app</h2>
+      </div>
+      <p class="hint">Deploys the Rayfin backend, SQL schema, static app, redirect origins, and delegated Entra permissions to the target workspace. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <div class="grid">
+        <label>SPA client id (optional)
+          <input id="deployClientId" type="text" placeholder="Auto-reuse or create Hydro Operations Fabric Client" /></label>
+        <label class="check"><input id="pushDeployConfig" type="checkbox" checked /> Commit generated hosting origin to <code>origin/main</code></label>
+      </div>
+      <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
+      <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
 
@@ -466,6 +490,9 @@ function deleteValid() {
   return $("tenant").value.trim() && $("workspace").value.trim() &&
     (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
 }
+function deployValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim();
+}
 function refresh() {
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
   // needed: reuse is off (temporary connection) or a reuse test just failed.
@@ -486,6 +513,7 @@ function refresh() {
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = !testValid();
   $("deleteBtn").disabled = !deleteValid();
+  $("deployBtn").disabled = !deployValid();
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -553,6 +581,16 @@ $("deleteBtn").addEventListener("click", async () => {
   }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
 });
 
+$("deployBtn").addEventListener("click", async () => {
+  $("deployBtn").disabled = true;
+  await runJob("/api/deploy-app", {
+    tenant: $("tenant").value,
+    workspace: $("workspace").value,
+    clientId: $("deployClientId").value,
+    pushConfig: $("pushDeployConfig").checked,
+  }, $("deployPanel"), () => refresh());
+});
+
 $("restartBtn").addEventListener("click", async () => {
   if (!confirm("Restart the local server to pick up code changes?")) return;
   const btn = $("restartBtn");
@@ -592,6 +630,7 @@ function activateTab(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $("paneSync").classList.toggle("active", name === "sync");
   $("panePipeline").classList.toggle("active", name === "pipeline");
+  $("paneDeploy").classList.toggle("active", name === "deploy");
   $("paneDelete").classList.toggle("active", name === "delete");
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));

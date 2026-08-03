@@ -7,9 +7,9 @@ just scripted, repeatable, and safe to run from CI or a fresh machine.
 
 Two ways to run everything:
 
-- **CLI** — `sync_workspace_from_git.py` and `delete_workspace_items.py`.
-- **Local web UI** — `webapp/server.py` serves a zero-build page that runs both
-  scripts and streams live progress. No `npm`, no build step.
+- **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
+- **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
+  workflows and streams live progress.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -57,6 +57,11 @@ situation.
 - **Workspace Admin** on the target workspace (required to connect / sync / delete).
 - **Python deps:** `python -m pip install -r requirements.txt`
   (`azure-identity`, `requests`, `flask`).
+- **Node.js/npm available on PATH** for app deployment. The deploy action automatically
+  runs the Hydro Operations app under the repository's required Node 24 wrapper.
+- Permission to create an Entra app registration when the target tenant does not already
+  contain `Hydro Operations Fabric Client`. The deploy action reuses the existing SPA
+  registration when exactly one is present.
 - **GitHub PAT** for the sync (unless you reuse an existing connection) with **`repo`**
   scope (classic) or fine-grained **Contents: Read** on the repo. The PAT is never a
   CLI flag and never logged — it comes from an env var or a hidden prompt.
@@ -129,6 +134,39 @@ python delete_workspace_items.py --yes        # actually delete
 
 Flags: `--tenant --workspace --yes --dry-run`.
 
+## Deploy the Hydro Operations Fabric app
+
+The **Deploy app** tab runs the complete Rayfin application deployment against the
+tenant and workspace selected in the sidebar:
+
+1. Validate the active Azure CLI tenant and resolve the exact workspace GUID/name.
+2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
+   or use the optional client ID entered in the form.
+3. Reuse matching active Rayfin state for idempotent redeploys; otherwise back up and
+  reset stale state, then generate a fresh ignored `rayfin/.env`.
+4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
+   and deploy static hosting, and apply the generated hosting origin to backend auth.
+5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
+   and consent, then verify the live app returns HTML over HTTP 200.
+6. When **Commit generated hosting origin** is selected, fetch Fabric commit-back,
+   commit only `HydroOperationsApp/rayfin/rayfin.yml`, and push `main`. This option
+   requires a clean checkout and refuses divergent/unpushed local commits.
+
+Rayfin may open a browser account picker during the job. The setup pipeline and app
+deployment remain separate actions so the pipeline's Key Vault and Teams parameters
+can be reviewed before execution.
+
+The same workflow is available from the CLI:
+
+```powershell
+python deploy_fabric_app.py `
+  --tenant <tenant-guid> `
+  --workspace <workspace-guid-or-name> `
+  --push-config
+```
+
+Add `--client-id <spa-app-guid>` when more than one matching SPA registration exists.
+
 ## Web UI (zero build)
 
 ```powershell
@@ -137,8 +175,9 @@ az login
 python webapp\server.py     # open http://127.0.0.1:5000
 ```
 
-The page has forms for both scripts with a live progress bar, phase checklist, and
-streaming log. The PAT is typed into a password field and passed only to the child
+The page has actions for Git sync, setup-pipeline execution, Hydro Operations app
+deployment, and workspace deletion, each with a live progress bar, phase checklist,
+and streaming log. The PAT is typed into a password field and passed only to the child
 process' environment — it is never sent to a CLI flag, logged, or returned. The server
 binds to `127.0.0.1` only. The delete form requires re-typing the workspace name to
 confirm and defaults to dry-run.

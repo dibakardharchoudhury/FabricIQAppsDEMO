@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Local API for the workspace-reset web UI.
 
-Thin Flask backend that drives the two existing CLI scripts (kept as the single
+Thin Flask backend that drives the workflow CLI scripts (kept as the single
 source of truth) as background jobs:
     - sync_workspace_from_git.py  -> POST /api/sync
     - delete_workspace_items.py   -> POST /api/delete
+    - deploy_fabric_app.py        -> POST /api/deploy-app
 
 Each POST starts a job and returns a jobId immediately. The child process is run
 UNBUFFERED so its progress lines stream out live; the worker thread appends them
@@ -45,11 +46,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
+DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SYNC_TIMEOUT_S = 900
 DELETE_TIMEOUT_S = 600
 PIPELINE_TIMEOUT_S = 3 * 3600
+DEPLOY_TIMEOUT_S = 45 * 60
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -81,6 +84,20 @@ PIPELINE_PHASES = ["Queued", "Resolving pipeline", "Running", "Done"]
 PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("Pipeline '",)),
     (2, ("Starting pipeline", "run queued", "job status:")),
+]
+
+DEPLOY_PHASES = [
+    "Queued", "Validating target", "Resolving SPA", "Preparing state",
+    "Signing in", "Provisioning app", "Applying auth", "Verifying", "Done",
+]
+DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("[1/8]",)),
+    (2, ("[2/8]",)),
+    (3, ("[3/8]",)),
+    (4, ("[4/8]",)),
+    (5, ("[5/8]",)),
+    (6, ("[6/8]", "[7/8]")),
+    (7, ("[8/8]",)),
 ]
 
 # Interactive `az login` run from the UI so sign-in is the app's first step
@@ -396,6 +413,38 @@ def api_run_pipeline():
     # Teams channel id) never need shell escaping and stay off the command line.
     env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
     job_id = _start(argv, env_extra, PIPELINE_TIMEOUT_S, PIPELINE_PHASES, PIPELINE_MARKERS)
+    return jsonify(jobId=job_id)
+
+
+@app.post("/api/deploy-app")
+def api_deploy_app():
+    data = request.get_json(silent=True) or {}
+    tenant = (data.get("tenant") or "").strip()
+    workspace = (data.get("workspace") or "").strip()
+    client_id = (data.get("clientId") or "").strip()
+    push_config = bool(data.get("pushConfig"))
+
+    if not tenant or not workspace:
+        return jsonify(error="tenant and workspace are required."), 400
+    if not TENANT_RE.fullmatch(tenant):
+        return jsonify(error="tenant must be a GUID or a domain like contoso.onmicrosoft.com."), 400
+    if client_id and not re.fullmatch(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        client_id,
+    ):
+        return jsonify(error="SPA client id must be a GUID."), 400
+
+    argv = [
+        str(DEPLOY_SCRIPT),
+        "--tenant", tenant,
+        "--workspace", workspace,
+    ]
+    if client_id:
+        argv += ["--client-id", client_id]
+    if push_config:
+        argv.append("--push-config")
+    job_id = _start(argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS)
     return jsonify(jobId=job_id)
 
 
