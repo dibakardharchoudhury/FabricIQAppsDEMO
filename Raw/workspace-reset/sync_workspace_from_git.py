@@ -417,6 +417,13 @@ def main() -> int:
         else:
             print("  No --connection-id and no FABRIC_GIT_PAT/GITHUB_PAT env var;")
             print("  a new GitHub connection will be created from a PAT.")
+            if not sys.stdin.isatty():
+                print(
+                    "ERROR: a GitHub PAT is required to create a connection but none was "
+                    "supplied (set FABRIC_GIT_PAT) and no terminal is available to prompt.",
+                    file=sys.stderr,
+                )
+                return 2
             while not pat:
                 pat = getpass.getpass("  GitHub Personal Access Token (input hidden): ").strip()
 

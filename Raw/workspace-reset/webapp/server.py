@@ -99,10 +99,13 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
         env.update(env_extra)
     try:
         # -u forces the child's stdout to be unbuffered so lines arrive live.
+        # DEVNULL stdin makes the child non-interactive (isatty()==False) so it never
+        # blocks on a hidden prompt reading the server's own terminal.
         proc = subprocess.Popen(
             [sys.executable, "-u", *argv],
             cwd=str(SCRIPT_DIR),
             env=env,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
