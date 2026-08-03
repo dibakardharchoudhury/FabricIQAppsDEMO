@@ -332,26 +332,17 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Deploy Hydro Operations app</h2>
       </div>
-      <p class="hint">Deploys the Rayfin backend, SQL schema, static app, redirect origins, and delegated Entra permissions to the target workspace. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
-      <aside class="notice" aria-label="Entra administrator prerequisite">
-        <strong>Tenant administrator rights may be required.</strong> Runtime sign-in uses the
-        single-tenant SPA <code>Hydro Operations Fabric Client</code>. This deployer attempts setup
-        automatically, but tenant policy can block it.
+      <p class="hint">Deploys the backend, database, and website to the target workspace. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <aside class="notice" aria-label="Browser sign-in setup">
+        <strong>Browser sign-in setup</strong>
         <ul>
-          <li><strong>Application Administrator / Cloud Application Administrator:</strong> create the SPA and its enterprise application/service principal, then add the generated Fabric hosting redirect plus delegated API permissions.</li>
-          <li><strong>Privileged Role Administrator / Global Administrator:</strong> grant tenant-wide admin consent.</li>
+          <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
+          <li>A tenant administrator may need to approve those permissions.</li>
+          <li>If approval is blocked, deployment still succeeds. The job shows a warning and the app works without sign-in or live data.</li>
         </ul>
-        The app registration holds the client ID, redirects, and requested scopes. Its enterprise
-        application/service principal stores the tenant's consent grants; it has no secret and does
-        not receive a Fabric workspace role. Required scopes are ADX <code>user_impersonation</code>
-        and Fabric <code>GraphQLApi.Execute.All</code>, <code>Workspace.Read.All</code>,
-        <code>Item.Read.All</code>, and <code>Item.Execute.All</code>. Redirects are the deployed
-        Fabric app URL plus <code>http://localhost:5173</code>.
-        SPA failures do <strong>not</strong> fail Fabric deployment: the AppBackend and static site
-        are still created, with warnings in the job log. Browser sign-in and live Fabric data will
-        remain unavailable. Give the hosting URL, SPA client ID (if any), and job warnings to your
-        Entra administrator; after setup, enter the client ID below and redeploy. Full steps:
-        <code>HydroOperationsApp/DEPLOY.md</code>.
+        <strong>Next step if warned:</strong> send the app URL, SPA client ID, and warning to your
+        Entra administrator, then enter the approved client ID below and redeploy.
+        Technical details: <code>HydroOperationsApp/DEPLOY.md</code>.
       </aside>
       <div class="grid">
         <label>SPA client id (optional)

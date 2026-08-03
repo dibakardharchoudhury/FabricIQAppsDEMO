@@ -599,7 +599,7 @@ def deploy(args: argparse.Namespace) -> None:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
     hosting_url = urls[-1]
 
-    print("[6/8] Applying the generated hosting origin to backend auth", flush=True)
+    print("[6/8] Setting the current app URL on the Fabric backend", flush=True)
     set_current_rayfin_redirect(hosting_url)
     run_stream(
         node24(
@@ -608,7 +608,7 @@ def deploy(args: argparse.Namespace) -> None:
         )
     )
 
-    print("[7/8] Configuring SPA redirects, delegated permissions, and consent", flush=True)
+    print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
         try:
             run_stream(node24("npm run setup-live-auth"))
@@ -619,7 +619,7 @@ def deploy(args: argparse.Namespace) -> None:
             "SPA configuration was skipped because no usable Application (client) ID is available."
         )
 
-    print("[8/8] Verifying the deployed app", flush=True)
+    print("[8/8] Checking the hosted page, Fabric backend, and sign-in readiness", flush=True)
     response = requests.get(hosting_url, timeout=60)
     if response.status_code != 200 or "text/html" not in response.headers.get("Content-Type", ""):
         raise DeployError(

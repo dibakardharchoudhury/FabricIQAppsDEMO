@@ -88,7 +88,8 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 
 DEPLOY_PHASES = [
     "Queued", "Validating target", "Resolving SPA", "Preparing state",
-    "Signing in", "Provisioning app", "Applying auth", "Verifying", "Done",
+    "Signing in", "Provisioning app", "Setting app URL", "Setting up sign-in",
+    "Checking deployment", "Done",
 ]
 DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("[1/8]",)),
@@ -96,8 +97,9 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (3, ("[3/8]",)),
     (4, ("[4/8]",)),
     (5, ("[5/8]",)),
-    (6, ("[6/8]", "[7/8]")),
-    (7, ("[8/8]",)),
+    (6, ("[6/8]",)),
+    (7, ("[7/8]",)),
+    (8, ("[8/8]",)),
 ]
 
 # Interactive `az login` run from the UI so sign-in is the app's first step
