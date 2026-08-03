@@ -155,9 +155,9 @@ tenant and workspace selected in the sidebar:
   also reads the AppBackend from Fabric and verifies the SPA redirect, every delegated
   scope, and its consent grant from Microsoft Graph. Per-user consent is reported as
   a degraded fallback; enterprise rollout requires tenant-wide `AllPrincipals` consent.
-6. When **Commit generated hosting origin** is selected, fetch Fabric commit-back,
-   commit only `HydroOperationsApp/rayfin/rayfin.yml`, and push `main`. This option
-   requires a clean checkout and refuses divergent/unpushed local commits.
+6. Leave generated hosting-origin changes local. The web UI never commits or pushes Git changes.
+  For an intentional CLI-driven persistence step, use `--push-config`; it requires a clean
+  checkout and refuses divergent or unpushed local commits.
 
 Rayfin may open a browser account picker during the job. The setup pipeline and app
 deployment remain separate actions so the pipeline's Key Vault and Teams parameters

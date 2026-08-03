@@ -449,7 +449,6 @@ def api_deploy_app():
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     client_id = (data.get("clientId") or "").strip()
-    push_config = bool(data.get("pushConfig"))
 
     if not tenant or not workspace:
         return jsonify(error="tenant and workspace are required."), 400
@@ -469,8 +468,6 @@ def api_deploy_app():
     ]
     if client_id:
         argv += ["--client-id", client_id]
-    if push_config:
-        argv.append("--push-config")
     job_id = _start(
         argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
     )

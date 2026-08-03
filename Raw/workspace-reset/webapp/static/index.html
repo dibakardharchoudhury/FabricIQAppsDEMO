@@ -348,7 +348,6 @@
       <div class="grid">
         <label>SPA client id (optional)
           <input id="deployClientId" type="text" placeholder="Auto-reuse or create Hydro Operations Fabric Client" /></label>
-        <label class="check"><input id="pushDeployConfig" type="checkbox" checked /> Commit generated hosting origin to <code>origin/main</code></label>
       </div>
       <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -605,7 +604,6 @@ $("deployBtn").addEventListener("click", async () => {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: $("deployClientId").value,
-    pushConfig: $("pushDeployConfig").checked,
   }, $("deployPanel"), () => refresh());
 });
 
