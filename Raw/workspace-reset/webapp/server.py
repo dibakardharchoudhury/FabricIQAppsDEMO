@@ -65,6 +65,13 @@ DELETE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("About to DELETE", "  - [", "deleted ", "gone ", "Nothing to delete")),
 ]
 
+TEST_TIMEOUT_S = 300
+TEST_PHASES = ["Queued", "Testing", "Done"]
+TEST_MARKERS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("Testing GitHub connectivity", "Trying connection", "Testing the supplied PAT")),
+    (2, ("CONNECTION TEST:",)),
+]
+
 app = Flask(__name__, static_folder=None)
 
 
@@ -178,12 +185,56 @@ def api_sync():
     env_extra: dict[str, str] = {}
     if connection_id:
         argv += ["--connection-id", connection_id]
-    else:
+    # Pass the PAT whenever supplied: it's the create-new secret, and also the
+    # fallback that lets auto-reuse ("yes") make a new connection if none works.
+    if pat:
         env_extra["FABRIC_GIT_PAT"] = pat
     if keep_connected:
         argv += ["--keep-connected"]
 
     job_id = _start(argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS)
+    return jsonify(jobId=job_id)
+
+
+@app.post("/api/test-connection")
+def api_test_connection():
+    data = request.get_json(silent=True) or {}
+    tenant = (data.get("tenant") or "").strip()
+    workspace = (data.get("workspace") or "").strip()
+    repository = (data.get("repository") or "").strip()
+    branch = (data.get("branch") or "main").strip() or "main"
+    directory = (data.get("directory") or "/").strip() or "/"
+    connection_id = (data.get("connectionId") or "").strip()
+    pat = (data.get("pat") or "").strip()
+
+    if not tenant or not workspace or not repository:
+        return jsonify(error="tenant, workspace and repository are required."), 400
+    repository = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository, flags=re.IGNORECASE)
+    repository = re.sub(r"^git@github\.com:", "", repository, flags=re.IGNORECASE)
+    repository = repository.removesuffix(".git").strip("/")
+    if "/" not in repository:
+        return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
+    if not connection_id and not pat:
+        return jsonify(error="enter a connection id (or 'yes') or a PAT to test."), 400
+
+    owner, repo = (part.strip() for part in repository.split("/", 1))
+    argv = [
+        str(SYNC_SCRIPT),
+        "--tenant", tenant,
+        "--workspace", workspace,
+        "--owner", owner,
+        "--repository", repo,
+        "--branch", branch,
+        "--directory", directory,
+        "--test-connection",
+    ]
+    env_extra: dict[str, str] = {}
+    if connection_id:
+        argv += ["--connection-id", connection_id]
+    if pat:
+        env_extra["FABRIC_GIT_PAT"] = pat
+
+    job_id = _start(argv, env_extra, TEST_TIMEOUT_S, TEST_PHASES, TEST_MARKERS)
     return jsonify(jobId=job_id)
 
 

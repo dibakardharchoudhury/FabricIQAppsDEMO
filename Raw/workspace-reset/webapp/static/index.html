@@ -87,6 +87,14 @@
     padding:.5rem .95rem; font-size:.82rem; box-shadow:none; }
   button.ghost:not(:disabled):hover { border-color:var(--primary); color:#fff; background:rgba(59,130,246,.14); }
 
+  /* connection test row */
+  .testrow { display:flex; align-items:center; gap:.75rem; margin-top:1rem; flex-wrap:wrap; }
+  .testresult { font-size:.8rem; font-weight:600; }
+  .testresult.running { color:var(--muted); }
+  .testresult.ok { color:var(--ok); }
+  .testresult.error { color:var(--destructive); }
+  #testPanel:empty { display:none; }
+
   /* output + progress */
   .output { margin:1.25rem 0 0; background:rgba(3,8,20,.78); border:1px solid var(--border); border-radius:12px; padding:.9rem 1rem;
     font-family:"Cascadia Code",ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; line-height:1.55;
@@ -163,7 +171,7 @@
       <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
       <h2>Sync workspace from GitHub</h2>
     </div>
-    <p class="hint">Imports every item from a branch, then disconnects. A temporary connection is created from your PAT and removed afterward.</p>
+    <p class="hint">Imports every item from a branch, then disconnects. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo (it tests the moment you tick it); otherwise a temporary connection is created from your PAT and removed afterward.</p>
     <div class="grid">
       <label>Repository (owner/repo or URL)
         <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
@@ -173,10 +181,14 @@
         <input id="directory" type="text" value="/" /></label>
       <label>GitHub PAT <span id="patNote"></span>
         <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
-      <label>Reuse connection id (optional)
-        <input id="connectionId" type="text" placeholder="existing Fabric GitHub connection GUID" /></label>
+      <label class="check"><input id="reuseConn" type="checkbox" /> Reuse existing connection</label>
       <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
     </div>
+    <div class="testrow">
+      <button id="testBtn" type="button" class="ghost" disabled>Test connection</button>
+      <span id="connTestResult" class="testresult"></span>
+    </div>
+    <div id="testPanel"></div>
     <button id="syncBtn" class="primary" disabled>Run sync</button>
     <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
   </section>
@@ -240,31 +252,46 @@ async function runJob(startUrl, body, panelEl, onDone) {
   const started = await postJson(startUrl, body);
   if (!started.ok || !started.data.jobId) {
     job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
-    renderPanel(panelEl, job); if (onDone) onDone(); return;
+    renderPanel(panelEl, job); if (onDone) onDone(job); return;
   }
   const jobId = started.data.jobId;
   let since = 0;
   const poll = async () => {
     let r;
     try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
-    catch (e) { job.status = "failed"; job.error = String(e); renderPanel(panelEl, job); if (onDone) onDone(); return; }
+    catch (e) { job.status = "failed"; job.error = String(e); renderPanel(panelEl, job); if (onDone) onDone(job); return; }
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { job.status = "failed"; job.error = j.error || ("HTTP " + r.status); renderPanel(panelEl, job); if (onDone) onDone(); return; }
+    if (!r.ok) { job.status = "failed"; job.error = j.error || ("HTTP " + r.status); renderPanel(panelEl, job); if (onDone) onDone(job); return; }
     since = j.nextSince != null ? j.nextSince : since;
     job.status = j.status; job.phases = j.phases || job.phases;
     job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
     job.phase = j.phase || job.phase; job.returncode = j.returncode;
     if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
     renderPanel(panelEl, job);
-    if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone();
+    if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
   };
   poll();
 }
 
 // ---- validation + wiring ----
+// Result of the most recent "Test connection" run: null (untested), "ok", or "fail".
+let connTestState = null;
+
+function setTestResult(cls, text) {
+  const el = $("connTestResult");
+  el.className = "testresult" + (cls ? " " + cls : "");
+  el.textContent = text || "";
+}
+const reuseChecked = () => $("reuseConn").checked;
+const connValue = () => (reuseChecked() ? "yes" : "");
+function baseValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
+}
 function syncValid() {
-  return $("tenant").value.trim() && $("workspace").value.trim() &&
-    $("repository").value.includes("/") && ($("connectionId").value.trim() || $("pat").value.trim());
+  return baseValid() && (reuseChecked() || $("pat").value.trim());
+}
+function testValid() {
+  return baseValid() && (reuseChecked() || $("pat").value.trim());
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
@@ -272,25 +299,72 @@ function deleteValid() {
     (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
 }
 function refresh() {
-  const usingConn = !!$("connectionId").value.trim();
-  $("pat").disabled = usingConn;
-  $("patNote").textContent = usingConn ? "(not needed \u2014 reusing connection)" : "";
+  if (connTestState === "fail") {
+    // A failed reuse test means the PAT is now required to proceed.
+    $("pat").disabled = false;
+    $("patNote").textContent = "(required \u2014 reuse test failed)";
+  } else if (reuseChecked()) {
+    $("pat").disabled = false;
+    $("patNote").textContent = "(optional \u2014 only used if reuse fails)";
+  } else {
+    $("pat").disabled = false;
+    $("patNote").textContent = "";
+  }
   const dry = $("dryRun").checked;
   $("confirmWrap").style.display = dry ? "none" : "flex";
   $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
+  $("testBtn").disabled = !testValid();
   $("deleteBtn").disabled = !deleteValid();
 }
 document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
 document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
+// Any change to a connection-affecting field invalidates the previous test result.
+["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
+  $(id).addEventListener("input", () => { connTestState = null; setTestResult("", ""); }));
+
+let testing = false;
+async function runTest() {
+  if (testing || !testValid()) return;
+  testing = true;
+  $("testBtn").disabled = true;
+  connTestState = null;
+  setTestResult("running", "Testing\u2026");
+  await runJob("/api/test-connection", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
+    connectionId: connValue(), pat: $("pat").value,
+  }, $("testPanel"), (job) => {
+    testing = false;
+    if (job && job.returncode === 0) {
+      connTestState = "ok";
+      setTestResult("ok", "\u2713 Connection verified \u2014 it can reach GitHub.");
+    } else {
+      connTestState = "fail";
+      setTestResult("error", "\u2717 Could not connect \u2014 enter a GitHub PAT below and test again.");
+      $("pat").focus();
+    }
+    refresh();
+  });
+}
+$("testBtn").addEventListener("click", runTest);
+// Ticking "Reuse existing connection" auto-verifies the saved connection.
+$("reuseConn").addEventListener("change", () => {
+  connTestState = null; setTestResult("", "");
+  refresh();
+  if (reuseChecked()) {
+    if (testValid()) runTest();
+    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
+  }
+});
 
 $("syncBtn").addEventListener("click", async () => {
   $("syncBtn").disabled = true;
   await runJob("/api/sync", {
     tenant: $("tenant").value, workspace: $("workspace").value,
     repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
-    connectionId: $("connectionId").value, keepConnected: $("keepConnected").checked, pat: $("pat").value,
+    connectionId: connValue(), keepConnected: $("keepConnected").checked, pat: $("pat").value,
   }, $("syncPanel"), () => { $("pat").value = ""; refresh(); });
 });
 

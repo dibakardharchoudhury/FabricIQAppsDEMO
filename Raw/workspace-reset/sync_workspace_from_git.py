@@ -94,11 +94,22 @@ class Fabric:
     """Thin Fabric REST client that authenticates with the current az login context."""
 
     def __init__(self, tenant_id: str) -> None:
-        self._credential = AzureCliCredential(tenant_id=tenant_id)
+        # process_timeout is generous because az.cmd cold-starts (and AV scanning
+        # the spawned python) can easily exceed the 10s azure-identity default.
+        self._credential = AzureCliCredential(tenant_id=tenant_id, process_timeout=60)
         self._session = requests.Session()
+        self._cached_token: str | None = None
+        self._token_expiry: float = 0.0
 
     def _token(self) -> str:
-        return self._credential.get_token(FABRIC_SCOPE).token
+        # Cache the token and refresh only near expiry, so long LRO polling doesn't
+        # invoke the (slow) Azure CLI on every single request.
+        now = time.time()
+        if not self._cached_token or now >= self._token_expiry - 300:
+            access = self._credential.get_token(FABRIC_SCOPE)
+            self._cached_token = access.token
+            self._token_expiry = float(access.expires_on)
+        return self._cached_token
 
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", {})
@@ -140,6 +151,38 @@ class Fabric:
 
     def delete_connection(self, connection_id: str) -> None:
         self.request("DELETE", f"{FABRIC_BASE}/connections/{connection_id}")
+
+    def list_connections(self) -> list[dict[str, Any]]:
+        """Return every connection visible to the caller, following pagination."""
+        out: list[dict[str, Any]] = []
+        url: str | None = f"{FABRIC_BASE}/connections"
+        while url:
+            resp = self.request("GET", url)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            out.extend(data.get("value", []))
+            token = data.get("continuationToken")
+            url = f"{FABRIC_BASE}/connections?continuationToken={token}" if token else None
+        return out
+
+    def find_github_connections(self, repo_url: str) -> list[str]:
+        """Ids of existing GitHubSourceControl connections pointing at repo_url.
+
+        Newest-looking first (the FabricOntologyDemo_<timestamp> names sort so the
+        most recent one is tried before older / manually-named connections).
+        """
+        want = repo_url.rstrip("/").removesuffix(".git").lower()
+        matches: list[dict[str, Any]] = []
+        for conn in self.list_connections():
+            details = conn.get("connectionDetails") or {}
+            if (details.get("type") or "").lower() != "githubsourcecontrol":
+                continue
+            path = (details.get("path") or "").rstrip("/").removesuffix(".git").lower()
+            if path == want:
+                matches.append(conn)
+        matches.sort(key=lambda c: c.get("displayName", ""), reverse=True)
+        return [c["id"] for c in matches if c.get("id")]
 
     def resolve_workspace_id(self, workspace: str) -> tuple[str, str]:
         if GUID_RE.match(workspace):
@@ -219,17 +262,105 @@ def split_owner_repo(repository: str, owner: str | None) -> tuple[str | None, st
     return owner, value
 
 
+def connect_and_initialize(
+    fab: "Fabric", base: str, ws_name: str, args: argparse.Namespace, connection_id: str
+) -> dict[str, Any] | None:
+    """Disconnect any stale link, connect via connection_id, then initialize.
+
+    Returns the initializeConnection JSON on success, or None if the connection
+    could not be used (e.g. its stored PAT is expired/invalid), leaving the
+    workspace disconnected so the next candidate can be tried cleanly.
+    """
+    state = fab.request("GET", f"{base}/connection")
+    if state.status_code == 200 and state.json().get("gitConnectionState") != "NotConnected":
+        fab.request("POST", f"{base}/disconnect")
+
+    print(f"Connecting '{ws_name}' -> {args.owner}/{args.repository}@{args.branch} ({args.directory}) via {connection_id}...")
+    connect_body = {
+        "gitProviderDetails": {
+            "gitProviderType": "GitHub",
+            "ownerName": args.owner,
+            "repositoryName": args.repository,
+            "branchName": args.branch,
+            "directoryName": args.directory,
+        },
+        "myGitCredentials": {
+            "source": "ConfiguredConnection",
+            "connectionId": connection_id,
+        },
+    }
+    r = fab.request("POST", f"{base}/connect", json=connect_body)
+    if r.status_code not in (200, 201):
+        print(f"  connect failed for {connection_id}: HTTP {r.status_code} {r.text}", file=sys.stderr)
+        return None
+    print("  connected.")
+
+    print("Initializing connection (PreferRemote)...")
+    r = fab.request("POST", f"{base}/initializeConnection", json={"initializationStrategy": "PreferRemote"})
+    try:
+        r = fab.poll_lro(r)
+    except SystemExit as exc:
+        print(f"  initialize failed: {exc}", file=sys.stderr)
+        fab.request("POST", f"{base}/disconnect")
+        return None
+    if r.status_code not in (200, 201):
+        print(f"  initializeConnection failed: HTTP {r.status_code} {r.text}", file=sys.stderr)
+        fab.request("POST", f"{base}/disconnect")
+        return None
+    return r.json() if r.content else {}
+
+
+def test_connection_flow(
+    fab: "Fabric", base: str, ws_name: str, args: argparse.Namespace,
+    candidate_ids: list[str], pat: str,
+) -> int:
+    """Verify GitHub connectivity without importing anything.
+
+    Tries each existing connection (and, if a PAT is supplied, a throwaway one) via
+    connect+initialize, then always disconnects and removes any temp connection.
+    Returns 0 on success, 3 when nothing works (a PAT is needed), 1 on other errors.
+    """
+    print(f"Testing GitHub connectivity for workspace '{ws_name}'...")
+    repo_url = f"https://github.com/{args.owner}/{args.repository}"
+    created_id: str | None = None
+    try:
+        for cid in candidate_ids:
+            print(f"Trying connection {cid}...")
+            if connect_and_initialize(fab, base, ws_name, args, cid) is not None:
+                print(f"CONNECTION TEST: SUCCESS -- connection {cid} can reach GitHub.")
+                return 0
+            print(f"  connection {cid} did not work.")
+        if pat:
+            conn_name = f"FabricOntologyDemoTest_{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+            print(f"Testing the supplied PAT via a temporary connection '{conn_name}'...")
+            created_id = fab.create_github_connection(conn_name, repo_url, pat)
+            if connect_and_initialize(fab, base, ws_name, args, created_id) is not None:
+                print("CONNECTION TEST: SUCCESS -- the supplied PAT can reach GitHub.")
+                return 0
+            print("CONNECTION TEST: FAILED -- the supplied PAT could not connect to GitHub.")
+            return 3
+        print("CONNECTION TEST: FAILED -- no existing connection works; a GitHub PAT is required.")
+        return 3
+    finally:
+        state = fab.request("GET", f"{base}/connection")
+        if state.status_code == 200 and state.json().get("gitConnectionState") != "NotConnected":
+            fab.request("POST", f"{base}/disconnect")
+        if created_id:
+            fab.delete_connection(created_id)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", help="Tenant id or domain to sign in against.")
     parser.add_argument("--workspace", help="Workspace GUID or display name.")
-    parser.add_argument("--connection-id", help="Reuse this existing Fabric GitHub connection id instead of creating one from a PAT.")
+    parser.add_argument("--connection-id", help="Connection to use: a Fabric connection GUID to reuse exactly, or 'yes'/'auto' to auto-discover and reuse an existing GitHub connection for this repo (creating a new one from a PAT only if none works). Omit to always create a new one.")
     parser.add_argument("--owner", help="GitHub owner/org name (optional if --repository is 'owner/repo').")
     parser.add_argument("--repository", help="GitHub repository, as 'owner/repo' or a bare repo name.")
     parser.add_argument("--branch", help="Branch to sync from (default: main).")
     parser.add_argument("--directory", help="Repo directory that maps to the workspace root (default: /).")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
     parser.add_argument("--keep-connected", action="store_true", help="Do not disconnect after syncing.")
+    parser.add_argument("--test-connection", action="store_true", help="Only verify GitHub connectivity (connect+initialize+disconnect), import nothing, then report SUCCESS/FAILED.")
     args = parser.parse_args()
 
     # Resolution order for every value: CLI flag > environment variable > prompt.
@@ -258,15 +389,31 @@ def main() -> int:
     args.branch = prompt_default("Branch", args.branch, "main")
     args.directory = prompt_default("Repo directory (workspace root)", args.directory, "/")
 
-    # A GitHub PAT is only needed when we have to create a connection. If the user
-    # passed an existing --connection-id we reuse it and never ask for a secret.
-    # The PAT is read from the FABRIC_GIT_PAT (or GITHUB_PAT) environment variable
-    # so it never appears as a CLI argument; a hidden prompt is the last resort.
+    # A GitHub PAT is only needed when we may have to CREATE a connection. Three
+    # connection modes, decided by the --connection-id value:
+    #   * a GUID           -> reuse exactly that connection (no PAT).
+    #   * "yes"/"auto"/etc -> auto-discover an existing connection for this repo and
+    #                         reuse it if it works; a PAT is only needed as a fallback
+    #                         to create a fresh connection when none works.
+    #   * empty            -> always create a new connection from a PAT.
+    # The PAT comes from FABRIC_GIT_PAT/GITHUB_PAT (never a CLI flag) or a hidden prompt.
+    conn_raw = (args.connection_id or "").strip()
+    explicit_conn = bool(conn_raw) and bool(GUID_RE.match(conn_raw))
+    reuse_auto = bool(conn_raw) and not explicit_conn
+
     pat = ""
-    if not (args.connection_id and args.connection_id.strip()):
+    if not explicit_conn:
         pat = (os.environ.get("FABRIC_GIT_PAT") or os.environ.get("GITHUB_PAT") or "").strip()
         if pat:
             print("  Using GitHub PAT from environment variable.")
+        elif args.test_connection:
+            pass  # test mode never prompts; the UI supplies a PAT on retry
+        elif reuse_auto:
+            # Reuse mode: the PAT is optional -- only used if no existing connection works.
+            if sys.stdin.isatty():
+                print("  Reuse mode: paste a PAT to allow creating a new connection if no")
+                print("  existing one works, or press Enter to try reuse only.")
+                pat = getpass.getpass("  GitHub PAT (optional, input hidden): ").strip()
         else:
             print("  No --connection-id and no FABRIC_GIT_PAT/GITHUB_PAT env var;")
             print("  a new GitHub connection will be created from a PAT.")
@@ -280,7 +427,7 @@ def main() -> int:
         print("Authentication failed. Run `az login` (optionally --tenant) first.", file=sys.stderr)
         return 1
 
-    if not args.yes and not confirm(ws_name, ws_id):
+    if not args.test_connection and not args.yes and not confirm(ws_name, ws_id):
         print("Aborted.")
         return 0
 
@@ -288,53 +435,52 @@ def main() -> int:
     repo_url = f"https://github.com/{args.owner}/{args.repository}"
     created_connection_id: str | None = None
 
-    try:
-        # 0. Resolve the connection: reuse --connection-id, or create a fresh one.
-        if args.connection_id and args.connection_id.strip():
-            connection_id = args.connection_id.strip()
-            print(f"Reusing existing connection {connection_id}.")
+    # Ordered list of existing connection ids to try before creating a new one.
+    candidate_ids: list[str] = []
+    if explicit_conn:
+        candidate_ids = [conn_raw]
+        print(f"Reusing existing connection {conn_raw}.")
+    elif reuse_auto:
+        candidate_ids = fab.find_github_connections(repo_url)
+        if candidate_ids:
+            print(f"Found {len(candidate_ids)} existing connection(s) for {repo_url}; will try to reuse.")
         else:
+            print(f"No existing connection found for {repo_url}; will create one.")
+
+    # Test-only mode: verify connectivity and report, importing nothing.
+    if args.test_connection:
+        return test_connection_flow(fab, base, ws_name, args, candidate_ids, pat)
+
+    try:
+        # 0-3. Reuse a working connection if we can; otherwise create a fresh one.
+        init: dict[str, Any] | None = None
+        connection_id: str | None = None
+        for cid in candidate_ids:
+            init = connect_and_initialize(fab, base, ws_name, args, cid)
+            if init is not None:
+                connection_id = cid
+                print(f"  reusing connection {cid}.")
+                break
+            print(f"  connection {cid} did not work; trying the next option...")
+
+        if init is None:
+            if not pat:
+                print(
+                    "No reusable connection worked and no PAT is available to create one.\n"
+                    "Provide a GitHub PAT (FABRIC_GIT_PAT / GITHUB_PAT) and retry.",
+                    file=sys.stderr,
+                )
+                return 1
             conn_name = f"FabricOntologyDemo_{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
             print(f"Creating GitHub connection '{conn_name}' for {repo_url}...")
             connection_id = fab.create_github_connection(conn_name, repo_url, pat)
             created_connection_id = connection_id
             print(f"  created connection {connection_id}.")
+            init = connect_and_initialize(fab, base, ws_name, args, connection_id)
+            if init is None:
+                print("connect/initialize failed even with a freshly created connection.", file=sys.stderr)
+                return 1
 
-        # 1. Ensure a clean connection: disconnect any stale link first (ignore if none).
-        state = fab.request("GET", f"{base}/connection")
-        if state.status_code == 200 and state.json().get("gitConnectionState") != "NotConnected":
-            print("Workspace already Git-connected; disconnecting first for a clean run...")
-            fab.request("POST", f"{base}/disconnect")
-
-        # 2. Connect to the GitHub branch via the configured connection.
-        print(f"Connecting '{ws_name}' -> {args.owner}/{args.repository}@{args.branch} ({args.directory})...")
-        connect_body = {
-            "gitProviderDetails": {
-                "gitProviderType": "GitHub",
-                "ownerName": args.owner,
-                "repositoryName": args.repository,
-                "branchName": args.branch,
-                "directoryName": args.directory,
-            },
-            "myGitCredentials": {
-                "source": "ConfiguredConnection",
-                "connectionId": connection_id,
-            },
-        }
-        r = fab.request("POST", f"{base}/connect", json=connect_body)
-        if r.status_code not in (200, 201):
-            print(f"connect failed: HTTP {r.status_code} {r.text}", file=sys.stderr)
-            return 1
-        print("  connected.")
-
-        # 3. Initialize the connection, preferring the remote (Git) side.
-        print("Initializing connection (PreferRemote)...")
-        r = fab.request("POST", f"{base}/initializeConnection", json={"initializationStrategy": "PreferRemote"})
-        r = fab.poll_lro(r)
-        if r.status_code not in (200, 201):
-            print(f"initializeConnection failed: HTTP {r.status_code} {r.text}", file=sys.stderr)
-            return 1
-        init = r.json() if r.content else {}
         remote_hash = init.get("remoteCommitHash")
         required = init.get("requiredAction", "")
         print(f"  requiredAction={required} remoteCommitHash={remote_hash}")
@@ -358,16 +504,17 @@ def main() -> int:
             print("  update complete.")
         else:
             print("  nothing to update (workspace already matches Git).")
-
-        # 5. Disconnect unless asked to stay connected.
-        if not args.keep_connected:
-            print("Disconnecting from Git...")
-            r = fab.request("POST", f"{base}/disconnect")
-            if r.status_code not in (200, 204):
-                print(f"disconnect returned HTTP {r.status_code} {r.text}", file=sys.stderr)
-            else:
-                print("  disconnected.")
     finally:
+        # Always leave the workspace un-linked (unless --keep-connected), even if the
+        # sync failed partway -- otherwise a crash would leave it Git-connected. This
+        # runs before deleting our connection, since a live link still needs it.
+        if not args.keep_connected:
+            state = fab.request("GET", f"{base}/connection")
+            if state.status_code == 200 and state.json().get("gitConnectionState") != "NotConnected":
+                print("Disconnecting from Git...")
+                d = fab.request("POST", f"{base}/disconnect")
+                print("  disconnected." if d.status_code in (200, 204)
+                      else f"  disconnect returned HTTP {d.status_code} {d.text}")
         # Remove the connection we created, unless the workspace stays Git-connected
         # (a live Git connection still needs its credential connection).
         if created_connection_id and not args.keep_connected:

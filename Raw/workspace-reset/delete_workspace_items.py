@@ -56,11 +56,22 @@ class Fabric:
     """Thin Fabric REST client that authenticates with the current az login context."""
 
     def __init__(self, tenant_id: str) -> None:
-        self._credential = AzureCliCredential(tenant_id=tenant_id)
+        # process_timeout is generous because az.cmd cold-starts (and AV scanning
+        # the spawned python) can easily exceed the 10s azure-identity default.
+        self._credential = AzureCliCredential(tenant_id=tenant_id, process_timeout=60)
         self._session = requests.Session()
+        self._cached_token: str | None = None
+        self._token_expiry: float = 0.0
 
     def _token(self) -> str:
-        return self._credential.get_token(FABRIC_SCOPE).token
+        # Cache the token and refresh only near expiry, so long deletes don't
+        # invoke the (slow) Azure CLI on every single request.
+        now = time.time()
+        if not self._cached_token or now >= self._token_expiry - 300:
+            access = self._credential.get_token(FABRIC_SCOPE)
+            self._cached_token = access.token
+            self._token_expiry = float(access.expires_on)
+        return self._cached_token
 
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         # Fetch a fresh token per request so long deletes don't fail on expiry.
