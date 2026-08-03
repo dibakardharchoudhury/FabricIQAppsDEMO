@@ -25,6 +25,7 @@ Runs on 127.0.0.1 only (loopback). Auth relies on your `az login` session.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -41,10 +42,12 @@ from flask import Flask, jsonify, request, send_from_directory
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
+PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SYNC_TIMEOUT_S = 900
 DELETE_TIMEOUT_S = 600
+PIPELINE_TIMEOUT_S = 3 * 3600
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -70,6 +73,12 @@ TEST_PHASES = ["Queued", "Testing", "Done"]
 TEST_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("Testing GitHub connectivity", "Trying connection", "Testing the supplied PAT")),
     (2, ("CONNECTION TEST:",)),
+]
+
+PIPELINE_PHASES = ["Queued", "Resolving pipeline", "Running", "Done"]
+PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("Pipeline '",)),
+    (2, ("Starting pipeline", "run queued", "job status:")),
 ]
 
 app = Flask(__name__, static_folder=None)
@@ -258,6 +267,97 @@ def api_delete():
         "--dry-run" if dry_run else "--yes",
     ]
     job_id = _start(argv, None, DELETE_TIMEOUT_S, DELETE_PHASES, DELETE_MARKERS)
+    return jsonify(jobId=job_id)
+
+
+# Declared parameters of the 01_Pipe_Setup pipeline, in display order. Each entry
+# drives one field in the UI (label + help + prefilled default) and is validated
+# here. Defaults mirror the pipeline's own defaultValue in pipeline-content.json
+# (they are ids and secret *names*, not secret values); "int" values are coerced
+# so they reach the pipeline as JSON numbers, not strings.
+PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
+    {"name": "env_suffix", "type": "string", "default": "V6",
+     "label": "Environment suffix",
+     "help": "Suffix appended to the artifacts this run creates (e.g. the lakehouse). Bump it to keep parallel demo runs from colliding."},
+    {"name": "workspace_id", "type": "string", "default": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+     "label": "Workspace id",
+     "help": "GUID of the Fabric workspace the notebooks build into — normally the same workspace you're running in."},
+    {"name": "key_vault_uri", "type": "string", "default": "https://akvfabcapnew.vault.azure.net/",
+     "label": "Key Vault URI",
+     "help": "Azure Key Vault that holds the service-principal secrets the notebooks read (e.g. https://myvault.vault.azure.net/)."},
+    {"name": "key_vault_tenant_id_secret_name", "type": "string", "default": "tenantid",
+     "label": "KV secret · tenant id",
+     "help": "Name of the Key Vault secret that stores the tenant id."},
+    {"name": "key_vault_client_id_secret_name", "type": "string", "default": "clientid",
+     "label": "KV secret · client id",
+     "help": "Name of the Key Vault secret that stores the app (client) id."},
+    {"name": "key_vault_client_secret_name", "type": "string", "default": "clientsecret",
+     "label": "KV secret · client secret",
+     "help": "Name of the Key Vault secret that stores the client secret."},
+    {"name": "ops_agent_teams_team_id", "type": "string", "default": "c480320e-9204-474b-9b2c-54a53e94f220",
+     "label": "Teams team id",
+     "help": "GUID of the Microsoft Teams team the operations agent posts to."},
+    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+     "label": "Teams channel id",
+     "help": "Channel (thread) id the operations agent posts to, e.g. 19:...@thread.tacv2."},
+    {"name": "ops_agent_run_as_user", "type": "string", "default": "admin@mngenvmcap218279.onmicrosoft.com",
+     "label": "Agent run-as user",
+     "help": "UPN the operations agent runs as when sending Teams messages."},
+    {"name": "per_notebook_timeout_secs", "type": "int", "default": "3600",
+     "label": "Per-notebook timeout (secs)",
+     "help": "Seconds the orchestrator waits for each notebook before giving up (e.g. 3600)."},
+]
+PIPELINE_PARAM_NAMES = {p["name"] for p in PIPELINE_PARAM_SPEC}
+
+
+@app.get("/api/pipeline-params")
+def api_pipeline_params():
+    """Expose the pipeline's parameter spec so the UI can render labelled fields."""
+    return jsonify(pipeline="01_Pipe_Setup", parameters=PIPELINE_PARAM_SPEC)
+
+
+@app.post("/api/run-pipeline")
+def api_run_pipeline():
+    data = request.get_json(silent=True) or {}
+    tenant = (data.get("tenant") or "").strip()
+    workspace = (data.get("workspace") or "").strip()
+    pipeline = (data.get("pipeline") or "01_Pipe_Setup").strip() or "01_Pipe_Setup"
+    raw_params = data.get("parameters") or {}
+
+    if not tenant or not workspace:
+        return jsonify(error="tenant and workspace are required."), 400
+    if not isinstance(raw_params, dict):
+        return jsonify(error="parameters must be an object of name -> value."), 400
+
+    # Keep only known parameters, drop blanks (so pipeline defaults apply), and
+    # coerce ints so they travel as JSON numbers.
+    params: dict[str, object] = {}
+    for spec in PIPELINE_PARAM_SPEC:
+        name = spec["name"]
+        if name not in raw_params:
+            continue
+        value = raw_params[name]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        if spec["type"] == "int":
+            try:
+                params[name] = int(str(value).strip())
+            except ValueError:
+                return jsonify(error=f"{spec['label']} must be a whole number."), 400
+        else:
+            params[name] = str(value).strip()
+
+    argv = [
+        str(PIPELINE_SCRIPT),
+        "--tenant", tenant,
+        "--workspace", workspace,
+        "--pipeline", pipeline,
+        "--yes",
+    ]
+    # Pass parameters as JSON through the environment so values with @ and : (a
+    # Teams channel id) never need shell escaping and stay off the command line.
+    env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
+    job_id = _start(argv, env_extra, PIPELINE_TIMEOUT_S, PIPELINE_PHASES, PIPELINE_MARKERS)
     return jsonify(jobId=job_id)
 
 

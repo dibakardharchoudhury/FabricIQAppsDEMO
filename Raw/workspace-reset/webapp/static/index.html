@@ -147,6 +147,16 @@
   .tab.active { color:#fff; border-color:transparent; background:linear-gradient(135deg,#3b82f6,#2563eb); box-shadow:0 10px 24px -12px rgba(59,130,246,.9); }
   .tab.danger:not(.active):hover { border-color:var(--destructive); background:rgba(239,68,68,.12); }
   .tab.danger.active { background:linear-gradient(135deg,var(--destructive),#dc2626); box-shadow:0 10px 24px -12px rgba(239,68,68,.9); }
+  .tab.run:not(.active):hover { border-color:var(--violet); background:rgba(139,92,246,.12); }
+  .tab.run.active { background:linear-gradient(135deg,var(--violet),#6d28d9); box-shadow:0 10px 24px -12px rgba(139,92,246,.9); }
+
+  /* pipeline parameter fields (dynamically rendered) */
+  .params { display:grid; grid-template-columns:repeat(2,1fr); gap:1.15rem 1.2rem; }
+  .param { display:flex; flex-direction:column; gap:.4rem; }
+  .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
+  .param input { width:100%; }
+  .param.wide { grid-column:1 / -1; }
 
   .side-foot { display:flex; flex-direction:column; gap:.65rem; align-items:stretch; margin-top:.1rem; }
   .side-foot .badge { align-self:flex-start; }
@@ -167,6 +177,7 @@
   }
   @media (max-width:640px) {
     .grid { grid-template-columns:1fr; }
+    .params { grid-template-columns:1fr; }
     .page { padding:1.6rem 1rem 2.5rem; }
   }
 </style>
@@ -195,6 +206,7 @@
 
       <nav class="nav" role="tablist">
         <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
+        <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
       </nav>
 
@@ -232,6 +244,19 @@
       <div id="testPanel"></div>
       <button id="syncBtn" class="primary" disabled>Run sync</button>
       <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="panePipeline" class="pane">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
+        <h2>Run the <code>01_Pipe_Setup</code> pipeline</h2>
+      </div>
+      <p class="hint">Kicks off the setup pipeline on demand and waits for it to finish. Fields below are the pipeline's parameters &mdash; they come pre-filled with sensible defaults; edit any you need, then run. Blank fields fall back to the pipeline's own default.</p>
+      <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
+      <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run pipeline</button>
+      <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
   </section>
 
@@ -374,6 +399,8 @@ function refresh() {
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = !testValid();
   $("deleteBtn").disabled = !deleteValid();
+  const pipeBtn = $("pipelineBtn");
+  if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
 document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
 document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
@@ -458,10 +485,56 @@ $("restartBtn").addEventListener("click", async () => {
 function activateTab(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $("paneSync").classList.toggle("active", name === "sync");
+  $("panePipeline").classList.toggle("active", name === "pipeline");
   $("paneDelete").classList.toggle("active", name === "delete");
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));
 
+// ---- pipeline parameters ----
+// The parameter spec (labels, help, defaults, types) is served by the backend so
+// the form stays in sync with the pipeline without duplicating it in the page.
+let pipelineSpec = [];
+async function loadPipelineParams() {
+  try {
+    const res = await fetch("/api/pipeline-params");
+    const data = await res.json();
+    pipelineSpec = data.parameters || [];
+  } catch (e) {
+    $("pipelineFields").innerHTML = `<p class="phelp">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    return;
+  }
+  $("pipelineFields").innerHTML = pipelineSpec.map((p) => {
+    // A couple of long-value fields span the full width for readability.
+    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user");
+    const numeric = p.type === "int";
+    return `<div class="param${wide ? " wide" : ""}">
+      <span class="plabel">${escapeHtml(p.label)}</span>
+      <span class="phelp">${escapeHtml(p.help)}</span>
+      <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
+    </div>`;
+  }).join("");
+  // Re-run validation whenever a pipeline field changes.
+  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) el.addEventListener("input", refresh); });
+  refresh();
+}
+function collectPipelineParams() {
+  const out = {};
+  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) out[p.name] = el.value; });
+  return out;
+}
+function pipelineValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim();
+}
+
+$("pipelineBtn").addEventListener("click", async () => {
+  $("pipelineBtn").disabled = true;
+  await runJob("/api/run-pipeline", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    pipeline: "01_Pipe_Setup", parameters: collectPipelineParams(),
+  }, $("pipelinePanel"), () => refresh());
+});
+
+loadPipelineParams();
 refresh();
 </script>
 </body>
