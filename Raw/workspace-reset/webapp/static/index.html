@@ -101,6 +101,7 @@
     white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; }
   .output.muted { color:var(--muted); } .output.running { color:#fcd34d; border-color:rgba(251,191,36,.35); }
   .output.ok { border-color:rgba(52,211,153,.45); } .output.error { border-color:rgba(251,113,133,.5); color:#fecaca; }
+  .output.warn { border-color:rgba(251,191,36,.4); color:#fde68a; }
   .output::-webkit-scrollbar { width:10px; height:10px; }
   .output::-webkit-scrollbar-thumb { background:#2a375c; border-radius:8px; border:2px solid transparent; background-clip:content-box; }
   .progress { margin-top:1.35rem; }
@@ -108,6 +109,7 @@
   .status { display:inline-flex; align-items:center; gap:.45rem; }
   .status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
   .status.running { color:var(--warn); } .status.ok { color:var(--ok); } .status.error { color:var(--err); }
+  .status.warn { color:var(--warn); }
   .pct { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:750; }
   .meta { display:inline-flex; align-items:baseline; gap:.7rem; }
   .elapsed { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:600; font-size:.82rem; letter-spacing:.02em; }
@@ -117,6 +119,7 @@
   .bar .fill.running { background:linear-gradient(90deg,var(--primary),var(--primary2),var(--violet),var(--primary)); background-size:300% 100%; animation:flow 2.2s linear infinite; }
   .bar .fill.ok { background:linear-gradient(90deg,var(--ok),var(--primary2)); }
   .bar .fill.error { background:linear-gradient(90deg,var(--destructive),var(--destructive2)); }
+  .bar .fill.warn { background:linear-gradient(90deg,var(--warn),#f59e0b); }
   @keyframes flow { to { background-position:300% 0; } }
   .phases { list-style:none; display:flex; flex-wrap:wrap; gap:.45rem; padding:.95rem 0 0; margin:0; font-size:.75rem; }
   .phases li { display:flex; align-items:center; gap:.35rem; color:var(--muted); background:rgba(148,163,184,.07);
@@ -343,11 +346,16 @@ function renderPanel(el, job) {
   if (!job.startedAt) job.startedAt = Date.now();
   if (job.status !== "running" && !job.endedAt) job.endedAt = Date.now();
   const elapsed = formatElapsed((job.endedAt || Date.now()) - job.startedAt);
-  const statusCls = job.status === "succeeded" ? "ok" : job.status === "failed" ? "error" : "running";
+  const statusCls = job.status === "succeeded" ? "ok"
+    : job.status === "failed" ? "error"
+    : job.status === "interrupted" ? "warn"
+    : "running";
   const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
   const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
   const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
-    : job.status === "succeeded" ? "Succeeded" : "Failed";
+    : job.status === "succeeded" ? "Succeeded"
+    : job.status === "interrupted" ? "Monitoring interrupted"
+    : "Failed";
   const phases = (job.phases || []).map((p, i) => {
     const cls = (job.status === "succeeded" || i < job.phaseIndex) ? "done"
       : (i === job.phaseIndex && job.status === "running") ? "active" : "";
@@ -395,12 +403,29 @@ async function runJob(startUrl, body, panelEl, onDone) {
   }
   const jobId = started.data.jobId;
   let since = 0;
+  let misses = 0;
+  // A lost job / unreachable server means we stopped watching -- NOT that the task
+  // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
+  const interrupted = (msg) => {
+    job.status = "interrupted"; job.error = msg;
+    renderPanel(panelEl, job); if (onDone) onDone(job);
+  };
   const poll = async () => {
     let r;
     try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
-    catch (e) { job.status = "failed"; job.error = String(e); renderPanel(panelEl, job); if (onDone) onDone(job); return; }
+    catch (e) {
+      // The local server may be briefly unreachable (e.g. restarting) -- retry before giving up.
+      if (++misses <= 4) { setTimeout(poll, 1000); return; }
+      interrupted("Lost contact with the local server. The task may still be running in Fabric \u2014 check the Monitoring hub.");
+      return;
+    }
+    if (r.status === 404) {
+      interrupted("The local server no longer has this run (it may have restarted). The pipeline may still be running or already finished in Fabric \u2014 check the Monitoring hub.");
+      return;
+    }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { job.status = "failed"; job.error = j.error || ("HTTP " + r.status); renderPanel(panelEl, job); if (onDone) onDone(job); return; }
+    misses = 0;
     since = j.nextSince != null ? j.nextSince : since;
     job.status = j.status; job.phases = j.phases || job.phases;
     job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
