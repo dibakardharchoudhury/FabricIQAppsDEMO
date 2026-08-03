@@ -232,6 +232,9 @@ function renderPanel(el, job) {
   const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
     ? "\n\nexit code: " + job.returncode : "";
   const err = job.error ? "\n[error] " + job.error : "";
+  // Keep the log pinned to the newest line unless the user has scrolled up.
+  const prevOut = el.querySelector(".output");
+  const stick = !prevOut || (prevOut.scrollHeight - prevOut.scrollTop - prevOut.clientHeight < 40);
   el.innerHTML =
     `<div class="progress">
        <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="pct">${pct}%</span></div>
@@ -239,6 +242,10 @@ function renderPanel(el, job) {
        ${phases ? `<ol class="phases">${phases}</ol>` : ""}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
      </div>`;
+  if (stick) {
+    const out = el.querySelector(".output");
+    if (out) out.scrollTop = out.scrollHeight;
+  }
 }
 
 function escapeHtml(s) {
