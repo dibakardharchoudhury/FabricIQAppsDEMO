@@ -238,79 +238,97 @@ def main() -> int:
         print("Confirmation did not match. Aborted; nothing was deleted.")
         return 1
 
-    # Delete in repeated passes: some items (e.g. a Lakehouse) remove children, and
-    # deleting a parent first can 400 a child listed earlier. Loop until stable.
-    remaining = {it["id"]: it for it in deletable}
-    failures: dict[str, str] = {}
-    for _pass in range(1, 6):
-        if not remaining:
+    # Reconcile the workspace to empty. Fabric only deletes an EMPTY folder (no
+    # items AND no nested subfolders — there is no recursive/force delete), and
+    # deleting a Lakehouse/Warehouse auto-removes its child items (SQLEndpoint,
+    # default semantic model) after a short lag. So we loop: each round we RE-LIST
+    # items+folders (to see lagging child removals), delete every deletable item,
+    # then delete only LEAF folders (those with no child folder). Re-listing makes
+    # a folder that held a lagging child become empty and deletable on a later pass.
+    def err_code(resp: requests.Response) -> str:
+        try:
+            return resp.json().get("errorCode", "") or ""
+        except ValueError:
+            return ""
+
+    max_rounds = 20
+    wait_s = 15
+    deleted_items = 0
+    deleted_folders = 0
+    prev_total: int | None = None
+    no_progress = 0
+    item_failures: dict[str, tuple[dict[str, Any], str]] = {}
+    folder_blocked: dict[str, tuple[dict[str, Any], str]] = {}
+
+    for round_no in range(1, max_rounds + 1):
+        items_now = fabric.list_items(workspace_id)
+        folders_now = fabric.list_folders(workspace_id)
+        deletable_now = [it for it in items_now if it.get("type") not in CHILD_ITEM_TYPES]
+        total = len(deletable_now) + len(folders_now)
+        if total == 0:
             break
-        progressed = False
-        failures = {}
-        for item_id, it in list(remaining.items()):
-            resp = fabric.delete_item(workspace_id, item_id)
+
+        no_progress = no_progress + 1 if prev_total is not None and total >= prev_total else 0
+        prev_total = total
+
+        item_failures = {}
+        for it in deletable_now:
+            resp = fabric.delete_item(workspace_id, it["id"])
             label = f"[{it.get('type')}] {it.get('displayName')}"
             if resp.status_code in (200, 204):
                 print(f"  deleted {label}")
-                remaining.pop(item_id, None)
-                progressed = True
+                deleted_items += 1
             elif resp.status_code == 404:
                 print(f"  gone     {label} (already removed)")
-                remaining.pop(item_id, None)
-                progressed = True
             else:
-                failures[item_id] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        if not progressed:
-            break
+                item_failures[it["id"]] = (it, f"HTTP {resp.status_code} {err_code(resp)}: {resp.text[:180]}")
 
-    if failures:
-        print(f"\n{len(failures)} item(s) could not be deleted:", file=sys.stderr)
-        for item_id, reason in failures.items():
-            it = remaining.get(item_id, {})
-            print(f"  - [{it.get('type')}] {it.get('displayName')} {item_id}: {reason}",
-                  file=sys.stderr)
-        return 1
-
-    # Folders are a separate API and can only be deleted once empty. Fabric's
-    # emptiness check lags for a minute or two after the items are deleted
-    # (FolderNotEmpty even though the folder is empty), so wait and retry.
-    folder_remaining = {fo["id"]: fo for fo in folders}
-    folder_failures: dict[str, str] = {}
-    max_folder_attempts = 12
-    for attempt in range(1, max_folder_attempts + 1):
-        if not folder_remaining:
-            break
-        folder_failures = {}
-        for folder_id, fo in list(folder_remaining.items()):
-            resp = fabric.delete_folder(workspace_id, folder_id)
+        # Only leaf folders (no child folder present) can possibly be empty.
+        parent_ids = {f.get("parentFolderId") for f in folders_now if f.get("parentFolderId")}
+        leaves = [f for f in folders_now if f["id"] not in parent_ids]
+        folder_blocked = {}
+        for fo in leaves:
+            resp = fabric.delete_folder(workspace_id, fo["id"])
             label = f"[Folder] {fo.get('displayName')}"
             if resp.status_code in (200, 204):
                 print(f"  deleted {label}")
-                folder_remaining.pop(folder_id, None)
+                deleted_folders += 1
             elif resp.status_code == 404:
                 print(f"  gone     {label} (already removed)")
-                folder_remaining.pop(folder_id, None)
             else:
-                folder_failures[folder_id] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        if folder_remaining and attempt < max_folder_attempts:
-            wait = 15
-            print(
-                f"  {len(folder_remaining)} folder(s) not deletable yet "
-                f"(FolderNotEmpty lag); waiting {wait}s and retrying "
-                f"(attempt {attempt}/{max_folder_attempts})..."
-            )
-            time.sleep(wait)
+                folder_blocked[fo["id"]] = (fo, f"HTTP {resp.status_code} {err_code(resp)}: {resp.text[:180]}")
 
-    if folder_failures:
-        print(f"\n{len(folder_failures)} folder(s) could not be deleted:", file=sys.stderr)
-        for folder_id, reason in folder_failures.items():
-            fo = folder_remaining.get(folder_id, {})
-            print(f"  - [Folder] {fo.get('displayName')} {folder_id}: {reason}",
+        # No shrink this round means we're waiting on child-item removal lag
+        # (FolderNotEmpty) — pause, then re-list and try again.
+        if no_progress >= 1 and (folder_blocked or item_failures) and round_no < max_rounds:
+            print(
+                f"  {len(folder_blocked)} folder(s)/{len(item_failures)} item(s) not deletable yet "
+                f"(child-removal lag); waiting {wait_s}s and retrying "
+                f"(round {round_no}/{max_rounds})..."
+            )
+            time.sleep(wait_s)
+
+    # Authoritative final check.
+    items_left = [it for it in fabric.list_items(workspace_id) if it.get("type") not in CHILD_ITEM_TYPES]
+    folders_left = fabric.list_folders(workspace_id)
+    if items_left or folders_left:
+        print(
+            f"\nCould not fully empty the workspace: {len(items_left)} item(s) and "
+            f"{len(folders_left)} folder(s) remain.",
+            file=sys.stderr,
+        )
+        for it in items_left:
+            reason = item_failures.get(it["id"], (None, ""))[1]
+            print(f"  - [{it.get('type')}] {it.get('displayName')} {it['id']} {reason}".rstrip(),
+                  file=sys.stderr)
+        for fo in folders_left:
+            reason = folder_blocked.get(fo["id"], (None, "FolderNotEmpty (still has items/subfolders)"))[1]
+            print(f"  - [Folder] {fo.get('displayName')} {fo['id']} {reason}".rstrip(),
                   file=sys.stderr)
         return 1
 
     print(
-        f"\nDone. Deleted {len(deletable)} item(s) and {len(folders)} folder(s). "
+        f"\nDone. Deleted {deleted_items} item(s) and {deleted_folders} folder(s). "
         f"Workspace '{name}' is empty."
     )
     return 0
