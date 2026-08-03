@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from pathlib import Path
@@ -420,15 +421,59 @@ def api_job(job_id: str):
     )
 
 
+def _detached_popen_kwargs() -> dict[str, object]:
+    """Popen kwargs that fully untie a child server from this console/session.
+
+    Without these the server dies the moment the launching window is closed; with
+    them it keeps running (so the Restart button and closing the terminal both
+    behave). No console means its stdout/stderr go to the void -- job output is
+    still captured in-memory and streamed to the page.
+    """
+    kwargs: dict[str, object] = {
+        "cwd": os.getcwd(),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no inherited console.
+        kwargs["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _respawn_detached() -> None:
+    """Start a fresh, console-independent server, then exit this one.
+
+    Preferred over os.execv, which keeps the replacement bound to the original
+    console (so a later window-close still kills it). The new server retry-binds
+    port 5000, so it comes up as soon as this process releases it.
+    """
+    env = os.environ.copy()
+    env["FABRIC_UI_NO_BROWSER"] = "1"  # a tab is already open
+    subprocess.Popen([sys.executable, *sys.argv], env=env, **_detached_popen_kwargs())
+    os._exit(0)
+
+
 @app.post("/api/restart")
 def api_restart():
-    """Re-exec this process so server.py edits take effect; refuses while a job runs."""
+    """Relaunch the server (console-independent) to pick up edits; refuses mid-job."""
     with JOBS_LOCK:
         if any(j.status == "running" for j in JOBS.values()):
             return jsonify(error="a job is still running; wait for it to finish."), 409
-    # Don't reopen a browser tab on the restart; a tab is already open.
-    os.environ["FABRIC_UI_NO_BROWSER"] = "1"
-    threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable, *sys.argv])).start()
+    threading.Timer(0.5, _respawn_detached).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/shutdown")
+def api_shutdown():
+    """Stop the local server (needed when it runs detached from any terminal)."""
+    with JOBS_LOCK:
+        if any(j.status == "running" for j in JOBS.values()):
+            return jsonify(error="a job is still running; wait for it to finish."), 409
+    threading.Timer(0.4, lambda: os._exit(0)).start()
     return jsonify(ok=True)
 
 
@@ -500,4 +545,14 @@ if __name__ == "__main__":
     if os.environ.get("FABRIC_UI_NO_BROWSER") != "1":
         print(f"\n  Opening {url} in your browser...\n  (leave this window open; close it to stop the app)\n")
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    # Retry the bind briefly: on Restart the outgoing server may still hold the
+    # port for a moment while this fresh one is coming up.
+    for attempt in range(20):
+        try:
+            app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+            break
+        except OSError as exc:
+            if attempt < 19 and getattr(exc, "errno", None) in (48, 98, 10048, 10013):
+                time.sleep(0.5)
+                continue
+            raise

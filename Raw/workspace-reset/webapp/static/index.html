@@ -264,7 +264,8 @@
 
       <div class="side-foot">
         <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
-        <button id="restartBtn" class="ghost" title="Re-exec the local server to pick up code changes">&#x21bb; Restart server</button>
+        <button id="restartBtn" class="ghost" title="Relaunch the local server to pick up code changes">&#x21bb; Restart server</button>
+        <button id="stopBtn" class="ghost" title="Stop the local server (it runs in the background)">&#x25A0; Stop server</button>
       </div>
     </aside>
 
@@ -565,6 +566,25 @@ $("restartBtn").addEventListener("click", async () => {
     setTimeout(waitForServer, 700);
   };
   setTimeout(waitForServer, 1000);
+});
+
+$("stopBtn").addEventListener("click", async () => {
+  if (!confirm("Stop the local server? The page will stop working until you launch it again.")) return;
+  const btn = $("stopBtn");
+  btn.disabled = true; btn.textContent = "Stopping\u2026";
+  const { ok, status, data } = await postJson("/api/shutdown", {});
+  if (!ok) { alert(data.error || ("stop failed (HTTP " + status + ")")); btn.disabled = false; btn.textContent = "\u25A0 Stop server"; return; }
+  const start = Date.now();
+  const waitForStop = async () => {
+    try { await fetch("/api/jobs/__ping__", { cache: "no-store" }); } catch (e) {
+      document.body.innerHTML = "<div style='display:flex;height:100vh;align-items:center;justify-content:center;font-family:system-ui;color:#9aa7c7;text-align:center;padding:2rem'>" +
+        "<div><h2 style='color:#e6edf7'>Server stopped</h2><p>You can close this tab. Run the launcher again to start it back up.</p></div></div>";
+      return;
+    }
+    if (Date.now() - start > 8000) { btn.disabled = false; btn.textContent = "\u25A0 Stop server"; alert("The server is still responding \u2014 try again."); return; }
+    setTimeout(waitForStop, 500);
+  };
+  setTimeout(waitForStop, 600);
 });
 
 // ---- tab switching ----
