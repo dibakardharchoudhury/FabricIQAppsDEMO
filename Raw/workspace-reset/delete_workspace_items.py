@@ -257,6 +257,7 @@ def main() -> int:
     deleted_folders = 0
     prev_total: int | None = None
     no_progress = 0
+    empty_stuck_rounds = 0
     item_failures: dict[str, tuple[dict[str, Any], str]] = {}
     folder_blocked: dict[str, tuple[dict[str, Any], str]] = {}
 
@@ -298,6 +299,19 @@ def main() -> int:
             else:
                 folder_blocked[fo["id"]] = (fo, f"HTTP {resp.status_code} {err_code(resp)}: {resp.text[:180]}")
 
+        # Every item is gone and only empty folders are still blocked (FolderNotEmpty):
+        # Fabric's folder-emptiness check is lagging after the bulk item delete. That
+        # lag can exceed any useful retry window, and the folder Delete API has NO
+        # force/recursive option, so stop after a few tries instead of spinning the
+        # whole budget. (Child-item lag from Lakehouse/Warehouse deletes still uses
+        # the full budget because item_failures/child re-listing keeps progressing.)
+        if not item_failures and folder_blocked:
+            empty_stuck_rounds += 1
+        else:
+            empty_stuck_rounds = 0
+        if empty_stuck_rounds >= 3:
+            break
+
         # No shrink this round means we're waiting on child-item removal lag
         # (FolderNotEmpty) — pause, then re-list and try again.
         if no_progress >= 1 and (folder_blocked or item_failures) and round_no < max_rounds:
@@ -311,7 +325,9 @@ def main() -> int:
     # Authoritative final check.
     items_left = [it for it in fabric.list_items(workspace_id) if it.get("type") not in CHILD_ITEM_TYPES]
     folders_left = fabric.list_folders(workspace_id)
-    if items_left or folders_left:
+
+    if items_left:
+        # Real failure: one or more ITEMS could not be deleted.
         print(
             f"\nCould not fully empty the workspace: {len(items_left)} item(s) and "
             f"{len(folders_left)} folder(s) remain.",
@@ -326,6 +342,29 @@ def main() -> int:
             print(f"  - [Folder] {fo.get('displayName')} {fo['id']} {reason}".rstrip(),
                   file=sys.stderr)
         return 1
+
+    if folders_left:
+        # All items are gone; only EMPTY folders remain. Fabric's folder Delete API
+        # has no force/recursive option and, per the official docs, deletes only an
+        # already-empty folder. After a bulk item delete its emptiness check can lag
+        # for many minutes, so these empty folders may linger. They are harmless: a
+        # git updateFromGit redeploy reuses same-named folders and won't duplicate
+        # them. Treat this as success (the item wipe succeeded) with a clear note.
+        print(
+            f"\nDeleted {deleted_items} item(s). Workspace '{name}' has no items left, but "
+            f"{len(folders_left)} folder(s) could not be removed:"
+        )
+        for fo in folders_left:
+            print(f"  - [Folder] {fo.get('displayName')} {fo['id']}")
+        print(
+            "\n  ACTION REQUIRED: delete these folder(s) MANUALLY from the Fabric portal UI.\n"
+            "  Fabric's folder API only deletes an already-empty folder (there is NO\n"
+            "  force/recursive delete), and its emptiness check lags for many minutes after\n"
+            "  a bulk item delete, so the API cannot remove them here. In the workspace, "
+            "right-click\n  each folder above and choose Delete. (They are otherwise harmless "
+            "\u2014 a redeploy\n  reuses same-named folders without duplicating them.)"
+        )
+        return 0
 
     print(
         f"\nDone. Deleted {deleted_items} item(s) and {deleted_folders} folder(s). "
