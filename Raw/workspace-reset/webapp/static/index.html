@@ -179,10 +179,10 @@
         <input id="branch" type="text" value="main" /></label>
       <label>Directory (workspace root)
         <input id="directory" type="text" value="/" /></label>
-      <label>GitHub PAT <span id="patNote"></span>
-        <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
-      <label class="check"><input id="reuseConn" type="checkbox" /> Reuse existing connection</label>
+      <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
       <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
+      <label id="patWrap" style="display:none">GitHub PAT <span id="patNote"></span>
+        <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
     </div>
     <div class="testrow">
       <button id="testBtn" type="button" class="ghost" disabled>Test connection</button>
@@ -295,7 +295,10 @@ function baseValid() {
   return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
 }
 function syncValid() {
-  return baseValid() && (reuseChecked() || $("pat").value.trim());
+  if (!baseValid()) return false;
+  // Reuse (untested or verified) needs no PAT; otherwise a PAT creates the connection.
+  if (reuseChecked() && connTestState !== "fail") return true;
+  return !!$("pat").value.trim();
 }
 function testValid() {
   return baseValid() && (reuseChecked() || $("pat").value.trim());
@@ -306,15 +309,16 @@ function deleteValid() {
     (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
 }
 function refresh() {
+  // The PAT only exists to CREATE a new connection, so reveal it only when one is
+  // needed: reuse is off (temporary connection) or a reuse test just failed.
+  const needPat = !reuseChecked() || connTestState === "fail";
+  $("patWrap").style.display = needPat ? "flex" : "none";
+  $("pat").disabled = false;
   if (connTestState === "fail") {
-    // A failed reuse test means the PAT is now required to proceed.
-    $("pat").disabled = false;
-    $("patNote").textContent = "(required \u2014 reuse test failed)";
-  } else if (reuseChecked()) {
-    $("pat").disabled = false;
-    $("patNote").textContent = "(optional \u2014 only used if reuse fails)";
+    $("patNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
+  } else if (needPat) {
+    $("patNote").textContent = "\u2014 needed to create a temporary connection";
   } else {
-    $("pat").disabled = false;
     $("patNote").textContent = "";
   }
   const dry = $("dryRun").checked;
@@ -356,6 +360,10 @@ async function runTest() {
   });
 }
 $("testBtn").addEventListener("click", runTest);
+// Auto-verify a saved connection once we have enough to test it.
+function maybeAutoTest() {
+  if (reuseChecked() && connTestState === null && !testing && testValid()) runTest();
+}
 // Ticking "Reuse existing connection" auto-verifies the saved connection.
 $("reuseConn").addEventListener("change", () => {
   connTestState = null; setTestResult("", "");
@@ -365,6 +373,9 @@ $("reuseConn").addEventListener("change", () => {
     else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
   }
 });
+// Finishing an edit (blur) on an identity/repo field re-runs the reuse test.
+["tenant", "workspace", "repository", "branch", "directory"].forEach((id) =>
+  $(id).addEventListener("change", maybeAutoTest));
 
 $("syncBtn").addEventListener("click", async () => {
   $("syncBtn").disabled = true;
