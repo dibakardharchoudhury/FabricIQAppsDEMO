@@ -109,6 +109,9 @@
   .status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
   .status.running { color:var(--warn); } .status.ok { color:var(--ok); } .status.error { color:var(--err); }
   .pct { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:750; }
+  .meta { display:inline-flex; align-items:baseline; gap:.7rem; }
+  .elapsed { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:600; font-size:.82rem; letter-spacing:.02em; }
+  .elapsed::before { content:"\23F1"; margin-right:.28rem; opacity:.75; font-size:.86em; }
   .bar { height:10px; background:rgba(3,8,20,.85); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .bar .fill { height:100%; width:0; border-radius:999px; transition:width .5s cubic-bezier(.4,0,.2,1); background:var(--primary); }
   .bar .fill.running { background:linear-gradient(90deg,var(--primary),var(--primary2),var(--violet),var(--primary)); background-size:300% 100%; animation:flow 2.2s linear infinite; }
@@ -336,6 +339,10 @@ async function postJson(url, body) {
 }
 
 function renderPanel(el, job) {
+  // Stamp start/end once so the elapsed clock ticks while running and freezes when done.
+  if (!job.startedAt) job.startedAt = Date.now();
+  if (job.status !== "running" && !job.endedAt) job.endedAt = Date.now();
+  const elapsed = formatElapsed((job.endedAt || Date.now()) - job.startedAt);
   const statusCls = job.status === "succeeded" ? "ok" : job.status === "failed" ? "error" : "running";
   const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
   const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
@@ -354,7 +361,7 @@ function renderPanel(el, job) {
   const stick = !prevOut || (prevOut.scrollHeight - prevOut.scrollTop - prevOut.clientHeight < 40);
   el.innerHTML =
     `<div class="progress">
-       <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="pct">${pct}%</span></div>
+       <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phases ? `<ol class="phases">${phases}</ol>` : ""}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
@@ -367,6 +374,14 @@ function renderPanel(el, job) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// mm:ss, or h:mm:ss once a job runs past an hour.
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return hh ? `${hh}:${p(mm)}:${p(ss)}` : `${p(mm)}:${p(ss)}`;
 }
 
 // Starts a job then polls until done, rendering progress into panelEl.
