@@ -6,13 +6,18 @@ Authentication uses your CURRENT sign-in context — the Azure CLI session. Run
 CLI for a Fabric token, so whatever identity you are signed in as is the identity
 that performs the deletions.
 
-Both --tenant and --workspace are REQUIRED. The script refuses to run if either is
-missing. This is destructive and effectively irreversible, so by default it prints
-what it will delete and asks you to confirm; pass --yes to skip the prompt or
---dry-run to list without deleting anything.
+Both tenant and workspace are REQUIRED — supply them via --tenant/--workspace or
+the FABRIC_TENANT/FABRIC_WORKSPACE environment variables (CLI flag > env var). The
+script refuses to run if either is missing. This is destructive and effectively
+irreversible, so by default it prints what it will delete and asks you to confirm;
+pass --yes to skip the prompt or --dry-run to list without deleting anything.
 
 Examples:
     az login
+    # env-driven:
+    #   $env:FABRIC_TENANT = "<tenant-guid>"; $env:FABRIC_WORKSPACE = "<workspace>"
+    python delete_workspace_items.py --dry-run
+
     python delete_workspace_items.py --tenant contoso.onmicrosoft.com --workspace "Hydro Ops Dev"
     python delete_workspace_items.py --tenant <tenant-guid> --workspace <workspace-guid> --dry-run
     python delete_workspace_items.py --tenant <tenant-guid> --workspace <workspace-guid> --yes
@@ -21,6 +26,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -137,12 +143,12 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--tenant", required=True,
-        help="Entra tenant id (GUID) or domain, e.g. contoso.onmicrosoft.com. REQUIRED.",
+        "--tenant",
+        help="Entra tenant id (GUID) or domain, e.g. contoso.onmicrosoft.com. Falls back to the FABRIC_TENANT env var.",
     )
     parser.add_argument(
-        "--workspace", required=True,
-        help="Fabric workspace id (GUID) or display name. REQUIRED.",
+        "--workspace",
+        help="Fabric workspace id (GUID) or display name. Falls back to the FABRIC_WORKSPACE env var.",
     )
     parser.add_argument(
         "--yes", action="store_true",
@@ -167,19 +173,26 @@ def confirm(workspace_id: str, name: str, count: int) -> bool:
 def main() -> int:
     args = parse_args()
 
-    # Belt-and-braces: argparse already enforces required, but guard explicitly so
-    # the script never proceeds on blank/whitespace values.
-    if not args.tenant.strip() or not args.workspace.strip():
-        print("ERROR: both --tenant and --workspace are required.", file=sys.stderr)
+    # Resolution order for tenant/workspace: CLI flag > environment variable.
+    tenant = (args.tenant or os.environ.get("FABRIC_TENANT") or "").strip()
+    workspace = (args.workspace or os.environ.get("FABRIC_WORKSPACE") or "").strip()
+
+    # Both are mandatory (from a flag or an env var); refuse to run without them.
+    if not tenant or not workspace:
+        print(
+            "ERROR: tenant and workspace are required. Pass --tenant/--workspace "
+            "or set FABRIC_TENANT/FABRIC_WORKSPACE.",
+            file=sys.stderr,
+        )
         return 2
 
-    fabric = Fabric(args.tenant.strip())
+    fabric = Fabric(tenant)
     try:
-        workspace_id, name = fabric.resolve_workspace_id(args.workspace.strip())
+        workspace_id, name = fabric.resolve_workspace_id(workspace)
     except ClientAuthenticationError as exc:
         print(
             "ERROR: could not authenticate with the Azure CLI. Run `az login` "
-            f"(optionally `az login --tenant {args.tenant}`) and retry.\n{exc}",
+            f"(optionally `az login --tenant {tenant}`) and retry.\n{exc}",
             file=sys.stderr,
         )
         return 1

@@ -21,14 +21,32 @@ required value (tenant, workspace, owner, repository) and offers defaults for
 branch (main) and directory (/). Any value passed on the command line is used
 as-is and not prompted for.
 
+Every value can also come from an environment variable, so a run can be fully
+driven from the environment (order: CLI flag > env var > prompt):
+    FABRIC_TENANT         tenant id or domain
+    FABRIC_WORKSPACE      workspace GUID or display name
+    FABRIC_REPOSITORY     GitHub repo as 'owner/repo' (or bare repo name)
+    FABRIC_OWNER          GitHub owner/org (optional if FABRIC_REPOSITORY has it)
+    FABRIC_BRANCH         branch (default main)
+    FABRIC_DIRECTORY      repo directory mapped to the workspace root (default /)
+    FABRIC_CONNECTION_ID  reuse an existing connection instead of creating one
+    FABRIC_GIT_PAT        GitHub PAT (also accepts GITHUB_PAT)
+
 Git credentials: by default the script creates a fresh Fabric GitHub connection
-named FabricOntologyDemo_<UTC timestamp> from a Personal Access Token that it
-asks for at a hidden prompt (never a CLI flag, so it stays out of shell history),
-and deletes that connection again on exit. Pass --connection-id to reuse an
-existing connection instead; then no PAT is requested.
+named FabricOntologyDemo_<UTC timestamp> from the PAT (FABRIC_GIT_PAT/GITHUB_PAT
+env var, else a hidden prompt -- never a CLI flag, so it stays out of shell
+history), and deletes that connection again on exit. Pass --connection-id (or
+FABRIC_CONNECTION_ID) to reuse an existing connection; then no PAT is requested.
 
 Examples:
     az login
+    # fully env-driven (set these first, PAT hidden and out of history):
+    #   $env:FABRIC_TENANT = "<tenant-guid>"
+    #   $env:FABRIC_WORKSPACE = "<workspace-guid-or-name>"
+    #   $env:FABRIC_REPOSITORY = "dibakardharchoudhury/FabricOntologyHydro"
+    #   $env:FABRIC_GIT_PAT = (Read-Host -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+    python sync_workspace_from_git.py --yes
+
     # interactive -- asks for everything, creates + cleans up a connection:
     python sync_workspace_from_git.py
 
@@ -48,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import re
 import sys
 import time
@@ -202,7 +221,18 @@ def main() -> int:
     parser.add_argument("--keep-connected", action="store_true", help="Do not disconnect after syncing.")
     args = parser.parse_args()
 
-    # Interactively collect anything not supplied on the command line.
+    # Resolution order for every value: CLI flag > environment variable > prompt.
+    # This lets the whole run be driven from env vars (handy for automation) while
+    # still prompting interactively for anything left unset.
+    args.tenant = args.tenant or os.environ.get("FABRIC_TENANT")
+    args.workspace = args.workspace or os.environ.get("FABRIC_WORKSPACE")
+    args.connection_id = args.connection_id or os.environ.get("FABRIC_CONNECTION_ID")
+    args.owner = args.owner or os.environ.get("FABRIC_OWNER")
+    args.repository = args.repository or os.environ.get("FABRIC_REPOSITORY")
+    args.branch = args.branch or os.environ.get("FABRIC_BRANCH")
+    args.directory = args.directory or os.environ.get("FABRIC_DIRECTORY")
+
+    # Interactively collect anything still not supplied.
     print("Fabric workspace <- GitHub sync. Provide the following (press Enter to accept a [default]):")
     args.tenant = prompt_required("Tenant id or domain", args.tenant)
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
@@ -217,11 +247,18 @@ def main() -> int:
 
     # A GitHub PAT is only needed when we have to create a connection. If the user
     # passed an existing --connection-id we reuse it and never ask for a secret.
+    # The PAT is read from the FABRIC_GIT_PAT (or GITHUB_PAT) environment variable
+    # so it never appears as a CLI argument; a hidden prompt is the last resort.
     pat = ""
     if not (args.connection_id and args.connection_id.strip()):
-        print("  No --connection-id given; a new GitHub connection will be created from a PAT.")
-        while not pat:
-            pat = getpass.getpass("  GitHub Personal Access Token (input hidden): ").strip()
+        pat = (os.environ.get("FABRIC_GIT_PAT") or os.environ.get("GITHUB_PAT") or "").strip()
+        if pat:
+            print("  Using GitHub PAT from environment variable.")
+        else:
+            print("  No --connection-id and no FABRIC_GIT_PAT/GITHUB_PAT env var;")
+            print("  a new GitHub connection will be created from a PAT.")
+            while not pat:
+                pat = getpass.getpass("  GitHub Personal Access Token (input hidden): ").strip()
 
     try:
         fab = Fabric(args.tenant)
