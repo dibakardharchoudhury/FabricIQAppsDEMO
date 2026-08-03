@@ -15,6 +15,7 @@ or double-click one of the thin shims that just call this file:
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
