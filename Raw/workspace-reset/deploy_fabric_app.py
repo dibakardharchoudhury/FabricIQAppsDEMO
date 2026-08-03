@@ -23,6 +23,12 @@ from typing import Any
 import requests
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
 APP_DISPLAY_NAME = "Hydro Operations Fabric Client"
 GUID_RE = re.compile(

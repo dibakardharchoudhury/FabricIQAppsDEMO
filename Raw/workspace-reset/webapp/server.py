@@ -191,6 +191,8 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             creationflags=NO_WINDOW,
         )
