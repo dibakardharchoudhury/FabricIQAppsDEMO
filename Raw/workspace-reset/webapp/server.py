@@ -94,6 +94,23 @@ LOGIN_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 # the value is safe to place on a command line.
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 
+
+def clean_repo(repository: str) -> str:
+    """Normalize 'owner/repo' or a pasted GitHub URL to 'owner/repo'.
+
+    Drops the protocol/host, a '.git' suffix, and any '/tree/<branch>' or
+    '/blob/<branch>/<path>' tail that GitHub appends when you copy a URL from a
+    branch or file view; returns '' when there aren't at least owner + repo.
+    """
+    value = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository.strip(), flags=re.IGNORECASE)
+    value = re.sub(r"^git@github\.com:", "", value, flags=re.IGNORECASE)
+    value = value.removesuffix(".git").strip("/")
+    parts = [p for p in value.split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return f"{parts[0]}/{parts[1]}"
+
+
 app = Flask(__name__, static_folder=None)
 
 
@@ -192,11 +209,9 @@ def api_sync():
 
     if not tenant or not workspace or not repository:
         return jsonify(error="tenant, workspace and repository are required."), 400
-    # Accept a pasted GitHub URL as well as 'owner/repo'.
-    repository = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository, flags=re.IGNORECASE)
-    repository = re.sub(r"^git@github\.com:", "", repository, flags=re.IGNORECASE)
-    repository = repository.removesuffix(".git").strip("/")
-    if "/" not in repository:
+    # Accept a pasted GitHub URL (incl. /tree/<branch>) as well as 'owner/repo'.
+    repository = clean_repo(repository)
+    if not repository:
         return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
     if not connection_id and not pat:
         return jsonify(error="a PAT is required unless a connection id is reused."), 400
@@ -239,10 +254,8 @@ def api_test_connection():
 
     if not tenant or not workspace or not repository:
         return jsonify(error="tenant, workspace and repository are required."), 400
-    repository = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository, flags=re.IGNORECASE)
-    repository = re.sub(r"^git@github\.com:", "", repository, flags=re.IGNORECASE)
-    repository = repository.removesuffix(".git").strip("/")
-    if "/" not in repository:
+    repository = clean_repo(repository)
+    if not repository:
         return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
     if not connection_id and not pat:
         return jsonify(error="enter a connection id (or 'yes') or a PAT to test."), 400

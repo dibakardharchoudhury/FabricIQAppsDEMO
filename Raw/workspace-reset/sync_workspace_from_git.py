@@ -261,13 +261,19 @@ def prompt_default(label: str, current: str | None, default: str) -> str:
 
 
 def split_owner_repo(repository: str, owner: str | None) -> tuple[str | None, str]:
-    """Accept 'owner/repo', a bare 'repo', or a pasted GitHub URL; return (owner, repo)."""
+    """Accept 'owner/repo', a bare 'repo', or a pasted GitHub URL; return (owner, repo).
+
+    A URL copied from a branch/file view carries a '/tree/<branch>' or
+    '/blob/<branch>/<path>' tail; keep only the owner + repo segments.
+    """
     value = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository.strip(), flags=re.IGNORECASE)
     value = re.sub(r"^git@github\.com:", "", value, flags=re.IGNORECASE)
     value = value.removesuffix(".git").strip("/")
-    if not owner and "/" in value:
-        o, r = value.split("/", 1)
-        return o.strip(), r.strip()
+    parts = [p for p in value.split("/") if p]
+    if not owner and len(parts) >= 2:
+        return parts[0], parts[1]
+    if owner and parts:
+        return owner, parts[0]
     return owner, value
 
 
