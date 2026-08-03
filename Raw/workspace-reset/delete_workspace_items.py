@@ -302,15 +302,18 @@ def main() -> int:
         # Every item is gone and only empty folders are still blocked (FolderNotEmpty):
         # Fabric's folder-emptiness check is lagging after the bulk item delete. That
         # lag can exceed any useful retry window, and the folder Delete API has NO
-        # force/recursive option, so stop after a few tries instead of spinning the
-        # whole budget. (Child-item lag from Lakehouse/Warehouse deletes still uses
-        # the full budget because item_failures/child re-listing keeps progressing.)
+        # force/recursive option, so try just a couple of times with a brief pause
+        # then give up. (Child-item lag from Lakehouse/Warehouse deletes still uses the
+        # full budget below because item_failures/child re-listing keeps progressing.)
         if not item_failures and folder_blocked:
             empty_stuck_rounds += 1
+            if empty_stuck_rounds >= 2:
+                break
+            print(f"  {len(folder_blocked)} folder(s) still blocked; brief 5s wait then one more try...")
+            time.sleep(5)
+            continue
         else:
             empty_stuck_rounds = 0
-        if empty_stuck_rounds >= 3:
-            break
 
         # No shrink this round means we're waiting on child-item removal lag
         # (FolderNotEmpty) — pause, then re-list and try again.
@@ -351,19 +354,23 @@ def main() -> int:
         # git updateFromGit redeploy reuses same-named folders and won't duplicate
         # them. Treat this as success (the item wipe succeeded) with a clear note.
         print(
-            f"\nDeleted {deleted_items} item(s). Workspace '{name}' has no items left, but "
-            f"{len(folders_left)} folder(s) could not be removed:"
+            f"\nDeleted {deleted_items} item(s). Workspace '{name}' has no items left."
         )
+        bar = "=" * 72
+        print("\n" + bar)
+        print("  ACTION REQUIRED — DELETE THESE FOLDER(S) MANUALLY IN THE FABRIC UI")
+        print(bar)
         for fo in folders_left:
-            print(f"  - [Folder] {fo.get('displayName')} {fo['id']}")
+            print(f"    •  {fo.get('displayName')}    ({fo['id']})")
+        print("-" * 72)
         print(
-            "\n  ACTION REQUIRED: delete these folder(s) MANUALLY from the Fabric portal UI.\n"
             "  Fabric's folder API only deletes an already-empty folder (there is NO\n"
-            "  force/recursive delete), and its emptiness check lags for many minutes after\n"
-            "  a bulk item delete, so the API cannot remove them here. In the workspace, "
-            "right-click\n  each folder above and choose Delete. (They are otherwise harmless "
-            "\u2014 a redeploy\n  reuses same-named folders without duplicating them.)"
+            "  force/recursive delete) and its emptiness check lags for minutes after a\n"
+            "  bulk item delete, so it cannot remove them here. In the workspace,\n"
+            "  right-click each folder listed above and choose Delete.\n"
+            "  (Harmless otherwise — a redeploy reuses same-named folders.)"
         )
+        print(bar)
         return 0
 
     print(
