@@ -213,6 +213,9 @@
   .side-foot { display:flex; flex-direction:column; gap:.65rem; align-items:stretch; margin-top:.1rem; }
   .side-foot .badge { align-self:flex-start; }
   .side-foot button.ghost { width:100%; justify-content:center; display:inline-flex; }
+  .version-stamp { display:flex; flex-direction:column; align-items:flex-end; gap:.12rem; margin-top:.15rem;
+    color:var(--muted); font-size:.66rem; line-height:1.3; font-variant-numeric:tabular-nums; }
+  .version-stamp strong { color:var(--text); font-size:.72rem; }
 
   /* panes */
   .pane { display:none; }
@@ -279,6 +282,10 @@
         <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
         <button id="restartBtn" class="ghost" title="Relaunch the local server to pick up code changes">&#x21bb; Restart server</button>
         <button id="stopBtn" class="ghost" title="Stop the local server (it runs in the background)">&#x25A0; Stop server</button>
+        <div id="versionStamp" class="version-stamp" title="Loading version metadata">
+          <strong id="appVersion">Version unavailable</strong>
+          <time id="appTimestamp"></time>
+        </div>
       </div>
     </aside>
 
@@ -733,6 +740,23 @@ async function loadWhoAmI() {
   }
 }
 
+async function loadVersion() {
+  const stamp = $("versionStamp"), version = $("appVersion"), timestamp = $("appTimestamp");
+  try {
+    const res = await fetch("/api/version", { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const builtAt = new Date(data.timestamp);
+    version.textContent = data.version;
+    timestamp.textContent = Number.isNaN(builtAt.getTime()) ? data.timestamp : new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    }).format(builtAt);
+    stamp.title = `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
+  } catch (error) {
+    stamp.title = String(error);
+  }
+}
+
 // Browser-integrated Microsoft sign-in (opens the Entra account picker via az login).
 let loggingIn = false;
 async function signIn() {
@@ -752,6 +776,7 @@ async function signIn() {
 $("signInBtn").addEventListener("click", signIn);
 
 loadWhoAmI();
+loadVersion();
 loadPipelineParams();
 refresh();</script>
 </body>

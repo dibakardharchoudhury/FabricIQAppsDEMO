@@ -48,6 +48,7 @@ DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
 PIPELINE_SCRIPT = SCRIPT_DIR / "run_pipeline.py"
 DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+REPO_ROOT = SCRIPT_DIR.parent.parent
 
 SYNC_TIMEOUT_S = 900
 DELETE_TIMEOUT_S = 600
@@ -611,6 +612,32 @@ def api_whoami():
         tenantId=acct.get("tenantId"),
         subscription=acct.get("name"),
     )
+
+
+@app.get("/api/version")
+def app_version():
+    """Return deterministic build identity from the checked-out Git commit."""
+    def git_value(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+
+    try:
+        commit_count = git_value("rev-list", "--count", "HEAD")
+        revision = git_value("rev-parse", "--short=8", "HEAD")
+        timestamp = git_value("show", "-s", "--format=%cI", "HEAD")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return jsonify(error=f"version metadata unavailable: {exc}"), 503
+
+    response = jsonify(version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/")
