@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import webbrowser
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -240,6 +241,8 @@ def api_restart():
     with JOBS_LOCK:
         if any(j.status == "running" for j in JOBS.values()):
             return jsonify(error="a job is still running; wait for it to finish."), 409
+    # Don't reopen a browser tab on the restart; a tab is already open.
+    os.environ["FABRIC_UI_NO_BROWSER"] = "1"
     threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable, *sys.argv])).start()
     return jsonify(ok=True)
 
@@ -255,4 +258,8 @@ def serve_frontend(path: str = ""):
 if __name__ == "__main__":
     # Loopback only -- do not expose this beyond the local machine. threaded=True
     # so the poll endpoint stays responsive while a job runs.
+    url = "http://127.0.0.1:5000/"
+    if os.environ.get("FABRIC_UI_NO_BROWSER") != "1":
+        print(f"\n  Opening {url} in your browser...\n  (leave this window open; close it to stop the app)\n")
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

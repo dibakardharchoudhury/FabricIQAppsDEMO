@@ -11,6 +11,28 @@ Two ways to run everything:
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs both
   scripts and streams live progress. No `npm`, no build step.
 
+## Easiest start — just launch it (no commands to type)
+
+One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
+(on Windows, tick *"Add python.exe to PATH"*) and the
+**[Azure CLI](https://aka.ms/installazurecli)**.
+
+Then launch the web app:
+
+- **Windows** — double-click **`Start Fabric Demo.cmd`**.
+- **macOS** — double-click **`start-fabric-demo.sh`** (first time you may need to make
+  it runnable: in Terminal run `chmod +x start-fabric-demo.sh`), or run
+  `bash start-fabric-demo.sh`.
+- **Linux** — run `bash start-fabric-demo.sh` (or `chmod +x start-fabric-demo.sh`
+  once, then `./start-fabric-demo.sh`).
+- **Any OS** — the shims above are thin wrappers around one cross-platform launcher,
+  so you can equally run `python launch.py` (Windows) / `python3 launch.py` (macOS/Linux).
+
+The launcher installs any missing dependencies, signs you in to Azure if needed
+(`az login` opens your browser), starts the app, and **opens your browser at
+`http://127.0.0.1:5000`** automatically. Keep the window open while you use it; close
+it (or press Ctrl+C) to stop.
+
 ## What manual sync this replaces
 
 In the Fabric portal the manual flow is:
