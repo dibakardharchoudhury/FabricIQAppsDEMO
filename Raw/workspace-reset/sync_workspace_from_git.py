@@ -208,6 +208,17 @@ def prompt_default(label: str, current: str | None, default: str) -> str:
     return entered or default
 
 
+def split_owner_repo(repository: str, owner: str | None) -> tuple[str | None, str]:
+    """Accept 'owner/repo', a bare 'repo', or a pasted GitHub URL; return (owner, repo)."""
+    value = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository.strip(), flags=re.IGNORECASE)
+    value = re.sub(r"^git@github\.com:", "", value, flags=re.IGNORECASE)
+    value = value.removesuffix(".git").strip("/")
+    if not owner and "/" in value:
+        o, r = value.split("/", 1)
+        return o.strip(), r.strip()
+    return owner, value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", help="Tenant id or domain to sign in against.")
@@ -238,9 +249,8 @@ def main() -> int:
     args.workspace = prompt_required("Workspace GUID or name", args.workspace)
     # Accept either "owner/repo" in one field or a bare repo name; only ask for
     # the owner separately when it can't be derived from the repository value.
-    args.repository = prompt_required("GitHub repository (owner/repo or repo)", args.repository)
-    if not args.owner and "/" in args.repository:
-        args.owner, args.repository = (part.strip() for part in args.repository.split("/", 1))
+    args.repository = prompt_required("GitHub repository (owner/repo, repo, or URL)", args.repository)
+    args.owner, args.repository = split_owner_repo(args.repository, args.owner)
     args.owner = prompt_required("GitHub owner/org", args.owner)
     args.branch = prompt_default("Branch", args.branch, "main")
     args.directory = prompt_default("Repo directory (workspace root)", args.directory, "/")

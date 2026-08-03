@@ -340,7 +340,7 @@ Work through these in order:
 
 | Problem | Fix |
 | --- | --- |
-| **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**) or re‑run `RTI_001`, then retry. |
+| **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**, or script it via [Raw/workspace-reset](../Raw/workspace-reset/README.md)) or re‑run `RTI_001`, then retry. |
 | **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
 | Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
 | **`rayfin up`/`deploy` → static deploy `401 Unauthorized`** (backend + DB apply succeed) | Rayfin's cached Fabric token is stale/expired. `npx rayfin login --select` (pick the target tenant), then retry just the static step: `rayfin up staticapp deploy`. The backend was already provisioned, so **don't re‑run the full `up`**. |

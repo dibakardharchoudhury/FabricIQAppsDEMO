@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Initialize Your Fabric Demo</title>
+<style>
+  :root {
+    --bg:#0b1020; --bg2:#0e1533; --card:rgba(23,32,58,.72); --card-border:rgba(148,163,184,.14);
+    --text:#e7ecff; --muted:#9aa7c7; --field:#0b1226; --border:#2a375c;
+    --primary:#3b82f6; --primary2:#22d3ee; --violet:#8b5cf6;
+    --destructive:#ef4444; --destructive2:#f97316; --ok:#34d399; --err:#fb7185; --warn:#fbbf24;
+    --radius:16px; --shadow:0 18px 48px -20px rgba(0,0,0,.75);
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    margin:0; min-height:100vh; color:var(--text);
+    font-family:"Segoe UI Variable","Segoe UI",Inter,system-ui,-apple-system,sans-serif;
+    background:
+      radial-gradient(1100px 620px at 10% -12%, rgba(59,130,246,.20), transparent 60%),
+      radial-gradient(900px 520px at 102% -4%, rgba(139,92,246,.18), transparent 55%),
+      radial-gradient(820px 620px at 50% 120%, rgba(34,211,238,.12), transparent 60%),
+      linear-gradient(180deg,var(--bg),var(--bg2));
+    background-attachment:fixed;
+  }
+  .page { max-width:940px; margin:0 auto; padding:2.5rem 1.25rem 3rem; }
+  code { background:rgba(148,163,184,.16); padding:.12em .42em; border-radius:6px; font-size:.9em; }
+
+  /* header */
+  .top { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:2rem; }
+  .brand { display:flex; align-items:center; gap:.95rem; }
+  .logo { width:48px; height:48px; border-radius:14px; display:grid; place-items:center; color:#fff; flex:0 0 auto;
+    background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 10px 26px -8px rgba(99,102,241,.7); }
+  .logo svg { width:25px; height:25px; }
+  h1 { margin:0; font-size:1.62rem; font-weight:750; letter-spacing:-.02em; line-height:1.1;
+    background:linear-gradient(92deg,#ffffff,#bcd0ff 42%,#7fe6ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--muted); margin:.28rem 0 0; font-size:.9rem; }
+  .cluster { display:flex; align-items:center; gap:.75rem; }
+  .badge { display:inline-flex; align-items:center; gap:.45rem; font-size:.72rem; font-weight:650; color:#a7f3d0;
+    background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.28); padding:.34rem .66rem; border-radius:999px; letter-spacing:.02em; }
+  .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)} 70%{box-shadow:0 0 0 7px rgba(52,211,153,0)} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0)} }
+
+  /* cards */
+  .card { position:relative; background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius);
+    padding:1.5rem 1.6rem 1.7rem; margin-bottom:1.5rem; backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%);
+    box-shadow:var(--shadow); transition:transform .25s ease, border-color .25s ease; }
+  .card:hover { transform:translateY(-3px); border-color:rgba(148,163,184,.3); }
+  .card::before { content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; opacity:.6;
+    background:linear-gradient(135deg,rgba(59,130,246,.6),transparent 42%,transparent 60%,rgba(139,92,246,.45));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none; }
+  .card.danger { background:linear-gradient(180deg,rgba(66,26,30,.72),rgba(38,18,26,.72)); }
+  .card.danger::before { background:linear-gradient(135deg,rgba(239,68,68,.6),transparent 45%,transparent 58%,rgba(249,115,22,.45)); }
+  .card-head { display:flex; align-items:center; gap:.7rem; }
+  .card-head .ico { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; flex:0 0 auto;
+    background:rgba(59,130,246,.15); color:#9cc4ff; }
+  .card.danger .card-head .ico { background:rgba(239,68,68,.16); color:#fda4a4; }
+  .card-head .ico svg { width:19px; height:19px; }
+  .card h2 { margin:0; font-size:1.12rem; font-weight:680; letter-spacing:-.01em; }
+  .card .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 1.2rem calc(34px + .7rem); }
+
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1.05rem 1.15rem; }
+  label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
+  label.check { flex-direction:row; align-items:center; gap:.6rem; color:var(--text); text-transform:none; letter-spacing:normal; font-weight:500; font-size:.9rem; }
+  #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
+  input[type=text],input[type=password],input:not([type]) { background:var(--field); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
+    transition:border-color .15s, box-shadow .15s, background .15s; }
+  input::placeholder { color:#5c6a90; }
+  input:hover:not(:disabled) { border-color:#3a4a7c; }
+  input:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); background:#0c1531; }
+  input:disabled { opacity:.45; cursor:not-allowed; }
+  input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary); }
+  .card.danger input[type=checkbox] { accent-color:var(--destructive); }
+
+  /* buttons */
+  button { margin-top:1.4rem; border:none; border-radius:11px; padding:.72rem 1.35rem; font-size:.92rem; font-weight:670; color:#fff;
+    cursor:pointer; letter-spacing:.01em; transition:transform .12s, box-shadow .2s, filter .2s; }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:linear-gradient(135deg,#3b82f6,#2563eb); box-shadow:0 10px 26px -10px rgba(59,130,246,.85); }
+  button.primary:not(:disabled):hover { filter:brightness(1.08); box-shadow:0 12px 30px -10px rgba(59,130,246,.95); }
+  button.destructive { background:linear-gradient(135deg,var(--destructive),#dc2626); box-shadow:0 10px 26px -10px rgba(239,68,68,.85); }
+  button.destructive:not(:disabled):hover { filter:brightness(1.08); }
+  button.ghost { margin-top:0; background:rgba(148,163,184,.08); border:1px solid var(--border); color:var(--muted); font-weight:600;
+    padding:.5rem .95rem; font-size:.82rem; box-shadow:none; }
+  button.ghost:not(:disabled):hover { border-color:var(--primary); color:#fff; background:rgba(59,130,246,.14); }
+
+  /* output + progress */
+  .output { margin:1.25rem 0 0; background:rgba(3,8,20,.78); border:1px solid var(--border); border-radius:12px; padding:.9rem 1rem;
+    font-family:"Cascadia Code",ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; line-height:1.55;
+    white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; }
+  .output.muted { color:var(--muted); } .output.running { color:#fcd34d; border-color:rgba(251,191,36,.35); }
+  .output.ok { border-color:rgba(52,211,153,.45); } .output.error { border-color:rgba(251,113,133,.5); color:#fecaca; }
+  .output::-webkit-scrollbar { width:10px; height:10px; }
+  .output::-webkit-scrollbar-thumb { background:#2a375c; border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+  .progress { margin-top:1.35rem; }
+  .progress-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:.5rem; font-size:.9rem; font-weight:640; }
+  .status { display:inline-flex; align-items:center; gap:.45rem; }
+  .status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+  .status.running { color:var(--warn); } .status.ok { color:var(--ok); } .status.error { color:var(--err); }
+  .pct { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:750; }
+  .bar { height:10px; background:rgba(3,8,20,.85); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+  .bar .fill { height:100%; width:0; border-radius:999px; transition:width .5s cubic-bezier(.4,0,.2,1); background:var(--primary); }
+  .bar .fill.running { background:linear-gradient(90deg,var(--primary),var(--primary2),var(--violet),var(--primary)); background-size:300% 100%; animation:flow 2.2s linear infinite; }
+  .bar .fill.ok { background:linear-gradient(90deg,var(--ok),var(--primary2)); }
+  .bar .fill.error { background:linear-gradient(90deg,var(--destructive),var(--destructive2)); }
+  @keyframes flow { to { background-position:300% 0; } }
+  .phases { list-style:none; display:flex; flex-wrap:wrap; gap:.45rem; padding:.95rem 0 0; margin:0; font-size:.75rem; }
+  .phases li { display:flex; align-items:center; gap:.35rem; color:var(--muted); background:rgba(148,163,184,.07);
+    border:1px solid var(--border); padding:.3rem .62rem; border-radius:999px; transition:.2s; }
+  .phases li::before { content:"\25CB"; font-size:.72em; }
+  .phases li.done { color:var(--ok); border-color:rgba(52,211,153,.35); background:rgba(52,211,153,.09); }
+  .phases li.done::before { content:"\2713"; }
+  .phases li.active { color:#0b1020; font-weight:750; background:linear-gradient(135deg,var(--warn),#f59e0b); border-color:transparent; }
+  .phases li.active::before { content:"\25D0"; }
+
+  .foot { text-align:center; color:var(--muted); font-size:.76rem; margin-top:2.2rem; opacity:.75; }
+  .foot code { font-size:.85em; }
+
+  @media (max-width:640px) {
+    .grid { grid-template-columns:1fr; }
+    .page { padding:1.6rem 1rem 2.5rem; }
+    .top { flex-direction:column; align-items:flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.6 12.6a.6.6 0 0 0 .47.98H11l-1 8.4 8.4-11.06a.6.6 0 0 0-.48-.96H12l1-8Z"/></svg>
+      </div>
+      <div>
+        <h1>Initialize Your Fabric Demo</h1>
+        <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+      </div>
+    </div>
+    <div class="cluster">
+      <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
+      <button id="restartBtn" class="ghost" title="Re-exec the local server to pick up code changes">&#x21bb; Restart server</button>
+    </div>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="2.2"/><path d="M14.5 8.5H18M14.5 12H18M6.6 15.8c.5-1.5 1.9-2.3 2.4-2.3s1.9.8 2.4 2.3"/></svg></span>
+      <h2>Identity</h2>
+    </div>
+    <p class="hint">Which tenant and workspace every action below targets.</p>
+    <div class="grid">
+      <label>Tenant id or domain
+        <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
+      <label>Workspace (GUID or name)
+        <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
+      <h2>Sync workspace from GitHub</h2>
+    </div>
+    <p class="hint">Imports every item from a branch, then disconnects. A temporary connection is created from your PAT and removed afterward.</p>
+    <div class="grid">
+      <label>Repository (owner/repo or URL)
+        <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
+      <label>Branch
+        <input id="branch" type="text" value="main" /></label>
+      <label>Directory (workspace root)
+        <input id="directory" type="text" value="/" /></label>
+      <label>GitHub PAT <span id="patNote"></span>
+        <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
+      <label>Reuse connection id (optional)
+        <input id="connectionId" type="text" placeholder="existing Fabric GitHub connection GUID" /></label>
+      <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
+    </div>
+    <button id="syncBtn" class="primary" disabled>Run sync</button>
+    <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
+  </section>
+
+  <section class="card danger">
+    <div class="card-head">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg></span>
+      <h2>Delete all workspace items</h2>
+    </div>
+    <p class="hint">Removes every item in the workspace so you can redeploy cleanly. Destructive &mdash; keep dry run on until you're sure.</p>
+    <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
+    <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
+      <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
+    <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
+    <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
+  </section>
+
+  <p class="foot">No build step &middot; secrets stay local &middot; run with <code>python webapp\server.py</code></p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function postJson(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function renderPanel(el, job) {
+  const statusCls = job.status === "succeeded" ? "ok" : job.status === "failed" ? "error" : "running";
+  const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
+  const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
+  const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
+    : job.status === "succeeded" ? "Succeeded" : "Failed";
+  const phases = (job.phases || []).map((p, i) => {
+    const cls = (job.status === "succeeded" || i < job.phaseIndex) ? "done"
+      : (i === job.phaseIndex && job.status === "running") ? "active" : "";
+    return `<li class="${cls}">${p}</li>`;
+  }).join("");
+  const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
+    ? "\n\nexit code: " + job.returncode : "";
+  const err = job.error ? "\n[error] " + job.error : "";
+  el.innerHTML =
+    `<div class="progress">
+       <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="pct">${pct}%</span></div>
+       <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
+       ${phases ? `<ol class="phases">${phases}</ol>` : ""}
+       <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
+     </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// Starts a job then polls until done, rendering progress into panelEl.
+async function runJob(startUrl, body, panelEl, onDone) {
+  const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
+  renderPanel(panelEl, job);
+  const started = await postJson(startUrl, body);
+  if (!started.ok || !started.data.jobId) {
+    job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
+    renderPanel(panelEl, job); if (onDone) onDone(); return;
+  }
+  const jobId = started.data.jobId;
+  let since = 0;
+  const poll = async () => {
+    let r;
+    try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
+    catch (e) { job.status = "failed"; job.error = String(e); renderPanel(panelEl, job); if (onDone) onDone(); return; }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { job.status = "failed"; job.error = j.error || ("HTTP " + r.status); renderPanel(panelEl, job); if (onDone) onDone(); return; }
+    since = j.nextSince != null ? j.nextSince : since;
+    job.status = j.status; job.phases = j.phases || job.phases;
+    job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
+    job.phase = j.phase || job.phase; job.returncode = j.returncode;
+    if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
+    renderPanel(panelEl, job);
+    if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone();
+  };
+  poll();
+}
+
+// ---- validation + wiring ----
+function syncValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim() &&
+    $("repository").value.includes("/") && ($("connectionId").value.trim() || $("pat").value.trim());
+}
+function deleteValid() {
+  const dry = $("dryRun").checked;
+  return $("tenant").value.trim() && $("workspace").value.trim() &&
+    (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
+}
+function refresh() {
+  const usingConn = !!$("connectionId").value.trim();
+  $("pat").disabled = usingConn;
+  $("patNote").textContent = usingConn ? "(not needed \u2014 reusing connection)" : "";
+  const dry = $("dryRun").checked;
+  $("confirmWrap").style.display = dry ? "none" : "flex";
+  $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
+  $("deleteBtn").className = dry ? "primary" : "destructive";
+  $("syncBtn").disabled = !syncValid();
+  $("deleteBtn").disabled = !deleteValid();
+}
+document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
+document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
+
+$("syncBtn").addEventListener("click", async () => {
+  $("syncBtn").disabled = true;
+  await runJob("/api/sync", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
+    connectionId: $("connectionId").value, keepConnected: $("keepConnected").checked, pat: $("pat").value,
+  }, $("syncPanel"), () => { $("pat").value = ""; refresh(); });
+});
+
+$("deleteBtn").addEventListener("click", async () => {
+  $("deleteBtn").disabled = true;
+  await runJob("/api/delete", {
+    tenant: $("tenant").value, workspace: $("workspace").value, dryRun: $("dryRun").checked,
+  }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
+});
+
+$("restartBtn").addEventListener("click", async () => {
+  if (!confirm("Restart the local server to pick up code changes?")) return;
+  const btn = $("restartBtn");
+  btn.disabled = true; btn.textContent = "Restarting\u2026";
+  const { ok, status, data } = await postJson("/api/restart", {});
+  if (!ok) { alert(data.error || ("restart failed (HTTP " + status + ")")); btn.disabled = false; btn.textContent = "Restart server"; return; }
+  const start = Date.now();
+  const waitForServer = async () => {
+    try { await fetch("/api/jobs/__ping__", { cache: "no-store" }); location.reload(); return; } catch (e) {}
+    if (Date.now() - start > 15000) { btn.textContent = "Timed out \u2014 reload manually"; return; }
+    setTimeout(waitForServer, 700);
+  };
+  setTimeout(waitForServer, 1000);
+});
+
+refresh();
+</script>
+</body>
+</html>

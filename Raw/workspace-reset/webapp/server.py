@@ -26,6 +26,7 @@ Runs on 127.0.0.1 only (loopback). Auth relies on your `az login` session.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -39,7 +40,7 @@ from flask import Flask, jsonify, request, send_from_directory
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPT_DIR / "sync_workspace_from_git.py"
 DELETE_SCRIPT = SCRIPT_DIR / "delete_workspace_items.py"
-FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SYNC_TIMEOUT_S = 900
 DELETE_TIMEOUT_S = 600
@@ -153,8 +154,12 @@ def api_sync():
 
     if not tenant or not workspace or not repository:
         return jsonify(error="tenant, workspace and repository are required."), 400
+    # Accept a pasted GitHub URL as well as 'owner/repo'.
+    repository = re.sub(r"^(https?://)?(www\.)?github\.com[/:]", "", repository, flags=re.IGNORECASE)
+    repository = re.sub(r"^git@github\.com:", "", repository, flags=re.IGNORECASE)
+    repository = repository.removesuffix(".git").strip("/")
     if "/" not in repository:
-        return jsonify(error="repository must be in 'owner/repo' form."), 400
+        return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
     if not connection_id and not pat:
         return jsonify(error="a PAT is required unless a connection id is reused."), 400
 
@@ -229,19 +234,22 @@ def api_job(job_id: str):
     )
 
 
+@app.post("/api/restart")
+def api_restart():
+    """Re-exec this process so server.py edits take effect; refuses while a job runs."""
+    with JOBS_LOCK:
+        if any(j.status == "running" for j in JOBS.values()):
+            return jsonify(error="a job is still running; wait for it to finish."), 409
+    threading.Timer(0.5, lambda: os.execv(sys.executable, [sys.executable, *sys.argv])).start()
+    return jsonify(ok=True)
+
+
 @app.get("/")
 @app.get("/<path:path>")
 def serve_frontend(path: str = ""):
-    """Serve the built React app when present; otherwise point at the dev server."""
-    if not FRONTEND_DIST.exists():
-        return (
-            "Frontend not built. During development run the Vite dev server "
-            "(npm run dev in webapp/frontend) which proxies /api here, or run "
-            "`npm run build` to produce frontend/dist.",
-            200,
-        )
-    target = path if path and (FRONTEND_DIST / path).is_file() else "index.html"
-    return send_from_directory(FRONTEND_DIST, target)
+    """Serve the self-contained static UI (no build step required)."""
+    target = path if path and (STATIC_DIR / path).is_file() else "index.html"
+    return send_from_directory(STATIC_DIR, target)
 
 
 if __name__ == "__main__":
