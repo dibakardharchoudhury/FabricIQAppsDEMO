@@ -14,8 +14,9 @@ Two ways to run everything:
 ## Easiest start — just launch it (no commands to type)
 
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
-(on Windows, tick *"Add python.exe to PATH"*) and the
-**[Azure CLI](https://aka.ms/installazurecli)**.
+(on Windows, tick *"Add python.exe to PATH"*), the
+**[Azure CLI](https://aka.ms/installazurecli)**, and **[Node.js](https://nodejs.org/)**
+(which includes npm and npx; needed only for **Deploy app**).
 
 Then launch the web app:
 
@@ -28,7 +29,8 @@ Then launch the web app:
 - **Any OS** — the shims above are thin wrappers around one cross-platform launcher,
   so you can equally run `python launch.py` (Windows) / `python3 launch.py` (macOS/Linux).
 
-The launcher installs any missing dependencies, signs you in to Azure if needed
+The launcher installs missing **Python packages**. The **Deploy app** action separately restores
+the locked npm packages (including Rayfin) under Node 24. It signs you in to Azure if needed
 (`az login` opens your browser), starts the app, and **opens your browser at
 `http://127.0.0.1:5000`** automatically. Keep the window open while you use it; close
 it (or press Ctrl+C) to stop.
@@ -57,8 +59,11 @@ situation.
 - **Workspace Admin** on the target workspace (required to connect / sync / delete).
 - **Python deps:** `python -m pip install -r requirements.txt`
   (`azure-identity`, `requests`, `flask`).
-- **Node.js/npm available on PATH** for app deployment. The deploy action automatically
-  runs the Hydro Operations app under the repository's required Node 24 wrapper.
+- **Node.js/npm/npx available on PATH** for app deployment. The launcher does not globally install
+  machine software. When **Deploy app** starts, it uses npx to download the required Node 24 runtime,
+  runs `npm ci` from the checked-in `package-lock.json`, and verifies the repository-local Rayfin CLI.
+  React, TypeScript, Vite, and Rayfin therefore need no separate/global installation. Internet/proxy
+  access to npm and write access to `HydroOperationsApp/node_modules` are required.
 - Permission to create an Entra app registration when the target tenant does not already
   contain `Hydro Operations Fabric Client`. The deploy action reuses the existing SPA
   registration when exactly one is present.
@@ -143,7 +148,9 @@ Flags: `--tenant --workspace --yes --dry-run`.
 The **Deploy app** tab runs the complete Rayfin application deployment against the
 tenant and workspace selected in the sidebar:
 
-1. Validate the active Azure CLI tenant and resolve the exact workspace GUID/name.
+1. Restore the exact locked npm dependencies under Node 24 (including Rayfin), validate the active
+  Azure CLI tenant, and resolve the exact workspace GUID/name. Missing Node/npm/npx is reported with
+  an install link; repository packages are installed automatically rather than treated as manual prerequisites.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   continue without working browser authentication and print an administrator handoff.

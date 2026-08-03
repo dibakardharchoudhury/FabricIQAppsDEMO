@@ -88,7 +88,7 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 ]
 
 DEPLOY_PHASES = [
-    "Queued", "Validating target", "Resolving SPA", "Preparing state",
+    "Queued", "Checking prerequisites", "Resolving SPA", "Preparing state",
     "Signing in", "Provisioning app", "Setting app URL", "Setting up sign-in",
     "Checking deployment", "Done",
 ]

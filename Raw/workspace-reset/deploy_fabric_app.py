@@ -128,6 +128,35 @@ def node24(command: str) -> list[str]:
     return command_argv("npx", "-y", "-p", "node@24", "-c", inner)
 
 
+def ensure_deploy_dependencies() -> None:
+    """Restore the locked Node toolchain and verify the local Rayfin CLI."""
+    manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
+    missing = [path.name for path in manifests if not path.is_file()]
+    if missing:
+        raise DeployError(
+            "Hydro Operations dependency manifest is incomplete; missing "
+            f"{', '.join(missing)}. Restore the files from Git and retry."
+        )
+    if not shutil.which("npx"):
+        raise DeployError(
+            "Node.js/npm/npx are not installed or not on PATH. Install Node.js from "
+            "https://nodejs.org/ (npm and npx are included), reopen the launcher, and retry. "
+            "The deployer downloads Node 24 and installs Rayfin automatically afterward."
+        )
+
+    print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
+    try:
+        run_stream(node24("npm ci --no-audit --no-fund"))
+        version = run_capture(node24("rayfin --version"))
+    except DeployError as exc:
+        raise DeployError(
+            "Could not restore or verify the locked Hydro Operations npm dependencies. "
+            "Check internet/proxy access to npm, write access to HydroOperationsApp/node_modules, "
+            f"and package-lock.json, then retry. Underlying error: {exc}"
+        ) from exc
+    print(f"Rayfin dependency ready: {version}", flush=True)
+
+
 def ensure_azure_tenant(tenant: str) -> None:
     account = json.loads(run_capture(az("account", "show", "-o", "json")))
     active = str(account.get("tenantId") or "")
@@ -622,7 +651,8 @@ def set_current_rayfin_redirect(hosting_url: str) -> None:
 
 
 def deploy(args: argparse.Namespace) -> None:
-    print("[1/8] Validating Azure tenant and Fabric workspace", flush=True)
+    print("[1/8] Checking dependencies, Azure tenant, and Fabric workspace", flush=True)
+    ensure_deploy_dependencies()
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)

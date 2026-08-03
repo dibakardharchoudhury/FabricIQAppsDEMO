@@ -42,7 +42,8 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
 
 ## Prerequisites
 
-- **Node.js 24** (the app pins `>=24 <25`).
+- **Node.js/npm/npx** on PATH. Commands run under Node 24 (the app pins `>=24 <25`);
+  the local **Deploy app** action downloads Node 24 through npx and restores all locked packages.
 - A **Fabric workspace** on a usable capacity, with permission to deploy.
 - **Azure CLI** (`az`) for the one‑time live‑auth step (Step 8).
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
@@ -180,10 +181,12 @@ create the STID GraphQL API or seed the operational SQL DB — those happen in S
 ```powershell
 git clone https://github.com/dibakardharchoudhury/FabricOntologyHydro.git
 cd FabricOntologyHydro/HydroOperationsApp
-npm install
+npm ci
 ```
 
-`npm install` installs the pinned Rayfin CLI — don't install it globally.
+`npm ci` installs the exact versions in `package-lock.json`, including the repository-local Rayfin
+CLI — don't install Rayfin globally. The local **Deploy app** action runs this automatically before
+it changes Fabric; this manual command is only for direct CLI development/deployment.
 
 ## 3. Configure
 
