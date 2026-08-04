@@ -119,12 +119,20 @@ def az(*args: str) -> list[str]:
 
 def node24(command: str) -> list[str]:
     """Run a repo command under the Node 24 wrapper required by the app."""
+    # npx resolves the project's node_modules/.bin from ITS OWN launch cwd, not
+    # from the inner `cd`, so bare `rayfin` (and other local bins) would be
+    # unresolved whenever this launcher runs from outside APP_DIR. Put the app's
+    # local .bin on PATH explicitly so the wrapper works from any directory.
+    bin_dir = APP_DIR / "node_modules" / ".bin"
     if os.name == "nt":
-        inner = f'cd /d "{APP_DIR}" && {command}'
+        inner = f'cd /d "{APP_DIR}" && set "PATH={bin_dir};%PATH%" && {command}'
     else:
         import shlex
 
-        inner = f"cd {shlex.quote(str(APP_DIR))} && {command}"
+        inner = (
+            f"cd {shlex.quote(str(APP_DIR))} && "
+            f'export PATH={shlex.quote(str(bin_dir))}:"$PATH" && {command}'
+        )
     return command_argv("npx", "-y", "-p", "node@24", "-c", inner)
 
 
