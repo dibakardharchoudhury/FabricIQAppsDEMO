@@ -14,6 +14,7 @@
     "prebuild": "rayfin env --framework vite",
     "env": "rayfin env --framework vite",
     "lint": "eslint .",
+    "test": "node --test scripts/*.test.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "up": "rayfin up",

@@ -110,7 +110,8 @@ The complete live-auth contract is:
 - **SPA redirect URIs on the app registration:** the current
   `https://<host>.webapp.fabricapps.net` origin in `rayfin/rayfin.yml`
   `services.auth.allowedRedirectUris`, plus `http://localhost:5173` for local development.
-  `setup-live-auth` removes stale Fabric-hosting origins while preserving unrelated redirects.
+  `setup-live-auth` preserves every existing SPA redirect and adds any missing current origins,
+  so one tenant-scoped SPA can be reused safely across multiple Fabric workspaces and apps.
 - **Requested delegated permissions on the app registration:** Azure Data Explorer
   `user_impersonation`; Power BI Service/Microsoft Fabric `GraphQLApi.Execute.All`,
   `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
@@ -263,7 +264,7 @@ npm run setup-live-auth   # or setup-live-auth:dry to preview
 ```
 
 `scripts/setup-live-auth.mjs` is idempotent: (1) reads the current hosting origin from `rayfin/rayfin.yml`
-(`allowedRedirectUris`) plus `localhost:5173`, removes stale Fabric-hosting origins, and registers them as **SPA redirect URIs** on the Entra
+(`allowedRedirectUris`) plus `localhost:5173`, preserves the SPA's existing redirect URIs, and adds any missing origins as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
 **Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
 **`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
