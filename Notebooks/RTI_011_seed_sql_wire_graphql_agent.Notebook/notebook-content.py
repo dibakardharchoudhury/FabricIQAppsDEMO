@@ -8,12 +8,12 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf",
-# META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V6",
-# META       "default_lakehouse_workspace_id": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+# META       "default_lakehouse": "929854d6-f34c-4a8e-9fdc-fb8d9b0f0666",
+# META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V1",
+# META       "default_lakehouse_workspace_id": "cea977d9-c506-4d6d-9580-2b5536b36f06",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf"
+# META           "id": "929854d6-f34c-4a8e-9fdc-fb8d9b0f0666"
 # META         }
 # META       ]
 # META     },
@@ -45,6 +45,22 @@
 # 
 # > Keep `SEED_SQL` below in sync with `HydroOperationsApp/sql/seed-operational-data.sql`.
 # > Only the 5 tables the web app uses are seeded.
+
+
+# PARAMETERS CELL ********************
+
+# Required per-run target.
+# The calling webapp must supply its own Rayfin SQL Database name.
+sql_db_item_name = ""
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# MARKDOWN ********************
 
 
 # CELL ********************
@@ -82,7 +98,15 @@ workspace_id = first_setting("workspace_id", required=True)
 target_folder_id = first_setting("target_folder_id", default=None)
 
 # The Rayfin app publishes its operational store as a Fabric SQL Database item.
-sql_db_item_name = first_setting("operational_sql_db_name", "rayfin_app_name", default="hydro-operations")
+# OLD CODE sql_db_item_name = first_setting("operational_sql_db_name", "rayfin_app_name", default="hydro-operations")
+
+sql_db_item_name = str(sql_db_item_name or "").strip()
+
+if not sql_db_item_name:
+    raise RuntimeError(
+        "sql_db_item_name was not supplied. "
+        "RTI_011 refuses to guess which Rayfin SQL Database to seed."
+    )
 
 # STID GraphQL item over the Lakehouse (consumed by the web app's STID panel).
 graphql_api_name = first_setting("stid_graphql_name", default="Hydro_STID_API")
@@ -207,7 +231,7 @@ GRAPHQL_OBJECTS = [
       "unit", "instrument_type", "is_active"]),
 ]
 
-OPERATIONAL_INSTRUCTIONS_MARKER = "## Operational data (hydro-operations SQL)"
+OPERATIONAL_INSTRUCTIONS_MARKER = f"## Operational data ({sql_db_item_name} SQL)"
 OPERATIONAL_INSTRUCTIONS = (
     f"\n\n{OPERATIONAL_INSTRUCTIONS_MARKER}\n"
     "In addition to the telemetry ontology, a Fabric SQL Database "
@@ -638,43 +662,54 @@ def _parse_conn_string(conn: str) -> tuple:
 
 
 def resolve_sql_database() -> tuple:
-    """Return (item_id, server_fqdn, database_name) for the hydro-operations SQL DB.
+    """Return the exact Fabric SQL Database requested by sql_db_item_name.
 
-    The Rayfin app can create several items that share the app name (AppBackend,
-    SQLDatabase, …), so match the SQLDatabase item by TYPE — matching by name alone can
-    resolve the wrong item and make the connection-string lookup return nothing."""
+    Never fall back to another SQL Database. Multiple Rayfin apps can exist
+    in the same workspace, so choosing the first database is unsafe.
+    """
     item = find_item_by_name(sql_db_item_name, item_type="SQLDatabase")
+
     if not item:
         candidates = list_items_of_type("SQLDatabase")
-        if len(candidates) > 1:
-            print(
-                f"⚠️ {len(candidates)} SQL Databases in the workspace; using "
-                f"'{candidates[0].get('displayName')}'."
-            )
-        item = candidates[0] if candidates else None
-    if not item:
+        available = [
+            candidate.get("displayName")
+            for candidate in candidates
+            if candidate.get("displayName")
+        ]
+
         raise RuntimeError(
-            f"No SQL Database item found in the workspace (looked for '{sql_db_item_name}'). "
-            "Deploy the Rayfin app (rayfin up) so its SQL Database item is created first."
+            f"SQL Database '{sql_db_item_name}' was not found. "
+            f"Available SQL Databases: {available}. "
+            "Refusing to seed a different database."
         )
+
     item_id = item["id"]
-    resp = api_request("GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/sqlDatabases/{item_id}")
+
+    resp = api_request(
+        "GET",
+        f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/sqlDatabases/{item_id}"
+    )
+
     props = {}
     if resp is not None and resp.status_code == 200 and resp.content:
         props = (resp.json() or {}).get("properties", {}) or {}
+
     server = props.get("serverFqdn")
     database = props.get("databaseName")
+
     if (not server or not database) and props.get("connectionString"):
         cs_server, cs_database = _parse_conn_string(props["connectionString"])
         server = server or cs_server
         database = database or cs_database
+
     database = database or sql_db_item_name
+
     if not server:
         raise RuntimeError(
-            "Could not resolve the SQL Database connection string from the Fabric REST API. "
-            "Open the SQL Database in Fabric → Settings → Connection strings to read it, "
-            "and run HydroOperationsApp/sql/seed-operational-data.sql there instead."
+            f"Could not resolve the connection information for SQL Database "
+            f"'{sql_db_item_name}'."
         )
+
     return item_id, server, database
 
 
@@ -845,8 +880,6 @@ def resolve_data_agent_id() -> str:
     by_name = next((a for a in agents if a.get("displayName") == data_agent_name), None)
     if by_name:
         return by_name["id"]
-    if agents:
-        return agents[0]["id"]
     raise RuntimeError(
         f"Data Agent '{data_agent_name}' not found. Run RTI_009 first to create + publish it."
     )
@@ -911,9 +944,6 @@ try:
         # Resolve id even if seeding failed, so the source can still be wired.
         sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
     if not sql_db_item_id:
-        candidates = list_items_of_type("SQLDatabase")
-        sql_db_item_id = candidates[0].get("id") if candidates else None
-    if not sql_db_item_id:
         raise RuntimeError(f"SQL Database item '{sql_db_item_name}' not found; cannot wire source.")
 
     agent_id = resolve_data_agent_id()
@@ -938,18 +968,28 @@ try:
 
     # Reuse/upgrade the existing sql_database datasource part (it may hold a stale
     # artifactId from a prior run) — there is only one SQL source, matched by type.
+    # Use only the datasource path belonging to the requested SQL Database.
+    # Never reuse another app's sql_database datasource.
     sql_part_path = SQL_DATASOURCE_PATH
-    for part in parts:
-        decoded = decode_payload(part.get("payload", ""))
-        if decoded.get("type") == SQL_DATASOURCE_TYPE:
-            sql_part_path = part.get("path", SQL_DATASOURCE_PATH)
-            break
 
     existing_ds = next(
-        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == sql_part_path),
+        (
+            decode_payload(p.get("payload", ""))
+            for p in parts
+            if p.get("path") == sql_part_path
+        ),
         {},
     )
-    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_source_artifact_id, schema_map))
+
+    parts = upsert_part(
+        parts,
+        sql_part_path,
+        build_sql_datasource_obj(
+            existing_ds,
+            sql_source_artifact_id,
+            schema_map,
+        ),
+    )
 
     existing_stage = next(
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
@@ -974,9 +1014,7 @@ except Exception as exc:  # noqa: BLE001 - best-effort; portal 'Add data' is the
 # Persist discovered ids back to rti_demo_settings
 # ---------------------------------------------------------------------------
 persist = {}
-if sql_db_item_id:
-    persist["operational_sql_db_id"] = sql_db_item_id
-    persist["operational_sql_db_name"] = sql_db_item_name
+
 if stid_graphql_id:
     persist["stid_graphql_id"] = stid_graphql_id
 
