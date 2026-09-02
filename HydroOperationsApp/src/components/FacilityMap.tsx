@@ -36,15 +36,18 @@ const STATUS_LABEL: Record<TwinStatus, string> = { ok: 'Healthy', warn: 'Uncerta
 const valueText = (value?: number | string, unit?: string) =>
   value === undefined || value === null || value === '' ? '—' : `${value}${unit ? ` ${unit}` : ''}`
 
-function FitBounds({ points }: { points: FacilityStat[] }) {
+function FitBounds({ points, focusPoints }: { points: FacilityStat[]; focusPoints?: [number, number][] }) {
   const map = useMap()
-  const key = points.map(p => p.facility_id).join(',')
+  const key = focusPoints?.length
+    ? focusPoints.map(([lat, lon]) => `${lat},${lon}`).join('|')
+    : points.map(p => p.facility_id).join(',')
   useEffect(() => {
     if (!points.length) return
-    if (points.length === 1) { map.setView([points[0].lat, points[0].lon], 7); return }
-    const bounds = new LatLngBounds(points.map(p => [p.lat, p.lon] as [number, number]))
-    map.fitBounds(bounds, { padding: [44, 44], maxZoom: 8 })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refit only when the set of facilities changes
+    const visiblePoints = focusPoints?.length ? focusPoints : points.map(p => [p.lat, p.lon] as [number, number])
+    if (visiblePoints.length === 1) { map.setView(visiblePoints[0], 9); return }
+    const bounds = new LatLngBounds(visiblePoints)
+    map.fitBounds(bounds, { padding: [44, 44], maxZoom: focusPoints?.length ? 10 : 8 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refit only when the visible facility/asset set changes
   }, [map, key])
   return null
 }
@@ -88,7 +91,7 @@ export function FacilityMap({ facilities, assets, selectedId, selectedAssetId, o
     <div className="facility-map-wrap">
       <MapContainer className="facility-map" center={[points[0].lat, points[0].lon]} zoom={6} minZoom={3} maxZoom={14} scrollWheelZoom>
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <FitBounds points={points} />
+        <FitBounds points={points} focusPoints={ring.length ? [ring[0].home, ...ring.map(({ lat, lon }) => [lat, lon] as [number, number])] : undefined} />
 
         {ring.map(({ pin, lat, lon, home }) => (
           <Polyline key={`link-${pin.equipment_id}`} positions={[home, [lat, lon]]} pathOptions={{ color: '#0f766e', weight: 1, opacity: 0.35, dashArray: '3 5' }} />
