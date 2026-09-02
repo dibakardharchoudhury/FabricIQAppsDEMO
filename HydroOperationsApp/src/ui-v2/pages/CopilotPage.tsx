@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Bot, Send, SquarePen } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { CopilotStreamCursor, CopilotThinking } from '../../components/CopilotThinking'
 import { FacilityContext } from '../components/FacilityContext'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
@@ -23,7 +24,7 @@ export function CopilotPage() {
     <FacilityContext />
     <section className="v2-page-head"><div><span className="v2-eyebrow">Fabric Data Agent</span><h1>Operations Copilot</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
     <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>Connected Fabric data</small></span><button className="v2-icon-action" type="button" title="New chat" disabled={data.copilotBusy || data.messages.length === 1} onClick={data.actions.resetCopilot}><SquarePen size={16} /></button></header>
-      <div className="v2-messages">{data.messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index}>{message.role === 'agent' ? message.text ? <><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>{message.chart && <ChartFromMarkdown markdown={message.text} />}</> : <span className="v2-thinking">Thinking<span>...</span></span> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{data.messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
+      <div className="v2-messages">{data.messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && data.copilotBusy && index === data.messages.length - 1}>{message.role === 'agent' ? message.text ? <><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>{message.chart && <ChartFromMarkdown markdown={message.text} />}{data.copilotBusy && index === data.messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{data.messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
       <footer><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={data.copilotBusy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>

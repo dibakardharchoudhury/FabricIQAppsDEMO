@@ -1,4 +1,7 @@
 import { PublicClientApplication } from '@azure/msal-browser'
+import { readAssistantStream, type AgentAnswer, type AgentUsage } from './assistantStream'
+
+export type { AgentAnswer, AgentUsage } from './assistantStream'
 
 const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
@@ -460,44 +463,6 @@ const FORMAT_DIRECTIVE = [
   '',
   'QUESTION: ',
 ].join('\n')
-export type AgentUsage = { prompt: number; completion: number; total: number }
-export type AgentAnswer = { text: string; usage?: AgentUsage }
-// Parses an OpenAI Assistants SSE stream, surfacing incremental assistant text via onProgress.
-type StreamEvent = { object?: string; delta?: { content?: Array<{ text?: { value?: string } }> }; content?: Array<{ text?: { value?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
-async function readAssistantStream(body: ReadableStream<Uint8Array>, onProgress?: (text: string) => void): Promise<AgentAnswer> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let answer = ''
-  let usage: AgentUsage | undefined
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const blocks = buffer.split('\n\n')
-    buffer = blocks.pop() ?? ''
-    for (const block of blocks) {
-      const dataLine = block.split('\n').find(line => line.startsWith('data:'))
-      if (!dataLine) continue
-      const data = dataLine.slice(5).trim()
-      if (!data || data === '[DONE]') continue
-      let event: StreamEvent
-      try { event = JSON.parse(data) as StreamEvent } catch { continue }
-      if (event.usage && typeof event.usage.total_tokens === 'number') {
-        usage = { prompt: event.usage.prompt_tokens ?? 0, completion: event.usage.completion_tokens ?? 0, total: event.usage.total_tokens }
-      }
-      const deltas = event.delta?.content
-      if (Array.isArray(deltas)) {
-        for (const part of deltas) { const chunk = part.text?.value; if (chunk) { answer += chunk; onProgress?.(answer) } }
-      } else if (event.object === 'thread.message' && Array.isArray(event.content) && !answer) {
-        const full = event.content.map(part => part.text?.value ?? '').filter(Boolean).join('\n')
-        if (full) { answer = full; onProgress?.(answer) }
-      }
-    }
-  }
-  return { text: answer, usage }
-}
-
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   const base = config?.dataAgentUrl
