@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Factory } from 'lucide-react'
+import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V2_TABS, resolveV2Tab, type V2Tab } from '../navigation'
-import { HydroOperationsDataProvider } from '../hooks/useHydroOperationsData'
+import { HydroOperationsDataProvider, useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const UI_CREDIT_LINE_1 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string | undefined)?.trim()
@@ -19,8 +19,20 @@ function setTabInUrl(tab: V2Tab) {
 }
 
 export function V2Shell() {
+  return <HydroOperationsDataProvider><V2ShellContent /></HydroOperationsDataProvider>
+}
+
+function V2ShellContent() {
+  const data = useHydroOperationsData()
   const [activeTab, setActiveTab] = useState<V2Tab>(() => tabFromLocation())
   const ActivePage = activeTab.Page
+  const telemetryLive = data.telemetry.length > 0
+  const eventTimes = data.telemetry.map(reading => Date.parse(reading.eventTime)).filter(time => !Number.isNaN(time))
+  const newestEventMs = eventTimes.length ? Math.max(...eventTimes) : 0
+  const oldestEventMs = eventTimes.length ? Math.min(...eventTimes) : 0
+  const freshCount = eventTimes.filter(time => data.now - time < 60_000).length
+  const stidLabel = data.stidState === 'connected' ? 'STID connected' : data.stidState === 'loading' ? 'Connecting...' : 'Connect STID'
+  const telemetryLabel = data.telemetryState === 'loading' ? 'Connecting...' : telemetryLive ? `${data.telemetry.length} signals` : data.telemetryState === 'connected' ? 'No recent events' : 'Connect telemetry'
 
   useEffect(() => {
     const handlePopState = () => setActiveTab(tabFromLocation())
@@ -36,8 +48,13 @@ export function V2Shell() {
   return <div className="v2-shell">
     <header className="v2-topbar">
       <div className="v2-brand"><span className="v2-brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
-      <div className="v2-header-status">
-        <span className="v2-source-chip connected"><CheckCircle2 size={14} />UI v2 shell</span>
+      <div className="v2-header-status source-actions">
+        <button className={data.stidState === 'connected' ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{stidLabel}</button>
+        <div className="telemetry-source">
+          <button className={telemetryLive ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryLabel}</button>
+          {telemetryLive && <span className={`live-pill ${data.telemetryStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimes.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{data.telemetryStatusLabel}<em>· {data.telemetryAgeLabel}</em></span>}
+          {telemetryLive && <button className="refresh-btn" onClick={() => void data.actions.connectTelemetry()} disabled={data.telemetryState === 'loading'} title="Refresh live telemetry now"><RefreshCw size={14} className={data.telemetryState === 'loading' ? 'spin' : undefined} /></button>}
+        </div>
       </div>
       <div className="v2-top-actions">
         {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2) && <div className="v2-credits" aria-label="Application credits">
@@ -61,10 +78,8 @@ export function V2Shell() {
       </div>
     </nav>
 
-    <HydroOperationsDataProvider>
-      <main className="v2-main">
-        <ActivePage />
-      </main>
-    </HydroOperationsDataProvider>
+    <main className="v2-main">
+      <ActivePage />
+    </main>
   </div>
 }
