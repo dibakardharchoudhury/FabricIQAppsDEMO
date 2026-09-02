@@ -1,12 +1,14 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
+  askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
   startStreamingPipeline, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
-  initializeRayfin, isRayfinConfigured, listAsset3DModels, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
-  type AppUser, type Asset3DModelRecord, type WorkOrderRecord,
+  createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
+  listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
+  updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
+  type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from '../../services/rayfin'
 import { twinStatus, type TwinStatus } from '../../twin'
 
@@ -28,7 +30,11 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string }
+
+const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
+const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }
@@ -62,6 +68,9 @@ function useHydroOperationsDataController() {
   const [stid, setStid] = useState<StidData | null>(null)
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
+  const [inspections, setInspections] = useState<InspectionRecord[]>([])
+  const [spareParts, setSpareParts] = useState<SparePartRecord[]>([])
+  const [notifications, setNotifications] = useState<MaintenanceNotificationRecord[]>([])
   const [assetModels, setAssetModels] = useState<Asset3DModelRecord[]>([])
   const [selectedFacilityId, setSelectedFacilityIdState] = useState<string | undefined>(persisted.selectedFacilityId)
   const [stidState, setStidState] = useState<LoadState>(persisted.stidConnected ? 'loading' : 'idle')
@@ -75,6 +84,9 @@ function useHydroOperationsDataController() {
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
   const [digitalTwinSelections, setDigitalTwinSelections] = useState<Record<string, string>>({})
+  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
+  const [copilotBusy, setCopilotBusy] = useState(false)
+  const [mutationKey, setMutationKey] = useState<string>()
 
   const setSelectedFacilityId = useCallback((facilityId: string) => {
     setSelectedFacilityIdState(facilityId)
@@ -93,7 +105,9 @@ function useHydroOperationsDataController() {
   }, [])
 
   const loadOperationalData = useCallback(async () => {
-    const [loadedOrders, loadedModels] = await Promise.allSettled([listWorkOrders(), listAsset3DModels()])
+    const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([
+      listWorkOrders(), listAsset3DModels(), listInspections(), listSpareParts(), listMaintenanceNotifications(),
+    ])
     if (loadedOrders.status === 'fulfilled') {
       setOrders(loadedOrders.value)
       setOperationsState('connected')
@@ -106,6 +120,9 @@ function useHydroOperationsDataController() {
     } else {
       setModelState('error')
     }
+    if (loadedInspections.status === 'fulfilled') setInspections(loadedInspections.value)
+    if (loadedParts.status === 'fulfilled') setSpareParts(loadedParts.value)
+    if (loadedNotifications.status === 'fulfilled') setNotifications(loadedNotifications.value)
     return { orders: loadedOrders.status === 'fulfilled' ? loadedOrders.value : [], models: loadedModels.status === 'fulfilled' ? loadedModels.value : [] }
   }, [])
 
@@ -360,6 +377,12 @@ function useHydroOperationsDataController() {
     return () => window.clearInterval(id)
   }, [telemetryLive, loadTelemetry])
 
+  useEffect(() => {
+    if (!telemetryLive) return
+    const id = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(id)
+  }, [telemetryLive])
+
   const jobKeys = Object.keys(jobs).sort().join(',')
   useEffect(() => {
     if (!jobKeys) return
@@ -432,7 +455,7 @@ function useHydroOperationsDataController() {
   const qualityIssueCount = useMemo(() => facilityTelemetry.filter(reading => ['bad', 'uncertain'].includes((reading.quality ?? '').toLowerCase())).length, [facilityTelemetry])
   const eventTimesSorted = useMemo(() => telemetry.map(row => Date.parse(row.eventTime)).filter(time => !Number.isNaN(time)).sort((a, b) => a - b), [telemetry])
   const medianEventMs = eventTimesSorted.length ? eventTimesSorted[Math.floor((eventTimesSorted.length - 1) / 2)] : 0
-  const dataAgeMs = medianEventMs ? Date.now() - medianEventMs : Infinity
+  const dataAgeMs = medianEventMs ? now - medianEventMs : Infinity
   const telemetryStatus: TelemetryStatus = !telemetry.length ? 'unavailable' : dataAgeMs < 60_000 ? 'live' : dataAgeMs < 300_000 ? 'delayed' : 'stale'
   const telemetryStatusLabel = telemetryStatus === 'live' ? 'Live' : telemetryStatus === 'delayed' ? 'Delayed' : telemetryStatus === 'stale' ? 'Stale' : 'Not connected'
   const telemetryAgeLabel = medianEventMs ? fmtSince(dataAgeMs) : ''
@@ -480,6 +503,65 @@ function useHydroOperationsDataController() {
     setDigitalTwinSelections(current => ({ ...current, [selectedFacility.facility_id]: assetId }))
   }, [selectedFacility])
 
+  const addWorkOrder = useCallback(async (equipmentId: string, instrumentId?: string, opcuaNodeId?: string) => {
+    setMutationKey(opcuaNodeId ?? equipmentId)
+    setNotice(undefined)
+    try {
+      const activeUser = user ?? await authenticate()
+      if (!activeUser) return
+      const record = await createWorkOrder(activeUser, equipmentId, instrumentId, opcuaNodeId)
+      setOrders(current => [record, ...current])
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Work order creation failed.')
+    } finally { setMutationKey(undefined) }
+  }, [authenticate, user])
+
+  const changeWorkOrderStatus = useCallback(async (id: string, status: string) => {
+    const previous = orders
+    setMutationKey(id)
+    setOrders(current => current.map(order => order.id === id ? { ...order, status } : order))
+    try { await updateWorkOrderStatus(id, status) }
+    catch (error) {
+      setOrders(previous)
+      setNotice(error instanceof Error ? error.message : 'Work order update failed.')
+    } finally { setMutationKey(undefined) }
+  }, [orders])
+
+  const removeWorkOrder = useCallback(async (id: string) => {
+    const previous = orders
+    setMutationKey(id)
+    setOrders(current => current.filter(order => order.id !== id))
+    try { await deleteWorkOrder(id) }
+    catch (error) {
+      setOrders(previous)
+      setNotice(error instanceof Error ? error.message : 'Work order deletion failed.')
+    } finally { setMutationKey(undefined) }
+  }, [orders])
+
+  const sendCopilotQuestion = useCallback(async (question: string) => {
+    const text = question.trim()
+    if (!text || copilotBusy) return
+    const startedAt = Date.now()
+    const chart = wantsChart(text)
+    setCopilotBusy(true)
+    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '', chart }])
+    const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
+      const next = current.slice()
+      next[next.length - 1] = { role: 'agent', text: value, chart, meta }
+      return next
+    })
+    try {
+      const answer = await askDataAgent(text, partial => setLastAgent(partial))
+      setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total })
+    } catch (error) {
+      setLastAgent(error instanceof Error ? error.message : 'The Data Agent request failed.', { elapsedMs: Date.now() - startedAt })
+    } finally { setCopilotBusy(false) }
+  }, [copilotBusy])
+
+  const resetCopilot = useCallback(() => {
+    if (!copilotBusy) setMessages([INITIAL_MESSAGE])
+  }, [copilotBusy])
+
   return {
     user,
     notice,
@@ -491,6 +573,8 @@ function useHydroOperationsDataController() {
     modelState,
     provisionState,
     streamState,
+    stid,
+    telemetry,
     facilities,
     selectedFacility,
     selectedFacilityId: selectedFacility?.facility_id,
@@ -499,6 +583,10 @@ function useHydroOperationsDataController() {
     facilityInstruments,
     facilityTelemetry,
     mappedTelemetry,
+    orders,
+    inspections,
+    spareParts,
+    notifications,
     assetModels,
     openOrders,
     facilityOpenOrders,
@@ -508,6 +596,9 @@ function useHydroOperationsDataController() {
     telemetryExplorerSelection,
     selectedDigitalTwinAssetId,
     facilityHealth,
+    messages,
+    copilotBusy,
+    mutationKey,
     counts: {
       facilities: facilities.length,
       assets: facilityEquipment.length,
@@ -525,6 +616,11 @@ function useHydroOperationsDataController() {
       connectTelemetry,
       updateTelemetryExplorerSelection,
       updateDigitalTwinAssetSelection,
+      addWorkOrder,
+      changeWorkOrderStatus,
+      removeWorkOrder,
+      sendCopilotQuestion,
+      resetCopilot,
       refreshDiscovery: clearWorkspaceConfigCache,
     },
   }

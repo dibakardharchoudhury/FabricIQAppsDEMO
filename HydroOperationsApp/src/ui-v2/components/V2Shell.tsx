@@ -13,7 +13,7 @@ function tabFromLocation(): V2Tab {
 
 function setTabInUrl(tab: V2Tab) {
   const url = new URL(window.location.href)
-  url.searchParams.set('ui', 'v2')
+  url.searchParams.delete('ui')
   url.searchParams.set('tab', tab.id)
   window.history.pushState({}, '', url)
 }

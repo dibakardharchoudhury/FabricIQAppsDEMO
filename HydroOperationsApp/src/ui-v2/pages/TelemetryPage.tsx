@@ -28,7 +28,7 @@ export function TelemetryPage() {
   const qualityIssueCount = data.facilityTelemetry.filter(item => issueQualities.has((item.quality ?? '').toLowerCase())).length
 
   useEffect(() => {
-    if (!signal) { setHistory([]); setHistoryState('idle'); return }
+    if (!signal) return
     let cancelled = false
     const load = async () => {
       setHistoryState('loading')
