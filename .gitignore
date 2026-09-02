@@ -1,0 +1,23 @@
+# PowerShell scripts for local Azure configuration
+setup-private-endpoint.ps1
+
+# Environment and credential files
+*.env
+.env.local
+credentials.json
+secrets.json
+SPN.txt
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db

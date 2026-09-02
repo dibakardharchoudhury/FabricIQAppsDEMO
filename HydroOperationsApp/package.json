@@ -1,0 +1,59 @@
+{
+  "name": "hydro-operations-app",
+  "private": true,
+  "version": "1.0.1",
+  "description": "Hydro Operations on Microsoft Fabric",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "predev": "rayfin env --framework vite",
+    "build": "tsc -b && vite build",
+    "prebuild": "rayfin env --framework vite",
+    "env": "rayfin env --framework vite",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "up": "rayfin up",
+    "rayfin:db": "rayfin up db apply",
+    "rayfin:up": "rayfin up",
+    "deploy": "rayfin up staticapp deploy",
+    "setup-live-auth": "node ./scripts/setup-live-auth.mjs",
+    "setup-live-auth:dry": "node ./scripts/setup-live-auth.mjs --dry-run"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "^3.30.0",
+    "@google/model-viewer": "^4.3.1",
+    "@microsoft/rayfin-auth": "^1.33.2",
+    "@microsoft/rayfin-auth-provider-fabric": "^1.33.2",
+    "@microsoft/rayfin-client": "^1.33.2",
+    "@types/leaflet": "^1.9.21",
+    "@types/three": "^0.185.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.26.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-leaflet": "^5.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@microsoft/rayfin-cli": "1.33.2",
+    "@microsoft/rayfin-core": "^1.33.2",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.1",
+    "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "typescript": "^5.5.2",
+    "typescript-eslint": "^8.62.0",
+    "vite": "^5.3.1"
+  }
+}

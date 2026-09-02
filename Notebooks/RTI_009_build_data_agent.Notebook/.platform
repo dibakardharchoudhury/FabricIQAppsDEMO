@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "RTI_009_build_data_agent",
+    "description": "Deploys a Fabric Data Agent bound to the RTI ontology (real-time + lakehouse)."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "a9010009-0000-4a00-8b00-000000000009"
+  }
+}

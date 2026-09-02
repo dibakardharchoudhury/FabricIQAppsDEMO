@@ -1,0 +1,44 @@
+@import 'leaflet/dist/leaflet.css';
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+
+:root {
+  color-scheme: light;
+  --cp-bg: #f5f7fb;
+  --cp-bg-elevated: #f9fbfd;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f2f5fb;
+  --cp-border: #e7ebf2;
+  --cp-border-strong: #c3ccda;
+  --cp-text: #101828;
+  --cp-text-muted: #556074;
+  --cp-text-soft: #7a869a;
+  --cp-accent: #0d9488;
+  --cp-accent-hover: #0f766e;
+  --cp-accent-soft: rgba(13, 148, 136, 0.09);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #059669;
+  --cp-danger: #e11d48;
+  --cp-warning: #f59e0b;
+  --cp-link: #4f46e5;
+  --cp-indigo: #6366f1;
+  --cp-cyan: #0891b2;
+  --cp-violet: #8b5cf6;
+  --cp-shadow: 0 24px 60px rgba(15, 23, 42, 0.14);
+  --cp-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.06);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(13, 148, 136, 0.12);
+  --cp-ink: #0b3b3a;
+  --cp-font-body: 'Inter', 'Aptos', 'Segoe UI', system-ui, sans-serif;
+  --cp-font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  font-family: var(--cp-font-body);
+  color: var(--cp-text);
+  background: var(--cp-bg);
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 0; min-height: 100vh; background: var(--cp-bg); color: var(--cp-text); }
+button, input, textarea { font: inherit; letter-spacing: 0; }
+button { color: inherit; }

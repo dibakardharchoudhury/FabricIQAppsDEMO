@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "RTI_011_seed_sql_wire_graphql_agent",
+    "description": "Seeds the hydro-operations SQL DB, creates the STID GraphQL item, and adds the SQL source to the published Data Agent. Triggered on demand (e.g. from the web app Seed button)."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "a9010011-0000-4a00-8b00-000000000011"
+  }
+}

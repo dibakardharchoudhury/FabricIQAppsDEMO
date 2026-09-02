@@ -1,0 +1,135 @@
+// Demo operational seed data (3 facilities) for the client-side self-seeder.
+// Dates are ISO strings; the seeder converts them to Date and stamps the actor oid.
+
+export interface SeedWorkOrder {
+  workOrderNumber: string; equipmentId: string; instrumentId?: string; opcuaNodeId?: string
+  title: string; description: string; priority: string; status: string
+  assigned: boolean; createdAt: string; dueAt?: string
+}
+export const seedWorkOrders: SeedWorkOrder[] = [
+  { workOrderNumber: "WO-2841", equipmentId: "EQUIP_RTI_T001", instrumentId: "INST_T001_VIBRATION_A", opcuaNodeId: "ns=2;s=T001.vibration_a", title: "Inspect guide bearing vibration", description: "Inspect bearing, alignment, and lubrication after elevated vibration trend.", priority: "Critical", status: "In progress", assigned: true, createdAt: "2026-07-28T08:00:00", dueAt: "2026-08-01T16:00:00" },
+  { workOrderNumber: "WO-2836", equipmentId: "EQUIP_RTI_T002", instrumentId: "INST_T002_INLET_PRESSURE", opcuaNodeId: "ns=2;s=T002.inlet_pressure", title: "Review inlet pressure variance", description: "Validate transducer and compare against local gauge.", priority: "High", status: "Scheduled", assigned: true, createdAt: "2026-07-27T10:00:00", dueAt: "2026-08-03T12:00:00" },
+  { workOrderNumber: "WO-2829", equipmentId: "EQUIP_RTI_T003", instrumentId: "INST_T003_TURBINE_TEMP", opcuaNodeId: "ns=2;s=T003.turbine_temp", title: "Inspect turbine cooling circuit", description: "Check strainers, flow, and temperature sensor calibration.", priority: "Medium", status: "Ready", assigned: false, createdAt: "2026-07-26T09:30:00", dueAt: "2026-08-05T12:00:00" },
+  { workOrderNumber: "WO-2848", equipmentId: "EQUIP_RTI_T006", instrumentId: "INST_T006_VIBRATION_D", opcuaNodeId: "ns=2;s=T006.vibration_d", title: "Fjord unit driven-end vibration check", description: "Trend review and balancing assessment on driven-end bearing.", priority: "High", status: "Approved", assigned: true, createdAt: "2026-07-29T07:00:00", dueAt: "2026-08-04T16:00:00" },
+  { workOrderNumber: "WO-2851", equipmentId: "EQUIP_RTI_T008", instrumentId: "INST_T008_POWER_OUTPUT", opcuaNodeId: "ns=2;s=T008.power_output", title: "Investigate power output dip", description: "Correlate output with head and guide-vane position.", priority: "Medium", status: "Planned", assigned: false, createdAt: "2026-07-29T13:20:00", dueAt: "2026-08-06T12:00:00" },
+  { workOrderNumber: "WO-2853", equipmentId: "EQUIP_RTI_T010", instrumentId: "INST_T010_TURBINE_SPEED", opcuaNodeId: "ns=2;s=T010.turbine_speed", title: "Overspeed trip test", description: "Scheduled governor overspeed protection test.", priority: "Low", status: "Scheduled", assigned: true, createdAt: "2026-07-30T09:00:00", dueAt: "2026-08-08T12:00:00" },
+  { workOrderNumber: "WO-2857", equipmentId: "EQUIP_RTI_T011", instrumentId: "INST_T011_TURBINE_TEMP", opcuaNodeId: "ns=2;s=T011.turbine_temp", title: "Highland unit cooling inspection", description: "Inspect heat exchanger fouling after temperature rise.", priority: "High", status: "In progress", assigned: true, createdAt: "2026-07-30T11:00:00", dueAt: "2026-08-02T18:00:00" },
+  { workOrderNumber: "WO-2860", equipmentId: "EQUIP_RTI_T013", instrumentId: "INST_T013_VIBRATION_A", opcuaNodeId: "ns=2;s=T013.vibration_a", title: "Highland unit bearing endoscopy", description: "Borescope guide bearing following vibration advisory.", priority: "Critical", status: "Ready", assigned: false, createdAt: "2026-07-30T14:10:00", dueAt: "2026-08-03T12:00:00" },
+  { workOrderNumber: "WO-2862", equipmentId: "EQUIP_RTI_T015", instrumentId: "INST_T015_INLET_PRESSURE", opcuaNodeId: "ns=2;s=T015.inlet_pressure", title: "Inlet strainer differential check", description: "Verify strainer differential pressure and clean if required.", priority: "Medium", status: "Approved", assigned: true, createdAt: "2026-07-31T08:30:00", dueAt: "2026-08-09T12:00:00" },
+  { workOrderNumber: "WO-2820", equipmentId: "EQUIP_RTI_T004", instrumentId: "INST_T004_TURBINE_TEMP", opcuaNodeId: "ns=2;s=T004.turbine_temp", title: "Annual thermographic survey", description: "Completed annual thermographic survey; no anomalies.", priority: "Low", status: "Completed", assigned: true, createdAt: "2026-07-15T08:00:00", dueAt: "2026-07-20T12:00:00" },
+  { workOrderNumber: "WO-2812", equipmentId: "EQUIP_RTI_T007", instrumentId: "INST_T007_VIBRATION_A", opcuaNodeId: "ns=2;s=T007.vibration_a", title: "Bearing lubrication refresh", description: "Completed lubrication service on guide bearing.", priority: "Medium", status: "Completed", assigned: true, createdAt: "2026-07-10T08:00:00", dueAt: "2026-07-14T12:00:00" },
+  { workOrderNumber: "WO-2867", equipmentId: "EQUIP_RTI_T012", instrumentId: "INST_T012_POWER_OUTPUT", opcuaNodeId: "ns=2;s=T012.power_output", title: "Efficiency test after overhaul", description: "Post-overhaul efficiency verification test.", priority: "High", status: "Draft", assigned: false, createdAt: "2026-07-31T15:00:00", dueAt: "2026-08-12T12:00:00" },
+]
+
+export interface SeedNotification {
+  equipmentId: string; opcuaNodeId?: string; summary: string; severity: string; status: string; reportedAt: string
+}
+export const seedNotifications: SeedNotification[] = [
+  { equipmentId: "EQUIP_RTI_T001", opcuaNodeId: "ns=2;s=T001.vibration_a", summary: "Guide bearing vibration exceeded advisory threshold", severity: "Warning", status: "Open", reportedAt: "2026-07-30T07:42:00" },
+  { equipmentId: "EQUIP_RTI_T002", opcuaNodeId: "ns=2;s=T002.inlet_pressure", summary: "Inlet pressure variance requires review", severity: "Advisory", status: "Open", reportedAt: "2026-07-30T06:15:00" },
+  { equipmentId: "EQUIP_RTI_T006", opcuaNodeId: "ns=2;s=T006.vibration_d", summary: "Driven-end vibration trending upward", severity: "Warning", status: "Open", reportedAt: "2026-07-29T18:05:00" },
+  { equipmentId: "EQUIP_RTI_T008", opcuaNodeId: "ns=2;s=T008.power_output", summary: "Power output below expected for head", severity: "Advisory", status: "Acknowledged", reportedAt: "2026-07-29T12:40:00" },
+  { equipmentId: "EQUIP_RTI_T011", opcuaNodeId: "ns=2;s=T011.turbine_temp", summary: "Bearing temperature above normal band", severity: "Warning", status: "Open", reportedAt: "2026-07-30T10:20:00" },
+  { equipmentId: "EQUIP_RTI_T013", opcuaNodeId: "ns=2;s=T013.vibration_a", summary: "Vibration advisory on guide bearing", severity: "Critical", status: "Open", reportedAt: "2026-07-30T13:55:00" },
+]
+
+export interface SeedInspection {
+  equipmentId: string; opcuaNodeId?: string; inspectionType: string; result: string
+  findings?: string; inspectedAt: string; nextDueAt?: string
+}
+export const seedInspections: SeedInspection[] = [
+  { equipmentId: "EQUIP_RTI_T001", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-20T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T001", opcuaNodeId: "ns=2;s=T001.turbine_temp", inspectionType: "THERMOGRAPHIC", result: "PASS", findings: "No hot spots detected on bearings or windings.", inspectedAt: "2026-07-20T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T002", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-21T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T002", opcuaNodeId: "ns=2;s=T002.vibration_a", inspectionType: "VIBRATION", result: "ATTENTION", findings: "Guide bearing vibration slightly above baseline; monitor.", inspectedAt: "2026-07-21T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T003", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-22T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T003", inspectionType: "LUBRICATION", result: "PASS", findings: "Oil level and quality within specification.", inspectedAt: "2026-07-22T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T004", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-23T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T004", opcuaNodeId: "ns=2;s=T004.turbine_temp", inspectionType: "THERMOGRAPHIC", result: "PASS", findings: "No hot spots detected on bearings or windings.", inspectedAt: "2026-07-23T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T005", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-24T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T005", opcuaNodeId: "ns=2;s=T005.vibration_a", inspectionType: "VIBRATION", result: "ATTENTION", findings: "Guide bearing vibration slightly above baseline; monitor.", inspectedAt: "2026-07-24T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T006", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-25T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T006", inspectionType: "LUBRICATION", result: "PASS", findings: "Oil level and quality within specification.", inspectedAt: "2026-07-25T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T007", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-26T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T007", opcuaNodeId: "ns=2;s=T007.turbine_temp", inspectionType: "THERMOGRAPHIC", result: "PASS", findings: "No hot spots detected on bearings or windings.", inspectedAt: "2026-07-26T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T008", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-27T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T008", opcuaNodeId: "ns=2;s=T008.vibration_a", inspectionType: "VIBRATION", result: "ATTENTION", findings: "Guide bearing vibration slightly above baseline; monitor.", inspectedAt: "2026-07-27T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T009", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-20T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T009", inspectionType: "LUBRICATION", result: "PASS", findings: "Oil level and quality within specification.", inspectedAt: "2026-07-20T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T010", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-21T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T010", opcuaNodeId: "ns=2;s=T010.turbine_temp", inspectionType: "THERMOGRAPHIC", result: "PASS", findings: "No hot spots detected on bearings or windings.", inspectedAt: "2026-07-21T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T011", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-22T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T011", opcuaNodeId: "ns=2;s=T011.vibration_a", inspectionType: "VIBRATION", result: "ATTENTION", findings: "Guide bearing vibration slightly above baseline; monitor.", inspectedAt: "2026-07-22T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T012", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-23T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T012", inspectionType: "LUBRICATION", result: "PASS", findings: "Oil level and quality within specification.", inspectedAt: "2026-07-23T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T013", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-24T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T013", opcuaNodeId: "ns=2;s=T013.turbine_temp", inspectionType: "THERMOGRAPHIC", result: "PASS", findings: "No hot spots detected on bearings or windings.", inspectedAt: "2026-07-24T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T014", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-25T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T014", opcuaNodeId: "ns=2;s=T014.vibration_a", inspectionType: "VIBRATION", result: "ATTENTION", findings: "Guide bearing vibration slightly above baseline; monitor.", inspectedAt: "2026-07-25T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T015", inspectionType: "VISUAL", result: "PASS", findings: "Casing, fasteners, and seals visually normal.", inspectedAt: "2026-07-26T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+  { equipmentId: "EQUIP_RTI_T015", inspectionType: "LUBRICATION", result: "PASS", findings: "Oil level and quality within specification.", inspectedAt: "2026-07-26T09:00:00", nextDueAt: "2026-10-15T09:00:00" },
+]
+
+export interface SeedSparePart {
+  partNumber: string; name: string; category: string; equipmentType: string
+  quantityOnHand: number; reorderLevel: number; storageLocation: string
+  unitCostUsd?: number; lastRestockedAt?: string
+}
+export const seedSpareParts: SeedSparePart[] = [
+  { partNumber: "SP-BRG-1001", name: "Guide bearing pad set", category: "BEARING", equipmentType: "TURB", quantityOnHand: 6, reorderLevel: 4, storageLocation: "Warehouse A-01", unitCostUsd: 4200.0, lastRestockedAt: "2026-06-10" },
+  { partNumber: "SP-BRG-1002", name: "Thrust bearing segment", category: "BEARING", equipmentType: "TURB", quantityOnHand: 2, reorderLevel: 3, storageLocation: "Warehouse A-01", unitCostUsd: 5100.0, lastRestockedAt: "2026-05-22" },
+  { partNumber: "SP-SEAL-2001", name: "Main shaft seal kit", category: "SEAL", equipmentType: "TURB", quantityOnHand: 9, reorderLevel: 5, storageLocation: "Warehouse A-02", unitCostUsd: 880.0, lastRestockedAt: "2026-06-28" },
+  { partNumber: "SP-SEAL-2002", name: "Guide vane seal ring", category: "SEAL", equipmentType: "TURB", quantityOnHand: 3, reorderLevel: 4, storageLocation: "Warehouse A-02", unitCostUsd: 640.0, lastRestockedAt: "2026-04-30" },
+  { partNumber: "SP-SEN-3001", name: "Vibration probe (eddy current)", category: "SENSOR", equipmentType: "TURB", quantityOnHand: 12, reorderLevel: 6, storageLocation: "Store B-11", unitCostUsd: 1350.0, lastRestockedAt: "2026-07-05" },
+  { partNumber: "SP-SEN-3002", name: "RTD temperature sensor", category: "SENSOR", equipmentType: "TURB", quantityOnHand: 20, reorderLevel: 8, storageLocation: "Store B-11", unitCostUsd: 210.0, lastRestockedAt: "2026-07-12" },
+  { partNumber: "SP-SEN-3003", name: "Pressure transducer", category: "SENSOR", equipmentType: "TURB", quantityOnHand: 7, reorderLevel: 6, storageLocation: "Store B-12", unitCostUsd: 490.0, lastRestockedAt: "2026-06-18" },
+  { partNumber: "SP-VAL-4001", name: "Guide vane servo valve", category: "VALVE", equipmentType: "TURB", quantityOnHand: 2, reorderLevel: 2, storageLocation: "Warehouse A-03", unitCostUsd: 7300.0, lastRestockedAt: "2026-03-15" },
+  { partNumber: "SP-VAL-4002", name: "Cooling water control valve", category: "VALVE", equipmentType: "TURB", quantityOnHand: 5, reorderLevel: 3, storageLocation: "Warehouse A-03", unitCostUsd: 1120.0, lastRestockedAt: "2026-06-02" },
+  { partNumber: "SP-ELE-5001", name: "Excitation control card", category: "ELECTRICAL", equipmentType: "TURB", quantityOnHand: 4, reorderLevel: 3, storageLocation: "Store B-20", unitCostUsd: 2650.0, lastRestockedAt: "2026-05-09" },
+  { partNumber: "SP-ELE-5002", name: "Governor PLC module", category: "ELECTRICAL", equipmentType: "TURB", quantityOnHand: 1, reorderLevel: 2, storageLocation: "Store B-20", unitCostUsd: 3900.0, lastRestockedAt: "2026-02-27" },
+  { partNumber: "SP-ELE-5003", name: "Field cabling loom", category: "ELECTRICAL", equipmentType: "TURB", quantityOnHand: 14, reorderLevel: 6, storageLocation: "Store B-21", unitCostUsd: 180.0, lastRestockedAt: "2026-07-20" },
+]
+
+export interface SeedAsset3DModel {
+  equipmentId: string; modelName: string; format: string; modelUrl: string
+  thumbnailUrl?: string; fileSizeMb?: number; version?: string; updatedAt: string
+}
+// Each turbine make/model has its own digital-twin geometry. The GLB is keyed on
+// manufacturer + model (the real driver of turbine geometry), so two units of the same
+// make share a model regardless of facility, while different makes look visibly different.
+// Models: CC0 / CC-BY power-generation assets from poly.pizza (Cloudflare CDN, CORS *):
+//   Turbine — Kay Lousberg (CC0); Generator — KolosStudios (CC-BY); Large Electric
+//   Generator — miro_art_studio (CC-BY); Space engine & Wind turbine — Poly by Google (CC-BY).
+const POLY = "https://static.poly.pizza"
+const TURBINE_MODEL_GLB: Record<string, { url: string; sizeMb: number }> = {
+  "RTI-Turbine-A": { url: `${POLY}/754e9358-fff8-4285-b80f-09b68c2f3c71.glb`, sizeMb: 0.06 }, // Andritz — Turbine
+  "RTI-Turbine-B": { url: `${POLY}/e9fc0901-7600-48f4-881d-b546f3df4cec.glb`, sizeMb: 0.03 }, // Voith — Generator
+  "RTI-Turbine-C": { url: `${POLY}/e81145eb-091e-4803-9523-8611bd7e24e4.glb`, sizeMb: 0.57 }, // GE Vernova — Large Electric Generator
+  "RTI-Turbine-D": { url: `${POLY}/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb`, sizeMb: 2.76 }, // Toshiba — Space engine
+  "RTI-Turbine-E": { url: `${POLY}/e6b02958-8f16-423e-8322-036b5379ef0b.glb`, sizeMb: 0.02 }, // Hitachi Energy — Wind turbine
+}
+// equipmentId -> { manufacturer, model } derived from the STID equipment table (NB01).
+const TURBINE_MAKE: Record<string, { mfr: string; model: keyof typeof TURBINE_MODEL_GLB }> = {
+  EQUIP_RTI_T001: { mfr: "Andritz", model: "RTI-Turbine-A" }, EQUIP_RTI_T002: { mfr: "Voith", model: "RTI-Turbine-B" },
+  EQUIP_RTI_T003: { mfr: "GE Vernova", model: "RTI-Turbine-C" }, EQUIP_RTI_T004: { mfr: "Toshiba", model: "RTI-Turbine-D" },
+  EQUIP_RTI_T005: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" }, EQUIP_RTI_T006: { mfr: "Andritz", model: "RTI-Turbine-A" },
+  EQUIP_RTI_T007: { mfr: "Voith", model: "RTI-Turbine-B" }, EQUIP_RTI_T008: { mfr: "GE Vernova", model: "RTI-Turbine-C" },
+  EQUIP_RTI_T009: { mfr: "Toshiba", model: "RTI-Turbine-D" }, EQUIP_RTI_T010: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" },
+  EQUIP_RTI_T011: { mfr: "Andritz", model: "RTI-Turbine-A" }, EQUIP_RTI_T012: { mfr: "Voith", model: "RTI-Turbine-B" },
+  EQUIP_RTI_T013: { mfr: "GE Vernova", model: "RTI-Turbine-C" }, EQUIP_RTI_T014: { mfr: "Toshiba", model: "RTI-Turbine-D" },
+  EQUIP_RTI_T015: { mfr: "Hitachi Energy", model: "RTI-Turbine-E" },
+}
+export const seedAsset3DModels: SeedAsset3DModel[] = Object.entries(TURBINE_MAKE).map(([equipmentId, { mfr, model }], i) => {
+  const glb = TURBINE_MODEL_GLB[model]
+  const tag = equipmentId.replace("EQUIP_RTI_", "")
+  return {
+    equipmentId,
+    modelName: `${mfr} ${model} twin — ${tag}`,
+    format: "GLB",
+    modelUrl: glb.url,
+    fileSizeMb: glb.sizeMb,
+    version: `v1.${i + 1}`,
+    updatedAt: `2026-07-${String(11 + i).padStart(2, "0")}T12:00:00`,
+  }
+})
+

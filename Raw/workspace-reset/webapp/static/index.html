@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Initialize Your Fabric Demo</title>
+<style>
+  :root {
+    --bg:#0b1020; --bg2:#0e1533; --card:rgba(23,32,58,.72); --card-border:rgba(148,163,184,.14);
+    --text:#e7ecff; --muted:#9aa7c7; --field:#0b1226; --border:#2a375c;
+    --primary:#3b82f6; --primary2:#22d3ee; --violet:#8b5cf6;
+    --destructive:#ef4444; --destructive2:#f97316; --ok:#34d399; --err:#fb7185; --warn:#fbbf24;
+    --radius:16px; --shadow:0 18px 48px -20px rgba(0,0,0,.75);
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    margin:0; min-height:100vh; color:var(--text);
+    font-family:"Segoe UI Variable","Segoe UI",Inter,system-ui,-apple-system,sans-serif;
+    background:
+      radial-gradient(1100px 620px at 10% -12%, rgba(59,130,246,.20), transparent 60%),
+      radial-gradient(900px 520px at 102% -4%, rgba(139,92,246,.18), transparent 55%),
+      radial-gradient(820px 620px at 50% 120%, rgba(34,211,238,.12), transparent 60%),
+      linear-gradient(180deg,var(--bg),var(--bg2));
+    background-attachment:fixed;
+  }
+  .page { max-width:1180px; margin:0 auto; padding:2.2rem 1.25rem 3rem; }
+  code { background:rgba(148,163,184,.16); padding:.12em .42em; border-radius:6px; font-size:.9em; }
+
+  /* header */
+  .top { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:2rem; }
+  .brand { display:flex; align-items:center; gap:.95rem; }
+  .brand > div { min-width:0; }
+  .logo { width:48px; height:48px; border-radius:14px; display:grid; place-items:center; color:#fff; flex:0 0 auto;
+    background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 10px 26px -8px rgba(99,102,241,.7); }
+  .logo svg { width:25px; height:25px; }
+  h1 { margin:0; font-size:1.62rem; font-weight:750; letter-spacing:-.02em; line-height:1.1;
+    background:linear-gradient(92deg,#ffffff,#bcd0ff 42%,#7fe6ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--muted); margin:.28rem 0 0; font-size:.9rem; }
+  .cluster { display:flex; align-items:center; gap:.75rem; }
+  .badge { display:inline-flex; align-items:center; gap:.45rem; font-size:.72rem; font-weight:650; color:#a7f3d0;
+    background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.28); padding:.34rem .66rem; border-radius:999px; letter-spacing:.02em; }
+  .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)} 70%{box-shadow:0 0 0 7px rgba(52,211,153,0)} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0)} }
+
+  /* cards */
+  .card { position:relative; background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius);
+    padding:1.5rem 1.6rem 1.7rem; margin-bottom:1.5rem; backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%);
+    box-shadow:var(--shadow); transition:transform .25s ease, border-color .25s ease; }
+  .card:hover { transform:translateY(-3px); border-color:rgba(148,163,184,.3); }
+  .card::before { content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; opacity:.6;
+    background:linear-gradient(135deg,rgba(59,130,246,.6),transparent 42%,transparent 60%,rgba(139,92,246,.45));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none; }
+  .card.danger { background:linear-gradient(180deg,rgba(66,26,30,.72),rgba(38,18,26,.72)); }
+  .card.danger::before { background:linear-gradient(135deg,rgba(239,68,68,.6),transparent 45%,transparent 58%,rgba(249,115,22,.45)); }
+  .card-head { display:flex; align-items:center; gap:.7rem; }
+  .card-head .ico { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; flex:0 0 auto;
+    background:rgba(59,130,246,.15); color:#9cc4ff; }
+  .card.danger .card-head .ico { background:rgba(239,68,68,.16); color:#fda4a4; }
+  .card-head .ico svg { width:19px; height:19px; }
+  .card h2 { margin:0; font-size:1.12rem; font-weight:680; letter-spacing:-.01em; }
+  .card .hint { color:var(--muted); font-size:.82rem; margin:.35rem 0 1.2rem calc(34px + .7rem); }
+
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:1.05rem 1.15rem; }
+  label { display:flex; flex-direction:column; font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); gap:.42rem; }
+  label.check { flex-direction:row; align-items:center; gap:.6rem; color:var(--text); text-transform:none; letter-spacing:normal; font-weight:500; font-size:.9rem; }
+  #patNote { text-transform:none; letter-spacing:normal; font-weight:500; color:#7c8ab0; }
+  input[type=text],input[type=password],input:not([type]) { background:var(--field); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:.62rem .78rem; font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal;
+    width:100%; min-width:0;
+    transition:border-color .15s, box-shadow .15s, background .15s; }
+  input::placeholder { color:#5c6a90; }
+  input:hover:not(:disabled) { border-color:#3a4a7c; }
+  input:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); background:#0c1531; }
+  input:disabled { opacity:.45; cursor:not-allowed; }
+  input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary); }
+  .card.danger input[type=checkbox] { accent-color:var(--destructive); }
+
+  /* buttons */
+  button { margin-top:1.4rem; border:none; border-radius:11px; padding:.72rem 1.35rem; font-size:.92rem; font-weight:670; color:#fff;
+    cursor:pointer; letter-spacing:.01em; transition:transform .12s, box-shadow .2s, filter .2s; }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:linear-gradient(135deg,#3b82f6,#2563eb); box-shadow:0 10px 26px -10px rgba(59,130,246,.85); }
+  button.primary:not(:disabled):hover { filter:brightness(1.08); box-shadow:0 12px 30px -10px rgba(59,130,246,.95); }
+  button.destructive { background:linear-gradient(135deg,var(--destructive),#dc2626); box-shadow:0 10px 26px -10px rgba(239,68,68,.85); }
+  button.destructive:not(:disabled):hover { filter:brightness(1.08); }
+  button.ghost { margin-top:0; background:rgba(148,163,184,.08); border:1px solid var(--border); color:var(--muted); font-weight:600;
+    padding:.5rem .95rem; font-size:.82rem; box-shadow:none; }
+  button.ghost:not(:disabled):hover { border-color:var(--primary); color:#fff; background:rgba(59,130,246,.14); }
+
+  /* connection test row */
+  .testrow { display:flex; align-items:center; gap:.75rem; margin-top:1rem; flex-wrap:wrap; }
+  .testresult { font-size:.8rem; font-weight:600; }
+  .testresult.running { color:var(--muted); }
+  .testresult.ok { color:var(--ok); }
+  .testresult.error { color:var(--destructive); }
+  #testPanel:empty { display:none; }
+
+  .notice { margin:1rem 0 1.15rem; padding:.85rem 1rem; border:1px solid rgba(251,191,36,.4); border-left:4px solid var(--warn);
+    border-radius:8px; background:rgba(251,191,36,.08); color:#fde68a; font-size:.8rem; line-height:1.55; }
+  .notice strong, .notice code { color:#fff; }
+  .notice ul { margin:.45rem 0 0; padding-left:1.15rem; }
+  .notice li + li { margin-top:.25rem; }
+
+  /* output + progress */
+  .output { margin:1.25rem 0 0; background:rgba(3,8,20,.78); border:1px solid var(--border); border-radius:12px; padding:.9rem 1rem;
+    font-family:"Cascadia Code",ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; line-height:1.55;
+    white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; }
+  .output.muted { color:var(--muted); } .output.running { color:#fcd34d; border-color:rgba(251,191,36,.35); }
+  .output.ok { border-color:rgba(52,211,153,.45); } .output.error { border-color:rgba(251,113,133,.5); color:#fecaca; }
+  .output.warn { border-color:rgba(251,191,36,.4); color:#fde68a; }
+  .output::-webkit-scrollbar { width:10px; height:10px; }
+  .output::-webkit-scrollbar-thumb { background:#2a375c; border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+  .progress { margin-top:1.35rem; }
+  .progress-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:.5rem; font-size:.9rem; font-weight:640; }
+  .status { display:inline-flex; align-items:center; gap:.45rem; }
+  .status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+  .status.running { color:var(--warn); } .status.ok { color:var(--ok); } .status.error { color:var(--err); }
+  .status.warn { color:var(--warn); }
+  .pct { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:750; }
+  .meta { display:inline-flex; align-items:baseline; gap:.7rem; }
+  .elapsed { color:var(--muted); font-variant-numeric:tabular-nums; font-weight:600; font-size:.82rem; letter-spacing:.02em; }
+  .elapsed::before { content:"\23F1"; margin-right:.28rem; opacity:.75; font-size:.86em; }
+  .bar { height:10px; background:rgba(3,8,20,.85); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+  .bar .fill { height:100%; width:0; border-radius:999px; transition:width .5s cubic-bezier(.4,0,.2,1); background:var(--primary); }
+  .bar .fill.running { background:linear-gradient(90deg,var(--primary),var(--primary2),var(--violet),var(--primary)); background-size:300% 100%; animation:flow 2.2s linear infinite; }
+  .bar .fill.ok { background:linear-gradient(90deg,var(--ok),var(--primary2)); }
+  .bar .fill.error { background:linear-gradient(90deg,var(--destructive),var(--destructive2)); }
+  .bar .fill.warn { background:linear-gradient(90deg,var(--warn),#f59e0b); }
+  @keyframes flow { to { background-position:300% 0; } }
+  .phases { list-style:none; display:flex; flex-wrap:wrap; gap:.45rem; padding:.95rem 0 0; margin:0; font-size:.75rem; }
+  .phases li { display:flex; align-items:center; gap:.35rem; color:var(--muted); background:rgba(148,163,184,.07);
+    border:1px solid var(--border); padding:.3rem .62rem; border-radius:999px; transition:.2s; }
+  .phases li::before { content:"\25CB"; font-size:.72em; }
+  .phases li.done { color:var(--ok); border-color:rgba(52,211,153,.35); background:rgba(52,211,153,.09); }
+  .phases li.done::before { content:"\2713"; }
+  .phases li.active { color:#0b1020; font-weight:750; background:linear-gradient(135deg,var(--warn),#f59e0b); border-color:transparent; }
+  .phases li.active::before { content:"\25D0"; }
+
+  /* shell: left sidebar + content pane */
+  .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
+  .side { position:sticky; top:1.4rem; display:flex; flex-direction:column; gap:1.15rem; }
+  .side, .main { min-width:0; }
+  .side .brand { align-items:flex-start; margin-bottom:.15rem; }
+  .side-card { background:var(--card); border:1px solid var(--card-border); border-radius:14px; padding:1rem 1.05rem;
+    backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%); box-shadow:var(--shadow);
+    display:flex; flex-direction:column; gap:.85rem; }
+  .idlabel { display:flex; align-items:center; gap:.5rem; font-size:.68rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--muted); }
+  .idlabel svg { width:16px; height:16px; }
+  .idfield { display:flex; flex-direction:column; gap:.34rem; }
+  .idfield span { font-size:.62rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+
+  /* signed-in user chip (from the az login session) */
+  .userchip { display:flex; align-items:center; gap:.6rem; padding:.5rem .65rem; border-radius:12px;
+    background:var(--card); border:1px solid var(--card-border); box-shadow:var(--shadow); }
+  .userchip .avatar { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; flex:0 0 auto;
+    font-size:.78rem; font-weight:750; color:#fff; background:linear-gradient(135deg,var(--primary),var(--violet)); }
+  .userchip .uinfo { display:flex; flex-direction:column; min-width:0; line-height:1.25; }
+  .userchip .uname { font-size:.8rem; font-weight:650; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .userchip .usub { font-size:.66rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .userchip.warn { border-color:rgba(251,191,36,.42); background:rgba(251,191,36,.08); }
+  .userchip.warn .avatar { background:linear-gradient(135deg,var(--warn),#f59e0b); color:#0b1020; }
+  .userchip .chipbtn { margin-left:auto; flex:0 0 auto; font-size:.68rem; font-weight:650; color:var(--text);
+    background:rgba(59,130,246,.16); border:1px solid rgba(59,130,246,.42); border-radius:999px;
+    padding:.28rem .6rem; cursor:pointer; white-space:nowrap; transition:background .15s, border-color .15s; }
+  .userchip .chipbtn:hover { background:rgba(59,130,246,.28); border-color:var(--primary); }
+  .userchip .chipbtn:disabled { opacity:.55; cursor:default; }
+  .userchip.warn .chipbtn { background:rgba(251,191,36,.18); border-color:rgba(251,191,36,.5); color:#fde68a; }
+  .userchip.warn .chipbtn:hover { background:rgba(251,191,36,.3); }
+  .loginpanel { margin-top:-.2rem; }
+
+  /* target card: clearly a form, not part of the nav below it */
+  .side-card.target { border-color:rgba(59,130,246,.22); }
+  .side-card .cardcap { font-size:.66rem; color:#7c8ab0; font-weight:400; text-transform:none; letter-spacing:normal;
+    margin:-.5rem 0 .1rem; line-height:1.4; }
+
+  /* vertical list nav — flat, browser-style grouped tabs */
+  .nav { display:flex; flex-direction:column; gap:.16rem; }
+  .nav-group { display:flex; align-items:center; gap:.5rem; padding:.15rem .3rem .4rem; font-size:.63rem; font-weight:750;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+  .nav-group .tag { width:11px; height:11px; border-radius:3px; flex:0 0 auto;
+    background:linear-gradient(135deg,var(--primary),var(--violet)); box-shadow:0 0 0 1px rgba(148,163,184,.18); }
+  .tab { margin:0; width:100%; justify-content:flex-start; background:transparent; border:1px solid transparent;
+    color:var(--muted); font-weight:600; font-size:.9rem; padding:.52rem .7rem; border-radius:9px;
+    display:inline-flex; align-items:center; gap:.62rem; box-shadow:none; position:relative; transition:background .15s, color .15s, border-color .15s; }
+  .tab svg { width:17px; height:17px; flex:0 0 auto; opacity:.85; }
+  .tab::before { content:""; position:absolute; left:0; top:50%; transform:translateY(-50%); width:3px; height:0;
+    border-radius:0 3px 3px 0; background:var(--primary); transition:height .18s ease; }
+  .tab:not(:disabled):hover { color:#e7ecff; background:rgba(148,163,184,.08); }
+  .tab.active { color:#fff; background:rgba(59,130,246,.14); border-color:rgba(59,130,246,.28); }
+  .tab.active svg { opacity:1; }
+  .tab.active::before { height:56%; }
+  .tab.run:not(.active):hover { background:rgba(139,92,246,.1); }
+  .tab.run.active { color:#fff; background:rgba(139,92,246,.15); border-color:rgba(139,92,246,.3); }
+  .tab.run.active::before { background:var(--violet); }
+  .tab.deploy:not(.active):hover { background:rgba(52,211,153,.1); }
+  .tab.deploy.active { color:#fff; background:rgba(52,211,153,.13); border-color:rgba(52,211,153,.3); }
+  .tab.deploy.active::before { background:var(--ok); }
+  .tab.danger:not(.active):hover { background:rgba(239,68,68,.1); }
+  .tab.danger.active { color:#fff; background:rgba(239,68,68,.15); border-color:rgba(239,68,68,.3); }
+  .tab.danger.active::before { background:var(--destructive); }
+
+  /* pipeline parameter fields (dynamically rendered) */
+  .params { display:grid; grid-template-columns:repeat(2,1fr); gap:1.15rem 1.2rem; }
+  .param { display:flex; flex-direction:column; gap:.4rem; }
+  .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
+  .param input { width:100%; }
+  .param.wide { grid-column:1 / -1; }
+
+  .side-foot { display:flex; flex-direction:column; gap:.65rem; align-items:stretch; margin-top:.1rem; }
+  .side-foot .badge { align-self:flex-start; }
+  .side-foot button.ghost { width:100%; justify-content:center; display:inline-flex; }
+  .version-stamp { display:flex; flex-direction:column; align-items:flex-end; gap:.12rem; margin-top:.15rem;
+    color:var(--muted); font-size:.66rem; line-height:1.3; font-variant-numeric:tabular-nums; }
+  .version-stamp strong { color:var(--text); font-size:.72rem; }
+
+  /* panes */
+  .pane { display:none; }
+  .pane.active { display:block; animation:fade .25s ease; }
+  .pane .card { margin-bottom:0; }
+  @keyframes fade { from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+
+  .foot { text-align:center; color:var(--muted); font-size:.76rem; margin-top:2.2rem; opacity:.75; }
+  .foot code { font-size:.85em; }
+
+  @media (max-width:900px) {
+    .shell { grid-template-columns:1fr; }
+    .side { position:static; }
+  }
+  @media (max-width:640px) {
+    .grid { grid-template-columns:1fr; }
+    .params { grid-template-columns:1fr; }
+    .page { padding:1.6rem 1rem 2.5rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="shell">
+    <aside class="side">
+      <div class="brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.6 12.6a.6.6 0 0 0 .47.98H11l-1 8.4 8.4-11.06a.6.6 0 0 0-.48-.96H12l1-8Z"/></svg>
+        </div>
+        <div>
+          <h1>Initialize Your Fabric Demo</h1>
+          <p class="sub">Sync a workspace from GitHub &amp; clear its items &mdash; powered by your <code>az login</code> session.</p>
+        </div>
+      </div>
+
+      <div id="userChip" class="userchip" title="Signed in via az login">
+        <span class="avatar" id="userAvatar">&hellip;</span>
+        <span class="uinfo">
+          <span class="uname" id="userName">Checking sign-in&hellip;</span>
+          <span class="usub" id="userSub"></span>
+        </span>
+        <button id="signInBtn" class="chipbtn" type="button" hidden>Sign in</button>
+      </div>
+      <div id="loginPanel" class="loginpanel" hidden></div>
+
+      <div class="side-card target">
+        <span class="idlabel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.4"/><path d="M12 1.5V5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg> Target workspace</span>
+        <p class="cardcap">Tenant &amp; workspace the actions below run against.</p>
+        <label class="idfield"><span>Tenant id or domain</span>
+          <input id="tenant" type="text" placeholder="contoso.onmicrosoft.com or GUID" /></label>
+        <label class="idfield"><span>Workspace (GUID or name)</span>
+          <input id="workspace" type="text" placeholder="ws-… or a display name" /></label>
+      </div>
+
+      <nav class="nav" role="tablist">
+        <div class="nav-group"><span class="tag"></span> Actions</div>
+        <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
+        <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
+        <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
+        <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
+      </nav>
+
+      <div class="side-foot">
+        <span class="badge"><span class="dot"></span> localhost&nbsp;&middot;&nbsp;127.0.0.1</span>
+        <button id="restartBtn" class="ghost" title="Relaunch the local server to pick up code changes">&#x21bb; Restart server</button>
+        <button id="stopBtn" class="ghost" title="Stop the local server (it runs in the background)">&#x25A0; Stop server</button>
+        <div id="versionStamp" class="version-stamp" title="Loading version metadata">
+          <strong id="appVersion">Version unavailable</strong>
+          <time id="appTimestamp"></time>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+
+  <section id="paneSync" class="pane active">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
+        <h2>Sync workspace from GitHub</h2>
+      </div>
+      <p class="hint">Imports every item from a branch, then disconnects. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo (it tests the moment you tick it); otherwise a temporary connection is created from your PAT and removed afterward.</p>
+      <div class="grid">
+        <label>Repository (owner/repo or URL)
+          <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
+        <label>Branch
+          <input id="branch" type="text" value="main" /></label>
+        <label>Directory (workspace root)
+          <input id="directory" type="text" value="/" /></label>
+        <label class="check"><input id="reuseConn" type="checkbox" checked /> Reuse existing connection</label>
+        <label class="check"><input id="keepConnected" type="checkbox" /> Keep connected after sync</label>
+        <label id="patWrap" style="display:none">GitHub PAT <span id="patNote"></span>
+          <input id="pat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
+      </div>
+      <div class="testrow">
+        <button id="testBtn" type="button" class="ghost" disabled>Test connection</button>
+        <span id="connTestResult" class="testresult"></span>
+      </div>
+      <div id="testPanel"></div>
+      <button id="syncBtn" class="primary" disabled>Run sync</button>
+      <div id="syncPanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="panePipeline" class="pane">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(139,92,246,.16);color:#c4b5fd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg></span>
+        <h2>Run the <code>01_Pipe_Setup</code> pipeline</h2>
+      </div>
+      <p class="hint">Kicks off the setup pipeline on demand and waits for it to finish. Fields below are the pipeline's parameters &mdash; they come pre-filled with sensible defaults; edit any you need, then run. Blank fields fall back to the pipeline's own default.</p>
+      <div id="pipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
+      <button id="pipelineBtn" class="primary" disabled style="background:linear-gradient(135deg,var(--violet),#6d28d9);box-shadow:0 10px 26px -10px rgba(139,92,246,.85)">Run pipeline</button>
+      <div id="pipelinePanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneDeploy" class="pane">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
+        <h2>Deploy Hydro Operations app</h2>
+      </div>
+      <p class="hint">Restores the locked Node 24/Rayfin dependencies, then deploys the backend, database, and website. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <aside class="notice" aria-label="Browser sign-in setup">
+        <strong>Browser sign-in setup</strong>
+        <ul>
+          <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
+          <li>A tenant administrator may need to approve those permissions.</li>
+          <li>If approval is blocked, deployment still succeeds. The job shows a warning and the app works without sign-in or live data.</li>
+        </ul>
+        <strong>Next step if warned:</strong> send the app URL, SPA client ID, and warning to your
+        Entra administrator, then enter the approved client ID below and redeploy.
+        Technical details: <code>HydroOperationsApp/DEPLOY.md</code>.
+      </aside>
+      <div class="grid">
+        <label>SPA client id (optional)
+          <input id="deployClientId" type="text" placeholder="Auto-reuse or create Hydro Operations Fabric Client" /></label>
+      </div>
+      <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
+      <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneDelete" class="pane">
+    <div class="card danger">
+      <div class="card-head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg></span>
+        <h2>Delete all workspace items</h2>
+      </div>
+      <p class="hint">Removes every item in the workspace so you can redeploy cleanly. Destructive &mdash; keep dry run on until you're sure.</p>
+      <label class="check"><input id="dryRun" type="checkbox" checked /> Dry run (list only, delete nothing)</label>
+      <label id="confirmWrap" style="display:none">Type the workspace to confirm deletion
+        <input id="confirmText" type="text" placeholder="re-enter the workspace GUID or name" /></label>
+      <button id="deleteBtn" class="primary" disabled>List items (dry run)</button>
+      <div id="deletePanel"><pre class="output muted">Output will appear here.</pre></div>
+    </div>
+  </section>
+    </main>
+  </div>
+
+  <p class="foot">No build step &middot; secrets stay local &middot; run with <code>python webapp\server.py</code></p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function postJson(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function renderPanel(el, job) {
+  // Stamp start/end once so the elapsed clock ticks while running and freezes when done.
+  if (!job.startedAt) job.startedAt = Date.now();
+  if (job.status !== "running" && !job.endedAt) job.endedAt = Date.now();
+  const elapsed = formatElapsed((job.endedAt || Date.now()) - job.startedAt);
+  const statusCls = job.status === "succeeded" ? "ok"
+    : job.status === "failed" ? "error"
+    : job.status === "interrupted" ? "warn"
+    : "running";
+  const total = Math.max(1, (job.phases ? job.phases.length : 1) - 1);
+  const pct = job.status === "succeeded" ? 100 : Math.round(((job.phaseIndex || 0) / total) * 100);
+  const label = job.status === "running" ? ((job.phase || "Working") + "\u2026")
+    : job.status === "succeeded" ? "Succeeded"
+    : job.status === "interrupted" ? "Monitoring interrupted"
+    : "Failed";
+  const phases = (job.phases || []).map((p, i) => {
+    const cls = (job.status === "succeeded" || i < job.phaseIndex) ? "done"
+      : (i === job.phaseIndex && job.status === "running") ? "active" : "";
+    return `<li class="${cls}">${p}</li>`;
+  }).join("");
+  const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
+    ? "\n\nexit code: " + job.returncode : "";
+  const err = job.error ? "\n[error] " + job.error : "";
+  // Keep the log pinned to the newest line unless the user has scrolled up.
+  const prevOut = el.querySelector(".output");
+  const stick = !prevOut || (prevOut.scrollHeight - prevOut.scrollTop - prevOut.clientHeight < 40);
+  el.innerHTML =
+    `<div class="progress">
+       <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
+       <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
+       ${phases ? `<ol class="phases">${phases}</ol>` : ""}
+       <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
+     </div>`;
+  if (stick) {
+    const out = el.querySelector(".output");
+    if (out) out.scrollTop = out.scrollHeight;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// mm:ss, or h:mm:ss once a job runs past an hour.
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return hh ? `${hh}:${p(mm)}:${p(ss)}` : `${p(mm)}:${p(ss)}`;
+}
+
+// Starts a job then polls until done, rendering progress into panelEl.
+async function runJob(startUrl, body, panelEl, onDone) {
+  const job = { status: "running", phases: [], phaseIndex: 0, phase: "", lines: [], returncode: null };
+  renderPanel(panelEl, job);
+  const started = await postJson(startUrl, body);
+  if (!started.ok || !started.data.jobId) {
+    job.status = "failed"; job.error = started.data.error || ("HTTP " + started.status);
+    renderPanel(panelEl, job); if (onDone) onDone(job); return;
+  }
+  const jobId = started.data.jobId;
+  let since = 0;
+  let misses = 0;
+  // A lost job / unreachable server means we stopped watching -- NOT that the task
+  // failed. Fabric runs are server-side and keep going; say so instead of "Failed".
+  const interrupted = (msg) => {
+    job.status = "interrupted"; job.error = msg;
+    renderPanel(panelEl, job); if (onDone) onDone(job);
+  };
+  const poll = async () => {
+    let r;
+    try { r = await fetch(`/api/jobs/${jobId}?since=${since}`); }
+    catch (e) {
+      // The local server may be briefly unreachable (e.g. restarting) -- retry before giving up.
+      if (++misses <= 4) { setTimeout(poll, 1000); return; }
+      interrupted("Lost contact with the local server. The task may still be running in Fabric \u2014 check the Monitoring hub.");
+      return;
+    }
+    if (r.status === 404) {
+      interrupted("The local server no longer has this run (it may have restarted). The pipeline may still be running or already finished in Fabric \u2014 check the Monitoring hub.");
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { job.status = "failed"; job.error = j.error || ("HTTP " + r.status); renderPanel(panelEl, job); if (onDone) onDone(job); return; }
+    misses = 0;
+    since = j.nextSince != null ? j.nextSince : since;
+    job.status = j.status; job.phases = j.phases || job.phases;
+    job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
+    job.phase = j.phase || job.phase; job.returncode = j.returncode;
+    if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
+    renderPanel(panelEl, job);
+    if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
+  };
+  poll();
+}
+
+// ---- validation + wiring ----
+// Result of the most recent "Test connection" run: null (untested), "ok", or "fail".
+let connTestState = null;
+
+function setTestResult(cls, text) {
+  const el = $("connTestResult");
+  el.className = "testresult" + (cls ? " " + cls : "");
+  el.textContent = text || "";
+}
+const reuseChecked = () => $("reuseConn").checked;
+const connValue = () => (reuseChecked() ? "yes" : "");
+function baseValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
+}
+function syncValid() {
+  if (!baseValid()) return false;
+  // Reuse (untested or verified) needs no PAT; otherwise a PAT creates the connection.
+  if (reuseChecked() && connTestState !== "fail") return true;
+  return !!$("pat").value.trim();
+}
+function testValid() {
+  return baseValid() && (reuseChecked() || $("pat").value.trim());
+}
+function deleteValid() {
+  const dry = $("dryRun").checked;
+  return $("tenant").value.trim() && $("workspace").value.trim() &&
+    (dry || $("confirmText").value.trim().toLowerCase() === $("workspace").value.trim().toLowerCase());
+}
+function deployValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim();
+}
+function refresh() {
+  // The PAT only exists to CREATE a new connection, so reveal it only when one is
+  // needed: reuse is off (temporary connection) or a reuse test just failed.
+  const needPat = !reuseChecked() || connTestState === "fail";
+  $("patWrap").style.display = needPat ? "flex" : "none";
+  $("pat").disabled = false;
+  if (connTestState === "fail") {
+    $("patNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
+  } else if (needPat) {
+    $("patNote").textContent = "\u2014 needed to create a temporary connection";
+  } else {
+    $("patNote").textContent = "";
+  }
+  const dry = $("dryRun").checked;
+  $("confirmWrap").style.display = dry ? "none" : "flex";
+  $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
+  $("deleteBtn").className = dry ? "primary" : "destructive";
+  $("syncBtn").disabled = !syncValid();
+  $("testBtn").disabled = !testValid();
+  $("deleteBtn").disabled = !deleteValid();
+  $("deployBtn").disabled = !deployValid();
+  const pipeBtn = $("pipelineBtn");
+  if (pipeBtn) pipeBtn.disabled = !pipelineValid();
+}
+document.querySelectorAll("input").forEach((el) => el.addEventListener("input", refresh));
+document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventListener("change", refresh));
+// Any change to a connection-affecting field invalidates the previous test result.
+["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
+  $(id).addEventListener("input", () => { connTestState = null; setTestResult("", ""); }));
+
+let testing = false;
+async function runTest() {
+  if (testing || !testValid()) return;
+  testing = true;
+  $("testBtn").disabled = true;
+  connTestState = null;
+  setTestResult("running", "Testing\u2026");
+  await runJob("/api/test-connection", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
+    connectionId: connValue(), pat: $("pat").value,
+  }, $("testPanel"), (job) => {
+    testing = false;
+    if (job && job.returncode === 0) {
+      connTestState = "ok";
+      setTestResult("ok", "\u2713 Connection verified \u2014 it can reach GitHub.");
+    } else {
+      connTestState = "fail";
+      setTestResult("error", "\u2717 Could not connect \u2014 enter a GitHub PAT below and test again.");
+      $("pat").focus();
+    }
+    refresh();
+  });
+}
+$("testBtn").addEventListener("click", runTest);
+// Auto-verify a saved connection once we have enough to test it.
+function maybeAutoTest() {
+  if (reuseChecked() && connTestState === null && !testing && testValid()) runTest();
+}
+// Ticking "Reuse existing connection" auto-verifies the saved connection.
+$("reuseConn").addEventListener("change", () => {
+  connTestState = null; setTestResult("", "");
+  refresh();
+  if (reuseChecked()) {
+    if (testValid()) runTest();
+    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
+  }
+});
+// Finishing an edit (blur) on an identity/repo field re-runs the reuse test.
+["tenant", "workspace", "repository", "branch", "directory"].forEach((id) =>
+  $(id).addEventListener("change", maybeAutoTest));
+
+$("syncBtn").addEventListener("click", async () => {
+  $("syncBtn").disabled = true;
+  await runJob("/api/sync", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("repository").value, branch: $("branch").value, directory: $("directory").value,
+    connectionId: connValue(), keepConnected: $("keepConnected").checked, pat: $("pat").value,
+  }, $("syncPanel"), () => { $("pat").value = ""; refresh(); });
+});
+
+$("deleteBtn").addEventListener("click", async () => {
+  $("deleteBtn").disabled = true;
+  await runJob("/api/delete", {
+    tenant: $("tenant").value, workspace: $("workspace").value, dryRun: $("dryRun").checked,
+  }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
+});
+
+$("deployBtn").addEventListener("click", async () => {
+  $("deployBtn").disabled = true;
+  await runJob("/api/deploy-app", {
+    tenant: $("tenant").value,
+    workspace: $("workspace").value,
+    clientId: $("deployClientId").value,
+  }, $("deployPanel"), () => refresh());
+});
+
+$("restartBtn").addEventListener("click", async () => {
+  if (!confirm("Restart the local server to pick up code changes?")) return;
+  const btn = $("restartBtn");
+  btn.disabled = true; btn.textContent = "Restarting\u2026";
+  const { ok, status, data } = await postJson("/api/restart", {});
+  if (!ok) { alert(data.error || ("restart failed (HTTP " + status + ")")); btn.disabled = false; btn.textContent = "Restart server"; return; }
+  const start = Date.now();
+  const waitForServer = async () => {
+    try { await fetch("/api/jobs/__ping__", { cache: "no-store" }); location.reload(); return; } catch (e) {}
+    if (Date.now() - start > 15000) { btn.textContent = "Timed out \u2014 reload manually"; return; }
+    setTimeout(waitForServer, 700);
+  };
+  setTimeout(waitForServer, 1000);
+});
+
+$("stopBtn").addEventListener("click", async () => {
+  if (!confirm("Stop the local server? The page will stop working until you launch it again.")) return;
+  const btn = $("stopBtn");
+  btn.disabled = true; btn.textContent = "Stopping\u2026";
+  const { ok, status, data } = await postJson("/api/shutdown", {});
+  if (!ok) { alert(data.error || ("stop failed (HTTP " + status + ")")); btn.disabled = false; btn.textContent = "\u25A0 Stop server"; return; }
+  const start = Date.now();
+  const waitForStop = async () => {
+    try { await fetch("/api/jobs/__ping__", { cache: "no-store" }); } catch (e) {
+      document.body.innerHTML = "<div style='display:flex;height:100vh;align-items:center;justify-content:center;font-family:system-ui;color:#9aa7c7;text-align:center;padding:2rem'>" +
+        "<div><h2 style='color:#e6edf7'>Server stopped</h2><p>You can close this tab. Run the launcher again to start it back up.</p></div></div>";
+      return;
+    }
+    if (Date.now() - start > 8000) { btn.disabled = false; btn.textContent = "\u25A0 Stop server"; alert("The server is still responding \u2014 try again."); return; }
+    setTimeout(waitForStop, 500);
+  };
+  setTimeout(waitForStop, 600);
+});
+
+// ---- tab switching ----
+function activateTab(name) {
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $("paneSync").classList.toggle("active", name === "sync");
+  $("panePipeline").classList.toggle("active", name === "pipeline");
+  $("paneDeploy").classList.toggle("active", name === "deploy");
+  $("paneDelete").classList.toggle("active", name === "delete");
+}
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => activateTab(b.dataset.tab)));
+
+// ---- pipeline parameters ----
+// The parameter spec (labels, help, defaults, types) is served by the backend so
+// the form stays in sync with the pipeline without duplicating it in the page.
+let pipelineSpec = [];
+async function loadPipelineParams() {
+  try {
+    const res = await fetch("/api/pipeline-params");
+    const data = await res.json();
+    pipelineSpec = data.parameters || [];
+  } catch (e) {
+    $("pipelineFields").innerHTML = `<p class="phelp">Couldn't load parameters: ${escapeHtml(String(e))}</p>`;
+    return;
+  }
+  $("pipelineFields").innerHTML = pipelineSpec.map((p) => {
+    // A couple of long-value fields span the full width for readability.
+    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user");
+    const numeric = p.type === "int";
+    return `<div class="param${wide ? " wide" : ""}">
+      <span class="plabel">${escapeHtml(p.label)}</span>
+      <span class="phelp">${escapeHtml(p.help)}</span>
+      <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
+    </div>`;
+  }).join("");
+  // Re-run validation whenever a pipeline field changes.
+  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) el.addEventListener("input", refresh); });
+  refresh();
+}
+function collectPipelineParams() {
+  const out = {};
+  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) out[p.name] = el.value; });
+  return out;
+}
+function pipelineValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim();
+}
+
+$("pipelineBtn").addEventListener("click", async () => {
+  $("pipelineBtn").disabled = true;
+  await runJob("/api/run-pipeline", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    pipeline: "01_Pipe_Setup", parameters: collectPipelineParams(),
+  }, $("pipelinePanel"), () => refresh());
+});
+
+// ---- signed-in identity (az login) ----
+function initialsFor(name) {
+  const s = String(name || "").trim();
+  if (!s) return "?";
+  const at = s.split("@")[0];
+  const parts = at.split(/[.\-_ ]+/).filter(Boolean);
+  const a = (parts[0] || "")[0] || "";
+  const b = (parts[1] || "")[0] || "";
+  return ((a + b) || at.slice(0, 2) || "?").toUpperCase();
+}
+async function loadWhoAmI() {
+  const chip = $("userChip"), name = $("userName"), sub = $("userSub"), av = $("userAvatar"), btn = $("signInBtn");
+  try {
+    const res = await fetch("/api/whoami");
+    const d = await res.json();
+    if (d.signedIn) {
+      chip.classList.remove("warn");
+      name.textContent = d.user || "Signed in";
+      sub.textContent = d.subscription ? d.subscription : (d.tenantId || "");
+      chip.title = `Signed in as ${d.user || "?"}\nTenant ${d.tenantId || "?"}` + (d.subscription ? `\nSubscription ${d.subscription}` : "");
+      av.textContent = initialsFor(d.user);
+      btn.textContent = "Switch"; btn.title = "Sign in as a different account"; btn.hidden = false;
+      // Prefill the tenant target from the active session when the field is empty.
+      if (!$("tenant").value.trim() && d.tenantId) { $("tenant").value = d.tenantId; refresh(); maybeAutoTest(); }
+    } else {
+      chip.classList.add("warn");
+      name.textContent = "Not signed in";
+      sub.textContent = "sign in to continue";
+      chip.title = d.detail || d.error || "sign in required";
+      av.textContent = "!";
+      btn.textContent = "Sign in"; btn.title = "Sign in with Microsoft"; btn.hidden = false;
+    }
+  } catch (e) {
+    chip.classList.add("warn");
+    name.textContent = "Sign-in unknown"; sub.textContent = "couldn't reach az"; av.textContent = "!";
+    btn.textContent = "Sign in"; btn.hidden = false;
+  }
+}
+
+async function loadVersion() {
+  const stamp = $("versionStamp"), version = $("appVersion"), timestamp = $("appTimestamp");
+  try {
+    const res = await fetch("/api/version", { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const builtAt = new Date(data.timestamp);
+    version.textContent = data.version;
+    timestamp.textContent = Number.isNaN(builtAt.getTime()) ? data.timestamp : new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    }).format(builtAt);
+    stamp.title = `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
+  } catch (error) {
+    stamp.title = String(error);
+  }
+}
+
+// Browser-integrated Microsoft sign-in (opens the Entra account picker via az login).
+let loggingIn = false;
+async function signIn() {
+  if (loggingIn) return;
+  loggingIn = true;
+  const btn = $("signInBtn"), panel = $("loginPanel");
+  btn.disabled = true; panel.hidden = false;
+  // A specific tenant is optional; when set, sign in scoped to it, otherwise the
+  // account picker lets you choose any identity.
+  const tenant = $("tenant").value.trim();
+  await runJob("/api/login", { tenant }, panel, async (job) => {
+    loggingIn = false; btn.disabled = false;
+    await loadWhoAmI();
+    if (job && job.returncode === 0) setTimeout(() => { panel.hidden = true; }, 4000);
+  });
+}
+$("signInBtn").addEventListener("click", signIn);
+
+loadWhoAmI();
+loadVersion();
+loadPipelineParams();
+refresh();</script>
+</body>
+</html>

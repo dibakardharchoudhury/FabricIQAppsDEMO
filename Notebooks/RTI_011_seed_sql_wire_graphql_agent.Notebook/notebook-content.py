@@ -1,0 +1,1012 @@
+# Fabric notebook source
+
+# METADATA ********************
+
+# META {
+# META   "kernel_info": {
+# META     "name": "synapse_pyspark"
+# META   },
+# META   "dependencies": {
+# META     "lakehouse": {
+# META       "default_lakehouse": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf",
+# META       "default_lakehouse_name": "Energy_IQ_LakehouseRTI_V6",
+# META       "default_lakehouse_workspace_id": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+# META       "known_lakehouses": [
+# META         {
+# META           "id": "c42060fb-abbc-4fa1-ac87-ed0a5c460aaf"
+# META         }
+# META       ]
+# META     },
+# META     "environment": {}
+# META   }
+# META }
+
+# MARKDOWN ********************
+
+# # 11 — Seed the operational SQL DB, wire GraphQL, add SQL source to the Data Agent
+# 
+# This notebook runs **after** the Hydro Operations web app (Rayfin) is deployed and its
+# `hydro-operations` **Fabric SQL Database** item + tables exist. It is designed to be
+# triggered on demand — for example, from the web app's **Seed demo data** button via the Fabric
+# job API (`jobType=RunNotebook`) — and is fully **idempotent**, so repeated runs are safe.
+# 
+# It performs three best-effort steps (each is wrapped so a later step still runs if an
+# earlier one fails, and each prints a manual fallback):
+# 
+# 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
+#    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
+# 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse so the
+#    web app's STID panel has a programmatically provisioned endpoint.
+# 3. **Data Agent** — adds the `hydro-operations` SQL Database as a second data source on
+#    the published Data Agent (so the app's Copilot can answer operational questions) and
+#    **republishes** it. The ontology source built by RTI_009 is preserved.
+# 
+# Settings are read from / written back to `rti_demo_settings`.
+# 
+# > Keep `SEED_SQL` below in sync with `HydroOperationsApp/sql/seed-operational-data.sql`.
+# > Only the 5 tables the web app uses are seeded.
+
+
+# CELL ********************
+
+# =========================
+# CELL 0
+# Load shared settings written by RTI_001 / RTI_002 / RTI_009
+# =========================
+
+from pyspark.sql import functions as F
+
+settings_table_name = "rti_demo_settings"
+
+spark.catalog.clearCache()
+spark.sql(f"REFRESH TABLE {settings_table_name}")
+
+settings = {
+    row["setting_name"]: row["setting_value"]
+    for row in spark.read.table(settings_table_name).collect()
+}
+
+
+def first_setting(*names, required: bool = False, default: str = None):
+    """Return the first non-empty value among the given setting names."""
+    for name in names:
+        value = settings.get(name)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    if required:
+        raise RuntimeError(f"Missing required setting. Tried: {list(names)}")
+    return default
+
+
+workspace_id = first_setting("workspace_id", required=True)
+target_folder_id = first_setting("target_folder_id", default=None)
+
+# The Rayfin app publishes its operational store as a Fabric SQL Database item.
+sql_db_item_name = first_setting("operational_sql_db_name", "rayfin_app_name", default="hydro-operations")
+
+# STID GraphQL item over the Lakehouse (consumed by the web app's STID panel).
+graphql_api_name = first_setting("stid_graphql_name", default="Hydro_STID_API")
+lakehouse_id = first_setting("lakehouse_id", required=True)
+lakehouse_name = first_setting("lakehouse_name", default="Energy_IQ_LakehouseRTI_V6")
+
+# Published Data Agent created by RTI_009.
+data_agent_name = first_setting("data_agent_name", default="RTI_Demo_Agent_V6")
+data_agent_id = first_setting("data_agent_id", default=None)
+
+# Actor id stamped on seeded rows (any valid oid; defaults to the system/zero oid).
+seed_actor_oid = first_setting("seed_actor_oid", default="00000000-0000-0000-0000-000000000000")
+
+# Key Vault names/URIs for SPN auth (written by RTI_001).
+key_vault_uri = first_setting("key_vault_uri", required=True)
+key_vault_tenant_id_secret = first_setting("key_vault_tenant_id_secret", required=True)
+key_vault_client_id_secret = first_setting("key_vault_client_id_secret", required=True)
+key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret", required=True)
+
+print("✅ Settings loaded")
+print("   Workspace ID       :", workspace_id)
+print("   SQL Database item   :", sql_db_item_name)
+print("   GraphQL API name    :", graphql_api_name)
+print("   Lakehouse name      :", lakehouse_name)
+print("   Data Agent name     :", data_agent_name)
+print("   Data Agent id       :", data_agent_id or "(resolve by name)")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# =========================
+# CELL 1
+# Seed SQL -> create GraphQL -> add SQL source to the Data Agent -> republish
+# =========================
+
+import json
+import time
+import uuid
+import base64
+import struct
+from typing import Optional
+
+import requests
+import notebookutils  # Fabric notebook utility
+
+FABRIC_API_BASE = "https://api.fabric.microsoft.com"
+DATA_AGENT_ITEM_TYPE = "DataAgent"
+GRAPHQL_ITEM_TYPE = "GraphQLApi"
+
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 5
+LRO_POLL_INTERVAL_SECONDS = 5
+LRO_MAX_WAIT_SECONDS = 300
+
+DATASOURCE_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+    "definition/dataSource/1.0.0/schema.json"
+)
+STAGE_CONFIG_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
+    "definition/stageConfiguration/1.0.0/schema.json"
+)
+DRAFT_STAGE_CONFIG_PATH = "Files/Config/draft/stage_config.json"
+
+# A Fabric SQL Database is added to a Data Agent as a `sql_database` source. Verified against
+# the portal's published datasource.json: the part lives under a `sql-database-<name>` folder
+# and carries a nested schema→table→column tree. (A flat table list is accepted by the REST
+# updateDefinition but 404s when the agent tries to load the source at runtime.)
+SQL_DATASOURCE_TYPE = "sql_database"
+SQL_DATASOURCE_FOLDER = SQL_DATASOURCE_TYPE.replace("_", "-")  # "sql-database"
+SQL_DATASOURCE_PATH = f"Files/Config/draft/{SQL_DATASOURCE_FOLDER}-{sql_db_item_name}/datasource.json"
+SQL_SCHEMA_NAME = "dbo"
+
+# Only the 5 operational tables the web app actually uses.
+SQL_TABLES = [
+    ("WorkOrders",
+     "Maintenance work orders. Columns: id, workOrderNumber, equipmentId, instrumentId, "
+     "opcuaNodeId, title, description, priority (Critical/High/Medium/Low), "
+     "status (Draft/Planned/Scheduled/Ready/Approved/In progress/Completed), "
+     "assignedToOid, createdByOid, createdAt, dueAt, completedAt."),
+    ("MaintenanceNotifications",
+     "Condition/alarm notifications raised against equipment. Columns: id, equipmentId, "
+     "opcuaNodeId, summary, severity (Advisory/Warning/Critical), "
+     "status (Open/Acknowledged), reportedByOid, reportedAt."),
+    ("Inspections",
+     "Field/condition inspection records. Columns: id, equipmentId, opcuaNodeId, "
+     "inspectionType (VISUAL/THERMOGRAPHIC/VIBRATION/LUBRICATION), "
+     "result (PASS/ATTENTION/FAIL), findings, inspectorOid, inspectedAt, nextDueAt."),
+    ("SpareParts",
+     "Spare-part inventory for fleet readiness. Columns: id, partNumber, name, "
+     "category (BEARING/SEAL/SENSOR/VALVE/ELECTRICAL), equipmentType, quantityOnHand, "
+     "reorderLevel, storageLocation, unitCostUsd, lastRestockedAt."),
+    ("Asset3DModels",
+     "Digital-twin / 3D model registry per equipment. Columns: id, equipmentId, "
+     "modelName, format (GLB/IFC/OBJ/USDZ), modelUrl, thumbnailUrl, fileSizeMb, "
+     "version, updatedByOid, updatedAt."),
+]
+
+# --- STID GraphQL API binding over the Lakehouse SQL analytics endpoint ------
+# The web app (HydroOperationsApp) issues exactly this query, so the GraphQL API
+# must expose these three silver tables with these fields (identity-mapped to the
+# lakehouse columns). graphqlType == the generated query field name.
+GRAPHQL_DEFINITION_SCHEMA_URL = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/"
+    "definition/1.0.0/schema.json"
+)
+GRAPHQL_DEFINITION_PATH = "graphql-definition.json"
+GRAPHQL_OBJECTS = [
+    ("silver_facilities",
+     ["facility_id", "facility_name", "type", "country", "lat", "lon", "commissioned_date"]),
+    ("silver_equipment",
+     ["equipment_id", "facility_id", "system_id", "equipment_type_code", "equipment_type_name",
+      "tag", "manufacturer", "model", "criticality", "install_date", "status", "is_active"]),
+    ("silver_instruments",
+     ["opcua_node_id", "tag", "instrument_id", "equipment_id", "system_id", "facility_id",
+      "unit", "instrument_type", "is_active"]),
+]
+
+OPERATIONAL_INSTRUCTIONS_MARKER = "## Operational data (hydro-operations SQL)"
+OPERATIONAL_INSTRUCTIONS = (
+    f"\n\n{OPERATIONAL_INSTRUCTIONS_MARKER}\n"
+    "In addition to the telemetry ontology, a Fabric SQL Database "
+    f"('{sql_db_item_name}') holds the plant's operational records. Use it for questions "
+    "about work orders, maintenance notifications, inspections, spare-part inventory and "
+    "3D/digital-twin models. Every row is keyed to an asset by `equipmentId` "
+    "(e.g. `EQUIP_RTI_T001`) and, where relevant, `opcuaNodeId`. Join operational rows to "
+    "live telemetry / equipment context in the ontology using `equipmentId` / `opcuaNodeId`. "
+    "Examples: 'open critical work orders', 'assets with FAIL inspections', "
+    "'spare parts below reorder level', 'notifications in the last 24 hours'."
+)
+
+SQL_DS_INSTRUCTIONS = (
+    "Operational system-of-record for the hydro fleet (Fabric SQL Database). Prefer THIS source "
+    "for anything about maintenance and asset operations; use the ontology/KQL source for live "
+    "telemetry values. Tables (dbo schema):\n"
+    "- WorkOrders: planned/active maintenance. Filter status in "
+    "(Draft, Planned, Scheduled, Ready, Approved, 'In progress', Completed) and "
+    "priority in (Critical, High, Medium, Low); dueAt/completedAt are datetime2.\n"
+    "- MaintenanceNotifications: raised alerts. severity in (Advisory, Warning, Critical), "
+    "status in (Open, Acknowledged).\n"
+    "- Inspections: inspectionType in (VISUAL, THERMOGRAPHIC, VIBRATION, LUBRICATION), "
+    "result in (PASS, ATTENTION, FAIL); nextDueAt drives overdue checks.\n"
+    "- SpareParts: inventory; flag rows where quantityOnHand <= reorderLevel as below reorder; "
+    "category in (BEARING, SEAL, SENSOR, VALVE, ELECTRICAL).\n"
+    "- Asset3DModels: one digital-twin model per asset (modelUrl, format, version).\n"
+    "JOIN KEYS: equipmentId identifies the asset (e.g. 'EQUIP_RTI_T001') and matches the "
+    "ontology equipment/signal_master equipment_id; opcuaNodeId (e.g. 'ns=2;s=T001.vibration_a') "
+    "matches the ontology signal_master opcua_node_id, so operational rows can be correlated with "
+    "live readings. All timestamps are datetime2 (UTC). Do NOT invent columns beyond those listed."
+)
+
+# ---------------------------------------------------------------------------
+# Idempotent operational seed — keep in sync with
+# HydroOperationsApp/sql/seed-operational-data.sql.
+# ---------------------------------------------------------------------------
+SEED_SQL = r"""
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+
+DECLARE @ActorOid nvarchar(200) = '$(ActorOid)';
+IF @ActorOid = '$' + '(ActorOid)' OR NULLIF(@ActorOid, '') IS NULL
+    SET @ActorOid = '00000000-0000-0000-0000-000000000000';
+
+MERGE dbo.WorkOrders AS target
+USING (VALUES
+    ('10000000-0000-0000-0000-000000000001','WO-2841','EQUIP_RTI_T001','INST_T001_VIBRATION_A','ns=2;s=T001.vibration_a','Inspect guide bearing vibration','Inspect bearing, alignment, and lubrication after elevated vibration trend.','Critical','In progress',@ActorOid,@ActorOid,'2026-07-28T08:00:00','2026-08-01T16:00:00'),
+    ('10000000-0000-0000-0000-000000000002','WO-2836','EQUIP_RTI_T002','INST_T002_INLET_PRESSURE','ns=2;s=T002.inlet_pressure','Review inlet pressure variance','Validate transducer and compare against local gauge.','High','Scheduled',@ActorOid,@ActorOid,'2026-07-27T10:00:00','2026-08-03T12:00:00'),
+    ('10000000-0000-0000-0000-000000000003','WO-2829','EQUIP_RTI_T003','INST_T003_TURBINE_TEMP','ns=2;s=T003.turbine_temp','Inspect turbine cooling circuit','Check strainers, flow, and temperature sensor calibration.','Medium','Ready',NULL,@ActorOid,'2026-07-26T09:30:00','2026-08-05T12:00:00'),
+    ('10000000-0000-0000-0000-000000000004','WO-2848','EQUIP_RTI_T006','INST_T006_VIBRATION_D','ns=2;s=T006.vibration_d','Fjord unit driven-end vibration check','Trend review and balancing assessment on driven-end bearing.','High','Approved',@ActorOid,@ActorOid,'2026-07-29T07:00:00','2026-08-04T16:00:00'),
+    ('10000000-0000-0000-0000-000000000005','WO-2851','EQUIP_RTI_T008','INST_T008_POWER_OUTPUT','ns=2;s=T008.power_output','Investigate power output dip','Correlate output with head and guide-vane position.','Medium','Planned',NULL,@ActorOid,'2026-07-29T13:20:00','2026-08-06T12:00:00'),
+    ('10000000-0000-0000-0000-000000000006','WO-2853','EQUIP_RTI_T010','INST_T010_TURBINE_SPEED','ns=2;s=T010.turbine_speed','Overspeed trip test','Scheduled governor overspeed protection test.','Low','Scheduled',@ActorOid,@ActorOid,'2026-07-30T09:00:00','2026-08-08T12:00:00'),
+    ('10000000-0000-0000-0000-000000000007','WO-2857','EQUIP_RTI_T011','INST_T011_TURBINE_TEMP','ns=2;s=T011.turbine_temp','Highland unit cooling inspection','Inspect heat exchanger fouling after temperature rise.','High','In progress',@ActorOid,@ActorOid,'2026-07-30T11:00:00','2026-08-02T18:00:00'),
+    ('10000000-0000-0000-0000-000000000008','WO-2860','EQUIP_RTI_T013','INST_T013_VIBRATION_A','ns=2;s=T013.vibration_a','Highland unit bearing endoscopy','Borescope guide bearing following vibration advisory.','Critical','Ready',NULL,@ActorOid,'2026-07-30T14:10:00','2026-08-03T12:00:00'),
+    ('10000000-0000-0000-0000-000000000009','WO-2862','EQUIP_RTI_T015','INST_T015_INLET_PRESSURE','ns=2;s=T015.inlet_pressure','Inlet strainer differential check','Verify strainer differential pressure and clean if required.','Medium','Approved',@ActorOid,@ActorOid,'2026-07-31T08:30:00','2026-08-09T12:00:00'),
+    ('10000000-0000-0000-0000-000000000010','WO-2820','EQUIP_RTI_T004','INST_T004_TURBINE_TEMP','ns=2;s=T004.turbine_temp','Annual thermographic survey','Completed annual thermographic survey; no anomalies.','Low','Completed',@ActorOid,@ActorOid,'2026-07-15T08:00:00','2026-07-20T12:00:00'),
+    ('10000000-0000-0000-0000-000000000011','WO-2812','EQUIP_RTI_T007','INST_T007_VIBRATION_A','ns=2;s=T007.vibration_a','Bearing lubrication refresh','Completed lubrication service on guide bearing.','Medium','Completed',@ActorOid,@ActorOid,'2026-07-10T08:00:00','2026-07-14T12:00:00'),
+    ('10000000-0000-0000-0000-000000000012','WO-2867','EQUIP_RTI_T012','INST_T012_POWER_OUTPUT','ns=2;s=T012.power_output','Efficiency test after overhaul','Post-overhaul efficiency verification test.','High','Draft',NULL,@ActorOid,'2026-07-31T15:00:00','2026-08-12T12:00:00')
+) AS source(id,workOrderNumber,equipmentId,instrumentId,opcuaNodeId,title,description,priority,status,assignedToOid,createdByOid,createdAt,dueAt)
+ON target.workOrderNumber = source.workOrderNumber
+WHEN MATCHED THEN UPDATE SET title=source.title, description=source.description, priority=source.priority, status=source.status, assignedToOid=source.assignedToOid, dueAt=source.dueAt
+WHEN NOT MATCHED THEN INSERT (id,workOrderNumber,equipmentId,instrumentId,opcuaNodeId,title,description,priority,status,assignedToOid,createdByOid,createdAt,dueAt)
+VALUES (source.id,source.workOrderNumber,source.equipmentId,source.instrumentId,source.opcuaNodeId,source.title,source.description,source.priority,source.status,source.assignedToOid,source.createdByOid,source.createdAt,source.dueAt);
+
+MERGE dbo.MaintenanceNotifications AS target
+USING (VALUES
+    ('20000000-0000-0000-0000-000000000001','EQUIP_RTI_T001','ns=2;s=T001.vibration_a','Guide bearing vibration exceeded advisory threshold','Warning','Open',@ActorOid,'2026-07-30T07:42:00'),
+    ('20000000-0000-0000-0000-000000000002','EQUIP_RTI_T002','ns=2;s=T002.inlet_pressure','Inlet pressure variance requires review','Advisory','Open',@ActorOid,'2026-07-30T06:15:00'),
+    ('20000000-0000-0000-0000-000000000003','EQUIP_RTI_T006','ns=2;s=T006.vibration_d','Driven-end vibration trending upward','Warning','Open',@ActorOid,'2026-07-29T18:05:00'),
+    ('20000000-0000-0000-0000-000000000004','EQUIP_RTI_T008','ns=2;s=T008.power_output','Power output below expected for head','Advisory','Acknowledged',@ActorOid,'2026-07-29T12:40:00'),
+    ('20000000-0000-0000-0000-000000000005','EQUIP_RTI_T011','ns=2;s=T011.turbine_temp','Bearing temperature above normal band','Warning','Open',@ActorOid,'2026-07-30T10:20:00'),
+    ('20000000-0000-0000-0000-000000000006','EQUIP_RTI_T013','ns=2;s=T013.vibration_a','Vibration advisory on guide bearing','Critical','Open',@ActorOid,'2026-07-30T13:55:00')
+) AS source(id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt)
+ON target.id = source.id
+WHEN MATCHED THEN UPDATE SET summary=source.summary,severity=source.severity,status=source.status
+WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt)
+VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.summary,source.severity,source.status,source.reportedByOid,source.reportedAt);
+
+MERGE dbo.Inspections AS target
+USING (VALUES
+    ('60000000-0000-0000-0000-000000000001','EQUIP_RTI_T001',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-20T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000002','EQUIP_RTI_T001','ns=2;s=T001.turbine_temp','THERMOGRAPHIC','PASS','No hot spots detected on bearings or windings.',@ActorOid,'2026-07-20T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000003','EQUIP_RTI_T002',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-21T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000004','EQUIP_RTI_T002','ns=2;s=T002.vibration_a','VIBRATION','ATTENTION','Guide bearing vibration slightly above baseline; monitor.',@ActorOid,'2026-07-21T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000005','EQUIP_RTI_T003',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-22T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000006','EQUIP_RTI_T003',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-22T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000007','EQUIP_RTI_T004',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-23T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000008','EQUIP_RTI_T004','ns=2;s=T004.turbine_temp','THERMOGRAPHIC','PASS','No hot spots detected on bearings or windings.',@ActorOid,'2026-07-23T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000009','EQUIP_RTI_T005',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-24T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000010','EQUIP_RTI_T005','ns=2;s=T005.vibration_a','VIBRATION','ATTENTION','Guide bearing vibration slightly above baseline; monitor.',@ActorOid,'2026-07-24T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000011','EQUIP_RTI_T006',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-25T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000012','EQUIP_RTI_T006',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-25T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000013','EQUIP_RTI_T007',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-26T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000014','EQUIP_RTI_T007','ns=2;s=T007.turbine_temp','THERMOGRAPHIC','PASS','No hot spots detected on bearings or windings.',@ActorOid,'2026-07-26T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000015','EQUIP_RTI_T008',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-27T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000016','EQUIP_RTI_T008','ns=2;s=T008.vibration_a','VIBRATION','ATTENTION','Guide bearing vibration slightly above baseline; monitor.',@ActorOid,'2026-07-27T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000017','EQUIP_RTI_T009',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-20T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000018','EQUIP_RTI_T009',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-20T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000019','EQUIP_RTI_T010',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-21T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000020','EQUIP_RTI_T010','ns=2;s=T010.turbine_temp','THERMOGRAPHIC','PASS','No hot spots detected on bearings or windings.',@ActorOid,'2026-07-21T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000021','EQUIP_RTI_T011',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-22T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000022','EQUIP_RTI_T011','ns=2;s=T011.vibration_a','VIBRATION','ATTENTION','Guide bearing vibration slightly above baseline; monitor.',@ActorOid,'2026-07-22T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000023','EQUIP_RTI_T012',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-23T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000024','EQUIP_RTI_T012',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-23T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000025','EQUIP_RTI_T013',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-24T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000026','EQUIP_RTI_T013','ns=2;s=T013.turbine_temp','THERMOGRAPHIC','PASS','No hot spots detected on bearings or windings.',@ActorOid,'2026-07-24T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000027','EQUIP_RTI_T014',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-25T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000028','EQUIP_RTI_T014','ns=2;s=T014.vibration_a','VIBRATION','ATTENTION','Guide bearing vibration slightly above baseline; monitor.',@ActorOid,'2026-07-25T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000029','EQUIP_RTI_T015',NULL,'VISUAL','PASS','Casing, fasteners, and seals visually normal.',@ActorOid,'2026-07-26T09:00:00','2026-10-15T09:00:00'),
+    ('60000000-0000-0000-0000-000000000030','EQUIP_RTI_T015',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-26T09:00:00','2026-10-15T09:00:00')
+) AS source(id,equipmentId,opcuaNodeId,inspectionType,result,findings,inspectorOid,inspectedAt,nextDueAt)
+ON target.id = source.id
+WHEN MATCHED THEN UPDATE SET inspectionType=source.inspectionType,result=source.result,findings=source.findings,inspectedAt=source.inspectedAt,nextDueAt=source.nextDueAt
+WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,inspectionType,result,findings,inspectorOid,inspectedAt,nextDueAt)
+VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.inspectionType,source.result,source.findings,source.inspectorOid,source.inspectedAt,source.nextDueAt);
+
+MERGE dbo.SpareParts AS target
+USING (VALUES
+    ('70000000-0000-0000-0000-000000000001','SP-BRG-1001','Guide bearing pad set','BEARING','TURB',6,4,'Warehouse A-01',4200.0,'2026-06-10'),
+    ('70000000-0000-0000-0000-000000000002','SP-BRG-1002','Thrust bearing segment','BEARING','TURB',2,3,'Warehouse A-01',5100.0,'2026-05-22'),
+    ('70000000-0000-0000-0000-000000000003','SP-SEAL-2001','Main shaft seal kit','SEAL','TURB',9,5,'Warehouse A-02',880.0,'2026-06-28'),
+    ('70000000-0000-0000-0000-000000000004','SP-SEAL-2002','Guide vane seal ring','SEAL','TURB',3,4,'Warehouse A-02',640.0,'2026-04-30'),
+    ('70000000-0000-0000-0000-000000000005','SP-SEN-3001','Vibration probe (eddy current)','SENSOR','TURB',12,6,'Store B-11',1350.0,'2026-07-05'),
+    ('70000000-0000-0000-0000-000000000006','SP-SEN-3002','RTD temperature sensor','SENSOR','TURB',20,8,'Store B-11',210.0,'2026-07-12'),
+    ('70000000-0000-0000-0000-000000000007','SP-SEN-3003','Pressure transducer','SENSOR','TURB',7,6,'Store B-12',490.0,'2026-06-18'),
+    ('70000000-0000-0000-0000-000000000008','SP-VAL-4001','Guide vane servo valve','VALVE','TURB',2,2,'Warehouse A-03',7300.0,'2026-03-15'),
+    ('70000000-0000-0000-0000-000000000009','SP-VAL-4002','Cooling water control valve','VALVE','TURB',5,3,'Warehouse A-03',1120.0,'2026-06-02'),
+    ('70000000-0000-0000-0000-000000000010','SP-ELE-5001','Excitation control card','ELECTRICAL','TURB',4,3,'Store B-20',2650.0,'2026-05-09'),
+    ('70000000-0000-0000-0000-000000000011','SP-ELE-5002','Governor PLC module','ELECTRICAL','TURB',1,2,'Store B-20',3900.0,'2026-02-27'),
+    ('70000000-0000-0000-0000-000000000012','SP-ELE-5003','Field cabling loom','ELECTRICAL','TURB',14,6,'Store B-21',180.0,'2026-07-20')
+) AS source(id,partNumber,name,category,equipmentType,quantityOnHand,reorderLevel,storageLocation,unitCostUsd,lastRestockedAt)
+ON target.partNumber = source.partNumber
+WHEN MATCHED THEN UPDATE SET name=source.name,category=source.category,quantityOnHand=source.quantityOnHand,reorderLevel=source.reorderLevel,storageLocation=source.storageLocation,unitCostUsd=source.unitCostUsd,lastRestockedAt=source.lastRestockedAt
+WHEN NOT MATCHED THEN INSERT (id,partNumber,name,category,equipmentType,quantityOnHand,reorderLevel,storageLocation,unitCostUsd,lastRestockedAt)
+VALUES (source.id,source.partNumber,source.name,source.category,source.equipmentType,source.quantityOnHand,source.reorderLevel,source.storageLocation,source.unitCostUsd,source.lastRestockedAt);
+
+MERGE dbo.Asset3DModels AS target
+USING (VALUES
+    ('80000000-0000-0000-0000-000000000001','EQUIP_RTI_T001','Andritz RTI-Turbine-A twin (T001)','GLB','https://static.poly.pizza/754e9358-fff8-4285-b80f-09b68c2f3c71.glb',NULL,0.06,'v1.1',@ActorOid,'2026-07-11T12:00:00'),
+    ('80000000-0000-0000-0000-000000000002','EQUIP_RTI_T002','Voith RTI-Turbine-B twin (T002)','GLB','https://static.poly.pizza/e9fc0901-7600-48f4-881d-b546f3df4cec.glb',NULL,0.03,'v1.2',@ActorOid,'2026-07-12T12:00:00'),
+    ('80000000-0000-0000-0000-000000000003','EQUIP_RTI_T003','GE Vernova RTI-Turbine-C twin (T003)','GLB','https://static.poly.pizza/e81145eb-091e-4803-9523-8611bd7e24e4.glb',NULL,0.57,'v1.3',@ActorOid,'2026-07-13T12:00:00'),
+    ('80000000-0000-0000-0000-000000000004','EQUIP_RTI_T004','Toshiba RTI-Turbine-D twin (T004)','GLB','https://static.poly.pizza/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb',NULL,2.76,'v1.4',@ActorOid,'2026-07-14T12:00:00'),
+    ('80000000-0000-0000-0000-000000000005','EQUIP_RTI_T005','Hitachi Energy RTI-Turbine-E twin (T005)','GLB','https://static.poly.pizza/e6b02958-8f16-423e-8322-036b5379ef0b.glb',NULL,0.02,'v1.5',@ActorOid,'2026-07-15T12:00:00'),
+    ('80000000-0000-0000-0000-000000000006','EQUIP_RTI_T006','Andritz RTI-Turbine-A twin (T006)','GLB','https://static.poly.pizza/754e9358-fff8-4285-b80f-09b68c2f3c71.glb',NULL,0.06,'v1.6',@ActorOid,'2026-07-16T12:00:00'),
+    ('80000000-0000-0000-0000-000000000007','EQUIP_RTI_T007','Voith RTI-Turbine-B twin (T007)','GLB','https://static.poly.pizza/e9fc0901-7600-48f4-881d-b546f3df4cec.glb',NULL,0.03,'v1.7',@ActorOid,'2026-07-17T12:00:00'),
+    ('80000000-0000-0000-0000-000000000008','EQUIP_RTI_T008','GE Vernova RTI-Turbine-C twin (T008)','GLB','https://static.poly.pizza/e81145eb-091e-4803-9523-8611bd7e24e4.glb',NULL,0.57,'v1.8',@ActorOid,'2026-07-18T12:00:00'),
+    ('80000000-0000-0000-0000-000000000009','EQUIP_RTI_T009','Toshiba RTI-Turbine-D twin (T009)','GLB','https://static.poly.pizza/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb',NULL,2.76,'v1.9',@ActorOid,'2026-07-19T12:00:00'),
+    ('80000000-0000-0000-0000-000000000010','EQUIP_RTI_T010','Hitachi Energy RTI-Turbine-E twin (T010)','GLB','https://static.poly.pizza/e6b02958-8f16-423e-8322-036b5379ef0b.glb',NULL,0.02,'v1.10',@ActorOid,'2026-07-20T12:00:00'),
+    ('80000000-0000-0000-0000-000000000011','EQUIP_RTI_T011','Andritz RTI-Turbine-A twin (T011)','GLB','https://static.poly.pizza/754e9358-fff8-4285-b80f-09b68c2f3c71.glb',NULL,0.06,'v1.11',@ActorOid,'2026-07-21T12:00:00'),
+    ('80000000-0000-0000-0000-000000000012','EQUIP_RTI_T012','Voith RTI-Turbine-B twin (T012)','GLB','https://static.poly.pizza/e9fc0901-7600-48f4-881d-b546f3df4cec.glb',NULL,0.03,'v1.12',@ActorOid,'2026-07-22T12:00:00'),
+    ('80000000-0000-0000-0000-000000000013','EQUIP_RTI_T013','GE Vernova RTI-Turbine-C twin (T013)','GLB','https://static.poly.pizza/e81145eb-091e-4803-9523-8611bd7e24e4.glb',NULL,0.57,'v1.13',@ActorOid,'2026-07-23T12:00:00'),
+    ('80000000-0000-0000-0000-000000000014','EQUIP_RTI_T014','Toshiba RTI-Turbine-D twin (T014)','GLB','https://static.poly.pizza/7e2d13c0-e9ea-47f6-a70e-576745b2d6e0.glb',NULL,2.76,'v1.14',@ActorOid,'2026-07-24T12:00:00'),
+    ('80000000-0000-0000-0000-000000000015','EQUIP_RTI_T015','Hitachi Energy RTI-Turbine-E twin (T015)','GLB','https://static.poly.pizza/e6b02958-8f16-423e-8322-036b5379ef0b.glb',NULL,0.02,'v1.15',@ActorOid,'2026-07-10T12:00:00')
+) AS source(id,equipmentId,modelName,format,modelUrl,thumbnailUrl,fileSizeMb,version,updatedByOid,updatedAt)
+ON target.id = source.id
+WHEN MATCHED THEN UPDATE SET modelName=source.modelName,format=source.format,modelUrl=source.modelUrl,fileSizeMb=source.fileSizeMb,version=source.version,updatedAt=source.updatedAt
+WHEN NOT MATCHED THEN INSERT (id,equipmentId,modelName,format,modelUrl,thumbnailUrl,fileSizeMb,version,updatedByOid,updatedAt)
+VALUES (source.id,source.equipmentId,source.modelName,source.format,source.modelUrl,source.thumbnailUrl,source.fileSizeMb,source.version,source.updatedByOid,source.updatedAt);
+
+COMMIT TRANSACTION;
+"""
+
+
+# ---------------------------------------------------------------------------
+# SPN auth (Key Vault) — Fabric + SQL tokens — and retry / LRO helpers
+# ---------------------------------------------------------------------------
+_token_cache = {}
+
+
+def _spn_secrets():
+    tenant_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_tenant_id_secret)
+    client_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_id_secret)
+    client_secret = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_secret_secret)
+    if not tenant_id or not client_id or not client_secret:
+        raise Exception("Unable to fetch SPN credentials from Key Vault")
+    return tenant_id, client_id, client_secret
+
+
+def get_spn_token(scope: str) -> str:
+    """Client-credentials token for the given resource scope (cached per scope)."""
+    now = time.time()
+    cached = _token_cache.get(scope)
+    if cached and now < cached[1]:
+        return cached[0]
+    tenant_id, client_id, client_secret = _spn_secrets()
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    resp = requests.post(
+        token_url,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+            "scope": scope,
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    token_json = resp.json()
+    token = token_json["access_token"]
+    _token_cache[scope] = (token, now + int(token_json.get("expires_in", 3600)) - 60)
+    return token
+
+
+def get_fabric_token() -> str:
+    return get_spn_token("https://api.fabric.microsoft.com/.default")
+
+
+def get_sql_token() -> str:
+    return get_spn_token("https://database.windows.net/.default")
+
+
+def get_headers() -> dict:
+    return {"Authorization": f"Bearer {get_fabric_token()}", "Content-Type": "application/json"}
+
+
+def api_request(method: str, url: str, data=None, params=None, timeout=60):
+    """Retry wrapper for Fabric REST calls (429 + 5xx)."""
+    last_response = None
+    for _ in range(MAX_RETRIES):
+        response = requests.request(
+            method=method, url=url, headers=get_headers(),
+            json=data, params=params, timeout=timeout,
+        )
+        last_response = response
+        if response.status_code == 429:
+            wait = int(response.headers.get("Retry-After", RETRY_DELAY_SECONDS))
+            print(f"Rate limited. Retrying in {wait}s.")
+            time.sleep(wait)
+            continue
+        if response.status_code >= 500:
+            print(f"Server error {response.status_code}. Retrying.")
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        return response
+    return last_response
+
+
+def wait_for_lro(operation_url: str) -> dict:
+    """Poll a Fabric long-running-operation URL until terminal."""
+    start = time.time()
+    while time.time() - start < LRO_MAX_WAIT_SECONDS:
+        response = api_request("GET", operation_url, timeout=60)
+        if response.status_code not in (200, 202):
+            raise RuntimeError(f"LRO polling failed: {response.status_code} {response.text}")
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"status": "Unknown"}
+        status = result.get("status", "Unknown")
+        if status in ("Succeeded", "Completed"):
+            return result
+        if status in ("Failed", "Cancelled"):
+            raise RuntimeError(json.dumps(result, indent=2))
+        print(f"⏳ LRO status: {status}")
+        time.sleep(LRO_POLL_INTERVAL_SECONDS)
+    raise TimeoutError("LRO polling timed out.")
+
+
+def encode_payload(obj: dict) -> str:
+    return base64.b64encode(json.dumps(obj, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def decode_payload(payload: str) -> dict:
+    try:
+        padded = payload + "=" * (-len(payload) % 4)
+        return json.loads(base64.b64decode(padded).decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def find_item_by_name(display_name: str, item_type: Optional[str] = None) -> Optional[dict]:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    params = {"type": item_type} if item_type else None
+    response = api_request("GET", url, params=params)
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    for item in (data or {}).get("value", []) or []:
+        if item.get("displayName") == display_name:
+            return item
+    return None
+
+
+def list_items_of_type(item_type: str) -> list:
+    """Return all workspace items of a given type (e.g. 'SQLDatabase')."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    resp = api_request("GET", url, params={"type": item_type})
+    if resp is not None and resp.status_code == 200 and resp.content:
+        return (resp.json() or {}).get("value", []) or []
+    return []
+
+
+def get_item_definition(item_id: str) -> dict:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/getDefinition"
+    response = api_request("POST", url, timeout=120)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("getDefinition returned 202 without Location header.")
+        wait_for_lro(operation_url)
+        result_response = api_request("GET", f"{operation_url}/result", timeout=120)
+        if result_response.status_code == 200:
+            return result_response.json() if result_response.content else {}
+        raise RuntimeError(f"getDefinition result failed: {result_response.status_code} {result_response.text}")
+    raise RuntimeError(f"Failed to get item definition: {response.status_code} {response.text}")
+
+
+def update_item_definition(item_id: str, definition: dict) -> dict:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/updateDefinition"
+    response = api_request("POST", url, data={"definition": definition}, timeout=300)
+    if response.status_code == 200:
+        return response.json() if response.content else {}
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if not operation_url:
+            raise RuntimeError("updateDefinition returned 202 without Location header.")
+        return wait_for_lro(operation_url)
+    raise RuntimeError(f"Failed to update item definition: {response.status_code} {response.text}")
+
+
+# The Data Agent uses the SAME generic /items/{id}/getDefinition + /updateDefinition endpoints
+# as RTI_009 (its create/patch flow). Only publish has a type-specific endpoint (below).
+def publish_data_agent(item_id: str, published_description: str = "") -> None:
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/staging/publish"
+    body = {"publishedDescription": published_description[:256]} if published_description else {}
+    response = api_request("POST", url, data=body, timeout=120)
+    if response.status_code in (200, 201):
+        print("✅ Data Agent published (staging → published).")
+        return
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if operation_url:
+            wait_for_lro(operation_url)
+        print("✅ Data Agent published via LRO (staging → published).")
+        return
+    raise RuntimeError(f"Failed to publish Data Agent: {response.status_code} {response.text}")
+
+
+def upsert_part(parts: list, path: str, obj: dict) -> list:
+    encoded = {"path": path, "payload": encode_payload(obj), "payloadType": "InlineBase64"}
+    for i, part in enumerate(parts):
+        if part.get("path") == path:
+            parts[i] = encoded
+            return parts
+    parts.append(encoded)
+    return parts
+
+
+def resolve_sql_analytics_endpoint_id(
+    parent_name: str, parent_kind: str = "sqldatabase", parent_id: Optional[str] = None
+) -> Optional[str]:
+    """Resolve the SQL analytics endpoint (a separate SQLEndpoint workspace item) that
+    mirrors a Lakehouse or Fabric SQL Database. Data Agent `data_warehouse` sources and
+    GraphQL `SqlAnalyticsEndpoint` datasources must reference THIS id — not the parent
+    Lakehouse/SQLDatabase item id. Returns None if it can't be resolved (callers fall back
+    to the parent id so behaviour degrades gracefully)."""
+    # 1) Lakehouses expose their endpoint id directly in item properties.
+    if parent_kind == "lakehouse" and parent_id:
+        resp = api_request("GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/lakehouses/{parent_id}")
+        if resp is not None and resp.status_code == 200 and resp.content:
+            props = (resp.json() or {}).get("properties", {}) or {}
+            ep_id = (props.get("sqlEndpointProperties") or {}).get("id")
+            if ep_id:
+                return ep_id
+    # 2) Otherwise list workspace items of type SQLEndpoint and match by display name.
+    resp = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items", params={"type": "SQLEndpoint"}
+    )
+    if resp is not None and resp.status_code == 200 and resp.content:
+        items = (resp.json() or {}).get("value", []) or []
+        target = (parent_name or "").lower()
+        for it in items:  # exact display-name match first
+            if (it.get("displayName") or "").lower() == target:
+                return it.get("id")
+        for it in items:  # then a contains match (endpoints are sometimes suffixed)
+            if target and target in (it.get("displayName") or "").lower():
+                return it.get("id")
+    return None
+
+
+def build_graphql_definition(source_endpoint_id: str) -> dict:
+    """graphql-definition.json binding the STID GraphQL API to the Lakehouse SQL analytics
+    endpoint, exposing the three silver tables the web app queries."""
+    objects = []
+    for table, cols in GRAPHQL_OBJECTS:
+        objects.append({
+            "graphqlType": table,
+            "sourceObject": f"dbo.{table}",
+            "sourceObjectType": "Table",
+            "actions": {"Query": "Enabled", "Query_by_pk": "Enabled"},
+            "fieldMappings": {c: c for c in cols},
+            "relationships": [],
+        })
+    return {
+        "$schema": GRAPHQL_DEFINITION_SCHEMA_URL,
+        "datasources": [
+            {
+                "sourceItemId": source_endpoint_id,
+                "sourceWorkspaceId": workspace_id,
+                "sourceType": "SqlAnalyticsEndpoint",
+                "objects": objects,
+            }
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# STEP A — Seed the operational SQL Database (idempotent MERGE via SPN + pyodbc)
+# ---------------------------------------------------------------------------
+def _parse_conn_string(conn: str) -> tuple:
+    """Extract (server, database) from an ADO.NET-style connection string."""
+    server = database = None
+    for part in (conn or "").split(";"):
+        key, _, value = part.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if key in ("data source", "server", "address", "addr", "network address"):
+            server = value
+        elif key in ("initial catalog", "database"):
+            database = value
+    return server, database
+
+
+def resolve_sql_database() -> tuple:
+    """Return (item_id, server_fqdn, database_name) for the hydro-operations SQL DB.
+
+    The Rayfin app can create several items that share the app name (AppBackend,
+    SQLDatabase, …), so match the SQLDatabase item by TYPE — matching by name alone can
+    resolve the wrong item and make the connection-string lookup return nothing."""
+    item = find_item_by_name(sql_db_item_name, item_type="SQLDatabase")
+    if not item:
+        candidates = list_items_of_type("SQLDatabase")
+        if len(candidates) > 1:
+            print(
+                f"⚠️ {len(candidates)} SQL Databases in the workspace; using "
+                f"'{candidates[0].get('displayName')}'."
+            )
+        item = candidates[0] if candidates else None
+    if not item:
+        raise RuntimeError(
+            f"No SQL Database item found in the workspace (looked for '{sql_db_item_name}'). "
+            "Deploy the Rayfin app (rayfin up) so its SQL Database item is created first."
+        )
+    item_id = item["id"]
+    resp = api_request("GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/sqlDatabases/{item_id}")
+    props = {}
+    if resp is not None and resp.status_code == 200 and resp.content:
+        props = (resp.json() or {}).get("properties", {}) or {}
+    server = props.get("serverFqdn")
+    database = props.get("databaseName")
+    if (not server or not database) and props.get("connectionString"):
+        cs_server, cs_database = _parse_conn_string(props["connectionString"])
+        server = server or cs_server
+        database = database or cs_database
+    database = database or sql_db_item_name
+    if not server:
+        raise RuntimeError(
+            "Could not resolve the SQL Database connection string from the Fabric REST API. "
+            "Open the SQL Database in Fabric → Settings → Connection strings to read it, "
+            "and run HydroOperationsApp/sql/seed-operational-data.sql there instead."
+        )
+    return item_id, server, database
+
+
+def fetch_sql_table_schema(server: str, database: str, tables: list) -> dict:
+    """Return {table: [(column, data_type), ...]} for the given dbo tables, ordered by
+    ORDINAL_POSITION — used to build the Data Agent's nested schema→table→column tree.
+    Read-only INFORMATION_SCHEMA query; it never touches the seed data."""
+    import pyodbc  # available in the Fabric Spark runtime
+
+    if not tables:
+        return {}
+    token = get_sql_token()
+    token_bytes = token.encode("utf-16-le")
+    token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+    SQL_COPT_SS_ACCESS_TOKEN = 1256  # driver attribute for AAD access-token auth
+    driver = "ODBC Driver 18 for SQL Server"
+    conn_str = (
+        f"Driver={{{driver}}};Server={server};Database={database};"
+        "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60"
+    )
+    placeholders = ",".join("?" for _ in tables)
+    connection = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            f"WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ({placeholders}) "
+            "ORDER BY TABLE_NAME, ORDINAL_POSITION",
+            SQL_SCHEMA_NAME, *tables,
+        )
+        schema = {t: [] for t in tables}
+        for table_name, column_name, data_type in cursor.fetchall():
+            schema.setdefault(table_name, []).append((column_name, data_type))
+        cursor.close()
+        return schema
+    finally:
+        connection.close()
+
+
+def seed_sql_database(server: str, database: str) -> None:
+    """Run the embedded idempotent MERGE seed against the SQL DB using an SPN token."""
+    import pyodbc  # available in the Fabric Spark runtime
+
+    token = get_sql_token()
+    token_bytes = token.encode("utf-16-le")
+    token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+    SQL_COPT_SS_ACCESS_TOKEN = 1256  # driver attribute for AAD access-token auth
+
+    driver = "ODBC Driver 18 for SQL Server"
+    conn_str = (
+        f"Driver={{{driver}}};Server={server};Database={database};"
+        "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60"
+    )
+    connection = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    connection.autocommit = True  # the batch manages its own BEGIN/COMMIT TRANSACTION
+    try:
+        cursor = connection.cursor()
+        cursor.execute(SEED_SQL.replace("$(ActorOid)", seed_actor_oid))
+        cursor.close()
+        # Report row counts.
+        counts = connection.cursor()
+        counts.execute(
+            "SELECT 'WorkOrders', COUNT(*) FROM dbo.WorkOrders "
+            "UNION ALL SELECT 'MaintenanceNotifications', COUNT(*) FROM dbo.MaintenanceNotifications "
+            "UNION ALL SELECT 'Inspections', COUNT(*) FROM dbo.Inspections "
+            "UNION ALL SELECT 'SpareParts', COUNT(*) FROM dbo.SpareParts "
+            "UNION ALL SELECT 'Asset3DModels', COUNT(*) FROM dbo.Asset3DModels"
+        )
+        for name, n in counts.fetchall():
+            print(f"   • {name}: {n}")
+        counts.close()
+    finally:
+        connection.close()
+
+
+sql_db_item_id = None
+sql_server = sql_database = None
+print("\n=== STEP A — Seed the operational SQL Database ===")
+try:
+    sql_db_item_id, sql_server, sql_database = resolve_sql_database()
+    print(f"✅ Resolved SQL Database: {sql_db_item_name} (id={sql_db_item_id})")
+    print(f"   Server: {sql_server}  DB: {sql_database}")
+    seed_sql_database(sql_server, sql_database)
+    print("✅ Operational seed applied (idempotent).")
+except Exception as exc:  # noqa: BLE001 - best-effort seed with manual fallback
+    print("⚠️ SQL seeding did not complete:")
+    print("   ", exc)
+    print("   Manual fallback: run HydroOperationsApp/sql/seed-operational-data.sql against")
+    print(f"   the '{sql_db_item_name}' SQL Database (Fabric → SQL query editor).")
+
+
+# ---------------------------------------------------------------------------
+# STEP B — Create (or reuse) the STID GraphQL API item over the Lakehouse
+# ---------------------------------------------------------------------------
+def create_graphql_api(name: str) -> Optional[dict]:
+    existing = find_item_by_name(name, item_type=GRAPHQL_ITEM_TYPE)
+    if existing:
+        print(f"✅ Reusing existing GraphQL API: {name} (id={existing.get('id')})")
+        return existing
+    body = {"displayName": name, "type": GRAPHQL_ITEM_TYPE}
+    if target_folder_id:
+        body["folderId"] = target_folder_id
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    response = api_request("POST", url, data=body, timeout=120)
+    if response.status_code in (200, 201):
+        created = response.json() if response.content else {}
+        print(f"✅ Created GraphQL API: {name} (id={created.get('id')})")
+        return created
+    if response.status_code == 202:
+        operation_url = response.headers.get("Location")
+        if operation_url:
+            wait_for_lro(operation_url)
+        created = find_item_by_name(name, item_type=GRAPHQL_ITEM_TYPE) or {}
+        print(f"✅ Created GraphQL API (via LRO): {name} (id={created.get('id')})")
+        return created
+    raise RuntimeError(f"Failed to create GraphQL API: {response.status_code} {response.text}")
+
+
+stid_graphql_id = None
+print("\n=== STEP B — STID GraphQL API item ===")
+try:
+    graphql_item = create_graphql_api(graphql_api_name)
+    stid_graphql_id = (graphql_item or {}).get("id")
+
+    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose the three
+    # silver tables the web app queries (silver_facilities / silver_equipment /
+    # silver_instruments). Without this the GraphQL item is created empty.
+    lakehouse_endpoint_id = resolve_sql_analytics_endpoint_id(
+        lakehouse_name, parent_kind="lakehouse", parent_id=lakehouse_id
+    )
+    if not lakehouse_endpoint_id:
+        raise RuntimeError(
+            f"Could not resolve the SQL analytics endpoint of Lakehouse '{lakehouse_name}'. "
+            "Ensure the lakehouse (and its SQL endpoint) exists, then re-run."
+        )
+    print(f"✅ Lakehouse SQL analytics endpoint id: {lakehouse_endpoint_id}")
+
+    gql_definition = get_item_definition(stid_graphql_id)
+    gql_parts = gql_definition.get("definition", {}).get("parts", []) or []
+    gql_parts = upsert_part(
+        gql_parts, GRAPHQL_DEFINITION_PATH, build_graphql_definition(lakehouse_endpoint_id)
+    )
+    print(f"Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo silver tables")
+    update_item_definition(stid_graphql_id, {"parts": gql_parts})
+    print(
+        f"🌐 GraphQL API '{graphql_api_name}' bound to '{lakehouse_name}' — exposing "
+        + ", ".join(t for t, _ in GRAPHQL_OBJECTS)
+    )
+except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the fallback
+    print("⚠️ GraphQL API creation/binding did not complete:")
+    print("   ", exc)
+    print(
+        f"   Manual fallback: open '{graphql_api_name}' → Get data → Lakehouse SQL analytics "
+        f"endpoint of '{lakehouse_name}' → expose silver_facilities / silver_equipment / "
+        "silver_instruments."
+    )
+
+
+# ---------------------------------------------------------------------------
+# STEP C — Add the SQL Database as a Data Agent source and republish
+# ---------------------------------------------------------------------------
+def resolve_data_agent_id() -> str:
+    # Never trust a persisted data_agent_id blindly — the agent may have been deleted/rebuilt
+    # (a stale id makes getDefinition 404 EntityNotFound). Verify it against the live workspace.
+    agents = list_items_of_type(DATA_AGENT_ITEM_TYPE)
+    if data_agent_id and any(a.get("id") == data_agent_id for a in agents):
+        return data_agent_id
+    by_name = next((a for a in agents if a.get("displayName") == data_agent_name), None)
+    if by_name:
+        return by_name["id"]
+    if agents:
+        return agents[0]["id"]
+    raise RuntimeError(
+        f"Data Agent '{data_agent_name}' not found. Run RTI_009 first to create + publish it."
+    )
+
+
+def _ds_element(type_name: str, display_name: str, is_selected: bool, children: list, **extra) -> dict:
+    node = {
+        "id": str(uuid.uuid4()),
+        "is_selected": is_selected,
+        "display_name": display_name,
+        "type": type_name,
+        "description": None,
+        "children": children,
+    }
+    node.update(extra)
+    return node
+
+
+def build_sql_datasource_obj(existing: dict, artifact_id: str, schema_map: dict) -> dict:
+    # Mirror the portal's published shape: a nested schema→table→column tree. The grouping and
+    # schema nodes are is_selected=False; the actual tables and their columns are is_selected=True.
+    ds = dict(existing)
+    ds["$schema"] = DATASOURCE_SCHEMA_URL
+    ds["artifactId"] = artifact_id
+    ds["workspaceId"] = workspace_id
+    ds["dataSourceInstructions"] = SQL_DS_INSTRUCTIONS
+    ds["displayName"] = sql_db_item_name
+    ds["type"] = SQL_DATASOURCE_TYPE
+    ds["userDescription"] = None
+    ds["metadata"] = None
+    table_nodes = []
+    for table, _desc in SQL_TABLES:
+        column_nodes = [
+            _ds_element("sql_database.column", col, True, [], data_type=dtype)
+            for col, dtype in (schema_map.get(table) or [])
+        ]
+        table_nodes.append(_ds_element("sql_database.table", table, True, column_nodes))
+    ds["elements"] = [
+        _ds_element("schema_grouping", "Schemas", False, [
+            _ds_element(f"{SQL_DATASOURCE_TYPE}.schema", SQL_SCHEMA_NAME, False, [
+                _ds_element("table_grouping", "Tables", False, table_nodes),
+            ]),
+        ]),
+    ]
+    return ds
+
+
+def build_stage_obj(existing: dict) -> dict:
+    """Preserve the ontology aiInstructions and append operational guidance once."""
+    stage = dict(existing)
+    stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
+    instructions = stage.get("aiInstructions") or ""
+    if OPERATIONAL_INSTRUCTIONS_MARKER not in instructions:
+        instructions = (instructions + OPERATIONAL_INSTRUCTIONS)[:15000]
+    stage["aiInstructions"] = instructions
+    return stage
+
+
+print("\n=== STEP C — Add SQL source to the Data Agent + republish ===")
+try:
+    if not sql_db_item_id:
+        # Resolve id even if seeding failed, so the source can still be wired.
+        sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
+    if not sql_db_item_id:
+        candidates = list_items_of_type("SQLDatabase")
+        sql_db_item_id = candidates[0].get("id") if candidates else None
+    if not sql_db_item_id:
+        raise RuntimeError(f"SQL Database item '{sql_db_item_name}' not found; cannot wire source.")
+
+    agent_id = resolve_data_agent_id()
+    print(f"✅ Data Agent id: {agent_id}")
+
+    # Reference the SQLDatabase item id directly — this is exactly what the portal's
+    # "Add data → SQL database" flow stores. Do NOT swap in the SQL analytics/warehouse
+    # endpoint id; that item isn't what the Data Agent binds to for a Fabric SQL Database.
+    sql_source_artifact_id = sql_db_item_id
+    print(f"✅ SQL Database source artifact id: {sql_source_artifact_id}")
+
+    # Enumerate the operational tables' columns so the source carries the same nested
+    # schema→table→column tree the portal writes (a flat table list 404s at load time).
+    if not sql_server or not sql_database:
+        _sid, sql_server, sql_database = resolve_sql_database()
+    schema_map = fetch_sql_table_schema(sql_server, sql_database, [t for t, _ in SQL_TABLES])
+    filled = sum(1 for t, _ in SQL_TABLES if schema_map.get(t))
+    print(f"✅ Enumerated columns for {filled}/{len(SQL_TABLES)} operational table(s)")
+
+    definition = get_item_definition(agent_id)
+    parts = definition.get("definition", {}).get("parts", []) or []
+
+    # Reuse/upgrade the existing sql_database datasource part (it may hold a stale
+    # artifactId from a prior run) — there is only one SQL source, matched by type.
+    sql_part_path = SQL_DATASOURCE_PATH
+    for part in parts:
+        decoded = decode_payload(part.get("payload", ""))
+        if decoded.get("type") == SQL_DATASOURCE_TYPE:
+            sql_part_path = part.get("path", SQL_DATASOURCE_PATH)
+            break
+
+    existing_ds = next(
+        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == sql_part_path),
+        {},
+    )
+    parts = upsert_part(parts, sql_part_path, build_sql_datasource_obj(existing_ds, sql_source_artifact_id, schema_map))
+
+    existing_stage = next(
+        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
+        {},
+    )
+    parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, build_stage_obj(existing_stage))
+
+    print(f"Applying definition: {len(parts)} part(s)")
+    print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table(s), nested column tree)")
+    update_item_definition(agent_id, {"parts": parts})
+
+    publish_data_agent(agent_id, "Operational SQL source added.")
+    print("🌐 Data Agent republished with ontology + operational SQL sources.")
+except Exception as exc:  # noqa: BLE001 - best-effort; portal 'Add data' is the fallback
+    print("⚠️ Adding the SQL source to the Data Agent did not complete:")
+    print("   ", exc)
+    print("   Manual fallback: open the Data Agent → Add data → SQL database →")
+    print(f"   '{sql_db_item_name}' → select {', '.join(t for t, _ in SQL_TABLES)} → Publish.")
+
+
+# ---------------------------------------------------------------------------
+# Persist discovered ids back to rti_demo_settings
+# ---------------------------------------------------------------------------
+persist = {}
+if sql_db_item_id:
+    persist["operational_sql_db_id"] = sql_db_item_id
+    persist["operational_sql_db_name"] = sql_db_item_name
+if stid_graphql_id:
+    persist["stid_graphql_id"] = stid_graphql_id
+
+if persist:
+    from delta.tables import DeltaTable
+
+    persist_df = (
+        spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
+        .withColumn("updated_utc", F.current_timestamp())
+    )
+    settings_delta_table = DeltaTable.forName(spark, settings_table_name)
+    (
+        settings_delta_table.alias("target")
+        .merge(persist_df.alias("source"), "target.setting_name = source.setting_name")
+        .whenMatchedUpdate(set={"setting_value": "source.setting_value", "updated_utc": "source.updated_utc"})
+        .whenNotMatchedInsert(
+            values={
+                "setting_name": "source.setting_name",
+                "setting_value": "source.setting_value",
+                "updated_utc": "source.updated_utc",
+            }
+        )
+        .execute()
+    )
+    print("\n✅ Persisted settings:", persist)
+    display(spark.read.table(settings_table_name).orderBy("setting_name"))
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }

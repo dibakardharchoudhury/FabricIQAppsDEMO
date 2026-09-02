@@ -1,0 +1,43 @@
+id: hydro-operations-ui
+appName: hydro-operations-ui
+description: Hydro turbine operations and maintenance on Microsoft Fabric
+version: 1.0.1
+
+services:
+  db:
+    enabled: true
+    dialect: mssql
+    schema:
+      entitiesPath: ./data/schema.ts
+
+  auth:
+    enabled: true
+    password:
+      enabled: false
+    fabric:
+      enabled: true
+    allowedRedirectUris:
+      - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
+      - https://lucid-bloom-4c2e0a0b0d-swedencentral.webapp.fabricapps.net
+      - https://easy-pond-ecd8897c4d-swedencentral.webapp.fabricapps.net
+      - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
+      - http://localhost:5173
+
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+
+  data:
+    enabled: true
+    dialect: mssql
+
+  storage:
+    enabled: false
+
+  functions:
+    enabled: false
+
+workspace:
+  name: ${FABRIC_WORKSPACE_NAME}
