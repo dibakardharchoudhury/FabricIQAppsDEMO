@@ -10,7 +10,7 @@ const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].in
 
 export function DigitalTwinPage() {
   const data = useHydroOperationsData()
-  const selectedAsset = data.facilityEquipment.find(item => item.equipment_id === data.selectedDigitalTwinAssetId) ?? data.facilityEquipment[0]
+  const selectedAsset = data.selectedAsset
   const selectedModel = data.assetModels.find(item => item.equipmentId === selectedAsset?.equipment_id)
   const assetInstruments = useMemo(
     () => data.facilityInstruments.filter(item => item.equipment_id === selectedAsset?.equipment_id),
@@ -48,7 +48,7 @@ export function DigitalTwinPage() {
       : !data.facilityEquipment.length ? <EmptyTwin title="No assets for this facility" text="The selected facility has no STID equipment records." />
         : <>
           <section className="v2-twin-selector">
-            <label><span>Asset</span><select value={selectedAsset?.equipment_id ?? ''} onChange={event => data.actions.updateDigitalTwinAssetSelection(event.target.value)}>{data.facilityEquipment.map(asset => <option key={asset.equipment_id} value={asset.equipment_id}>{asset.tag ?? asset.equipment_id}</option>)}</select></label>
+            <label><span>Asset</span><select value={selectedAsset?.equipment_id ?? ''} onChange={event => data.setSelectedAssetId(event.target.value)}>{data.facilityEquipment.map(asset => <option key={asset.equipment_id} value={asset.equipment_id}>{asset.tag ?? asset.equipment_id}</option>)}</select></label>
           </section>
 
           <section className="v2-twin-summary">

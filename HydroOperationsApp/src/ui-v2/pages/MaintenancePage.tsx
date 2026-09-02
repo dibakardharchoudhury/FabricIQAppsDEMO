@@ -8,9 +8,8 @@ type Scope = 'asset' | 'facility' | 'all'
 
 export function MaintenancePage() {
   const data = useHydroOperationsData()
-  const [scope, setScope] = useState<Scope>('facility')
-  const [assetId, setAssetId] = useState<string>()
-  const selectedAsset = data.facilityEquipment.find(asset => asset.equipment_id === assetId) ?? data.facilityEquipment[0]
+  const [scope, setScope] = useState<Scope>('asset')
+  const selectedAsset = data.selectedAsset
   const visibleOrders = useMemo(() => data.orders.filter(order => {
     if (scope === 'all') return true
     if (scope === 'asset') return order.equipmentId === selectedAsset?.equipment_id
@@ -27,7 +26,7 @@ export function MaintenancePage() {
 
     <section className="v2-maintenance-toolbar">
       <div className="v2-range-control" role="group" aria-label="Work order scope">{(['asset', 'facility', 'all'] as Scope[]).map(item => <button key={item} type="button" className={scope === item ? 'active' : ''} onClick={() => setScope(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}</div>
-      <label><span>Selected asset</span><select value={selectedAsset?.equipment_id ?? ''} onChange={event => setAssetId(event.target.value)}>{data.facilityEquipment.map(asset => <option key={asset.equipment_id} value={asset.equipment_id}>{asset.tag ?? asset.equipment_id}</option>)}</select></label>
+      <label><span>Selected asset</span><select value={selectedAsset?.equipment_id ?? ''} onChange={event => data.setSelectedAssetId(event.target.value)}>{data.facilityEquipment.map(asset => <option key={asset.equipment_id} value={asset.equipment_id}>{asset.tag ?? asset.equipment_id}</option>)}</select></label>
       <button className="v2-primary-action" type="button" disabled={!selectedAsset || Boolean(data.mutationKey)} onClick={() => selectedAsset && void data.actions.addWorkOrder(selectedAsset.equipment_id)}><Plus size={15} />Create work order</button>
     </section>
 

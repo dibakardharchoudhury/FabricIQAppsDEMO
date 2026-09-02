@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Activity, AlertTriangle, Factory, Gauge, MapPin, Plus, Radio, Wrench } from 'lucide-react'
-import { FacilityMap, type FacilityStat } from '../../components/FacilityMap'
+import { FacilityMap, type AssetPin, type FacilityStat } from '../../components/FacilityMap'
 import { twinStatus, type TwinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 export function OverviewPage() {
   const data = useHydroOperationsData()
-  const [selectedAssetId, setSelectedAssetId] = useState<string>()
   const facility = data.selectedFacility
   const telemetryTone = data.telemetryStatus === 'live' ? 'good' : data.telemetryStatus === 'delayed' ? 'warn' : data.telemetryStatus === 'stale' ? 'bad' : 'muted'
-  const qualityTone = data.counts.qualityIssues ? 'warn' : data.counts.liveSignals ? 'good' : 'muted'
-  const issueSignals = data.mappedTelemetry.filter(item => ['bad', 'uncertain'].includes((item.reading.quality ?? '').toLowerCase()))
+  const issueSignals = data.mappedTelemetry.filter(item =>
+    item.instrument?.equipment_id === data.selectedAssetId
+    && ['bad', 'uncertain'].includes((item.reading.quality ?? '').toLowerCase()))
+  const qualityTone = issueSignals.length ? 'warn' : data.counts.liveSignals ? 'good' : 'muted'
   const telemetryByNode = useMemo(() => new Map(data.telemetry.map(reading => [reading.opcuaNodeId, reading])), [data.telemetry])
+  const openOrderNodes = useMemo(() => new Set(data.openOrders.map(order => order.opcuaNodeId)), [data.openOrders])
   const facilityStats = useMemo<FacilityStat[]>(() => (data.stid?.facilities ?? []).map(item => {
     const equipment = data.stid?.equipment.filter(asset => asset.facility_id === item.facility_id) ?? []
     const instruments = data.stid?.instruments.filter(instrument => instrument.facility_id === item.facility_id) ?? []
@@ -25,6 +27,18 @@ export function OverviewPage() {
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return { ...item, lat: Number(item.lat), lon: Number(item.lon), assetCount: equipment.length, instrumentCount: instruments.length, openOrders: data.openOrders.filter(order => equipmentIds.has(order.equipmentId)).length, health, worst }
   }), [data.openOrders, data.stid, telemetryByNode])
+  const assetPins = useMemo<AssetPin[]>(() => data.facilityEquipment.map(asset => {
+    const instruments = data.facilityInstruments.filter(instrument => instrument.equipment_id === asset.equipment_id)
+    const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
+    const signals = instruments.map(instrument => {
+      const reading = telemetryByNode.get(instrument.opcua_node_id)
+      const status = twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id) })
+      health[status]++
+      return { label: instrument.tag ?? instrument.instrument_id, value: reading?.value, unit: instrument.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
+    })
+    const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
+    return { equipment_id: asset.equipment_id, tag: asset.tag ?? asset.equipment_id, worst, health, openOrders: data.openOrders.filter(order => order.equipmentId === asset.equipment_id).length, signals }
+  }), [data.facilityEquipment, data.facilityInstruments, data.openOrders, openOrderNodes, telemetryByNode])
 
   return <div className="v2-overview">
     {data.notice && <div className="v2-notice"><AlertTriangle size={15} /><span>{data.notice}</span></div>}
@@ -54,14 +68,14 @@ export function OverviewPage() {
       </div>
       <div className="v2-health-grid">
         <HealthItem tone={telemetryTone} icon={Radio} label="Telemetry freshness" value={data.telemetryStatusLabel} detail={data.telemetryAgeLabel ? `Median event age ${data.telemetryAgeLabel}` : 'No recent telemetry loaded'} />
-        <HealthItem tone={qualityTone} icon={AlertTriangle} label="BAD / UNCERTAIN quality" value={String(data.counts.qualityIssues)} detail={`${data.counts.liveSignals || 0} signal${data.counts.liveSignals === 1 ? '' : 's'} in selected facility`} />
+        <HealthItem tone={qualityTone} icon={AlertTriangle} label="BAD / UNCERTAIN quality" value={String(issueSignals.length)} detail={`Signals on ${data.selectedAsset?.tag ?? 'selected asset'}`} />
         <HealthItem tone={data.counts.openWorkOrders ? 'warn' : data.operationsState === 'connected' ? 'good' : 'muted'} icon={Wrench} label="Open maintenance work" value={data.operationsState === 'connected' ? String(data.counts.openWorkOrders) : 'Not connected'} detail="Work orders scoped to this facility" />
       </div>
     </section>
 
     <section className="v2-overview-workspace">
-      <article className="v2-data-panel v2-map-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Facility Network</span><h2>{facilityStats.length} governed site{facilityStats.length === 1 ? '' : 's'}</h2></div>{facilityStats.length ? <FacilityMap facilities={facilityStats} selectedId={facility?.facility_id} onSelect={data.setSelectedFacilityId} /> : <div className="v2-inline-empty">Connect STID to load facility coordinates.</div>}</article>
-      <article className="v2-data-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Asset Registry</span><h2>{data.facilityEquipment.length} assets</h2></div><div className="v2-asset-list">{data.facilityEquipment.map(asset => <button type="button" className={selectedAssetId === asset.equipment_id ? 'active' : ''} key={asset.equipment_id} onClick={() => setSelectedAssetId(asset.equipment_id)}><span>{asset.tag?.replace(/\D/g, '').padStart(2, '0') || '—'}</span><span><strong>{asset.tag ?? asset.equipment_id}</strong><small>{asset.manufacturer ?? 'Manufacturer unavailable'} · {asset.model ?? 'Model unavailable'}</small></span><em>{asset.status ?? 'Unknown'}</em></button>)}{!data.facilityEquipment.length && <div className="v2-inline-empty">No assets loaded for this facility.</div>}</div></article>
+      <article className="v2-data-panel v2-map-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Facility Network</span><h2>{facilityStats.length} governed site{facilityStats.length === 1 ? '' : 's'}</h2></div>{facilityStats.length ? <FacilityMap facilities={facilityStats} assets={assetPins} selectedId={facility?.facility_id} selectedAssetId={data.selectedAssetId} onSelect={data.setSelectedFacilityId} onSelectAsset={data.setSelectedAssetId} /> : <div className="v2-inline-empty">Connect STID to load facility coordinates.</div>}</article>
+      <article className="v2-data-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Asset Registry</span><h2>{data.facilityEquipment.length} assets</h2></div><div className="v2-asset-list">{data.facilityEquipment.map(asset => <button type="button" className={data.selectedAssetId === asset.equipment_id ? 'active' : ''} key={asset.equipment_id} onClick={() => data.setSelectedAssetId(asset.equipment_id)}><span>{asset.tag?.replace(/\D/g, '').padStart(2, '0') || '—'}</span><span><strong>{asset.tag ?? asset.equipment_id}</strong><small>{asset.manufacturer ?? 'Manufacturer unavailable'} · {asset.model ?? 'Model unavailable'}</small></span><em>{asset.status ?? 'Unknown'}</em></button>)}{!data.facilityEquipment.length && <div className="v2-inline-empty">No assets loaded for this facility.</div>}</div></article>
     </section>
 
     {issueSignals.length > 0 && <section className="v2-data-panel v2-alert-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Quality Alerts</span><h2>{issueSignals.length} signals need attention</h2></div><div className="v2-alert-list">{issueSignals.slice(0, 8).map(item => {

@@ -25,7 +25,8 @@ export function TelemetryPage() {
   const signal = signals.find(item => item.instrument_id === selectedSignalId) ?? signals[0]
   const latestByNode = useMemo(() => new Map(data.facilityTelemetry.map(item => [item.opcuaNodeId, item])), [data.facilityTelemetry])
   const latest = signal ? latestByNode.get(signal.opcua_node_id) : undefined
-  const qualityIssueCount = data.facilityTelemetry.filter(item => issueQualities.has((item.quality ?? '').toLowerCase())).length
+  const selectedAssetTelemetry = data.mappedTelemetry.filter(item => item.instrument?.equipment_id === asset?.equipment_id)
+  const qualityIssueCount = selectedAssetTelemetry.filter(item => issueQualities.has((item.reading.quality ?? '').toLowerCase())).length
 
   useEffect(() => {
     if (!signal) return
@@ -55,8 +56,8 @@ export function TelemetryPage() {
 
     <section className="v2-telemetry-status">
       <TelemetryStatusCard icon={Radio} label="Telemetry freshness" value={data.telemetryStatusLabel} detail={data.telemetryAgeLabel ? `Median event age ${data.telemetryAgeLabel}` : 'No telemetry rows loaded'} tone={data.telemetryStatus === 'live' ? 'good' : data.telemetryStatus === 'delayed' ? 'warn' : data.telemetryStatus === 'stale' ? 'bad' : 'muted'} />
-      <TelemetryStatusCard icon={Activity} label="Live signals" value={String(data.counts.liveSignals || '-')} detail="Selected facility" tone={data.counts.liveSignals ? 'good' : 'muted'} />
-      <TelemetryStatusCard icon={AlertTriangle} label="Quality issues" value={String(qualityIssueCount)} detail="BAD / UNCERTAIN latest quality" tone={qualityIssueCount ? 'warn' : data.counts.liveSignals ? 'good' : 'muted'} />
+      <TelemetryStatusCard icon={Activity} label="Live signals" value={String(selectedAssetTelemetry.length || '-')} detail={asset?.tag ?? 'Selected turbine'} tone={selectedAssetTelemetry.length ? 'good' : 'muted'} />
+      <TelemetryStatusCard icon={AlertTriangle} label="Quality issues" value={String(qualityIssueCount)} detail="BAD / UNCERTAIN latest quality" tone={qualityIssueCount ? 'warn' : selectedAssetTelemetry.length ? 'good' : 'muted'} />
     </section>
 
     {data.stidState !== 'connected' ? <EmptyPanel title="STID not connected" text="Use Administration to connect STID before exploring telemetry by asset and signal." />

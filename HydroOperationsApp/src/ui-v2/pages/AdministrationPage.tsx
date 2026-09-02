@@ -1,4 +1,5 @@
 import { Check, Database, Play, Radio, RefreshCw, UserRound } from 'lucide-react'
+import { FacilityContext } from '../components/FacilityContext'
 import { fmtElapsed, useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 export function AdministrationPage() {
@@ -96,6 +97,7 @@ export function AdministrationPage() {
   ]
 
   return <div className="v2-admin">
+    <FacilityContext />
     <section className="v2-admin-head">
       <span className="v2-eyebrow">Administration</span>
       <h1>Fabric environment setup</h1>

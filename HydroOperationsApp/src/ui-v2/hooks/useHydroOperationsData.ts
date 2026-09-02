@@ -31,7 +31,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
-type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string }
+type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
@@ -73,6 +73,7 @@ function useHydroOperationsDataController() {
   const [notifications, setNotifications] = useState<MaintenanceNotificationRecord[]>([])
   const [assetModels, setAssetModels] = useState<Asset3DModelRecord[]>([])
   const [selectedFacilityId, setSelectedFacilityIdState] = useState<string | undefined>(persisted.selectedFacilityId)
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Record<string, string>>(() => persisted.selectedAssetIds ?? {})
   const [stidState, setStidState] = useState<LoadState>(persisted.stidConnected ? 'loading' : 'idle')
   const [telemetryState, setTelemetryState] = useState<LoadState>(persisted.telemetryConnected ? 'loading' : 'idle')
   const [operationsState, setOperationsState] = useState<LoadState>('idle')
@@ -83,7 +84,6 @@ function useHydroOperationsDataController() {
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const [digitalTwinSelections, setDigitalTwinSelections] = useState<Record<string, string>>({})
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
@@ -428,6 +428,17 @@ function useHydroOperationsDataController() {
     () => (stid?.equipment ?? []).filter(asset => !selectedFacility || asset.facility_id === selectedFacility.facility_id),
     [stid, selectedFacility],
   )
+  const selectedAsset = facilityEquipment.find(asset => asset.equipment_id === selectedAssetIds[selectedFacility?.facility_id ?? '']) ?? facilityEquipment[0]
+  const selectedAssetId = selectedAsset?.equipment_id
+  const setSelectedAssetId = useCallback((assetId: string) => {
+    const facilityId = selectedFacility?.facility_id
+    if (!facilityId || !facilityEquipment.some(asset => asset.equipment_id === assetId)) return
+    setSelectedAssetIds(current => {
+      const next = { ...current, [facilityId]: assetId }
+      writePersistedSetup({ selectedAssetIds: next })
+      return next
+    })
+  }, [facilityEquipment, selectedFacility])
   const facilityInstruments = useMemo(
     () => stid?.instruments.filter(item => !selectedFacility || item.facility_id === selectedFacility.facility_id) ?? [],
     [stid, selectedFacility],
@@ -478,30 +489,19 @@ function useHydroOperationsDataController() {
   const telemetryExplorerSelection = useMemo<TelemetryExplorerSelection>(() => {
     const facilityId = selectedFacility?.facility_id
     const saved = facilityId ? telemetrySelections[facilityId] : undefined
-    const asset = facilityEquipment.find(item => item.equipment_id === saved?.assetId) ?? facilityEquipment[0]
-    const assetSignals = stid?.instruments.filter(item => item.equipment_id === asset?.equipment_id) ?? []
+    const assetSignals = stid?.instruments.filter(item => item.equipment_id === selectedAssetId) ?? []
     const signal = assetSignals.find(item => item.instrument_id === saved?.signalId) ?? assetSignals[0]
-    return { assetId: asset?.equipment_id, signalId: signal?.instrument_id, range: saved?.range ?? '1h' }
-  }, [facilityEquipment, selectedFacility, stid, telemetrySelections])
+    return { assetId: selectedAssetId, signalId: signal?.instrument_id, range: saved?.range ?? '24h' }
+  }, [selectedAssetId, selectedFacility, stid, telemetrySelections])
 
   const updateTelemetryExplorerSelection = useCallback((patch: Partial<TelemetryExplorerSelection>) => {
     if (!selectedFacility?.facility_id) return
+    if (patch.assetId) setSelectedAssetId(patch.assetId)
     setTelemetrySelections(current => {
-      const previous = current[selectedFacility.facility_id] ?? { range: '1h' as TelemetryHistoryRange }
+      const previous = current[selectedFacility.facility_id] ?? { range: '24h' as TelemetryHistoryRange }
       return { ...current, [selectedFacility.facility_id]: { ...previous, ...patch, range: patch.range ?? previous.range } }
     })
-  }, [selectedFacility])
-
-  const selectedDigitalTwinAssetId = useMemo(() => {
-    const facilityId = selectedFacility?.facility_id
-    const saved = facilityId ? digitalTwinSelections[facilityId] : undefined
-    return (facilityEquipment.find(item => item.equipment_id === saved) ?? facilityEquipment[0])?.equipment_id
-  }, [digitalTwinSelections, facilityEquipment, selectedFacility])
-
-  const updateDigitalTwinAssetSelection = useCallback((assetId: string) => {
-    if (!selectedFacility?.facility_id) return
-    setDigitalTwinSelections(current => ({ ...current, [selectedFacility.facility_id]: assetId }))
-  }, [selectedFacility])
+  }, [selectedFacility, setSelectedAssetId])
 
   const addWorkOrder = useCallback(async (equipmentId: string, instrumentId?: string, opcuaNodeId?: string) => {
     setMutationKey(opcuaNodeId ?? equipmentId)
@@ -551,12 +551,15 @@ function useHydroOperationsDataController() {
       return next
     })
     try {
-      const answer = await askDataAgent(text, partial => setLastAgent(partial))
+      const context = selectedFacility && selectedAsset
+        ? `Current filter: facility ${selectedFacility.facility_id} (${selectedFacility.facility_name}), asset ${selectedAsset.equipment_id} (${selectedAsset.tag ?? selectedAsset.equipment_id}). Apply this filter unless the user explicitly requests a broader scope.\n\nUser request: `
+        : ''
+      const answer = await askDataAgent(`${context}${text}`, partial => setLastAgent(partial))
       setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total })
     } catch (error) {
       setLastAgent(error instanceof Error ? error.message : 'The Data Agent request failed.', { elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
-  }, [copilotBusy])
+  }, [copilotBusy, selectedAsset, selectedFacility])
 
   const resetCopilot = useCallback(() => {
     if (!copilotBusy) setMessages([INITIAL_MESSAGE])
@@ -579,6 +582,9 @@ function useHydroOperationsDataController() {
     selectedFacility,
     selectedFacilityId: selectedFacility?.facility_id,
     setSelectedFacilityId,
+    selectedAsset,
+    selectedAssetId,
+    setSelectedAssetId,
     facilityEquipment,
     facilityInstruments,
     facilityTelemetry,
@@ -594,7 +600,6 @@ function useHydroOperationsDataController() {
     telemetryStatusLabel,
     telemetryAgeLabel,
     telemetryExplorerSelection,
-    selectedDigitalTwinAssetId,
     facilityHealth,
     messages,
     copilotBusy,
@@ -615,7 +620,6 @@ function useHydroOperationsDataController() {
       connectStid,
       connectTelemetry,
       updateTelemetryExplorerSelection,
-      updateDigitalTwinAssetSelection,
       addWorkOrder,
       changeWorkOrderStatus,
       removeWorkOrder,
