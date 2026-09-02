@@ -368,6 +368,24 @@ def publish_data_agent(item_id: str, published_description: str = "") -> None:
     raise RuntimeError(f"Failed to publish Data Agent: {response.status_code} {response.text}")
 
 
+def enable_preview_runtime(item_id: str) -> None:
+    """Select Preview Runtime and verify it before publishing."""
+    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/staging/settings"
+    current = api_request("GET", url, timeout=120)
+    if current.status_code != 200:
+        raise RuntimeError(f"Failed to read Data Agent runtime settings: {current.status_code} {current.text}")
+    experimental = dict((current.json() or {}).get("experimental") or {})
+    experimental["enableExperimentalFeatures"] = True
+    updated = api_request("PATCH", url, data={"experimental": experimental}, timeout=120)
+    if updated.status_code != 200:
+        raise RuntimeError(f"Failed to enable Data Agent Preview Runtime: {updated.status_code} {updated.text}")
+    verified = api_request("GET", url, timeout=120)
+    settings = verified.json() if verified.status_code == 200 else {}
+    if (settings.get("experimental") or {}).get("enableExperimentalFeatures") is not True:
+        raise RuntimeError("Fabric Data Agent Preview Runtime could not be enabled.")
+    print("✅ Data Agent Preview Runtime enabled.")
+
+
 def upsert_part(parts: list, path: str, obj: dict) -> list:
     """Replace (or append) an InlineBase64 part at `path` with `obj`."""
     encoded = {"path": path, "payload": encode_payload(obj), "payloadType": "InlineBase64"}
@@ -523,8 +541,9 @@ try:
     update_item_definition(data_agent_item_id, {"parts": parts})
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
 
-    # 4) PUBLISH — promote staging → published so the agent's endpoints go live.
+    # 4) PUBLISH — lock Preview Runtime into the published agent and promote staging.
     try:
+        enable_preview_runtime(data_agent_item_id)
         publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
         openai_endpoint = (
             f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}"
