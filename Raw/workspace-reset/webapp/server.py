@@ -81,10 +81,12 @@ TEST_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (2, ("CONNECTION TEST:",)),
 ]
 
-PIPELINE_PHASES = ["Queued", "Resolving pipeline", "Running", "Done"]
+PIPELINE_PHASES = ["Queued", "Resolving workspace", "Checking Key Vault", "Resolving pipeline", "Running", "Done"]
 PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
-    (1, ("Pipeline '",)),
-    (2, ("Starting pipeline", "run queued", "job status:")),
+    (1, ("Key Vault preflight:", "Pipeline '")),
+    (2, ("public network access", "checking Fabric managed private endpoints", "Fabric endpoint state")),
+    (3, ("Pipeline '",)),
+    (4, ("Starting pipeline", "run queued", "job status:")),
 ]
 
 DEPLOY_PHASES = [
@@ -364,9 +366,9 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "env_suffix", "type": "string", "default": "V6",
      "label": "Environment suffix",
      "help": "Suffix appended to the artifacts this run creates (e.g. the lakehouse). Bump it to keep parallel demo runs from colliding."},
-    {"name": "workspace_id", "type": "string", "default": "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
-     "label": "Workspace id",
-     "help": "GUID of the Fabric workspace the notebooks build into — normally the same workspace you're running in."},
+    {"name": "workspace_id", "type": "string", "default": "",
+     "label": "Workspace name or ID",
+     "help": "Mirrors the target workspace on the left. Names are resolved to the canonical workspace GUID before the pipeline starts."},
     {"name": "key_vault_uri", "type": "string", "default": "https://akvfabcapnew.vault.azure.net/",
      "label": "Key Vault URI",
      "help": "Azure Key Vault that holds the service-principal secrets the notebooks read (e.g. https://myvault.vault.azure.net/)."},
@@ -413,6 +415,8 @@ def api_run_pipeline():
         return jsonify(error="tenant and workspace are required."), 400
     if not isinstance(raw_params, dict):
         return jsonify(error="parameters must be an object of name -> value."), 400
+    if not str(raw_params.get("key_vault_uri") or "").strip():
+        return jsonify(error="Key Vault URI is required for connectivity preflight."), 400
 
     # Keep only known parameters, drop blanks (so pipeline defaults apply), and
     # coerce ints so they travel as JSON numbers.
@@ -431,6 +435,10 @@ def api_run_pipeline():
                 return jsonify(error=f"{spec['label']} must be a whole number."), 400
         else:
             params[name] = str(value).strip()
+
+    # run_pipeline.py resolves the target workspace and replaces this value with
+    # its canonical GUID. Keep the display value here only for transparent input.
+    params["workspace_id"] = workspace
 
     argv = [
         str(PIPELINE_SCRIPT),

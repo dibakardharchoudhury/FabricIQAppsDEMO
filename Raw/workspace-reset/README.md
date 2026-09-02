@@ -57,6 +57,15 @@ situation.
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as
   is the identity that performs the changes.
 - **Workspace Admin** on the target workspace (required to connect / sync / delete).
+- **Workspace Admin** is also required to create a Fabric managed private endpoint
+  during the pipeline Key Vault preflight. The Azure subscription must have the
+  `Microsoft.Network` resource provider registered.
+- Read access to the target Key Vault resource and its private endpoint connections.
+  When private connectivity is needed, the signed-in identity must also be able to
+  approve Key Vault private endpoint connections (for example, Key Vault Contributor,
+  Contributor, or a custom role containing the required private-endpoint-connection
+  read/write and approval actions). If approval is not authorized, the Fabric request
+  remains pending and the pipeline does not start.
 - **Python deps:** `python -m pip install -r requirements.txt`
   (`azure-identity`, `requests`, `flask`).
 - **Node.js/npm/npx available on PATH** for app deployment. The launcher does not globally install
@@ -91,6 +100,23 @@ everything required.
 | `FABRIC_DIRECTORY` | sync | Repo directory mapped to the workspace root (default `/`) |
 | `FABRIC_CONNECTION_ID` | sync | Reuse an existing Fabric GitHub connection instead of creating one |
 | `FABRIC_GIT_PAT` / `GITHUB_PAT` | sync | GitHub PAT (only if not reusing a connection) |
+
+## Run the setup pipeline and Key Vault preflight
+
+The **Run pipeline** tab accepts either the target workspace display name or GUID in
+the sidebar. Its workspace parameter mirrors that value, and the runner resolves it
+to the canonical GUID before starting `01_Pipe_Setup`.
+
+Before the pipeline starts, the app resolves the Key Vault URI against Azure resources
+visible to the current `az login` identity. If public network access is enabled with a
+default allow rule, no endpoint is created. Otherwise the app reuses or creates a Fabric
+managed private endpoint for the Key Vault `vault` subresource, approves the matching
+Key Vault connection when authorized, and waits until Fabric reports it ready. This
+preflight reads network metadata only; it never reads or logs Key Vault secret values.
+
+Creating the Fabric endpoint and approving the Azure connection are separate control-plane
+operations. If the current identity lacks Azure approval rights, approve the pending request
+under **Key Vault > Networking > Private endpoint connections**, then run the action again.
 
 ## Sync a workspace from Git
 

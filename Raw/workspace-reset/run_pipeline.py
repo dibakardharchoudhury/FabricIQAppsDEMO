@@ -47,6 +47,8 @@ import sys
 import time
 from typing import Any
 
+from key_vault_preflight import PreflightError, ensure_key_vault_access
+
 try:
     import requests
     from azure.core.exceptions import ClientAuthenticationError
@@ -248,6 +250,17 @@ def main() -> int:
     except ClientAuthenticationError:
         print("Authentication failed. Run `az login` (optionally --tenant) first.", file=sys.stderr)
         return 1
+
+    # The action target is the source of truth. Notebooks require the canonical
+    # GUID even when the user selected the workspace by display name.
+    parameters["workspace_id"] = ws_id
+    key_vault_uri = str(parameters.get("key_vault_uri") or "").strip()
+    if key_vault_uri:
+        try:
+            ensure_key_vault_access(args.tenant, ws_id, key_vault_uri)
+        except PreflightError as exc:
+            print(f"Key Vault preflight failed: {exc}", file=sys.stderr)
+            return 1
 
     item_id, pipe_name = fab.find_pipeline(ws_id, args.pipeline)
     print(f"Pipeline '{pipe_name}' ({item_id}) in workspace '{ws_name}' ({ws_id}).")
