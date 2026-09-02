@@ -641,9 +641,9 @@ def ensure_lakehouse(
 STID_FILES = {
     "facilities_stid.csv": (
         "facility_id,facility_name,type,country,lat,lon,commissioned_date\n"
-        "FACILITY_RTI_001,RTI Demo Hydropower Plant,Hydropower,NO,60.25,2.10,2015-06-01\n"
-        "FACILITY_RTI_002,RTI Fjord Hydropower Plant,Hydropower,NO,61.20,7.10,2012-05-01\n"
-        "FACILITY_RTI_003,RTI Highland Hydropower Plant,Hydropower,NO,59.90,8.60,2018-09-01\n"
+        "FACILITY_RTI_001,Sloy Power Station,Hydropower,GB,56.2512,-4.7117,2015-06-01\n"
+        "FACILITY_RTI_002,Foyers Power Station,Hydropower,GB,57.2600,-4.5200,2012-05-01\n"
+        "FACILITY_RTI_003,Pitlochry Power Station,Hydropower,GB,56.7050,-3.7350,2018-09-01\n"
     ),
     "systems_stid.csv": (
         "system_id,facility_id,system_name,oag_rds_system_code\n"
