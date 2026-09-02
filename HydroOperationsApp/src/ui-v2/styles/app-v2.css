@@ -425,6 +425,13 @@
   margin-bottom: 14px;
 }
 
+.v2-panel-headline-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .v2-panel-headline h2 {
   margin: 5px 0 0;
   font-size: 16px;
@@ -1502,6 +1509,24 @@ button.v2-signal-row:hover,
 .v2-overview-workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr); gap: 14px; }
 .v2-map-panel .facility-map-wrap { min-height: 360px; }
 .v2-map-panel .facility-map { height: 360px; }
+.v2-expanded-view {
+  position: fixed !important;
+  inset: 12px;
+  z-index: 2000;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 12px;
+  background: var(--cp-surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+}
+.v2-map-panel.v2-expanded-view .facility-map-wrap { flex: 1; min-height: 0; }
+.v2-map-panel.v2-expanded-view .facility-map { height: 100%; }
+.v2-twin-panel.v2-expanded-view .twin-stage { flex: 1; height: auto; min-height: 0; }
 .v2-asset-list { display: grid; max-height: 390px; overflow: auto; }
 .v2-asset-list button { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 9px; align-items: center; width: 100%; min-height: 56px; padding: 8px 6px; border: 0; border-top: 1px solid var(--cp-border); background: transparent; text-align: left; cursor: pointer; }
 .v2-asset-list button:hover, .v2-asset-list button.active { background: var(--cp-accent-soft); }

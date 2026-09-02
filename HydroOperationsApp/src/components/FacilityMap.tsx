@@ -52,6 +52,16 @@ function FitBounds({ points, focusPoints }: { points: FacilityStat[]; focusPoint
   return null
 }
 
+function ResizeMap() {
+  const map = useMap()
+  useEffect(() => {
+    const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }))
+    observer.observe(map.getContainer())
+    return () => observer.disconnect()
+  }, [map])
+  return null
+}
+
 export function FacilityMap({ facilities, assets, selectedId, selectedAssetId, onSelect, onSelectAsset, updatedAt }: {
   facilities: FacilityStat[]
   assets?: AssetPin[]
@@ -91,6 +101,7 @@ export function FacilityMap({ facilities, assets, selectedId, selectedAssetId, o
     <div className="facility-map-wrap">
       <MapContainer className="facility-map" center={[points[0].lat, points[0].lon]} zoom={6} minZoom={3} maxZoom={14} scrollWheelZoom>
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <ResizeMap />
         <FitBounds points={points} focusPoints={ring.length ? [ring[0].home, ...ring.map(({ lat, lon }) => [lat, lon] as [number, number])] : undefined} />
 
         {ring.map(({ pin, lat, lon, home }) => (

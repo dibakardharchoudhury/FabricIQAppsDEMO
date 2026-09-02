@@ -1,8 +1,9 @@
 import { lazy, Suspense, useMemo } from 'react'
-import { Activity, Box, ExternalLink, Factory, Gauge } from 'lucide-react'
+import { Activity, Box, ExternalLink, Factory, Gauge, Maximize2, Minimize2 } from 'lucide-react'
 import type { TwinSignal, TwinStatus } from '../../twin'
 import { ageLabel, freshnessOf, twinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
+import { useExpandedView } from '../hooks/useExpandedView'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 const AssetModelViewer = lazy(() => import('../../components/AssetModelViewer').then(m => ({ default: m.AssetModelViewer })))
@@ -10,6 +11,7 @@ const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].in
 
 export function DigitalTwinPage() {
   const data = useHydroOperationsData()
+  const twinView = useExpandedView()
   const selectedAsset = data.selectedAsset
   const selectedModel = data.assetModels.find(item => item.equipmentId === selectedAsset?.equipment_id)
   const assetInstruments = useMemo(
@@ -58,8 +60,8 @@ export function DigitalTwinPage() {
             <TwinMetric icon={Gauge} label="Current status" value={liveState} detail={medianIso ? `Median update ${ageLabel(medianIso)}` : 'No Eventhouse reading'} tone={liveState === 'Live telemetry' ? 'good' : medianIso ? 'warn' : 'muted'} />
           </section>
 
-          <section className="v2-twin-panel">
-            <div className="v2-panel-headline"><span className="v2-eyebrow">Digital Twin</span><h2>{selectedAsset?.tag ?? 'Asset model'}</h2></div>
+          <section className={`v2-twin-panel${twinView.expanded ? ' v2-expanded-view' : ''}`}>
+            <div className="v2-panel-headline v2-panel-headline-action"><div><span className="v2-eyebrow">Digital Twin</span><h2>{selectedAsset?.tag ?? 'Asset model'}</h2></div><button className="v2-icon-action" type="button" title={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-label={twinView.expanded ? 'Restore digital twin view' : 'Expand digital twin view'} aria-pressed={twinView.expanded} onClick={twinView.toggleExpanded}>{twinView.expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></div>
             {data.modelState !== 'connected' ? <EmptyTwin title="Model metadata unavailable" text="Sign in through Administration to load Rayfin 3D model metadata." compact />
               : !selectedModel ? <EmptyTwin title="No 3D model for selected asset" text="No Asset3DModel record matches this asset's equipment ID." compact />
                 : !canRenderModel(selectedModel.format) ? <ModelFallback model={selectedModel} />

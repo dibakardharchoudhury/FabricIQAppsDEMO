@@ -1,12 +1,14 @@
 import { useMemo } from 'react'
-import { Activity, AlertTriangle, Factory, Gauge, MapPin, Plus, Radio, Wrench } from 'lucide-react'
+import { Activity, AlertTriangle, Factory, Gauge, MapPin, Maximize2, Minimize2, Plus, Radio, Wrench } from 'lucide-react'
 import { FacilityMap, type AssetPin, type FacilityStat } from '../../components/FacilityMap'
 import { twinStatus, type TwinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
+import { useExpandedView } from '../hooks/useExpandedView'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 export function OverviewPage() {
   const data = useHydroOperationsData()
+  const mapView = useExpandedView()
   const facility = data.selectedFacility
   const telemetryTone = data.telemetryStatus === 'live' ? 'good' : data.telemetryStatus === 'delayed' ? 'warn' : data.telemetryStatus === 'stale' ? 'bad' : 'muted'
   const issueSignals = data.mappedTelemetry.filter(item =>
@@ -74,7 +76,10 @@ export function OverviewPage() {
     </section>
 
     <section className="v2-overview-workspace">
-      <article className="v2-data-panel v2-map-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Facility Network</span><h2>{facilityStats.length} governed site{facilityStats.length === 1 ? '' : 's'}</h2></div>{facilityStats.length ? <FacilityMap facilities={facilityStats} assets={assetPins} selectedId={facility?.facility_id} selectedAssetId={data.selectedAssetId} onSelect={data.setSelectedFacilityId} onSelectAsset={data.setSelectedAssetId} /> : <div className="v2-inline-empty">Connect STID to load facility coordinates.</div>}</article>
+      <article className={`v2-data-panel v2-map-panel${mapView.expanded ? ' v2-expanded-view' : ''}`}>
+        <div className="v2-panel-headline v2-panel-headline-action"><div><span className="v2-eyebrow">Facility Network</span><h2>{facilityStats.length} governed site{facilityStats.length === 1 ? '' : 's'}</h2></div><button className="v2-icon-action" type="button" title={mapView.expanded ? 'Restore map view' : 'Expand map view'} aria-label={mapView.expanded ? 'Restore map view' : 'Expand map view'} aria-pressed={mapView.expanded} onClick={mapView.toggleExpanded}>{mapView.expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></div>
+        {facilityStats.length ? <FacilityMap facilities={facilityStats} assets={assetPins} selectedId={facility?.facility_id} selectedAssetId={data.selectedAssetId} onSelect={data.setSelectedFacilityId} onSelectAsset={data.setSelectedAssetId} /> : <div className="v2-inline-empty">Connect STID to load facility coordinates.</div>}
+      </article>
       <article className="v2-data-panel"><div className="v2-panel-headline"><span className="v2-eyebrow">Asset Registry</span><h2>{data.facilityEquipment.length} assets</h2></div><div className="v2-asset-list">{data.facilityEquipment.map(asset => <button type="button" className={data.selectedAssetId === asset.equipment_id ? 'active' : ''} key={asset.equipment_id} onClick={() => data.setSelectedAssetId(asset.equipment_id)}><span>{asset.tag?.replace(/\D/g, '').padStart(2, '0') || '—'}</span><span><strong>{asset.tag ?? asset.equipment_id}</strong><small>{asset.manufacturer ?? 'Manufacturer unavailable'} · {asset.model ?? 'Model unavailable'}</small></span><em>{asset.status ?? 'Unknown'}</em></button>)}{!data.facilityEquipment.length && <div className="v2-inline-empty">No assets loaded for this facility.</div>}</div></article>
     </section>
 
