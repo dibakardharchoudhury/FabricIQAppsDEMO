@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, SquarePen, Trash2, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, Settings, SquarePen, Trash2, Wrench, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
@@ -19,6 +19,19 @@ import { twinStatus, ageLabel, freshnessOf, type TwinSignal, type TwinStatus } f
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
 type OrderScope = 'asset' | 'facility' | 'all'
+type V1TabId = 'overview' | 'telemetry' | 'digital-twin' | 'copilot' | 'maintenance' | 'administration'
+const V1_TABS = [
+  { id: 'overview', label: 'Overview', icon: Gauge },
+  { id: 'telemetry', label: 'Real Time Telemetry', icon: Activity },
+  { id: 'digital-twin', label: 'Digital Twin', icon: Factory },
+  { id: 'copilot', label: 'Copilot', icon: Bot },
+  { id: 'maintenance', label: 'Work Orders & Maintenance', icon: Wrench },
+  { id: 'administration', label: 'Administration', icon: Settings },
+] satisfies Array<{ id: V1TabId; label: string; icon: typeof Gauge }>
+const v1TabFromLocation = (): V1TabId => {
+  const value = new URLSearchParams(window.location.search).get('tab')
+  return V1_TABS.some(tab => tab.id === value) ? value as V1TabId : 'overview'
+}
 // OPC UA node ids encode the equipment tag (ns=2;s=T004.inlet_pressure -> T004) so a work order
 // can be raised even before STID metadata maps the signal to an asset.
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -86,6 +99,7 @@ function readPersistedJobs(): Record<string, ProgressJob> {
 }
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState<V1TabId>(() => v1TabFromLocation())
   const [user, setUser] = useState<AppUser | null>(null)
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
   const [inspections, setInspections] = useState<InspectionRecord[]>([])
@@ -105,8 +119,7 @@ export default function App() {
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [provisioned, setProvisioned] = useState(false)
-  const [setupHidden, setSetupHidden] = useState(false)
-  const [copilotOpen, setCopilotOpen] = useState(false)
+  const [copilotOpen, setCopilotOpen] = useState(activeTab === 'copilot')
   const [copilotMax, setCopilotMax] = useState(false)
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
@@ -114,6 +127,25 @@ export default function App() {
   const [raising, setRaising] = useState<string>()
   const [orderScope, setOrderScope] = useState<OrderScope>('facility')
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const tab = v1TabFromLocation()
+      setActiveTab(tab)
+      setCopilotOpen(tab === 'copilot')
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const selectTab = (tab: V1TabId) => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('ui', 'v1')
+    url.searchParams.set('tab', tab)
+    window.history.pushState({}, '', url)
+    setActiveTab(tab)
+    setCopilotOpen(tab === 'copilot')
+  }
 
   const facilities = useMemo(() => stid?.facilities ?? [], [stid])
   const facility = facilities.find(item => item.facility_id === selectedFacilityId) ?? facilities[0]
@@ -647,7 +679,7 @@ export default function App() {
     'Summarize the facilities with their type, country, and number of assets.',
   ]
 
-  return <div className="app-shell">
+  return <div className={`app-shell v1-tab-${activeTab}`}>
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
@@ -676,23 +708,31 @@ export default function App() {
           {UI_CREDIT_LINE_1 && <span>{UI_CREDIT_LINE_1}</span>}
           {UI_CREDIT_LINE_2 && <span>{UI_CREDIT_LINE_2}</span>}
         </div>}
-        <span className="app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small></span>
+        <span className="app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small><a href="?ui=v2">Click here for V2 UI</a></span>
         <button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button>
       </div>
     </header>
 
+    <nav className="v1-tabs" aria-label="Hydro Operations domains">
+      <div className="v1-tabs-inner">{V1_TABS.map(tab => {
+        const Icon = tab.icon
+        const active = tab.id === activeTab
+        return <button key={tab.id} className={active ? 'v1-tab active' : 'v1-tab'} type="button" aria-current={active ? 'page' : undefined} onClick={() => selectTab(tab.id)}><Icon size={15} /><span>{tab.label}</span></button>
+      })}</div>
+    </nav>
+
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
       {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? now) - job.startedAt)}</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
-      {!setupHidden && !setupComplete && <section className="setup">
-        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>First time here? Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.</p><button className="icon-button" onClick={() => setSetupHidden(true)} title="Hide guided setup"><X size={16} /></button></div>
+      {activeTab === 'administration' && <section className="setup">
+        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>{setupComplete ? 'All setup steps are complete. Use the actions below to verify each connection.' : 'Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.'}</p><button className="icon-button" onClick={() => selectTab('overview')} title="Close administration"><X size={16} /></button></div>
         <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
           <span className="step-num">{step.done ? <Check size={14} /> : step.n}</span>
           <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
           <button className="step-action" onClick={step.run} disabled={step.busy || step.done}>{step.done ? 'Done' : step.busy ? 'Working…' : step.action}</button>
         </li>)}</ol>
       </section>}
-      <section className="page-head"><div><span className="eyebrow">FACILITY OPERATIONS</span><h1>{facility?.facility_name ?? 'Hydropower operations'}</h1><p>{facility ? `${facility.facility_id} · ${facility.type ?? 'Facility'} · ${facility.country ?? 'Location unavailable'}` : 'Connect STID to load governed facility and asset metadata.'}</p></div><button className="copilot-button" onClick={() => setCopilotOpen(true)}><Bot size={16} /> Copilot</button></section>
+      <section className="page-head"><div><span className="eyebrow">FACILITY OPERATIONS</span><h1>{facility?.facility_name ?? 'Hydropower operations'}</h1><p>{facility ? `${facility.facility_id} · ${facility.type ?? 'Facility'} · ${facility.country ?? 'Location unavailable'}` : 'Connect STID to load governed facility and asset metadata.'}</p></div><button className="copilot-button" onClick={() => selectTab('copilot')}><Bot size={16} /> Copilot</button></section>
 
       {facilities.length > 1 && <section className="facility-strip">{facilities.map(item => <button key={item.facility_id} className={item.facility_id === facility?.facility_id ? 'facility-chip active' : 'facility-chip'} onClick={() => selectFacility(item.facility_id)}><Factory size={14} /><span><strong>{item.facility_name}</strong><small>{item.facility_id}</small></span></button>)}</section>}
 
