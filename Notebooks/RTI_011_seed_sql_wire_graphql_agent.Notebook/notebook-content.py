@@ -244,6 +244,38 @@ OPERATIONAL_INSTRUCTIONS = (
     "'spare parts below reorder level', 'notifications in the last 24 hours'."
 )
 
+ASSET_RESOLUTION_INSTRUCTIONS_MARKER = "### Asset & Facility Resolution (Must Follow)"
+ASSET_RESOLUTION_INSTRUCTIONS = r'''
+
+### Asset & Facility Resolution (Must Follow)
+
+1. **Turbine / Asset naming**
+- Treat all of the following as referring to the same turbine asset:
+- "turbine 5", "the 5th turbine", "unit 5", "asset 5", "T005"
+- Normalize turbine references as:
+- **Tag:** `T00N` (e.g., N=5 → `T005`)
+- **Equipment ID:** `EQUIP_RTI_T00N` (e.g., N=5 → `EQUIP_RTI_T005`)
+- When a user mentions a turbine by number or T‑code, always use both:
+- `equipment.tag = "T00N"` and/or
+- `equipment.equipment_id = "EQUIP_RTI_T00N"`
+in all `analyze_ontology` and `analyze_sql_database` queries.
+2. **Signal-based resolution**
+- When the user mentions an OPC UA node like `ns=2;s=T005.power_output`, `ns=2;s=T005.vibration_a`, etc.:
+- Use that `opcua_node_id` to look up `signal_master`,
+- From `signal_master`, take `equipment_id`, `system_id`, and `facility_id` as the authoritative context for the asset.
+- Prefer this resolved `equipment_id`/`facility_id` over the raw text (e.g., "turbine 5") when constructing tool queries.
+3. **Facility naming**
+- Map human facility names to IDs. For this environment:
+- "RTI demo plant", "RTI hydropower plant", "the demo plant", "facility 1", "site 1" →
+`facility_id = "FACILITY_RTI_001"`, `facility_name = "RTI Demo Hydropower Plant"`.
+- Use the normalized `facility_id` in ontology/SQL queries instead of the raw user phrase whenever facility filtering is required.
+4. **Tool query rewriting**
+- Before calling any `analyze_ontology` or `analyze_sql_database` tool:
+- Resolve turbines and facilities using the rules above.
+- Rewrite the natural-language query to use the **canonical IDs/tags** (`EQUIP_RTI_T00N`, `T00N`, `FACILITY_RTI_001`) instead of the user's free-text wording.
+- This ID normalization is required and does **not** change user intent; it only maps human phrasing to model identifiers.
+'''
+
 SQL_DS_INSTRUCTIONS = (
     "Operational system-of-record for the hydro fleet (Fabric SQL Database). Prefer THIS source "
     "for anything about maintenance and asset operations; use the ontology/KQL source for live "
@@ -928,13 +960,15 @@ def build_sql_datasource_obj(existing: dict, artifact_id: str, schema_map: dict)
 
 
 def build_stage_obj(existing: dict) -> dict:
-    """Preserve the ontology aiInstructions and append operational guidance once."""
+    """Preserve existing aiInstructions and append required guidance once."""
     stage = dict(existing)
     stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
     instructions = stage.get("aiInstructions") or ""
     if OPERATIONAL_INSTRUCTIONS_MARKER not in instructions:
-        instructions = (instructions + OPERATIONAL_INSTRUCTIONS)[:15000]
-    stage["aiInstructions"] = instructions
+        instructions += OPERATIONAL_INSTRUCTIONS
+    if ASSET_RESOLUTION_INSTRUCTIONS_MARKER not in instructions:
+        instructions += ASSET_RESOLUTION_INSTRUCTIONS
+    stage["aiInstructions"] = instructions[:15000]
     return stage
 
 
