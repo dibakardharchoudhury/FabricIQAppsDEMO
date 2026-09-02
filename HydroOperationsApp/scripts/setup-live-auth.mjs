@@ -240,8 +240,7 @@ function isFabricHostingOrigin(value) {
 }
 
 export function synchronizeRedirectUris(current, desired) {
-  const retained = current.filter((uri) => !isFabricHostingOrigin(uri) || desired.includes(toOrigin(uri)))
-  return [...new Set([...retained, ...desired])]
+  return [...new Set([...current, ...desired])]
 }
 
 // ─── STEP 1: SPA redirect URIs ───────────────────────────────────────────────
