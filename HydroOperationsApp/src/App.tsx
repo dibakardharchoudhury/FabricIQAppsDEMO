@@ -3,6 +3,8 @@ import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Fac
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
+import './ui-v2/styles/app-v2.css'
+import { CopilotExperience } from './components/CopilotExperience'
 import { CopilotStreamCursor, CopilotThinking } from './components/CopilotThinking'
 import { FacilityMap, type FacilityStat, type AssetPin } from './components/FacilityMap'
 // Lazy so three.js / model-viewer only load when a GLB is actually shown.
@@ -735,6 +737,19 @@ export default function App() {
       <section className="page-head"><div><span className="eyebrow">FACILITY OPERATIONS</span><h1>{facility?.facility_name ?? 'Hydropower operations'}</h1><p>{facility ? `${facility.facility_id} · ${facility.type ?? 'Facility'} · ${facility.country ?? 'Location unavailable'}` : 'Connect STID to load governed facility and asset metadata.'}</p></div><button className="copilot-button" onClick={() => selectTab('copilot')}><Bot size={16} /> Copilot</button></section>
 
       {facilities.length > 1 && <section className="facility-strip">{facilities.map(item => <button key={item.facility_id} className={item.facility_id === facility?.facility_id ? 'facility-chip active' : 'facility-chip'} onClick={() => selectFacility(item.facility_id)}><Factory size={14} /><span><strong>{item.facility_name}</strong><small>{item.facility_id}</small></span></button>)}</section>}
+
+      {activeTab === 'copilot' && <CopilotExperience
+        messages={messages}
+        busy={busy}
+        selectedFacilityId={facility?.facility_id}
+        facilities={facilities.map(item => ({ id: item.facility_id, name: item.facility_name }))}
+        assets={equipment.map(asset => ({ id: asset.equipment_id, label: asset.tag ?? asset.equipment_id }))}
+        selectedAssetId={selected?.equipment_id}
+        onSelectFacility={selectFacility}
+        onSelectAsset={setSelectedId}
+        onSend={value => void sendQuestion(value)}
+        onReset={resetChat}
+      />}
 
       <section className="metrics">
         <div><MapPin size={17} /><span>Facilities<strong>{stid ? facilities.length : '—'}</strong><small>Lakehouse STID</small></span></div>
