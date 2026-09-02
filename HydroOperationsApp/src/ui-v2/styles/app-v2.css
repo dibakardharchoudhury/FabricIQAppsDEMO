@@ -1399,20 +1399,6 @@ button.v2-signal-row:hover,
   box-shadow: var(--cp-shadow-card);
 }
 
-.v2-maintenance-toolbar {
-  display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto;
-  gap: 12px;
-  align-items: end;
-  padding: 14px;
-  border: 1px solid var(--cp-border);
-  border-radius: 12px;
-  background: var(--cp-surface);
-}
-
-.v2-maintenance-toolbar label { display: flex; flex-direction: column; gap: 6px; }
-.v2-maintenance-toolbar label span { color: var(--cp-text-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
-.v2-maintenance-toolbar select,
 .v2-order-row select { border: 1px solid var(--cp-border); border-radius: 7px; padding: 8px 9px; background: var(--cp-bg-elevated); color: var(--cp-text); font-size: 11px; }
 
 .v2-primary-action,
@@ -1629,7 +1615,6 @@ button.v2-signal-row:hover,
   .v2-twin-summary,
   .v2-admin-status-grid,
   .v2-capability-grid,
-  .v2-maintenance-toolbar,
   .v2-maintenance-grid,
   .v2-overview-workspace {
     grid-template-columns: 1fr;
