@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Bot, Box, Check, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, Settings, SquarePen, Trash2, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Bot, Box, ClipboardCheck, Database, Factory, Gauge, MapPin, Maximize2, Minimize2, Package, Plus, Radio, RefreshCw, Send, Settings, SquarePen, Trash2, Wrench, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
 import './ui-v2/styles/app-v2.css'
+import { AdministrationExperience } from './components/AdministrationExperience'
 import { CopilotExperience } from './components/CopilotExperience'
 import { CopilotStreamCursor, CopilotThinking } from './components/CopilotThinking'
 import { FacilityMap, type FacilityStat, type AssetPin } from './components/FacilityMap'
@@ -668,7 +669,6 @@ export default function App() {
     { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
-  const setupComplete = steps.every(step => step.done)
   // Starter prompts grounded in the loaded data (SQL DB + ontology) so users click questions the
   // agent can actually answer, and phrased to encourage clean tabular output.
   const primaryFacilityId = facility?.facility_id ?? facilities[0]?.facility_id
@@ -715,25 +715,18 @@ export default function App() {
       </div>
     </header>
 
-    <nav className="v1-tabs" aria-label="Hydro Operations domains">
-      <div className="v1-tabs-inner">{V1_TABS.map(tab => {
+    <nav className="v2-tabs" aria-label="Hydro Operations domains">
+      <div className="v2-tabs-inner">{V1_TABS.map(tab => {
         const Icon = tab.icon
         const active = tab.id === activeTab
-        return <button key={tab.id} className={active ? 'v1-tab active' : 'v1-tab'} type="button" aria-current={active ? 'page' : undefined} onClick={() => selectTab(tab.id)}><Icon size={15} /><span>{tab.label}</span></button>
+        return <button key={tab.id} className={active ? 'v2-tab active' : 'v2-tab'} type="button" aria-current={active ? 'page' : undefined} onClick={() => selectTab(tab.id)}><Icon size={15} /><span>{tab.label}</span></button>
       })}</div>
     </nav>
 
     <main>
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice(undefined)}><X size={15} /></button></div>}
       {Object.entries(jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? now) - job.startedAt)}</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
-      {activeTab === 'administration' && <section className="setup">
-        <div className="setup-head"><span className="eyebrow">GUIDED SETUP</span><p>{setupComplete ? 'All setup steps are complete. Use the actions below to verify each connection.' : 'Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.'}</p><button className="icon-button" onClick={() => selectTab('overview')} title="Close administration"><X size={16} /></button></div>
-        <ol className="setup-steps">{steps.map(step => <li key={step.n} className={step.done ? 'setup-step done' : 'setup-step'}>
-          <span className="step-num">{step.done ? <Check size={14} /> : step.n}</span>
-          <div className="step-body"><strong>{step.title}</strong><small>{step.why}</small></div>
-          <button className="step-action" onClick={step.run} disabled={step.busy || step.done}>{step.done ? 'Done' : step.busy ? 'Working…' : step.action}</button>
-        </li>)}</ol>
-      </section>}
+      {activeTab === 'administration' && <AdministrationExperience steps={steps} />}
       <section className="page-head"><div><span className="eyebrow">FACILITY OPERATIONS</span><h1>{facility?.facility_name ?? 'Hydropower operations'}</h1><p>{facility ? `${facility.facility_id} · ${facility.type ?? 'Facility'} · ${facility.country ?? 'Location unavailable'}` : 'Connect STID to load governed facility and asset metadata.'}</p></div><button className="copilot-button" onClick={() => selectTab('copilot')}><Bot size={16} /> Copilot</button></section>
 
       {facilities.length > 1 && <section className="facility-strip">{facilities.map(item => <button key={item.facility_id} className={item.facility_id === facility?.facility_id ? 'facility-chip active' : 'facility-chip'} onClick={() => selectFacility(item.facility_id)}><Factory size={14} /><span><strong>{item.facility_name}</strong><small>{item.facility_id}</small></span></button>)}</section>}
