@@ -1535,6 +1535,15 @@ button.v2-signal-row:hover,
 .v2-message p:last-child { margin-bottom: 0; }
 .v2-message table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .v2-message th, .v2-message td { padding: 6px 8px; border: 1px solid var(--cp-border); text-align: left; white-space: nowrap; }
+.v2-agent-file { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--cp-accent); font-weight: 600; }
+.v2-agent-file[aria-disabled="true"] { color: var(--cp-text-soft); pointer-events: none; }
+.v2-agent-image { display: block; width: 100%; height: auto; margin-top: 10px; border: 1px solid var(--cp-border); border-radius: 6px; }
+.v2-agent-native-chart { margin: 12px 0 0; padding: 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-bg); overflow-x: auto; }
+.v2-agent-native-chart figcaption { margin-bottom: 8px; color: var(--cp-text); font-size: 13px; font-weight: 700; }
+.v2-agent-native-chart svg { display: block; width: 100%; min-width: 620px; height: auto; }
+.v2-agent-native-chart text { fill: var(--cp-text-soft); font-size: 10px; }
+.v2-agent-native-chart .grid { stroke: var(--cp-border); stroke-width: 1; }
+.v2-agent-native-chart .axis-title { fill: var(--cp-text); font-size: 11px; font-weight: 600; }
 .v2-message > small { display: block; margin-top: 8px; color: var(--cp-text-soft); font-size: 9px; }
 .copilot-thinking { display: inline-flex; align-items: center; gap: 10px; min-height: 58px; padding: 6px 12px 6px 7px; border: 1px solid color-mix(in srgb, var(--cp-accent) 24%, var(--cp-border)); border-radius: 9px; background: color-mix(in srgb, var(--cp-accent-soft) 62%, var(--cp-surface)); box-shadow: 0 6px 18px rgba(15, 118, 110, .08); overflow: hidden; }
 .copilot-helper-stage { position: relative; display: block; width: 94px; height: 46px; flex: 0 0 94px; }

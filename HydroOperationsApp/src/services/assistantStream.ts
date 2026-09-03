@@ -1,5 +1,18 @@
 export type AgentUsage = { prompt: number; completion: number; total: number }
-export type AgentAnswer = { text: string; usage?: AgentUsage }
+export type AgentArtifact = { fileId: string; name: string; url?: string; kind: 'file' | 'image' }
+export type AgentVisualization = {
+  chartType: string
+  title: string
+  xColumn: string
+  yColumns: string[]
+  xAxisTitle?: string
+  yAxisTitle?: string
+  groupBy?: string
+  sortBy?: string
+  sortOrder?: string
+  inlineCsvData: string
+}
+export type AgentAnswer = { text: string; usage?: AgentUsage; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[] }
 
 type StreamEvent = {
   object?: string

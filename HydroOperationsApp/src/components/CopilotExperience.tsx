@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react'
-import { BarChart3, Bot, LineChart, PieChart, Send, SquarePen } from 'lucide-react'
+import { BarChart3, Bot, Download, LineChart, PieChart, Send, SquarePen } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import type { AgentArtifact, AgentVisualization } from '../services/fabric'
+import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 
 export type CopilotMessage = {
   role: 'user' | 'agent'
   text: string
+  artifacts?: AgentArtifact[]
+  visualizations?: AgentVisualization[]
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -35,7 +39,7 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
   return <div className="v2-domain-page v2-copilot-page">
     <section className="v2-page-head"><div><span className="v2-eyebrow">Fabric Data Agent</span><h1>Operations Copilot</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
     <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>Connected Fabric data</small></span><button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button></header>
-      <div className="v2-messages">{messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && index === messages.length - 1}>{message.role === 'agent' ? message.text ? <><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>{!busy && <ChartFromMarkdown markdown={message.text} />}{busy && index === messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
+      <div className="v2-messages">{messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && index === messages.length - 1}>{message.role === 'agent' ? message.text || message.artifacts?.length || message.visualizations?.length ? <>{message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}{message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} /> : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}{message.visualizations?.map((visualization, visualizationIndex) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${visualizationIndex}`} />)}{busy && index === messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
       <footer><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
@@ -83,7 +87,7 @@ function extractSeries(table: ParsedTable): ChartSeries | null {
   return points.length ? { valueHeader: table.headers[valueColumn] ?? 'Value', points } : null
 }
 
-function ChartFromMarkdown({ markdown }: { markdown: string }) {
+export function ChartFromMarkdown({ markdown }: { markdown: string }) {
   const series = useMemo(() => { const table = parseFirstTable(markdown); return table ? extractSeries(table) : null }, [markdown])
   const [kind, setKind] = useState<ChartKind>('bar')
   if (!series) return null

@@ -1,8 +1,9 @@
 import { PublicClientApplication } from '@azure/msal-browser'
-import { type AgentAnswer, type AgentUsage } from './assistantStream'
+import { type AgentAnswer, type AgentArtifact, type AgentUsage } from './assistantStream'
+import { extractAgentVisualizations, type AssistantRunStep } from './agentResponse'
 import { createSingleFlight } from './singleFlight'
 
-export type { AgentAnswer, AgentUsage } from './assistantStream'
+export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 
 const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
@@ -463,6 +464,21 @@ export function resetDataAgentConversation() {
   dataAgentSessionPromise = undefined
 }
 
+type AssistantAnnotation = { text?: string; file_path?: { file_id?: string }; file_citation?: { file_id?: string } }
+type AssistantContent = {
+  text?: { value?: string; annotations?: AssistantAnnotation[] }
+  image_file?: { file_id?: string }
+}
+type AssistantMessage = {
+  role?: string
+  run_id?: string
+  content?: AssistantContent[]
+  attachments?: Array<{ file_id?: string }>
+}
+function artifactName(text: string | undefined, fileId: string, kind: AgentArtifact['kind']) {
+  return text?.split(/[\\/]/).pop()?.trim() || `${kind}-${fileId}`
+}
+
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   const base = config?.dataAgentUrl
@@ -513,26 +529,60 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
 
   // Fabric's reference external client creates a normal run and polls it. The streaming variant
   // intermittently returns 500 for multi-source and visualization requests.
-  let run = await oai(`/threads/${session.threadId}/runs`, {
-    method: 'POST',
-    body: JSON.stringify({ assistant_id: session.assistantId }),
-  }) as { id: string; status: string; last_error?: { message?: string }; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
-  const deadline = Date.now() + 5 * 60_000
-  while (['queued', 'in_progress', 'cancelling'].includes(run.status) && Date.now() < deadline) {
-    await delay(2000)
-    run = await oai(`/threads/${session.threadId}/runs/${run.id}`) as typeof run
+  type AgentRun = { id: string; status: string; last_error?: { code?: string; message?: string }; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+  const executeRun = async () => {
+    let current = await oai(`/threads/${session.threadId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ assistant_id: session.assistantId }),
+    }) as AgentRun
+    const deadline = Date.now() + 5 * 60_000
+    while (['queued', 'in_progress', 'cancelling'].includes(current.status) && Date.now() < deadline) {
+      await delay(2000)
+      current = await oai(`/threads/${session.threadId}/runs/${current.id}`) as AgentRun
+    }
+    return current
   }
+  let run = await executeRun()
+  if (run.status === 'failed' && run.last_error?.code === 'server_error') run = await executeRun()
   if (run.status !== 'completed') {
     const detail = run.last_error?.message ? `: ${run.last_error.message}` : ''
     throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}${detail}.`)
   }
   if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
 
-  const list = await oai(`/threads/${session.threadId}/messages?order=desc`) as { data?: Array<{ role?: string; run_id?: string; content?: Array<{ text?: { value?: string } }> }> }
-  const answer = list.data?.find(message => message.role === 'assistant' && message.run_id === run.id)
-    ?.content?.map(part => part.text?.value ?? '').filter(Boolean).join('\n')
+  const list = await oai(`/threads/${session.threadId}/messages?order=desc`) as { data?: AssistantMessage[] }
+  const messages = (list.data ?? []).filter(candidate => candidate.role === 'assistant' && candidate.run_id === run.id).reverse()
+  const answer = messages.flatMap(message => message.content?.map(part => part.text?.value ?? '') ?? []).filter(Boolean).join('\n')
+  const artifactMap = new Map<string, AgentArtifact>()
+  const addArtifact = (fileId: string | undefined, name: string | undefined, kind: AgentArtifact['kind']) => {
+    if (fileId && !artifactMap.has(fileId)) artifactMap.set(fileId, { fileId, name: artifactName(name, fileId, kind), kind })
+  }
+  for (const message of messages) {
+    for (const part of message.content ?? []) {
+      addArtifact(part.image_file?.file_id, undefined, 'image')
+      for (const annotation of part.text?.annotations ?? []) {
+        addArtifact(annotation.file_path?.file_id, annotation.text, 'file')
+        addArtifact(annotation.file_citation?.file_id, annotation.text, 'file')
+      }
+    }
+    for (const attachment of message.attachments ?? []) addArtifact(attachment.file_id, undefined, 'file')
+  }
+  const artifacts = await Promise.all([...artifactMap.values()].map(async artifact => {
+    try {
+      const response = await fetch(url(`/files/${artifact.fileId}/content`), { headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
+      if (!response.ok) return artifact
+      return { ...artifact, url: URL.createObjectURL(await response.blob()) }
+    } catch { return artifact }
+  }))
+  let visualizations = [] as ReturnType<typeof extractAgentVisualizations>
+  try {
+    const stepList = await oai(`/threads/${session.threadId}/runs/${run.id}/steps?order=asc&limit=100`) as { data?: AssistantRunStep[] }
+    visualizations = extractAgentVisualizations(stepList.data ?? [])
+  } catch {
+    // Run steps are supplemental; never discard a valid assistant message if they are unavailable.
+  }
   if (answer) onProgress?.(answer)
-  return { text: answer || 'The Data Agent returned no answer.', usage }
+  return { text: answer || 'The Data Agent returned no answer.', usage, artifacts, visualizations }
 }
 
 export type TelemetryReading = { opcuaNodeId: string; eventTime: string; value: number; quality: string }

@@ -2,7 +2,7 @@ import { createContext, createElement, useCallback, useContext, useEffect, useMe
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
-  startStreamingPipeline, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
+  startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
@@ -32,7 +32,7 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
-export type ChatMessage = { role: 'user' | 'agent'; text: string; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
@@ -567,14 +567,14 @@ function useHydroOperationsDataController() {
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
+    const setLastAgent = (value: string, meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: value, meta }
+      next[next.length - 1] = { role: 'agent', text: value, artifacts, visualizations, meta }
       return next
     })
     try {
       const answer = await askDataAgent(text, partial => setLastAgent(partial))
-      setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total })
+      setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations)
     } catch (error) {
       setLastAgent(error instanceof Error ? error.message : 'The Data Agent request failed.', { elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
