@@ -174,18 +174,20 @@ Flags: `--tenant --workspace --yes --dry-run`.
 The **Deploy app** tab runs the complete Rayfin application deployment against the
 tenant and workspace selected in the sidebar:
 
-1. Restore the exact locked npm dependencies under Node 24 (including Rayfin), validate the active
-  Azure CLI tenant, and resolve the exact workspace GUID/name. Missing Node/npm/npx is reported with
-  an install link; repository packages are installed automatically rather than treated as manual prerequisites.
+1. Validate the distinct v1/v2 entry points and page modules, restore the exact locked npm
+  dependencies under Node 24 (including Rayfin), validate the active Azure CLI tenant, and resolve
+  the exact workspace GUID/name. Missing Node/npm/npx is reported with an install link; repository
+  packages are installed automatically rather than treated as manual prerequisites.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   continue without working browser authentication and print an administrator handoff.
 3. Reuse matching active Rayfin state for idempotent redeploys; otherwise back up and
-  reset stale state, then generate a fresh ignored `rayfin/.env`.
+  reset stale state, then generate a fresh ignored `rayfin/.env`. Run the full TypeScript/Vite
+  production build so both `?ui=v1` and `?ui=v2` are compiled before changing Fabric resources.
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, and apply the generated hosting origin to backend auth.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
-  and consent, then verify the live app returns HTML over HTTP 200. The final check
+  and consent, then verify both live `?ui=v1` and `?ui=v2` routes return the SPA over HTTP 200. The final check
   also reads the AppBackend from Fabric and verifies the SPA redirect, every delegated
   scope, and its consent grant from Microsoft Graph. Missing SPA access, redirects,
   permissions, or consent are reported as **degraded-success warnings and do not fail the Fabric

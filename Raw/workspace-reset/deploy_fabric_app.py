@@ -55,6 +55,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
+UI_PAGE_NAMES = (
+    "AdministrationPage.tsx",
+    "CopilotPage.tsx",
+    "DigitalTwinPage.tsx",
+    "MaintenancePage.tsx",
+    "OverviewPage.tsx",
+    "TelemetryPage.tsx",
+)
 
 
 class DeployError(RuntimeError):
@@ -136,8 +144,72 @@ def node24(command: str) -> list[str]:
     return command_argv("npx", "-y", "-p", "node@24", "-c", inner)
 
 
+def validate_versioned_ui_sources(app_dir: Path = APP_DIR) -> None:
+    """Require distinct v1/v2 entry boundaries before deployment."""
+    required = [
+        app_dir / "src" / "main.tsx",
+        app_dir / "src" / "AppV1.tsx",
+        app_dir / "src" / "AppV2.tsx",
+        app_dir / "src" / "ui-v1" / "components" / "V1Shell.tsx",
+        app_dir / "src" / "ui-v1" / "navigation.tsx",
+        app_dir / "src" / "ui-v2" / "components" / "V2Shell.tsx",
+        app_dir / "src" / "ui-v2" / "navigation.tsx",
+    ]
+    for version in ("ui-v1", "ui-v2"):
+        required.extend(app_dir / "src" / version / "pages" / name for name in UI_PAGE_NAMES)
+
+    missing = [str(path.relative_to(app_dir)) for path in required if not path.is_file()]
+    if missing:
+        raise DeployError(
+            "Hydro Operations versioned UI is incomplete; missing " + ", ".join(missing)
+        )
+
+    main_source = (app_dir / "src" / "main.tsx").read_text(encoding="utf-8")
+    routing_contract = (
+        r"import\s+AppV1\s+from\s+['\"]\./AppV1(?:\.tsx)?['\"]",
+        r"import\s+AppV2\s+from\s+['\"]\./AppV2(?:\.tsx)?['\"]",
+        r"ui\s*===\s*['\"]v2['\"]\s*\?\s*<AppV2\s*/>\s*:\s*<AppV1\s*/>",
+    )
+    if not all(re.search(pattern, main_source) for pattern in routing_contract):
+        raise DeployError(
+            "Hydro Operations main.tsx must route ui=v2 to AppV2 and all other values to AppV1."
+        )
+    print("Versioned UI source check passed: distinct v1 and v2 pages are present.", flush=True)
+
+
+def validate_versioned_ui_build() -> None:
+    """Compile both statically imported UI versions before changing Fabric."""
+    print("Building both Hydro Operations UI versions with Node 24...", flush=True)
+    run_stream(node24("npm run build"))
+    index_path = APP_DIR / "dist" / "index.html"
+    asset_dir = APP_DIR / "dist" / "assets"
+    if not index_path.is_file() or not asset_dir.is_dir() or not any(asset_dir.iterdir()):
+        raise DeployError("Hydro Operations production build did not produce dist/index.html and assets.")
+    print("Versioned UI production build passed.", flush=True)
+
+
+def validate_hosted_ui_versions(hosting_url: str) -> None:
+    """Verify both public version routes serve the deployed SPA shell."""
+    for version in ("v1", "v2"):
+        url = f"{hosting_url.rstrip('/')}/?ui={version}"
+        response = requests.get(url, timeout=60)
+        content_type = response.headers.get("Content-Type", "")
+        if (
+            response.status_code != 200
+            or "text/html" not in content_type
+            or 'id="root"' not in response.text
+        ):
+            raise DeployError(
+                f"App verification failed for ?ui={version}: {url} returned HTTP "
+                f"{response.status_code} with Content-Type {content_type or '(missing)'} "
+                "or did not contain the React root."
+            )
+    print("Hosted UI check passed for ?ui=v1 and ?ui=v2.", flush=True)
+
+
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
+    validate_versioned_ui_sources()
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
     missing = [path.name for path in manifests if not path.is_file()]
     if missing:
@@ -773,6 +845,7 @@ def deploy(args: argparse.Namespace) -> None:
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
     prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
+    validate_versioned_ui_build()
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
     ensure_rayfin_login(args.tenant)
@@ -813,12 +886,7 @@ def deploy(args: argparse.Namespace) -> None:
         )
 
     print("[8/8] Checking the hosted page, Fabric backend, and sign-in readiness", flush=True)
-    response = requests.get(hosting_url, timeout=60)
-    if response.status_code != 200 or "text/html" not in response.headers.get("Content-Type", ""):
-        raise DeployError(
-            f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
-            f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
-        )
+    validate_hosted_ui_versions(hosting_url)
     validate_fabric_app(workspace_id)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
