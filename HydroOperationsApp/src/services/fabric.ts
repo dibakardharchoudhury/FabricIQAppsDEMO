@@ -25,18 +25,10 @@ const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execu
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
 const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
-const INTERACTION_STATUS_KEY = 'msal.interaction.status'
-const POPUP_TOKEN_TIMEOUT_MS = 60_000
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
 let initialized = false
-
-function clearAbandonedInteraction() {
-  if (msal?.getAllAccounts().length === 0 && sessionStorage.getItem(INTERACTION_STATUS_KEY) === clientId) {
-    sessionStorage.removeItem(INTERACTION_STATUS_KEY)
-  }
-}
 
 /** Initialize MSAL and process any redirect returning from Entra. */
 export async function initAuth(): Promise<void> {
@@ -47,7 +39,6 @@ export async function initAuth(): Promise<void> {
   } catch (error) {
     console.warn('Entra redirect handling failed.', error)
   }
-  clearAbandonedInteraction()
   initialized = true
 }
 
@@ -56,7 +47,6 @@ async function ensureInit() {
   if (initialized) return
   await msal.initialize()
   try { await msal.handleRedirectPromise() } catch (error) { console.warn('Entra redirect handling failed.', error) }
-  clearAbandonedInteraction()
   initialized = true
 }
 
@@ -78,21 +68,8 @@ async function silentToken(scopes: string[]): Promise<string | null> {
 async function popupToken(scopes: string[]): Promise<string> {
   await ensureInit()
   const account = msal!.getAllAccounts()[0]
-  let timedOut = false
-  let timeoutId: ReturnType<typeof setTimeout> | undefined
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        timedOut = true
-        reject(new Error('Microsoft Entra sign-in popup did not complete within 60 seconds. Allow popups for this site and try again.'))
-      }, POPUP_TOKEN_TIMEOUT_MS)
-    })
-    const result = await Promise.race([msal!.acquireTokenPopup({ scopes, account: account ?? undefined }), timeout])
-    return result.accessToken
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId)
-    if (timedOut && sessionStorage.getItem(INTERACTION_STATUS_KEY) === clientId) sessionStorage.removeItem(INTERACTION_STATUS_KEY)
-  }
+  const result = await msal!.acquireTokenPopup({ scopes, account: account ?? undefined })
+  return result.accessToken
 }
 
 /** A Fabric REST token (read + execute). Silent first, popup only when interactive is allowed. */
@@ -104,7 +81,6 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
     return await popupToken(FABRIC_SCOPES)
   } catch (error) {
     console.warn('Fabric permission consent did not complete.', error)
-    if (error instanceof Error && error.message.includes('popup did not complete')) throw error
     throw new Error('Fabric permission consent is required before this action can run. Complete the consent popup and try again.', { cause: error })
   }
 }

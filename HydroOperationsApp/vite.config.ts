@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { viteSingleFile } from 'vite-plugin-singlefile'
 import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 
@@ -15,7 +16,14 @@ const appVersion = commitCount ? `${major}.${minor}.${commitCount}` : pkg.versio
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    viteSingleFile({
+      useRecommendedBuildConfig: false,
+      inlinePattern: ['**/assets/index-*.js', '**/assets/index-*.css'],
+      deleteInlinedFiles: false,
+    }),
+  ],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
