@@ -165,9 +165,10 @@ function useHydroOperationsDataController() {
     return data
   }, [])
 
-  const connectStid = useCallback(async (opts?: { retries?: number }) => {
+  const connectStid = useCallback(async (opts?: { retries?: number; interactive?: boolean }) => {
     setStidState('loading'); setNotice(undefined)
     const retries = opts?.retries ?? 0
+    const interactive = opts?.interactive ?? true
     clearWorkspaceConfigCache()
     try {
       let data = await queryStid()
@@ -176,9 +177,12 @@ function useHydroOperationsDataController() {
         clearWorkspaceConfigCache()
         data = await queryStid()
       }
-      if (!data) { await beginInteractiveConnect('stid'); data = await queryStid() }
+      if (!data && interactive) { await beginInteractiveConnect('stid'); data = await queryStid() }
       if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
-      else setStidState('unavailable')
+      else {
+        setStidState('unavailable')
+        if (!interactive) setNotice('Fabric provisioning completed. The STID GraphQL API is still publishing or needs permission. Wait a moment, then click Connect STID.')
+      }
     } catch (error) {
       setStidState('error')
       const message = error instanceof Error ? error.message : 'STID data is unavailable.'
@@ -211,14 +215,15 @@ function useHydroOperationsDataController() {
   }
 
   const awaitProvision = useCallback(async (poll: () => Promise<JobStatus>) => {
+    let completed = false
     try {
       const status = await poll()
       if (status === 'Completed') {
+        completed = true
         setProvisionState('complete')
         writePersistedSetup({ provisioned: true })
         await loadOperationalData()
-        setNotice('Operational data re-seeded and Fabric provisioning complete. Connecting STID...')
-        await connectStid({ retries: 5 })
+        setNotice('Operational data re-seeded and Fabric provisioning complete. Checking STID publication...')
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
@@ -226,6 +231,7 @@ function useHydroOperationsDataController() {
       setProvisionState('error')
       setNotice(`Fabric provisioning failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally { endJob('seed') }
+    if (completed) await connectStid({ retries: 5, interactive: false })
   }, [connectStid, loadOperationalData])
 
   const seedAndProvision = useCallback(async () => {

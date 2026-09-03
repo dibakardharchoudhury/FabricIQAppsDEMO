@@ -1,5 +1,6 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { readAssistantStream, type AgentAnswer, type AgentUsage } from './assistantStream'
+import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentUsage } from './assistantStream'
 
@@ -418,7 +419,7 @@ async function resolvePostseedNotebookId(): Promise<string> {
 
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
-export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobStatus> {
+export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
   const postseedNotebookId = await resolvePostseedNotebookId()
   const status = await runJob(
     postseedNotebookId,
@@ -426,9 +427,9 @@ export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobSt
     onStatus,
     {
       timeoutMs: 15 * 60_000,
-      // A seed run must always start with this app's explicit SQL target.
-      // Do not reattach to a previous run that may have been started without the parameter.
-      reuseActive: false,
+      // RTI_011 writes shared Delta tables. Reattach to any active instance rather than
+      // starting a competing run, even if that run originated outside this browser tab.
+      reuseActive: true,
       parameters: [
         {
           name: 'sql_db_item_name',
@@ -441,7 +442,7 @@ export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobSt
   // The notebook publishes new items (GraphQL API, Data Agent source) — force a fresh discovery.
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
-}
+})
 
 /** Resume tracking a post-seed notebook run that was already started before a page reload. */
 export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
@@ -451,25 +452,8 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
   return status
 }
 
-// The published Fabric Data Agent exposes an OpenAI Assistants-compatible endpoint
-// (.../dataAgents/{id}/aiassistant/openai) that already fans out to its SQL DB + ontology sources.
-// Runtime guidance so answers come back as clean, professional, tabular Markdown.
-const AGENT_FORMAT_INSTRUCTIONS = 'You are the Operations Copilot for a hydropower operations team. Answer in concise, professional GitHub-flavored Markdown. Whenever you return more than one record (facilities, equipment/assets, instruments, signals, or work orders), present them as a Markdown table with clear human-readable column headers and include units where known. Lead with a one-line summary, then the table. Use short ISO-like dates. You cannot draw images or charts; if the user asks for a chart, graph, plot, trend, or visual, ALWAYS return the underlying data as a Markdown table (a label/category column plus a numeric value column) — the client app renders the chart from that table. Never say "the chart below" without a data table. If the connected sources cannot answer, say so briefly and name the data that would be needed.'
-
-// Fabric Data Agents apply their own system prompt and largely ignore the assistant-level
-// `instructions`, so the formatting contract is also injected into the user turn to force it.
-const FORMAT_DIRECTIVE = [
-  'FORMATTING CONTRACT — you MUST obey every rule below when answering:',
-  '1. Reply ONLY in GitHub-flavored Markdown.',
-  '2. If the answer has more than ONE record, or compares fields across items (equipment, facilities, instruments, signals, work orders, etc.), you MUST render it as a Markdown table — NEVER a bulleted or numbered list. Tabular data as bullets is not acceptable.',
-  '3. Table format: a bold, human-readable header row (e.g. **Equipment ID | Manufacturer | Model | Criticality**), a separator row, then one row per record. Right-size columns; include units in the header where known.',
-  '4. Put a single short summary sentence ABOVE the table (e.g. "15 turbines across 3 facilities:"). No prose after the table unless a caveat is needed.',
-  '5. For a single scalar answer, reply in one short bolded sentence — no table.',
-  '6. Use short ISO-like dates (YYYY-MM-DD). Keep language crisp and professional.',
-  '7. You cannot render images. If asked for a chart, graph, plot, trend line, bar, or pie, you MUST still return the data as a Markdown table with one category/label column and one numeric value column — the app draws the chart from that table. Do not reference "the chart below" unless the table is present.',
-  '',
-  'QUESTION: ',
-].join('\n')
+// The published Fabric Data Agent owns grounding, source routing, and response instructions.
+// Send the user's question unchanged so this client behaves like Fabric's Test data agent view.
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   const base = config?.dataAgentUrl
@@ -492,14 +476,14 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     return res.json()
   }
 
-  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used', instructions: AGENT_FORMAT_INSTRUCTIONS }) }) as { id: string }
+  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
   // Threads are created through Fabric's private endpoint (get-or-create by tag), then driven by id.
   const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
   const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
   if (!threadRes.ok) throw new Error(`Data Agent thread failed (${threadRes.status}).`)
   const thread = await threadRes.json() as { id: string }
 
-  await oai(`/threads/${thread.id}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: `${FORMAT_DIRECTIVE}${question}` }) })
+  await oai(`/threads/${thread.id}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: question }) })
 
   // Ask for a streamed run so tokens surface as they're generated; fall back to polling if unsupported.
   const runRes = await fetch(url(`/threads/${thread.id}/runs`), {

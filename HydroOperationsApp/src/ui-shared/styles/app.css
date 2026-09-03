@@ -1578,10 +1578,16 @@ button.v2-signal-row:hover,
 .v2-copilot textarea { width: 100%; min-height: 46px; max-height: 120px; resize: vertical; border: 1px solid var(--cp-border); border-radius: 8px; padding: 11px; background: var(--cp-bg-elevated); color: var(--cp-text); }
 .v2-copilot > footer button { border: 0; border-radius: 7px; background: var(--cp-accent-hover); color: white; cursor: pointer; }
 .v2-copilot > footer button:disabled { opacity: .45; cursor: default; }
-.v2-agent-chart { display: grid; gap: 7px; margin-top: 12px; padding: 12px; border: 1px solid var(--cp-border); border-radius: 8px; background: var(--cp-surface); }
-.v2-agent-chart > div { display: grid; grid-template-columns: minmax(90px, 160px) 1fr 60px; gap: 8px; align-items: center; font-size: 9.5px; }
-.v2-agent-chart i { height: 8px; overflow: hidden; border-radius: 4px; background: var(--cp-bg-elevated); }
-.v2-agent-chart b { display: block; height: 100%; border-radius: 4px; background: var(--cp-accent); }
+.v2-agent-chart { margin-top: 12px; padding: 10px; border: 1px solid var(--cp-border); border-radius: 8px; background: var(--cp-surface); }
+.v2-chart-tabs { display: inline-flex; overflow: hidden; margin-bottom: 6px; border: 1px solid var(--cp-border); border-radius: 6px; }
+.v2-chart-tabs button { width: 32px; height: 28px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--cp-border); background: var(--cp-bg-elevated); color: var(--cp-text-muted); cursor: pointer; }
+.v2-chart-tabs button:first-child { border-left: 0; }
+.v2-chart-tabs button.on { background: var(--cp-accent); color: white; }
+.v2-chart-svg { display: block; width: 100%; height: auto; max-height: 330px; }
+.v2-chart-axis { stroke: var(--cp-border); stroke-width: 1; }
+.v2-chart-line { fill: none; stroke: #2f9e8f; stroke-width: 2.5; }
+.v2-chart-label { fill: var(--cp-text-muted); font: 9px var(--cp-font-mono); }
+.v2-chart-title { fill: var(--cp-text-muted); font: 10px var(--cp-font-body); font-weight: 600; }
 
 @media (max-width: 900px) {
   .v2-topbar {
