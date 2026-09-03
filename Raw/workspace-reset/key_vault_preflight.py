@@ -72,14 +72,43 @@ def matching_endpoint(endpoints: list[dict[str, Any]], vault_resource_id: str) -
 
 
 def select_connection(connections: list[dict[str, Any]], known_ids: set[str]) -> dict[str, Any] | None:
-    candidates = []
+    pending: list[dict[str, Any]] = []
+    approved: list[dict[str, Any]] = []
     for connection in connections:
         state = ((connection.get("properties") or {}).get("privateLinkServiceConnectionState") or {})
-        if str(state.get("status", "")).casefold() not in {"pending", "approved"}:
+        status = str(state.get("status", "")).casefold()
+        if connection.get("id") in known_ids:
             continue
-        if connection.get("id") not in known_ids:
-            candidates.append(connection)
-    return candidates[0] if len(candidates) == 1 else None
+        if status == "pending":
+            pending.append(connection)
+        elif status == "approved":
+            approved.append(connection)
+    if len(pending) == 1:
+        return pending[0]
+    if not pending and len(approved) == 1:
+        return approved[0]
+    return None
+
+
+def connection_state(connection: dict[str, Any]) -> tuple[str, str]:
+    properties = connection.get("properties") or {}
+    approval = properties.get("privateLinkServiceConnectionState") or {}
+    return (
+        str(properties.get("provisioningState") or "Unknown"),
+        str(approval.get("status") or "Unknown"),
+    )
+
+
+def connection_is_transitioning(connection: dict[str, Any]) -> bool:
+    provisioning, _ = connection_state(connection)
+    return provisioning.casefold() in {
+        "accepted",
+        "creating",
+        "pending",
+        "provisioning",
+        "updating",
+        "updatingdns",
+    }
 
 
 class CloudClient:
@@ -217,6 +246,29 @@ def ensure_key_vault_access(tenant_id: str, workspace_id: str, key_vault_uri: st
 
     approval_state = ((selected.get("properties") or {}).get("privateLinkServiceConnectionState") or {})
     if str(approval_state.get("status", "")).casefold() != "approved":
+        while connection_is_transitioning(selected) and time.time() < deadline:
+            provisioning, _ = connection_state(selected)
+            print(f"  Key Vault connection is still provisioning ({provisioning}); waiting before approval...")
+            time.sleep(10)
+            selected = _json_or_error(
+                client.request(
+                    ARM_SCOPE,
+                    "GET",
+                    f"{ARM_BASE}{selected['id']}?api-version={KEY_VAULT_API}",
+                ),
+                "Refreshing the Key Vault private endpoint connection",
+            )
+        if connection_is_transitioning(selected):
+            provisioning, _ = connection_state(selected)
+            raise PreflightError(
+                "The Key Vault private endpoint connection did not finish provisioning "
+                f"({provisioning}) before the approval timeout. Retry the pipeline action."
+            )
+        provisioning, approval_status = connection_state(selected)
+        if provisioning.casefold() == "failed" or approval_status.casefold() == "rejected":
+            raise PreflightError(
+                "The Key Vault private endpoint connection was rejected or failed before approval."
+            )
         print(f"  approving Key Vault connection '{selected.get('name', '')}'...")
         approval = {
             "etag": selected.get("etag", ""),

@@ -2,6 +2,8 @@ import unittest
 
 from key_vault_preflight import (
     PreflightError,
+    connection_is_transitioning,
+    connection_state,
     endpoint_state,
     matching_endpoint,
     public_network_is_open,
@@ -39,6 +41,30 @@ class KeyVaultPreflightTests(unittest.TestCase):
         self.assertIs(one, select_connection([one], {"old"}))
         self.assertIsNone(select_connection([one, two], {"old"}))
         self.assertIsNone(select_connection([one], {"new"}))
+
+    def test_connection_selection_prefers_pending_over_approved_history(self):
+        approved = {"id": "old", "properties": {"privateLinkServiceConnectionState": {"status": "Approved"}}}
+        pending = {"id": "new", "properties": {"privateLinkServiceConnectionState": {"status": "Pending"}}}
+
+        self.assertIs(pending, select_connection([approved, pending], set()))
+
+    def test_connection_waits_while_key_vault_updates_dns(self):
+        pending = {
+            "properties": {
+                "provisioningState": "UpdatingDns",
+                "privateLinkServiceConnectionState": {"status": "Pending"},
+            }
+        }
+        ready = {
+            "properties": {
+                "provisioningState": "Succeeded",
+                "privateLinkServiceConnectionState": {"status": "Pending"},
+            }
+        }
+
+        self.assertEqual(connection_state(pending), ("UpdatingDns", "Pending"))
+        self.assertTrue(connection_is_transitioning(pending))
+        self.assertFalse(connection_is_transitioning(ready))
 
 
 if __name__ == "__main__":
