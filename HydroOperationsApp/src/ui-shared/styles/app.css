@@ -1545,9 +1545,11 @@ button.v2-signal-row:hover,
 .v2-agent-native-chart .grid { stroke: var(--cp-border); stroke-width: 1; }
 .v2-agent-native-chart .axis-title { fill: var(--cp-text); font-size: 11px; font-weight: 600; }
 .v2-message > small { display: block; margin-top: 8px; color: var(--cp-text-soft); font-size: 9px; }
-.copilot-thinking { display: inline-flex; align-items: center; gap: 10px; min-height: 58px; padding: 6px 12px 6px 7px; border: 1px solid color-mix(in srgb, var(--cp-accent) 24%, var(--cp-border)); border-radius: 9px; background: color-mix(in srgb, var(--cp-accent-soft) 62%, var(--cp-surface)); box-shadow: 0 6px 18px rgba(15, 118, 110, .08); overflow: hidden; }
-.copilot-helper-stage { position: relative; display: block; width: 94px; height: 46px; flex: 0 0 94px; }
-.copilot-helper { position: absolute; left: 2px; bottom: 7px; width: 29px; height: 31px; border: 2px solid #17324d; border-radius: 9px 9px 7px 7px; background: #f7c948; box-shadow: inset 0 -8px 0 #e6a92e, 0 3px 5px rgba(23, 50, 77, .16); transform-origin: center bottom; animation: copilot-helper-patrol 3.6s ease-in-out infinite; }
+.copilot-thinking { display: inline-flex; align-items: center; gap: 12px; width: min(360px, calc(100vw - 100px)); min-height: 90px; box-sizing: border-box; padding: 8px 12px 8px 8px; border: 1px solid color-mix(in srgb, var(--cp-accent) 24%, var(--cp-border)); border-radius: 9px; background: color-mix(in srgb, var(--cp-accent-soft) 62%, var(--cp-surface)); box-shadow: 0 6px 18px rgba(15, 118, 110, .08); overflow: hidden; }
+.copilot-sprint { display: grid; grid-template-rows: 52px 24px; width: 220px; min-width: 0; border: 1px solid color-mix(in srgb, var(--cp-accent) 24%, var(--cp-border)); border-radius: 7px; background: color-mix(in srgb, var(--cp-surface) 82%, transparent); overflow: hidden; }
+.copilot-helper-stage { position: relative; display: block; width: 100%; height: 52px; outline: none; cursor: crosshair; touch-action: manipulation; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(20% - 1px), color-mix(in srgb, var(--cp-border) 55%, transparent) calc(20% - 1px), color-mix(in srgb, var(--cp-border) 55%, transparent) 20%); }
+.copilot-helper-stage:focus-visible { box-shadow: inset 0 0 0 2px var(--cp-accent); }
+.copilot-helper { position: absolute; bottom: 8px; width: 29px; height: 31px; border: 2px solid #17324d; border-radius: 9px 9px 7px 7px; background: #f7c948; box-shadow: inset 0 -8px 0 #e6a92e, 0 3px 5px rgba(23, 50, 77, .16); transform-origin: center bottom; transition: left .16s ease; }
 .copilot-helper-antenna { position: absolute; left: 12px; top: -9px; width: 3px; height: 8px; border-radius: 3px; background: #17324d; }
 .copilot-helper-antenna::after { content: ''; position: absolute; left: -2px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: #25a89e; box-shadow: 0 0 0 2px #17324d; animation: copilot-helper-blink 1.1s steps(2, end) infinite; }
 .copilot-helper-visor { position: absolute; left: 4px; top: 7px; width: 17px; height: 8px; border: 2px solid #17324d; border-radius: 4px; background: #bff7f0; box-shadow: inset 7px 0 0 rgba(255,255,255,.65); }
@@ -1558,12 +1560,12 @@ button.v2-signal-row:hover,
 .copilot-helper-leg { position: absolute; bottom: -8px; width: 4px; height: 9px; border-radius: 0 0 4px 4px; background: #17324d; transform-origin: top; animation: copilot-helper-step .36s ease-in-out infinite alternate; }
 .copilot-helper-leg.left { left: 6px; }
 .copilot-helper-leg.right { right: 6px; animation-direction: alternate-reverse; }
-.copilot-helper-thought { position: absolute; top: 0; right: 1px; width: 25px; height: 21px; border: 2px solid color-mix(in srgb, var(--cp-accent) 45%, #17324d); border-radius: 50%; background: var(--cp-surface); color: var(--cp-accent-hover); text-align: center; line-height: 18px; animation: copilot-thought-pop 1.8s ease-in-out infinite; }
-.copilot-helper-thought::before, .copilot-helper-thought::after { content: ''; position: absolute; border-radius: 50%; background: var(--cp-surface); border: 1.5px solid color-mix(in srgb, var(--cp-accent) 45%, #17324d); }
-.copilot-helper-thought::before { left: -8px; bottom: -5px; width: 7px; height: 7px; }
-.copilot-helper-thought::after { left: -13px; bottom: -9px; width: 4px; height: 4px; }
-.copilot-helper-thought > i { display: none; }
-.copilot-helper-thought b { font-size: 12px; font-style: normal; }
+.copilot-signal { position: absolute; top: 7px; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid color-mix(in srgb, var(--cp-accent) 55%, var(--cp-border)); border-radius: 50%; background: var(--cp-surface); color: var(--cp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cp-accent) 10%, transparent); animation: copilot-signal-pulse 1.1s ease-in-out infinite; transition: left .18s ease; }
+.copilot-sprint-controls { display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; border-top: 1px solid var(--cp-border); }
+.copilot-sprint-controls button { display: grid; place-items: center; width: 28px; height: 24px; border: 0; background: transparent; color: var(--cp-accent-hover); cursor: pointer; }
+.copilot-sprint-controls button:hover:not(:disabled) { background: var(--cp-accent-soft); }
+.copilot-sprint-controls button:disabled { color: var(--cp-text-soft); cursor: default; opacity: .45; }
+.copilot-sprint-controls span { display: inline-flex; align-items: center; justify-content: center; gap: 4px; color: var(--cp-text-muted); font: 600 10px var(--cp-font-mono); }
 .copilot-thinking-copy { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .copilot-thinking-label { background: linear-gradient(90deg, var(--cp-text-muted) 0%, var(--cp-text-muted) 35%, var(--cp-accent) 50%, var(--cp-text-muted) 65%, var(--cp-text-muted) 100%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 650; animation: copilot-shimmer 1.6s linear infinite; }
 .copilot-thinking-dots { display: inline-flex; gap: 4px; align-items: center; }
@@ -1573,13 +1575,13 @@ button.v2-signal-row:hover,
 .copilot-stream-cursor { display: inline-block; width: 2px; height: 1em; margin-left: 3px; border-radius: 2px; vertical-align: -2px; background: var(--cp-accent); animation: copilot-cursor .8s steps(2, start) infinite; }
 @keyframes copilot-shimmer { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
 @keyframes copilot-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .4; } 40% { transform: translateY(-4px); opacity: 1; } }
-@keyframes copilot-helper-patrol { 0%, 8% { transform: translateX(0) rotate(-2deg); } 45%, 52% { transform: translateX(52px) rotate(2deg); } 53% { transform: translateX(52px) scaleX(-1) rotate(2deg); } 92%, 100% { transform: translateX(0) scaleX(-1) rotate(-2deg); } }
 @keyframes copilot-helper-step { from { transform: rotate(22deg); } to { transform: rotate(-22deg); } }
 @keyframes copilot-helper-wave { from { transform: rotate(24deg); } to { transform: rotate(-24deg); } }
 @keyframes copilot-helper-blink { 50% { background: #f28c28; box-shadow: 0 0 7px #f28c28, 0 0 0 2px #17324d; } }
-@keyframes copilot-thought-pop { 0%, 20%, 100% { transform: translateY(3px) scale(.8); opacity: 0; } 35%, 75% { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes copilot-signal-pulse { 50% { transform: translateY(3px); box-shadow: 0 0 0 6px color-mix(in srgb, var(--cp-accent) 5%, transparent); } }
 @keyframes copilot-cursor { 50% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .copilot-helper, .copilot-helper-arm, .copilot-helper-leg, .copilot-helper-antenna::after, .copilot-helper-thought, .copilot-thinking-label, .copilot-thinking-dots i, .copilot-stream-cursor { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .copilot-helper, .copilot-helper-arm, .copilot-helper-leg, .copilot-helper-antenna::after, .copilot-signal, .copilot-thinking-label, .copilot-thinking-dots i, .copilot-stream-cursor { animation: none; transition: none; } }
+@media (max-width: 640px) { .copilot-thinking { align-items: stretch; flex-direction: column; width: min(100%, 250px); } .copilot-sprint { width: 100%; } }
 .v2-suggestions { display: flex; flex-wrap: wrap; gap: 8px; }
 .v2-suggestions button { max-width: 330px; border: 1px solid var(--cp-border); border-radius: 7px; padding: 9px 11px; background: var(--cp-surface); color: var(--cp-text-muted); font-size: 10.5px; text-align: left; cursor: pointer; }
 .v2-suggestions button:hover { border-color: var(--cp-accent); color: var(--cp-accent-hover); }

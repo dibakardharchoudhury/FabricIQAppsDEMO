@@ -29,6 +29,7 @@
     "@microsoft/rayfin-auth": "^1.33.2",
     "@microsoft/rayfin-auth-provider-fabric": "^1.33.2",
     "@microsoft/rayfin-client": "^1.33.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/leaflet": "^1.9.21",
     "@types/three": "^0.185.1",
     "leaflet": "^1.9.4",

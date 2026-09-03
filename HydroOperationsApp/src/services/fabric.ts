@@ -1,6 +1,5 @@
 import { PublicClientApplication } from '@azure/msal-browser'
-import { type AgentAnswer, type AgentArtifact, type AgentUsage } from './assistantStream'
-import { extractAgentVisualizations, extractAssistantText, type AssistantRunStep } from './agentResponse'
+import { type AgentAnswer } from './assistantStream'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
@@ -155,10 +154,11 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
     const graphqlUrl = gql
       ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${gql.id}/graphql`
       : undefined
-    // The published Data Agent exposes an OpenAI Assistants-compatible endpoint under its item id.
+    // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
+    // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
     const da = items.find(i => i.type === 'DataAgent')
     const dataAgentUrl = da
-      ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/dataAgents/${da.id}/aiassistant/openai`
+      ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${workspaceId}/dataagents/${da.id}/agent`
       : undefined
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
@@ -467,160 +467,84 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
   return status
 }
 
-// The published Fabric Data Agent owns grounding, source routing, and response instructions.
-// Send the user's question unchanged so this client behaves like Fabric's Test data agent view.
-type DataAgentSession = { base: string; assistantId: string; threadId: string }
-let dataAgentSession: DataAgentSession | undefined
-let dataAgentSessionPromise: Promise<DataAgentSession> | undefined
+// MCP intentionally has no server-side conversation threads. Keep a bounded transcript locally
+// and include it only after the first turn; a new conversation still sends the question unchanged.
+type DataAgentTurn = { question: string; answer: string }
+const dataAgentConversation: DataAgentTurn[] = []
 
 export function resetDataAgentConversation() {
-  dataAgentSession = undefined
-  dataAgentSessionPromise = undefined
+  dataAgentConversation.length = 0
 }
 
-type AssistantAnnotation = { text?: string; file_path?: { file_id?: string }; file_citation?: { file_id?: string } }
-type AssistantContent = {
-  type?: string
-  text?: { value?: string; annotations?: AssistantAnnotation[] }
-  image_file?: { file_id?: string }
-  image_url?: { url?: string }
-  refusal?: string
+type McpContent = {
+  type: string
+  text?: string
+  data?: string
+  mimeType?: string
+  resource?: { text?: string; blob?: string; mimeType?: string; uri?: string }
 }
-type AssistantMessage = {
-  id?: string
-  role?: string
-  run_id?: string
-  content?: AssistantContent[]
-  attachments?: Array<{ file_id?: string }>
-}
-function artifactName(text: string | undefined, fileId: string, kind: AgentArtifact['kind']) {
-  return text?.split(/[\\/]/).pop()?.trim() || `${kind}-${fileId}`
+
+function dataAgentQuestion(question: string): string {
+  if (!dataAgentConversation.length) return question
+  const transcript = dataAgentConversation
+    .slice(-4)
+    .map(turn => `User: ${turn.question}\nAssistant: ${turn.answer}`)
+    .join('\n\n')
+    .slice(-12_000)
+  return `Use this recent conversation only to resolve follow-up references. Re-query the live data when needed.\n\n${transcript}\n\nUser's latest question: ${question}`
 }
 
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
-  const base = config?.dataAgentUrl
-  if (!base) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
+  const endpoint = config?.dataAgentUrl
+  if (!endpoint) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
-  let usage: AgentUsage | undefined
-
-  const baseHeaders: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    ActivityId: crypto.randomUUID(),
-  }
-  const version = 'api-version=2024-05-01-preview'
-  const url = (path: string) => `${base}${path}${path.includes('?') ? '&' : '?'}${version}`
-  const oai = async (path: string, init?: RequestInit) => {
-    const res = await fetch(url(path), { ...init, headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      throw new Error(`Data Agent request failed (${res.status})${detail ? `: ${detail.slice(0, 500)}` : '.'}`)
-    }
-    return res.json()
-  }
-
-  const getSession = async () => {
-    if (dataAgentSession?.base === base) return dataAgentSession
-    if (!dataAgentSessionPromise) {
-      dataAgentSessionPromise = (async () => {
-        const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
-        const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
-        const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
-        if (!threadRes.ok) throw new Error(`Data Agent thread failed (${threadRes.status}).`)
-        const thread = await threadRes.json() as { id: string }
-        return { base, assistantId: assistant.id, threadId: thread.id }
-      })()
-    }
-    try {
-      dataAgentSession = await dataAgentSessionPromise
-      return dataAgentSession
-    } finally {
-      dataAgentSessionPromise = undefined
-    }
-  }
-  const session = await getSession()
-
-  await oai(`/threads/${session.threadId}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: question }) })
-
-  // Fabric's reference external client creates a normal run and polls it. The streaming variant
-  // intermittently returns 500 for multi-source and visualization requests.
-  type AgentRun = { id: string; status: string; last_error?: { code?: string; message?: string }; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
-  const executeRun = async () => {
-    let current = await oai(`/threads/${session.threadId}/runs`, {
-      method: 'POST',
-      body: JSON.stringify({ assistant_id: session.assistantId }),
-    }) as AgentRun
-    const deadline = Date.now() + 5 * 60_000
-    while (['queued', 'in_progress', 'cancelling'].includes(current.status) && Date.now() < deadline) {
-      await delay(2000)
-      current = await oai(`/threads/${session.threadId}/runs/${current.id}`) as AgentRun
-    }
-    return current
-  }
-  let run = await executeRun()
-  if (run.status === 'failed' && run.last_error?.code === 'server_error') run = await executeRun()
-  if (run.status !== 'completed') {
-    const detail = run.last_error?.message ? `: ${run.last_error.message}` : ''
-    throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}${detail}.`)
-  }
-  if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
-
-  type MessagePage = { data?: AssistantMessage[]; has_more?: boolean; last_id?: string }
-  const newestFirst: AssistantMessage[] = []
-  let after: string | undefined
-  let hasMore = true
-  while (hasMore) {
-    const cursor = after ? `&after=${encodeURIComponent(after)}` : ''
-    const page = await oai(`/threads/${session.threadId}/messages?order=desc&limit=100${cursor}`) as MessagePage
-    newestFirst.push(...(page.data ?? []))
-    hasMore = page.has_more === true
-    if (!hasMore) break
-    after = page.last_id ?? page.data?.at(-1)?.id
-    if (!after) throw new Error('The Data Agent response was paginated without a continuation cursor.')
-  }
-  const messages = newestFirst.filter(candidate => candidate.role === 'assistant' && candidate.run_id === run.id).reverse()
-  const answer = extractAssistantText(messages)
-  const artifactMap = new Map<string, AgentArtifact>()
-  const addArtifact = (fileId: string | undefined, name: string | undefined, kind: AgentArtifact['kind']) => {
-    if (fileId && !artifactMap.has(fileId)) artifactMap.set(fileId, { fileId, name: artifactName(name, fileId, kind), kind })
-  }
-  for (const message of messages) {
-    for (const part of message.content ?? []) {
-      addArtifact(part.image_file?.file_id, undefined, 'image')
-      const imageUrl = part.image_url?.url
-      if (imageUrl && !artifactMap.has(imageUrl)) artifactMap.set(imageUrl, {
-        fileId: imageUrl,
-        name: artifactName(imageUrl, imageUrl, 'image'),
-        kind: 'image',
-        url: imageUrl,
-      })
-      for (const annotation of part.text?.annotations ?? []) {
-        addArtifact(annotation.file_path?.file_id, annotation.text, 'file')
-        addArtifact(annotation.file_citation?.file_id, annotation.text, 'file')
-      }
-    }
-    for (const attachment of message.attachments ?? []) addArtifact(attachment.file_id, undefined, 'file')
-  }
-  const artifacts = await Promise.all([...artifactMap.values()].map(async artifact => {
-    if (artifact.url) return artifact
-    try {
-      const response = await fetch(url(`/files/${artifact.fileId}/content`), { headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
-      if (!response.ok) return artifact
-      return { ...artifact, url: URL.createObjectURL(await response.blob()) }
-    } catch { return artifact }
-  }))
-  let visualizations = [] as ReturnType<typeof extractAgentVisualizations>
+  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+    import('@modelcontextprotocol/sdk/client/index.js'),
+    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+  ])
+  const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },
+  })
   try {
-    const stepList = await oai(`/threads/${session.threadId}/runs/${run.id}/steps?order=asc&limit=100`) as { data?: AssistantRunStep[] }
-    visualizations = extractAgentVisualizations(stepList.data ?? [])
-  } catch {
-    // Run steps are supplemental; never discard a valid assistant message if they are unavailable.
+    await client.connect(transport)
+    const tool = (await client.listTools()).tools[0]
+    if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
+    const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
+    if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
+    const result = await client.callTool({
+      name: tool.name,
+      arguments: { [questionArgument]: dataAgentQuestion(question) },
+    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
+    const content = result.content as McpContent[]
+    const text = content
+      .flatMap(part => [part.text, part.resource?.text])
+      .filter((value): value is string => Boolean(value))
+      .join('\n')
+      .trim()
+    if (result.isError) throw new Error(text || 'The Data Agent MCP tool returned an error.')
+    const artifacts = content.flatMap((part, index) => {
+      const data = part.data ?? part.resource?.blob
+      const mimeType = part.mimeType ?? part.resource?.mimeType
+      if (!data || !mimeType?.startsWith('image/')) return []
+      const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0))
+      return [{
+        fileId: `mcp-image-${index}`,
+        name: `data-agent-image-${index + 1}.${mimeType.split('/')[1] || 'png'}`,
+        kind: 'image' as const,
+        url: URL.createObjectURL(new Blob([bytes], { type: mimeType })),
+      }]
+    })
+    const answer = text || 'The Data Agent returned no answer.'
+    dataAgentConversation.push({ question, answer })
+    if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
+    onProgress?.(answer)
+    return { text: answer, artifacts }
+  } finally {
+    await client.close().catch(() => undefined)
   }
-  if (answer) onProgress?.(answer)
-  return { text: answer || 'The Data Agent returned no answer.', usage, artifacts, visualizations }
 }
 
 export type TelemetryReading = { opcuaNodeId: string; eventTime: string; value: number; quality: string }
