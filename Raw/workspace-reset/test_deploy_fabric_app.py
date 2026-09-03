@@ -1,5 +1,7 @@
 import argparse
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -39,6 +41,21 @@ class DeployOrderTests(unittest.TestCase):
             "Demo Workspace",
             None,
         )
+
+    def test_verifies_installed_rayfin_without_running_the_cli(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_dir = Path(temp_dir)
+            package_dir = app_dir / "node_modules" / "@microsoft" / "rayfin-cli"
+            executable = package_dir / "scripts" / "main"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("", encoding="utf-8")
+            (package_dir / "package.json").write_text(
+                json.dumps({"version": "1.33.2", "bin": {"rayfin": "scripts/main"}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(DEPLOY, "APP_DIR", app_dir):
+                self.assertEqual(DEPLOY.installed_rayfin_version(), "1.33.2")
 
 
 if __name__ == "__main__":

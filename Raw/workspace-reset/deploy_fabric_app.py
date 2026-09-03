@@ -136,6 +136,22 @@ def node24(command: str) -> list[str]:
     return command_argv("npx", "-y", "-p", "node@24", "-c", inner)
 
 
+def installed_rayfin_version() -> str:
+    """Verify the local Rayfin package without loading project configuration."""
+    package_dir = APP_DIR / "node_modules" / "@microsoft" / "rayfin-cli"
+    package_path = package_dir / "package.json"
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DeployError(f"Installed Rayfin package metadata is unavailable: {package_path}") from exc
+
+    version = str(package.get("version") or "").strip()
+    bin_path = package_dir / str((package.get("bin") or {}).get("rayfin") or "")
+    if not version or not bin_path.is_file():
+        raise DeployError("Installed Rayfin CLI package is incomplete.")
+    return version
+
+
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
@@ -155,7 +171,7 @@ def ensure_deploy_dependencies() -> None:
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
         run_stream(node24("npm ci --no-audit --no-fund"))
-        version = run_capture(node24("rayfin --version"))
+        version = installed_rayfin_version()
     except DeployError as exc:
         raise DeployError(
             "Could not restore or verify the locked Hydro Operations npm dependencies. "
