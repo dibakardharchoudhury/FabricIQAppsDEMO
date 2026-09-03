@@ -1,5 +1,5 @@
 import { PublicClientApplication } from '@azure/msal-browser'
-import { readAssistantStream, type AgentAnswer, type AgentUsage } from './assistantStream'
+import { type AgentAnswer, type AgentUsage } from './assistantStream'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentUsage } from './assistantStream'
@@ -454,6 +454,15 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
 
 // The published Fabric Data Agent owns grounding, source routing, and response instructions.
 // Send the user's question unchanged so this client behaves like Fabric's Test data agent view.
+type DataAgentSession = { base: string; assistantId: string; threadId: string }
+let dataAgentSession: DataAgentSession | undefined
+let dataAgentSessionPromise: Promise<DataAgentSession> | undefined
+
+export function resetDataAgentConversation() {
+  dataAgentSession = undefined
+  dataAgentSessionPromise = undefined
+}
+
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   const base = config?.dataAgentUrl
@@ -472,47 +481,57 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   const url = (path: string) => `${base}${path}${path.includes('?') ? '&' : '?'}${version}`
   const oai = async (path: string, init?: RequestInit) => {
     const res = await fetch(url(path), { ...init, headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
-    if (!res.ok) throw new Error(`Data Agent request failed (${res.status}).`)
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`Data Agent request failed (${res.status})${detail ? `: ${detail.slice(0, 500)}` : '.'}`)
+    }
     return res.json()
   }
 
-  const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
-  // Threads are created through Fabric's private endpoint (get-or-create by tag), then driven by id.
-  const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
-  const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
-  if (!threadRes.ok) throw new Error(`Data Agent thread failed (${threadRes.status}).`)
-  const thread = await threadRes.json() as { id: string }
-
-  await oai(`/threads/${thread.id}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: question }) })
-
-  // Ask for a streamed run so tokens surface as they're generated; fall back to polling if unsupported.
-  const runRes = await fetch(url(`/threads/${thread.id}/runs`), {
-    method: 'POST',
-    headers: { ...baseHeaders, Accept: 'text/event-stream', 'OpenAI-Beta': 'assistants=v2' },
-    body: JSON.stringify({ assistant_id: assistant.id, stream: true }),
-  })
-  if (!runRes.ok) throw new Error(`Data Agent run failed (${runRes.status}).`)
-
-  if ((runRes.headers.get('content-type') ?? '').includes('text/event-stream') && runRes.body) {
-    const streamed = await readAssistantStream(runRes.body, onProgress)
-    usage = streamed.usage ?? usage
-    if (streamed.text) return { text: streamed.text, usage }
-    // Stream closed without assistant text — fall through to fetch the final message list below.
-  } else {
-    // Endpoint ignored streaming and returned the run object as JSON — poll it to completion.
-    let run = await runRes.json() as { id: string; status: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
-    const deadline = Date.now() + 120_000
-    while (['queued', 'in_progress', 'cancelling', 'requires_action'].includes(run.status) && Date.now() < deadline) {
-      await delay(2000)
-      run = await oai(`/threads/${thread.id}/runs/${run.id}`) as { id: string; status: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+  const getSession = async () => {
+    if (dataAgentSession?.base === base) return dataAgentSession
+    if (!dataAgentSessionPromise) {
+      dataAgentSessionPromise = (async () => {
+        const assistant = await oai('/assistants', { method: 'POST', body: JSON.stringify({ model: 'not used' }) }) as { id: string }
+        const privateBase = base.replace('/aiassistant/openai', '/__private/aiassistant')
+        const threadRes = await fetch(`${privateBase}/threads/fabric?tag="hydro-ops-${crypto.randomUUID()}"`, { headers: baseHeaders })
+        if (!threadRes.ok) throw new Error(`Data Agent thread failed (${threadRes.status}).`)
+        const thread = await threadRes.json() as { id: string }
+        return { base, assistantId: assistant.id, threadId: thread.id }
+      })()
     }
-    if (run.status !== 'completed') throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}.`)
-    if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
+    try {
+      dataAgentSession = await dataAgentSessionPromise
+      return dataAgentSession
+    } finally {
+      dataAgentSessionPromise = undefined
+    }
   }
+  const session = await getSession()
 
-  const list = await oai(`/threads/${thread.id}/messages?order=desc`) as { data?: Array<{ role?: string; content?: Array<{ text?: { value?: string } }> }> }
-  const answer = list.data?.find(message => message.role === 'assistant')
+  await oai(`/threads/${session.threadId}/messages`, { method: 'POST', body: JSON.stringify({ role: 'user', content: question }) })
+
+  // Fabric's reference external client creates a normal run and polls it. The streaming variant
+  // intermittently returns 500 for multi-source and visualization requests.
+  let run = await oai(`/threads/${session.threadId}/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ assistant_id: session.assistantId }),
+  }) as { id: string; status: string; last_error?: { message?: string }; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+  const deadline = Date.now() + 5 * 60_000
+  while (['queued', 'in_progress', 'cancelling'].includes(run.status) && Date.now() < deadline) {
+    await delay(2000)
+    run = await oai(`/threads/${session.threadId}/runs/${run.id}`) as typeof run
+  }
+  if (run.status !== 'completed') {
+    const detail = run.last_error?.message ? `: ${run.last_error.message}` : ''
+    throw new Error(`The Data Agent run ${run.status === 'failed' ? 'failed' : `did not finish (${run.status})`}${detail}.`)
+  }
+  if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
+
+  const list = await oai(`/threads/${session.threadId}/messages?order=desc`) as { data?: Array<{ role?: string; run_id?: string; content?: Array<{ text?: { value?: string } }> }> }
+  const answer = list.data?.find(message => message.role === 'assistant' && message.run_id === run.id)
     ?.content?.map(part => part.text?.value ?? '').filter(Boolean).join('\n')
+  if (answer) onProgress?.(answer)
   return { text: answer || 'The Data Agent returned no answer.', usage }
 }
 

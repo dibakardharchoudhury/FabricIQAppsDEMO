@@ -1,7 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryStid, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
+  queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
   startStreamingPipeline, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
@@ -32,11 +32,10 @@ type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
-export type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
-const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
 
 function readPersistedSetup(): PersistedSetup {
   try { return JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || '{}') as PersistedSetup }
@@ -566,12 +565,11 @@ function useHydroOperationsDataController() {
     const text = question.trim()
     if (!text || copilotBusy) return
     const startedAt = Date.now()
-    const chart = wantsChart(text)
     setCopilotBusy(true)
-    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '', chart }])
+    setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
     const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: value, chart, meta }
+      next[next.length - 1] = { role: 'agent', text: value, meta }
       return next
     })
     try {
@@ -583,7 +581,10 @@ function useHydroOperationsDataController() {
   }, [copilotBusy])
 
   const resetCopilot = useCallback(() => {
-    if (!copilotBusy) setMessages([INITIAL_MESSAGE])
+    if (!copilotBusy) {
+      resetDataAgentConversation()
+      setMessages([INITIAL_MESSAGE])
+    }
   }, [copilotBusy])
 
   return {

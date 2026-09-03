@@ -7,7 +7,6 @@ import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 export type CopilotMessage = {
   role: 'user' | 'agent'
   text: string
-  chart?: boolean
   meta?: { elapsedMs: number; tokens?: number }
 }
 
