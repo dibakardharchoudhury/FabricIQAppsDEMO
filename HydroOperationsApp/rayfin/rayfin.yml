@@ -22,6 +22,7 @@ services:
       - http://localhost:5173
       - https://curly-dove-3ef414f49d-swedencentral.webapp.fabricapps.net
       - https://pine-bolt-bb8eb5474e-swedencentral.webapp.fabricapps.net
+      - https://agile-peak-bb55ff4436-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist

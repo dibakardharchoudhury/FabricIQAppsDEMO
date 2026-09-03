@@ -379,11 +379,30 @@ def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
         return values, None
 
 
+def fabric_item_exists(workspace_id: str, item_id: str) -> bool:
+    """Return false for deleted saved items; fail for other Fabric API errors."""
+    if not GUID_RE.fullmatch(item_id):
+        return False
+    response = requests.get(
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item_id}",
+        headers=fabric_headers(),
+        timeout=60,
+    )
+    if response.status_code == 200:
+        return True
+    if response.status_code == 404:
+        return False
+    raise DeployError(
+        f"Could not validate saved Fabric item {item_id}: "
+        f"HTTP {response.status_code} {response.text}"
+    )
+
+
 def prepare_rayfin_env(
     tenant: str, workspace_id: str, workspace_name: str, client_id: str | None
 ) -> None:
     values, deployment = current_rayfin_target()
-    if deployment and all(
+    target_matches = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
             values.get("RAYFIN_PUBLIC_WORKSPACE_ID", "").casefold() == workspace_id.casefold(),
@@ -393,9 +412,13 @@ def prepare_rayfin_env(
             str(deployment.get("fabricWorkspaceId") or "").casefold() == workspace_id.casefold(),
             str(deployment.get("fabricTenantId") or "").casefold() == tenant.casefold(),
         )
-    ):
-        print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
-        return
+    )
+    if target_matches:
+        item_id = str(deployment.get("fabricItemId") or "")
+        if fabric_item_exists(workspace_id, item_id):
+            print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
+            return
+        print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup_dir = Path(tempfile.gettempdir()) / "fabric-demo-rayfin-backups" / timestamp
