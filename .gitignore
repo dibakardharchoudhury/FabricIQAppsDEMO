@@ -18,6 +18,14 @@ __pycache__/
 .vscode/
 *.code-workspace
 
+# Local video recordings
+*.mp4
+*.mov
+*.webm
+*.avi
+*.mkv
+*.m4v
+
 # OS files
 .DS_Store
 Thumbs.db
