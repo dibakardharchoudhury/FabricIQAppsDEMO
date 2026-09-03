@@ -551,15 +551,12 @@ function useHydroOperationsDataController() {
       return next
     })
     try {
-      const context = selectedFacility && selectedAsset
-        ? `Current filter: facility ${selectedFacility.facility_id} (${selectedFacility.facility_name}), asset ${selectedAsset.equipment_id} (${selectedAsset.tag ?? selectedAsset.equipment_id}). Apply this filter unless the user explicitly requests a broader scope.\n\nUser request: `
-        : ''
-      const answer = await askDataAgent(`${context}${text}`, partial => setLastAgent(partial))
+      const answer = await askDataAgent(text, partial => setLastAgent(partial))
       setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total })
     } catch (error) {
       setLastAgent(error instanceof Error ? error.message : 'The Data Agent request failed.', { elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
-  }, [copilotBusy, selectedAsset, selectedFacility])
+  }, [copilotBusy])
 
   const resetCopilot = useCallback(() => {
     if (!copilotBusy) setMessages([INITIAL_MESSAGE])

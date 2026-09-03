@@ -734,12 +734,6 @@ export default function App() {
       {activeTab === 'copilot' && <CopilotExperience
         messages={messages}
         busy={busy}
-        selectedFacilityId={facility?.facility_id}
-        facilities={facilities.map(item => ({ id: item.facility_id, name: item.facility_name }))}
-        assets={equipment.map(asset => ({ id: asset.equipment_id, label: asset.tag ?? asset.equipment_id }))}
-        selectedAssetId={selected?.equipment_id}
-        onSelectFacility={selectFacility}
-        onSelectAsset={setSelectedId}
         onSend={value => void sendQuestion(value)}
         onReset={resetChat}
       />}
