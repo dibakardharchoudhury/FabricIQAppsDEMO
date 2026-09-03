@@ -1,6 +1,6 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer, type AgentArtifact, type AgentUsage } from './assistantStream'
-import { extractAgentVisualizations, type AssistantRunStep } from './agentResponse'
+import { extractAgentVisualizations, extractAssistantText, type AssistantRunStep } from './agentResponse'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
@@ -490,10 +490,14 @@ export function resetDataAgentConversation() {
 
 type AssistantAnnotation = { text?: string; file_path?: { file_id?: string }; file_citation?: { file_id?: string } }
 type AssistantContent = {
+  type?: string
   text?: { value?: string; annotations?: AssistantAnnotation[] }
   image_file?: { file_id?: string }
+  image_url?: { url?: string }
+  refusal?: string
 }
 type AssistantMessage = {
+  id?: string
   role?: string
   run_id?: string
   content?: AssistantContent[]
@@ -574,9 +578,21 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   }
   if (run.usage && typeof run.usage.total_tokens === 'number') usage = { prompt: run.usage.prompt_tokens ?? 0, completion: run.usage.completion_tokens ?? 0, total: run.usage.total_tokens }
 
-  const list = await oai(`/threads/${session.threadId}/messages?order=desc`) as { data?: AssistantMessage[] }
-  const messages = (list.data ?? []).filter(candidate => candidate.role === 'assistant' && candidate.run_id === run.id).reverse()
-  const answer = messages.flatMap(message => message.content?.map(part => part.text?.value ?? '') ?? []).filter(Boolean).join('\n')
+  type MessagePage = { data?: AssistantMessage[]; has_more?: boolean; last_id?: string }
+  const newestFirst: AssistantMessage[] = []
+  let after: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const cursor = after ? `&after=${encodeURIComponent(after)}` : ''
+    const page = await oai(`/threads/${session.threadId}/messages?order=desc&limit=100${cursor}`) as MessagePage
+    newestFirst.push(...(page.data ?? []))
+    hasMore = page.has_more === true
+    if (!hasMore) break
+    after = page.last_id ?? page.data?.at(-1)?.id
+    if (!after) throw new Error('The Data Agent response was paginated without a continuation cursor.')
+  }
+  const messages = newestFirst.filter(candidate => candidate.role === 'assistant' && candidate.run_id === run.id).reverse()
+  const answer = extractAssistantText(messages)
   const artifactMap = new Map<string, AgentArtifact>()
   const addArtifact = (fileId: string | undefined, name: string | undefined, kind: AgentArtifact['kind']) => {
     if (fileId && !artifactMap.has(fileId)) artifactMap.set(fileId, { fileId, name: artifactName(name, fileId, kind), kind })
@@ -584,6 +600,13 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   for (const message of messages) {
     for (const part of message.content ?? []) {
       addArtifact(part.image_file?.file_id, undefined, 'image')
+      const imageUrl = part.image_url?.url
+      if (imageUrl && !artifactMap.has(imageUrl)) artifactMap.set(imageUrl, {
+        fileId: imageUrl,
+        name: artifactName(imageUrl, imageUrl, 'image'),
+        kind: 'image',
+        url: imageUrl,
+      })
       for (const annotation of part.text?.annotations ?? []) {
         addArtifact(annotation.file_path?.file_id, annotation.text, 'file')
         addArtifact(annotation.file_citation?.file_id, annotation.text, 'file')
@@ -592,6 +615,7 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     for (const attachment of message.attachments ?? []) addArtifact(attachment.file_id, undefined, 'file')
   }
   const artifacts = await Promise.all([...artifactMap.values()].map(async artifact => {
+    if (artifact.url) return artifact
     try {
       const response = await fetch(url(`/files/${artifact.fileId}/content`), { headers: { ...baseHeaders, 'OpenAI-Beta': 'assistants=v2' } })
       if (!response.ok) return artifact

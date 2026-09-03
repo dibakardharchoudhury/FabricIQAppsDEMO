@@ -1,5 +1,19 @@
 import type { AgentVisualization } from './assistantStream'
 
+export type AssistantTextContent = {
+  type?: string
+  text?: { value?: string }
+  refusal?: string
+}
+
+export function extractAssistantText(messages: Array<{ content?: AssistantTextContent[] }>): string {
+  return messages
+    .flatMap(message => message.content ?? [])
+    .map(part => part.text?.value ?? part.refusal ?? '')
+    .filter(text => text.length > 0)
+    .join('\n\n')
+}
+
 export type AssistantRunStep = {
   step_details?: {
     tool_calls?: Array<{
