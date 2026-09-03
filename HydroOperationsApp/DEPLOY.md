@@ -107,10 +107,10 @@ az ad sp create --id <spa-client-id>
 
 The complete live-auth contract is:
 
-- **SPA redirect URIs on the app registration:** the current
-  `https://<host>.webapp.fabricapps.net` origin in `rayfin/rayfin.yml`
-  `services.auth.allowedRedirectUris`, plus `http://localhost:5173` for local development.
-  `setup-live-auth` removes stale Fabric-hosting origins while preserving unrelated redirects.
+- **SPA redirect URIs on the app registration:** every URI already registered in Entra, plus the
+  current `https://<host>.webapp.fabricapps.net` deployment origin and `http://localhost:5173` for
+  local development. Existing Entra redirects are never removed. Historical origins found only in
+  local `rayfin.yml` configuration are not recreated.
 - **Requested delegated permissions on the app registration:** Azure Data Explorer
   `user_impersonation`; Power BI Service/Microsoft Fabric `GraphQLApi.Execute.All`,
   `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
@@ -131,7 +131,7 @@ The complete live-auth contract is:
 
 **If the tenant blocks the script** (missing role or restricted consent), it prints the exact action and continues — complete these in the Entra portal on that app registration:
 
-1. **Authentication → Add a platform → Single-page application** → add the current hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`; remove old `*.webapp.fabricapps.net` origins. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
+1. **Authentication → Add a platform → Single-page application** → preserve every existing redirect and add the current hosting origin from `rayfin/rayfin.yml` (`allowedRedirectUris`) **and** `http://localhost:5173`. Do not remove existing redirects. *Fixes AADSTS50011.* Needs **Application Administrator** on the app.
 2. **API permissions → Add a permission → APIs my organization uses** → add these **Delegated** scopes:
    - **Azure Data Explorer** → `user_impersonation` — Eventhouse telemetry (resource app id `2746ea77-4702-4b45-80ca-3c97e680e8b7`).
    - **Power BI Service** (resource app id `00000009-0000-0000-c000-000000000000`) → `GraphQLApi.Execute.All` (STID Lakehouse GraphQL), `Workspace.Read.All` (workspace item discovery), **`Item.Read.All`** (read the Eventhouse query URI — **required for live telemetry**; without it the app reports “No Eventhouse found”), and `Item.Execute.All` (run notebooks/pipelines from the app).
@@ -156,7 +156,7 @@ Send your admin this checklist (the dry run prints the concrete values for each 
 | # | Action | On | Role the admin needs |
 |---|---|---|---|
 | 1 | **Create** the SPA app registration (single‑tenant, no secret), ensure its **enterprise application/service principal** exists (`az ad sp create --id <spa-client-id>`), and give you the **Application (client) ID** | Entra ID → App registrations / Enterprise applications | **Application Administrator** (or self‑service app registration enabled) |
-| 2 | **Authentication → Single‑page application** → set the current origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173`; remove old Fabric-hosting origins | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
+| 2 | **Authentication → Single‑page application** → preserve every existing redirect and add the current origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173` | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
 | 3 | **API permissions** → add the delegated scopes from the list above (ADX `user_impersonation`; Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` + `Item.Read.All` + `Item.Execute.All`) | that app | **Application Administrator** on the app |
 | 4 | **Grant admin consent** for the directory | that app | **Privileged Role Administrator / Global Administrator** |
 
@@ -263,7 +263,8 @@ npm run setup-live-auth   # or setup-live-auth:dry to preview
 ```
 
 `scripts/setup-live-auth.mjs` is idempotent: (1) reads the current hosting origin from `rayfin/rayfin.yml`
-(`allowedRedirectUris`) plus `localhost:5173`, removes stale Fabric-hosting origins, and registers them as **SPA redirect URIs** on the Entra
+(`allowedRedirectUris`), preserves every SPA redirect already in Entra, and adds only that current
+origin plus `localhost:5173` as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
 **Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
 **`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,

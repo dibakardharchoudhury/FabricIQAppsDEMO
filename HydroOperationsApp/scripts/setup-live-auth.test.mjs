@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { synchronizeRedirectUris } from './setup-live-auth.mjs'
+import { selectCurrentHostingOrigin, synchronizeRedirectUris } from './setup-live-auth.mjs'
+
+test('selects only the latest configured Fabric host for addition', () => {
+  const historical = 'https://historical.webapp.fabricapps.net'
+  const current = 'https://current.webapp.fabricapps.net'
+
+  assert.equal(
+    selectCurrentHostingOrigin([historical, 'http://localhost:5173', current]),
+    current,
+  )
+})
 
 test('preserves existing SPA redirects and appends only missing redirects', () => {
   const existing = [

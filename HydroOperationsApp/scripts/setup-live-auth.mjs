@@ -45,7 +45,7 @@
 // SOURCES (all local, no scraping of deploy output):
 //   - rayfin/.env       → RAYFIN_PUBLIC_AAD_CLIENT_ID, RAYFIN_PUBLIC_TENANT_ID
 //   - rayfin/rayfin.yml → services.auth.allowedRedirectUris (`rayfin up` records
-//                         hosting origins; all configured origins are preserved)
+//                         the current hosting origin last)
 //
 // PREREQUISITE THAT CANNOT BE AUTOMATED AWAY:
 //   Sign in to the Azure CLI (`az login`) as an identity allowed to update the
@@ -243,21 +243,23 @@ export function synchronizeRedirectUris(current, desired) {
   return [...new Set([...current, ...desired])]
 }
 
+export function selectCurrentHostingOrigin(redirectUris) {
+  return redirectUris.map(toOrigin).filter(isFabricHostingOrigin).at(-1)
+}
+
 // ─── STEP 1: SPA redirect URIs ───────────────────────────────────────────────
 
 function registerRedirectUris(clientId) {
   console.log('\n\u2500\u2500 STEP 1: SPA redirect URIs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500')
 
-  const recordedHostingOrigins = readAllowedRedirectUris(files.rayfinYml)
-    .map(toOrigin)
-    .filter(isFabricHostingOrigin)
-  if (recordedHostingOrigins.length === 0) {
+  const currentHostingOrigin = selectCurrentHostingOrigin(readAllowedRedirectUris(files.rayfinYml))
+  if (!currentHostingOrigin) {
     console.warn(
       '\u26a0 No allowedRedirectUris found in rayfin/rayfin.yml. Deploy once with ' +
         '`npx rayfin up` so it records the hosting origin, then re-run this script.',
     )
   }
-  const desired = [...new Set([...recordedHostingOrigins, ...DEV_ORIGINS])]
+  const desired = [...new Set([...(currentHostingOrigin ? [currentHostingOrigin] : []), ...DEV_ORIGINS])]
 
   console.log('Desired SPA origins   :')
   for (const o of desired) console.log('  -', o)
@@ -283,17 +285,14 @@ function registerRedirectUris(clientId) {
   const current = Array.isArray(app.spa) ? app.spa : []
   const synchronized = synchronizeRedirectUris(current, desired)
   const added = synchronized.filter((uri) => !current.includes(uri))
-  const removed = current.filter((uri) => !synchronized.includes(uri))
 
-  if (added.length === 0 && removed.length === 0) {
+  if (added.length === 0) {
     console.log('\u2713 All required SPA redirect URIs are already registered. Nothing to do.')
     return
   }
 
-  if (added.length > 0) console.log('Will ADD these SPA redirect URIs:')
+  console.log('Will ADD these SPA redirect URIs:')
   for (const u of added) console.log('  +', u)
-  if (removed.length > 0) console.log('Will REMOVE stale Fabric SPA redirect URIs:')
-  for (const u of removed) console.log('  -', u)
 
   if (dryRun) {
     console.log('(dry run \u2014 no changes written)')

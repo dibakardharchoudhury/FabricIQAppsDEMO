@@ -9,7 +9,9 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
 - **Golden rule:** SPA redirect URIs, delegated permissions, and admin consent are all done by
   **`npm run setup-live-auth`** (idempotent). Do NOT add redirect URIs / API permissions / grant
   consent by hand in the Entra portal, and do NOT hand-edit `rayfin/rayfin.yml`
-  `allowedRedirectUris` — `rayfin deploy` records the hosting origin there and the script reads it.
+  `allowedRedirectUris`. Before deploying, preserve every redirect currently registered in Entra;
+  after deploying, add only the current hosting origin. Never remove an existing Entra SPA redirect
+  and never recreate a historical origin merely because it remains in local configuration.
   Only fall back to manual portal steps for the exact action the script prints it lacks a role for.
 - The only genuinely manual step is creating the SPA app registration (`az ad app create`), because
   an app registration is tenant-scoped.

@@ -704,19 +704,6 @@ def _rayfin_redirect_block() -> tuple[Path, list[str], int, int, int, str]:
     return config, lines, key_index, end_index, key_indent, newline
 
 
-def read_rayfin_redirects() -> list[str]:
-    """Read allowedRedirectUris from rayfin.yml without changing the file."""
-    _, lines, key_index, end_index, _, _ = _rayfin_redirect_block()
-    redirects: list[str] = []
-    for line in lines[key_index + 1 : end_index]:
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            uri = stripped[2:].strip().strip('"').strip("'")
-            if uri:
-                redirects.append(uri)
-    return redirects
-
-
 def write_rayfin_redirects(redirects: list[str]) -> list[str]:
     """Write the complete deduplicated redirect list to rayfin.yml."""
     config, lines, key_index, end_index, key_indent, newline = _rayfin_redirect_block()
@@ -731,12 +718,6 @@ def write_rayfin_redirects(redirects: list[str]) -> list[str]:
         encoding="utf-8",
     )
     return merged
-
-
-def merge_rayfin_redirects(*groups: list[str]) -> list[str]:
-    """Merge current rayfin.yml redirects with additional redirect URI groups."""
-    current = read_rayfin_redirects()
-    return write_rayfin_redirects(_unique_redirect_uris(current, *groups))
 
 
 def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> None:
@@ -769,7 +750,6 @@ def deploy(args: argparse.Namespace) -> None:
     # Capture both configuration sources BEFORE any Rayfin command can modify Entra.
     # A shared SPA may already serve several Fabric webapps, so losing even one existing
     # redirect URI is a deployment failure.
-    original_rayfin_redirects = read_rayfin_redirects()
     original_entra_redirects: list[str] = []
     if client_id:
         try:
@@ -786,12 +766,10 @@ def deploy(args: argparse.Namespace) -> None:
             flush=True,
         )
 
-    # Protect existing redirects during the FIRST rayfin up as well. The hosting URL does
-    # not exist yet, so merge the Entra snapshot + current rayfin.yml + localhost now.
-    preserved_redirects = merge_rayfin_redirects(
-        original_entra_redirects,
-        original_rayfin_redirects,
-        ["http://localhost:5173"],
+    # Entra is authoritative for existing redirects. Do not resurrect historical hosts
+    # that remain only in rayfin.yml; seed Rayfin with the live snapshot plus localhost.
+    preserved_redirects = write_rayfin_redirects(
+        _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
@@ -807,11 +785,13 @@ def deploy(args: argparse.Namespace) -> None:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
     hosting_url = urls[-1]
 
-    print("[6/8] Merging the current app URL into the shared redirect configuration", flush=True)
-    preserved_redirects = merge_rayfin_redirects(
-        preserved_redirects,
-        [hosting_url],
-        ["http://localhost:5173"],
+    print("[6/8] Adding the current app URL to the preserved redirect configuration", flush=True)
+    preserved_redirects = write_rayfin_redirects(
+        _unique_redirect_uris(
+            original_entra_redirects,
+            [hosting_url],
+            ["http://localhost:5173"],
+        )
     )
     print(
         f"Rayfin redirect configuration now contains {len(preserved_redirects)} URI(s).",

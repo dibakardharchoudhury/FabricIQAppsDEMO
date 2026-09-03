@@ -29,8 +29,10 @@ hand when a script does it.**
 SPA **redirect URIs**, **delegated permissions**, and **admin consent** are all done by
 `npm run setup-live-auth` (STEP 1 + STEP 2 in that script). **Do NOT** add redirect URIs, add
 API permissions, or grant consent manually in the Entra portal, and **do NOT** hand-edit
-`rayfin/rayfin.yml` `allowedRedirectUris`. `rayfin up` / `rayfin deploy` record the current
-hosting origin into `rayfin.yml`, and `setup-live-auth` reads it from there. Only fall back to
+`rayfin/rayfin.yml` `allowedRedirectUris`. Snapshot and preserve every redirect currently registered
+in Entra, then add only the hosting origin produced by the current deployment. Never remove an
+existing Entra SPA redirect or recreate an origin found only in stale local configuration.
+`setup-live-auth` applies that preserved set. Only fall back to
 manual portal steps for the exact action the script prints it lacks a role to perform.
 
 > **Do not hide an Entra authorization failure.** The required single-tenant SPA is **`Hydro
@@ -88,7 +90,8 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    npm run setup-live-auth:dry      # preview only; --redirect-only / --grant-only to scope
    ```
    It reads `RAYFIN_PUBLIC_AAD_CLIENT_ID` / `TENANT_ID` from `rayfin/.env` and the hosting
-  current origin from `rayfin/rayfin.yml`, then registers it + `localhost:5173`, removes stale
+  current origin from `rayfin/rayfin.yml`, then preserves all existing Entra redirects and adds it
+  plus `localhost:5173`; it never removes an existing redirect
   Fabric-hosting origins, and
    grants ADX `user_impersonation` + the Power BI / Microsoft Fabric scopes
    `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
@@ -120,8 +123,8 @@ If the target is the SAME tenant as a prior deploy (only the workspace or capaci
   do NOT run `az ad app create`. Keep the same client id + `RAYFIN_PUBLIC_TENANT_ID` in `.env`; only
   `FABRIC_WORKSPACE_NAME` + `RAYFIN_PUBLIC_WORKSPACE_ID` change.
 - Still reset local state (step 1) and re-point `.env` to the new workspace GUID (resolve by name via
-  `GET /v1/workspaces`). `setup-live-auth` just ADDS the new hosting origin to the existing app and
-  re-confirms consent (already `AllPrincipals` → no-op).
+  `GET /v1/workspaces`). Preserve the SPA redirects currently registered in Entra, add only the new
+  hosting origin, and re-confirm consent (already `AllPrincipals` → no-op).
 - Verify the app afterwards: `az ad app show --id <appId> --query spa.redirectUris` and the SP's
   `oauth2PermissionGrants` — Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` +
   `Item.Read.All` + `Item.Execute.All`, and ADX `user_impersonation`, all as `AllPrincipals`.
