@@ -19,7 +19,6 @@ const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as strin
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
   cache: { cacheLocation: 'localStorage' },
-  system: { asyncPopups: true },
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
@@ -39,10 +38,15 @@ function clearAbandonedInteraction() {
   }
 }
 
-/** Initialize MSAL for popup authentication inside the Fabric iframe. */
+/** Initialize MSAL and process any redirect returning from Entra. */
 export async function initAuth(): Promise<void> {
   if (!msal) return
   await msal.initialize()
+  try {
+    await msal.handleRedirectPromise()
+  } catch (error) {
+    console.warn('Entra redirect handling failed.', error)
+  }
   clearAbandonedInteraction()
   initialized = true
 }
@@ -51,6 +55,7 @@ async function ensureInit() {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
   if (initialized) return
   await msal.initialize()
+  try { await msal.handleRedirectPromise() } catch (error) { console.warn('Entra redirect handling failed.', error) }
   clearAbandonedInteraction()
   initialized = true
 }
