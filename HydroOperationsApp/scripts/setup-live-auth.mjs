@@ -45,7 +45,7 @@
 // SOURCES (all local, no scraping of deploy output):
 //   - rayfin/.env       → RAYFIN_PUBLIC_AAD_CLIENT_ID, RAYFIN_PUBLIC_TENANT_ID
 //   - rayfin/rayfin.yml → services.auth.allowedRedirectUris (`rayfin up` records
-//                         the current origin last; older origins are replaced)
+//                         hosting origins; all configured origins are preserved)
 //
 // PREREQUISITE THAT CANNOT BE AUTOMATED AWAY:
 //   Sign in to the Azure CLI (`az login`) as an identity allowed to update the
@@ -251,14 +251,13 @@ function registerRedirectUris(clientId) {
   const recordedHostingOrigins = readAllowedRedirectUris(files.rayfinYml)
     .map(toOrigin)
     .filter(isFabricHostingOrigin)
-  const currentHostingOrigin = recordedHostingOrigins.at(-1)
-  if (!currentHostingOrigin) {
+  if (recordedHostingOrigins.length === 0) {
     console.warn(
       '\u26a0 No allowedRedirectUris found in rayfin/rayfin.yml. Deploy once with ' +
         '`npx rayfin up` so it records the hosting origin, then re-run this script.',
     )
   }
-  const desired = [...new Set([...(currentHostingOrigin ? [currentHostingOrigin] : []), ...DEV_ORIGINS])]
+  const desired = [...new Set([...recordedHostingOrigins, ...DEV_ORIGINS])]
 
   console.log('Desired SPA origins   :')
   for (const o of desired) console.log('  -', o)
