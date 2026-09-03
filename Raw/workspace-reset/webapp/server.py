@@ -233,7 +233,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
 
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
            phases: list[str], markers: list[tuple[int, tuple[str, ...]]],
-           python: bool = True, exclusive: bool = False) -> str | None:
+           python: bool = True, exclusive: bool = True) -> str | None:
     job = Job(phases, exclusive=exclusive)
     with JOBS_LOCK:
         running = [existing for existing in JOBS.values() if existing.status == "running"]
@@ -294,7 +294,9 @@ def api_sync():
     if keep_connected:
         argv += ["--keep-connected"]
 
-    job_id = _start(argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS)
+    job_id = _start(
+        argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS, exclusive=True
+    )
     return job_response(job_id)
 
 
@@ -354,7 +356,9 @@ def api_delete():
         "--workspace", workspace,
         "--dry-run" if dry_run else "--yes",
     ]
-    job_id = _start(argv, None, DELETE_TIMEOUT_S, DELETE_PHASES, DELETE_MARKERS)
+    job_id = _start(
+        argv, None, DELETE_TIMEOUT_S, DELETE_PHASES, DELETE_MARKERS, exclusive=True
+    )
     return job_response(job_id)
 
 
@@ -451,7 +455,14 @@ def api_run_pipeline():
     # Pass parameters as JSON through the environment so values with @ and : (a
     # Teams channel id) never need shell escaping and stay off the command line.
     env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
-    job_id = _start(argv, env_extra, PIPELINE_TIMEOUT_S, PIPELINE_PHASES, PIPELINE_MARKERS)
+    job_id = _start(
+        argv,
+        env_extra,
+        PIPELINE_TIMEOUT_S,
+        PIPELINE_PHASES,
+        PIPELINE_MARKERS,
+        exclusive=True,
+    )
     return job_response(job_id)
 
 
@@ -680,7 +691,9 @@ def app_version():
 def serve_frontend(path: str = ""):
     """Serve the self-contained static UI (no build step required)."""
     target = path if path and (STATIC_DIR / path).is_file() else "index.html"
-    return send_from_directory(STATIC_DIR, target)
+    response = send_from_directory(STATIC_DIR, target)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

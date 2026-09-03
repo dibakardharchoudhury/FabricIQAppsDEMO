@@ -28,6 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REQUIREMENTS = HERE / "requirements.txt"
 SERVER = HERE / "webapp" / "server.py"
+APP_URL = "http://127.0.0.1:5000/"
 
 
 def fail(message: str) -> None:
@@ -37,6 +38,42 @@ def fail(message: str) -> None:
     except EOFError:
         pass
     raise SystemExit(1)
+
+
+def stop_existing_server() -> None:
+    """Stop an existing local Fabric Demo server so current code owns the port."""
+    try:
+        with urllib.request.urlopen(APP_URL, timeout=1) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError:
+        return
+
+    if "Initialize Your Fabric Demo" not in body:
+        fail("Port 5000 is already used by another application. Stop it, then retry.")
+
+    request = urllib.request.Request(
+        APP_URL + "api/shutdown",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3):
+            pass
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            fail("The existing local app is running a job. Wait for it to finish, then relaunch.")
+        fail(f"Could not stop the existing local app (HTTP {exc.code}).")
+    except urllib.error.URLError as exc:
+        fail(f"Could not stop the existing local app: {exc.reason}")
+
+    for _ in range(30):
+        try:
+            urllib.request.urlopen(APP_URL, timeout=0.5).close()
+        except urllib.error.URLError:
+            return
+        time.sleep(0.2)
+    fail("The existing local app did not stop. Use its Stop server button, then retry.")
 
 
 def main() -> int:
@@ -66,6 +103,7 @@ def main() -> int:
     #    so you can close this window and keep using the page. The page's own
     #    Restart / Stop buttons manage the server's lifecycle from here on.
     print("  [2/2] Starting the app...\n")
+    stop_existing_server()
     env = os.environ.copy()
     env["FABRIC_UI_NO_BROWSER"] = "1"  # this launcher opens the browser once, below
     popen_kwargs: dict[str, object] = {
@@ -81,20 +119,19 @@ def main() -> int:
         popen_kwargs["start_new_session"] = True
     proc = subprocess.Popen([sys.executable, str(SERVER)], env=env, **popen_kwargs)
 
-    url = "http://127.0.0.1:5000/"
     for _ in range(60):
         try:
-            urllib.request.urlopen(url, timeout=1).close()
+            urllib.request.urlopen(APP_URL, timeout=1).close()
             break
         except urllib.error.URLError:
             if proc.poll() is not None:
                 fail("The server stopped before it was ready (is port 5000 already in use?).")
             time.sleep(0.5)
     else:
-        fail("The server did not become ready in time. Try opening " + url + " manually.")
+        fail("The server did not become ready in time. Try opening " + APP_URL + " manually.")
 
-    webbrowser.open(url)
-    print(f"   The app is running at {url} (PID {proc.pid}).")
+    webbrowser.open(APP_URL)
+    print(f"   The app is running at {APP_URL} (PID {proc.pid}).")
     print("   Sign in with Microsoft on the page, then use the tools.")
     print("   You can close this window -- the app keeps running.")
     print("   To stop it, use the 'Stop server' button on the page.\n")
