@@ -736,8 +736,7 @@ def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> N
 
 
 def deploy(args: argparse.Namespace) -> None:
-    print("[1/8] Checking dependencies, Azure tenant, and Fabric workspace", flush=True)
-    ensure_deploy_dependencies()
+    print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)
@@ -774,6 +773,7 @@ def deploy(args: argparse.Namespace) -> None:
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
     prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
+    ensure_deploy_dependencies()
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
     ensure_rayfin_login(args.tenant)
