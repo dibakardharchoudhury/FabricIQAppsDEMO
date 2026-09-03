@@ -19,6 +19,7 @@ const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
 
 const SETUP_STORAGE_KEY = 'hydro.v2.setup.v1'
+const DATA_CACHE_KEY = 'hydro.data-cache.v1'
 const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
@@ -26,6 +27,7 @@ const STREAM_ETA_MS = 5 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
+const TELEMETRY_POLL_MS = 30_000
 
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
@@ -34,6 +36,7 @@ export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: stri
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
+type CachedData = { stid?: StidData; telemetry?: TelemetryReading[] }
 
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 
@@ -44,6 +47,21 @@ function readPersistedSetup(): PersistedSetup {
 
 function writePersistedSetup(patch: PersistedSetup) {
   try { localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify({ ...readPersistedSetup(), ...patch })) }
+  catch { /* storage unavailable */ }
+}
+
+function readCachedData(): CachedData {
+  try {
+    const value = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || '{}') as CachedData
+    return {
+      stid: value.stid && Array.isArray(value.stid.facilities) && Array.isArray(value.stid.equipment) && Array.isArray(value.stid.instruments) ? value.stid : undefined,
+      telemetry: Array.isArray(value.telemetry) ? value.telemetry : undefined,
+    }
+  } catch { return {} }
+}
+
+function writeCachedData(patch: CachedData) {
+  try { localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({ ...readCachedData(), ...patch })) }
   catch { /* storage unavailable */ }
 }
 
@@ -65,9 +83,10 @@ const isTerminalJobStatus = (status: string) => isDoneStatus(status) || status =
 
 function useHydroOperationsDataController() {
   const persisted = useMemo(() => readPersistedSetup(), [])
+  const cached = useMemo(() => readCachedData(), [])
   const [user, setUser] = useState<AppUser | null>(null)
-  const [stid, setStid] = useState<StidData | null>(null)
-  const [telemetry, setTelemetry] = useState<TelemetryReading[]>([])
+  const [stid, setStid] = useState<StidData | null>(cached.stid ?? null)
+  const [telemetry, setTelemetry] = useState<TelemetryReading[]>(cached.telemetry ?? [])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
   const [inspections, setInspections] = useState<InspectionRecord[]>([])
   const [spareParts, setSpareParts] = useState<SparePartRecord[]>([])
@@ -75,8 +94,8 @@ function useHydroOperationsDataController() {
   const [assetModels, setAssetModels] = useState<Asset3DModelRecord[]>([])
   const [selectedFacilityId, setSelectedFacilityIdState] = useState<string | undefined>(persisted.selectedFacilityId)
   const [selectedAssetIds, setSelectedAssetIds] = useState<Record<string, string>>(() => persisted.selectedAssetIds ?? {})
-  const [stidState, setStidState] = useState<LoadState>(persisted.stidConnected ? 'loading' : 'idle')
-  const [telemetryState, setTelemetryState] = useState<LoadState>(persisted.telemetryConnected ? 'loading' : 'idle')
+  const [stidState, setStidState] = useState<LoadState>(cached.stid ? 'connected' : persisted.stidConnected ? 'loading' : 'idle')
+  const [telemetryState, setTelemetryState] = useState<LoadState>(cached.telemetry?.length ? 'connected' : persisted.telemetryConnected ? 'loading' : 'idle')
   const [operationsState, setOperationsState] = useState<LoadState>('idle')
   const [modelState, setModelState] = useState<LoadState>('idle')
   const [provisionState, setProvisionState] = useState<ActionState>(persisted.provisioned ? 'complete' : 'idle')
@@ -96,6 +115,7 @@ function useHydroOperationsDataController() {
 
   const applyStid = useCallback((data: StidData) => {
     setStid(data)
+    writeCachedData({ stid: data })
     setSelectedFacilityIdState(current => {
       const next = current && data.facilities.some(facility => facility.facility_id === current)
         ? current
@@ -158,10 +178,11 @@ function useHydroOperationsDataController() {
     }
     if (data) {
       setTelemetry(data)
+      writeCachedData({ telemetry: data })
       setTelemetryState('connected')
       writePersistedSetup({ telemetryConnected: data.length > 0 })
     } else {
-      setTelemetryState('unavailable')
+      setTelemetryState(current => !interactive && current === 'connected' ? current : 'unavailable')
     }
     return data
   }, [])
@@ -344,7 +365,11 @@ function useHydroOperationsDataController() {
   useEffect(() => {
     let cancelled = false
     const initialize = async () => {
-      if (isRayfinConfigured()) {
+      const initializeOperations = async () => {
+        if (!isRayfinConfigured()) {
+          setOperationsState('unavailable'); setModelState('unavailable')
+          return
+        }
         setOperationsState('loading')
         try {
           const current = await initializeRayfin()
@@ -357,28 +382,37 @@ function useHydroOperationsDataController() {
           setOperationsState('error')
           setNotice(error instanceof Error ? error.message : 'Operations data is unavailable.')
         }
-      } else { setOperationsState('unavailable'); setModelState('unavailable') }
+      }
 
-      try { await initAuth() }
-      catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : 'Fabric authentication is unavailable.') }
+      const initializeFabricData = async () => {
+        try { await initAuth() }
+        catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : 'Fabric authentication is unavailable.') }
 
-      if (isStidConfigured()) {
-        setStidState('loading')
-        try {
-          const data = await queryStid()
-          if (cancelled) return
-          if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
-          else setStidState('unavailable')
-        } catch (error) {
-          if (cancelled) return
-          setStidState('error')
-          setNotice(error instanceof Error ? error.message : 'STID data is unavailable.')
+        const initializeStid = async () => {
+          if (!isStidConfigured()) { setStidState('unavailable'); return }
+          setStidState(current => current === 'connected' ? current : 'loading')
+          try {
+            const data = await queryStid()
+            if (cancelled) return
+            if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
+            else setStidState(current => current === 'connected' ? current : 'unavailable')
+          } catch (error) {
+            if (cancelled) return
+            setStidState('error')
+            setNotice(error instanceof Error ? error.message : 'STID data is unavailable.')
+          }
         }
-      } else setStidState('unavailable')
 
-      setTelemetryState('loading')
-      try { await loadTelemetry(false) }
-      catch (error) { if (!cancelled) { setTelemetryState('error'); setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.') } }
+        const initializeTelemetry = async () => {
+          setTelemetryState(current => current === 'connected' ? current : 'loading')
+          try { await loadTelemetry(false) }
+          catch (error) { if (!cancelled) { setTelemetryState('error'); setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.') } }
+        }
+
+        await Promise.all([initializeStid(), initializeTelemetry()])
+      }
+
+      await Promise.all([initializeOperations(), initializeFabricData()])
 
       if (!cancelled) await Promise.all(Object.values(readPersistedJobs()).map(job => resumeJob(job)))
     }
@@ -396,7 +430,7 @@ function useHydroOperationsDataController() {
       try { await loadTelemetry(false) } catch { /* keep last good readings */ }
       finally { inFlight = false }
     }
-    const id = window.setInterval(poll, 10_000)
+    const id = window.setInterval(poll, TELEMETRY_POLL_MS)
     return () => window.clearInterval(id)
   }, [telemetryLive, loadTelemetry])
 

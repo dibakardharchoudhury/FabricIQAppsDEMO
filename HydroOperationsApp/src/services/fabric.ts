@@ -113,6 +113,7 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
 type WorkspaceItem = { id: string; type: string; displayName: string }
 type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string }
 let configCache: ResolvedConfig | null = null
+let configPromise: Promise<ResolvedConfig | null> | undefined
 
 /** Last-known-good values injected at build time; used only when live discovery is unavailable. */
 function envConfig(): ResolvedConfig {
@@ -136,6 +137,16 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
  *  Discovered values are cached for the session so no id can go stale. */
 async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null> {
   if (configCache) return configCache
+  if (configPromise) return configPromise
+  configPromise = discoverConfig(interactive)
+  try {
+    return await configPromise
+  } finally {
+    configPromise = undefined
+  }
+}
+
+async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | null> {
   const env = envConfig()
   const token = await fabricToken(interactive)
   if (!token) {
@@ -189,7 +200,10 @@ async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
-export function clearWorkspaceConfigCache() { configCache = null }
+export function clearWorkspaceConfigCache() {
+  configCache = null
+  configPromise = undefined
+}
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
 export type JobStatus = 'NotStarted' | 'InProgress' | 'Completed' | 'Failed' | 'Cancelled' | 'Deduped'
