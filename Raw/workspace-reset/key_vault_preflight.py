@@ -233,6 +233,30 @@ def ensure_key_vault_access(tenant_id: str, workspace_id: str, key_vault_uri: st
     if connection.casefold() == "rejected" or provisioning.casefold() == "failed":
         raise PreflightError("The Fabric managed private endpoint is rejected or failed; delete it and retry.")
 
+    # Fabric activation must succeed before the data-source owner approves the
+    # request. Approving while activation is still Provisioning can terminally
+    # fail the Fabric endpoint even though Key Vault records the approval.
+    activation_deadline = time.time() + poll_seconds
+    while provisioning.casefold() not in {"succeeded", "success"} and time.time() < activation_deadline:
+        time.sleep(10)
+        endpoint = matching_endpoint(_list_fabric_endpoints(client, workspace_id), vault_id)
+        if endpoint is None:
+            continue
+        provisioning, connection = endpoint_state(endpoint)
+        print(f"  Fabric endpoint state: provisioning={provisioning}, connection={connection}.")
+        if connection.casefold() == "rejected" or provisioning.casefold() == "failed":
+            raise PreflightError(
+                "Fabric could not activate the managed private endpoint. Delete the failed "
+                "endpoint in Workspace settings > Network security, then retry."
+            )
+    if provisioning.casefold() not in {"succeeded", "success"}:
+        raise PreflightError(
+            f"Fabric managed private endpoint activation did not succeed within {poll_seconds} seconds."
+        )
+    if connection.casefold() == "approved":
+        print("  Key Vault private connectivity is approved and ready.")
+        return
+
     deadline = time.time() + poll_seconds
     selected: dict[str, Any] | None = None
     while time.time() < deadline and selected is None:

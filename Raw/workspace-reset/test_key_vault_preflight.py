@@ -35,6 +35,13 @@ class KeyVaultPreflightTests(unittest.TestCase):
         endpoint = {"properties": {"provisioningState": "Succeeded", "connectionState": {"status": "Approved"}}}
         self.assertEqual(endpoint_state(endpoint), ("Succeeded", "Approved"))
 
+    def test_fabric_activation_and_approval_are_separate_states(self):
+        activating = {"provisioningState": "Provisioning", "connectionState": {"status": None}}
+        awaiting_approval = {"provisioningState": "Succeeded", "connectionState": {"status": "Pending"}}
+
+        self.assertEqual(endpoint_state(activating), ("Provisioning", "Unknown"))
+        self.assertEqual(endpoint_state(awaiting_approval), ("Succeeded", "Pending"))
+
     def test_connection_selection_refuses_ambiguity(self):
         one = {"id": "new", "properties": {"privateLinkServiceConnectionState": {"status": "Pending"}}}
         two = {"id": "other", "properties": {"privateLinkServiceConnectionState": {"status": "Pending"}}}
