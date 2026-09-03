@@ -78,8 +78,8 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
   try {
     return await popupToken(FABRIC_SCOPES)
   } catch (error) {
-    console.warn('Fabric consent unavailable; falling back to configured values.', error)
-    return null
+    console.warn('Fabric permission consent did not complete.', error)
+    throw new Error('Fabric permission consent is required before this action can run. Complete the consent popup and try again.', { cause: error })
   }
 }
 
@@ -407,13 +407,21 @@ export async function resumeStreamingPipeline(onStatus: JobProgress | undefined,
 
 export function isPostSeedConfigured() { return Boolean(msal) }
 
+async function resolvePostseedNotebookId(): Promise<string> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const items = await listItems(token)
+  const notebook = items.find(item => item.type === 'Notebook' && item.displayName === postseedNotebookName)
+  if (!notebook) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
+  return notebook.id
+}
+
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
 export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobStatus> {
-  const config = await ensureConfig(true)
-  if (!config?.postseedNotebookId) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
+  const postseedNotebookId = await resolvePostseedNotebookId()
   const status = await runJob(
-    config.postseedNotebookId,
+    postseedNotebookId,
     'RunNotebook',
     onStatus,
     {
@@ -437,9 +445,8 @@ export async function runPostSeedNotebook(onStatus?: JobProgress): Promise<JobSt
 
 /** Resume tracking a post-seed notebook run that was already started before a page reload. */
 export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
-  const config = await ensureConfig(true)
-  if (!config?.postseedNotebookId) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
-  const status = await pollLatestInstance(config.postseedNotebookId, sinceIso, onStatus, { timeoutMs: 15 * 60_000 })
+  const postseedNotebookId = await resolvePostseedNotebookId()
+  const status = await pollLatestInstance(postseedNotebookId, sinceIso, onStatus, { timeoutMs: 15 * 60_000 })
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
 }

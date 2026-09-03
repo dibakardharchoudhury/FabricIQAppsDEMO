@@ -15,17 +15,18 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
-      - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
-      - https://lucid-bloom-4c2e0a0b0d-swedencentral.webapp.fabricapps.net
-      - https://easy-pond-ecd8897c4d-swedencentral.webapp.fabricapps.net
-      - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
-      - http://localhost:5173
-      - https://curly-dove-3ef414f49d-swedencentral.webapp.fabricapps.net
-      - https://pine-bolt-bb8eb5474e-swedencentral.webapp.fabricapps.net
+      - https://early-iris-f14ccec1b4-swedencentral.webapp.fabricapps.net
+      - https://soft-cape-3e48fdb831-swedencentral.webapp.fabricapps.net
       - https://agile-peak-bb55ff4436-swedencentral.webapp.fabricapps.net
       - https://full-wren-9f95184e46-swedencentral.webapp.fabricapps.net
-      - https://soft-cape-3e48fdb831-swedencentral.webapp.fabricapps.net
-      - https://early-iris-f14ccec1b4-swedencentral.webapp.fabricapps.net
+      - https://pine-bolt-bb8eb5474e-swedencentral.webapp.fabricapps.net
+      - https://curly-dove-3ef414f49d-swedencentral.webapp.fabricapps.net
+      - https://lucid-bloom-4c2e0a0b0d-swedencentral.webapp.fabricapps.net
+      - https://easy-pond-ecd8897c4d-swedencentral.webapp.fabricapps.net
+      - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
+      - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
+      - http://localhost:5173
+      - https://rural-haze-8e8396be06-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
