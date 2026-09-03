@@ -36,6 +36,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -625,9 +626,27 @@ def api_whoami():
 @app.get("/api/version")
 def app_version():
     """Return deterministic build identity from the checked-out Git commit."""
+    git_executable = shutil.which("git")
+    git_metadata = REPO_ROOT / ".git"
+    if not git_executable or not git_metadata.exists():
+        reason = (
+            "Git is not available to the local server process. Install Git for Windows and restart the server."
+            if not git_executable
+            else f"{REPO_ROOT} is not a Git checkout. Clone the repository instead of downloading/copying only its files."
+        )
+        timestamp = datetime.fromtimestamp(Path(__file__).stat().st_mtime, UTC).isoformat()
+        response = jsonify(
+            version="Local copy",
+            timestamp=timestamp,
+            revision="unavailable",
+            detail=reason,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     def git_value(*args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(REPO_ROOT), *args],
+            [git_executable, "-C", str(REPO_ROOT), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -641,7 +660,15 @@ def app_version():
         revision = git_value("rev-parse", "--short=8", "HEAD")
         timestamp = git_value("show", "-s", "--format=%cI", "HEAD")
     except (OSError, subprocess.SubprocessError) as exc:
-        return jsonify(error=f"version metadata unavailable: {exc}"), 503
+        timestamp = datetime.fromtimestamp(Path(__file__).stat().st_mtime, UTC).isoformat()
+        response = jsonify(
+            version="Local copy",
+            timestamp=timestamp,
+            revision="unavailable",
+            detail=f"Git metadata could not be read: {exc}",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     response = jsonify(version=f"v1.0.{commit_count}", timestamp=timestamp, revision=revision)
     response.headers["Cache-Control"] = "no-store"

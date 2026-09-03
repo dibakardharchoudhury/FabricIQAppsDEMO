@@ -759,8 +759,10 @@ async function loadVersion() {
     timestamp.textContent = Number.isNaN(builtAt.getTime()) ? data.timestamp : new Intl.DateTimeFormat(undefined, {
       year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     }).format(builtAt);
-    stamp.title = `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
+    stamp.title = data.detail || `Git commit ${data.revision}\nCommitted ${data.timestamp}`;
   } catch (error) {
+    version.textContent = "Version check failed";
+    timestamp.textContent = "Hover for details";
     stamp.title = String(error);
   }
 }
