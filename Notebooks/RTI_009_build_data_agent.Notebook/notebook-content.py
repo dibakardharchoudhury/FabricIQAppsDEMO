@@ -94,7 +94,7 @@ key_vault_tenant_id_secret = first_setting("key_vault_tenant_id_secret", require
 key_vault_client_id_secret = first_setting("key_vault_client_id_secret", required=True)
 key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret", required=True)
 
-data_agent_name = first_setting("data_agent_name", default="RTI_Demo_Agent_V3")
+data_agent_name = first_setting("data_agent_name", required=True)
 
 print("✅ Settings loaded")
 print("   Workspace ID     :", workspace_id)
@@ -351,7 +351,7 @@ def publish_data_agent(item_id: str, published_description: str = "") -> None:
 
     POST /v1/workspaces/{ws}/dataAgents/{id}/staging/publish (Preview) promotes the
     current staging (draft) config to the published environment. Once published, the
-    agent surfaces its agent (OpenAI-compatible) endpoint and MCP endpoint.
+    agent exposes its supported MCP endpoint.
     """
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/dataAgents/{item_id}/staging/publish"
     body = {"publishedDescription": published_description[:256]} if published_description else {}
@@ -545,13 +545,12 @@ try:
     try:
         enable_preview_runtime(data_agent_item_id)
         publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-        openai_endpoint = (
-            f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}"
-            f"/aiskills/{data_agent_item_id}/aiassistant/openai"
+        mcp_endpoint = (
+            f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}"
+            f"/dataagents/{data_agent_item_id}/agent"
         )
-        print("🌐 Published — consumption endpoints (also shown on the agent's page in Fabric):")
-        print(f"   • Agent (OpenAI-compatible): {openai_endpoint}")
-        print("   • MCP endpoint: shown on the Data Agent page in Fabric (Settings → Endpoints).")
+        print("🌐 Published — consumption endpoint:")
+        print(f"   • MCP: {mcp_endpoint}")
     except Exception as pub_exc:  # noqa: BLE001 - publish is best-effort; config already landed
         print("⚠️ Data Agent configured but publish did not complete:")
         print("   ", pub_exc)

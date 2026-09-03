@@ -1,13 +1,13 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
+import { selectDataAgent } from './artifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 
 const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
-const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID) as string | undefined ?? 'a79a4b7e-e508-4fa4-8b6f-15deadca0f34'
-const agentUrl = import.meta.env.VITE_RAYFIN_DATA_AGENT_MCP_URL as string | undefined
+const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID) as string | undefined
 
 // Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
@@ -90,6 +90,11 @@ type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventh
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
 
+function requireWorkspaceId(): string {
+  if (!workspaceId) throw new Error('Fabric workspace configuration is missing. Rebuild the app with Rayfin environment injection.')
+  return workspaceId
+}
+
 /** Last-known-good values injected at build time; used only when live discovery is unavailable. */
 function envConfig(): ResolvedConfig {
   return {
@@ -98,14 +103,20 @@ function envConfig(): ResolvedConfig {
     eventhouseQueryUri: import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined,
     kqlDatabase: import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined,
     graphqlUrl: graphqlUrlOverride,
-    dataAgentUrl: agentUrl,
   }
 }
 
 async function listItems(token: string): Promise<WorkspaceItem[]> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
-  return ((await res.json()) as { value?: WorkspaceItem[] }).value ?? []
+  const items: WorkspaceItem[] = []
+  let nextUrl: string | undefined = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items`
+  while (nextUrl) {
+    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
+    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string }
+    items.push(...(page.value ?? []))
+    nextUrl = page.continuationUri
+  }
+  return items
 }
 
 /** Discover artifact ids/URIs from the workspace by display name; fall back to build-time env values.
@@ -137,7 +148,7 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
     let eventhouseQueryUri: string | undefined
     let kqlDatabase: string | undefined
     if (eh) {
-      const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/eventhouses/${eh.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/eventhouses/${eh.id}`, { headers: { Authorization: `Bearer ${token}` } })
       if (res.ok) {
         const props = ((await res.json()) as { properties?: { queryServiceUri?: string; databasesItemIds?: string[] } }).properties
         eventhouseQueryUri = props?.queryServiceUri
@@ -152,13 +163,13 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
     // queries directly at this deterministic path — no per-capacity cluster host or env override needed.
     const gql = items.find(i => i.type === 'GraphQLApi')
     const graphqlUrl = gql
-      ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${gql.id}/graphql`
+      ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/graphqlapis/${gql.id}/graphql`
       : undefined
     // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
     // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
-    const da = items.find(i => i.type === 'DataAgent')
+    const da = selectDataAgent(items)
     const dataAgentUrl = da
-      ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${workspaceId}/dataagents/${da.id}/agent`
+      ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
@@ -166,7 +177,7 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       eventhouseQueryUri: eventhouseQueryUri ?? env.eventhouseQueryUri,
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
       graphqlUrl: graphqlUrl ?? env.graphqlUrl,
-      dataAgentUrl: dataAgentUrl ?? env.dataAgentUrl,
+      dataAgentUrl,
     }
     return configCache
   } catch (error) {
@@ -192,7 +203,7 @@ const ACTIVE_STATUSES: JobStatus[] = ['NotStarted', 'InProgress']
 
 /** Newest job instance started at/after `sinceIso` — used when the 202 Location header is not CORS-exposed. */
 async function latestInstance(token: string, itemId: string, sinceIso: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
+  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) return undefined
   const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
   return list
@@ -203,7 +214,7 @@ async function latestInstance(token: string, itemId: string, sinceIso: string): 
 /** Newest still-running (NotStarted/InProgress) instance for an item, so callers can reattach
  *  instead of starting a duplicate run after a refresh or repeated clicks. */
 async function activeInstance(token: string, itemId: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
+  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) return undefined
   const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
   return list
@@ -239,8 +250,8 @@ async function runJob(
   } else {
     const isNotebookRun = jobType === 'RunNotebook'
     const triggerUrl = isNotebookRun
-      ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/notebooks/${itemId}/jobs/execute/instances?beta=false`
-      : `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances?jobType=${jobType}`
+      ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/notebooks/${itemId}/jobs/execute/instances?beta=false`
+      : `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances?jobType=${jobType}`
 
     const requestBody = isNotebookRun && opts?.parameters?.length
       ? JSON.stringify({ parameters: opts.parameters })

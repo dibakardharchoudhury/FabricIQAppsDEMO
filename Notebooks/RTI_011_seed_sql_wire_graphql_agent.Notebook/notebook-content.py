@@ -114,7 +114,7 @@ lakehouse_id = first_setting("lakehouse_id", required=True)
 lakehouse_name = first_setting("lakehouse_name", default="Energy_IQ_LakehouseRTI_V6")
 
 # Published Data Agent created by RTI_009.
-data_agent_name = first_setting("data_agent_name", default="RTI_Demo_Agent_V6")
+data_agent_name = first_setting("data_agent_name", required=True)
 data_agent_id = first_setting("data_agent_id", default=None)
 
 # Actor id stamped on seeded rows (any valid oid; defaults to the system/zero oid).
