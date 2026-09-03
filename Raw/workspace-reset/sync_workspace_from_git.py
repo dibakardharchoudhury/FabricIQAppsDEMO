@@ -32,11 +32,12 @@ driven from the environment (order: CLI flag > env var > prompt):
     FABRIC_CONNECTION_ID  reuse an existing connection instead of creating one
     FABRIC_GIT_PAT        GitHub PAT (also accepts GITHUB_PAT)
 
-Git credentials: by default the script creates a fresh Fabric GitHub connection
-named FabricOntologyDemo_<UTC timestamp> from the PAT (FABRIC_GIT_PAT/GITHUB_PAT
-env var, else a hidden prompt -- never a CLI flag, so it stays out of shell
-history), and deletes that connection again on exit. Pass --connection-id (or
-FABRIC_CONNECTION_ID) to reuse an existing connection; then no PAT is requested.
+Git credentials: when no reusable connection exists, the script creates a Fabric
+GitHub connection named FabricOntologyDemo_<UTC timestamp> from the PAT
+(FABRIC_GIT_PAT/GITHUB_PAT env var, else a hidden prompt -- never a CLI flag, so
+it stays out of shell history). A successful connection is retained for reuse;
+a connection that fails during sync is deleted. Pass --connection-id (or
+FABRIC_CONNECTION_ID) to reuse a specific existing connection without a PAT.
 
 Examples:
     az login
@@ -59,7 +60,7 @@ Examples:
         --repository FabricOntologyHydro \
         --branch main --directory /
     # add --yes to skip the confirmation prompt
-    # add --keep-connected to skip disconnect (keeps the created connection too)
+    # add --keep-connected to leave the workspace Git-linked after syncing
 """
 
 from __future__ import annotations
@@ -458,6 +459,7 @@ def main() -> int:
     base = f"{FABRIC_BASE}/workspaces/{ws_id}/git"
     repo_url = f"https://github.com/{args.owner}/{args.repository}"
     created_connection_id: str | None = None
+    sync_completed = False
 
     # Ordered list of existing connection ids to try before creating a new one.
     candidate_ids: list[str] = []
@@ -528,6 +530,7 @@ def main() -> int:
             print("  update complete.")
         else:
             print("  nothing to update (workspace already matches Git).")
+        sync_completed = True
     finally:
         # Always leave the workspace un-linked (unless --keep-connected), even if the
         # sync failed partway -- otherwise a crash would leave it Git-connected. This
@@ -539,11 +542,13 @@ def main() -> int:
                 d = fab.request("POST", f"{base}/disconnect")
                 print("  disconnected." if d.status_code in (200, 204)
                       else f"  disconnect returned HTTP {d.status_code} {d.text}")
-        # Remove the connection we created, unless the workspace stays Git-connected
-        # (a live Git connection still needs its credential connection).
-        if created_connection_id and not args.keep_connected:
-            print(f"Cleaning up connection {created_connection_id}...")
+        # Keep a successfully used connection for future runs. Only remove a newly
+        # created connection when this sync failed, so invalid entries do not build up.
+        if created_connection_id and not sync_completed:
+            print(f"Cleaning up failed connection {created_connection_id}...")
             fab.delete_connection(created_connection_id)
+        elif created_connection_id:
+            print(f"Retained connection {created_connection_id} for future reuse.")
 
     # 6. Report resulting inventory.
     items = fab.request("GET", f"{FABRIC_BASE}/workspaces/{ws_id}/items")

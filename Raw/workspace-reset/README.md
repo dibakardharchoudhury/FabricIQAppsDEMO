@@ -148,10 +148,12 @@ $env:FABRIC_GIT_PAT    = (Read-Host -AsSecureString | ConvertFrom-SecureString -
 python sync_workspace_from_git.py --yes
 ```
 
-By default the script creates a fresh connection named `FabricOntologyDemo_<UTC timestamp>`
-from the PAT and **deletes it again on exit**. Pass `--connection-id` (or
-`FABRIC_CONNECTION_ID`) to reuse an existing connection; then no PAT is requested.
-Pass `--keep-connected` to leave the workspace Git-linked after the sync.
+When no reusable connection exists, the script creates one named
+`FabricOntologyDemo_<UTC timestamp>` from the PAT. A successful sync retains that connection;
+the next run can discover and reuse it without requesting the PAT. Failed newly created
+connections are deleted. Pass `--connection-id` (or `FABRIC_CONNECTION_ID`) to select a specific
+existing connection. Pass `--keep-connected` to leave the workspace Git-linked after the sync;
+otherwise only the workspace link is removed and the credential connection remains available.
 
 Flags: `--tenant --workspace --connection-id --owner --repository --branch --directory --yes --keep-connected`.
 
@@ -279,6 +281,6 @@ confirm and defaults to dry-run.
 
 - The PAT is never a command-line argument, never printed, and never returned by the
   web API — only via env var, hidden prompt, or the UI password field.
-- Auto-created connections are deleted on exit unless you pass `--connection-id` or
-  `--keep-connected`.
+- Auto-created connections are retained after a successful sync so Fabric can securely reuse the
+  stored credential. A newly created connection is deleted when its sync fails.
 - Delete is guarded: confirmation prompt (CLI) / type-to-confirm + dry-run default (UI).

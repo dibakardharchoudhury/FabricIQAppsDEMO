@@ -66,7 +66,7 @@ SYNC_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (2, ("Connecting '", "  connected.")),
     (3, ("Initializing connection", "requiredAction=")),
     (4, ("Updating workspace from Git", "update complete", "nothing to update")),
-    (5, ("Disconnecting from Git", "disconnected", "Cleaning up connection")),
+    (5, ("Disconnecting from Git", "disconnected", "Retained connection", "Cleaning up failed connection")),
 ]
 
 DELETE_PHASES = ["Queued", "Working", "Done"]

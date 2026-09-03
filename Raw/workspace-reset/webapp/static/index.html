@@ -297,7 +297,7 @@
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
         <h2>Sync workspace from GitHub</h2>
       </div>
-      <p class="hint">Imports every item from a branch, then disconnects. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo (it tests the moment you tick it); otherwise a temporary connection is created from your PAT and removed afterward.</p>
+      <p class="hint">Imports every item from a branch, then disconnects the workspace by default. Tick <strong>Reuse existing connection</strong> to auto-find and verify a saved connection for this repo. If a PAT creates a connection, a successful sync retains it for future reuse.</p>
       <div class="grid">
         <label>Repository (owner/repo or URL)
           <input id="repository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
@@ -518,14 +518,14 @@ function deployValid() {
 }
 function refresh() {
   // The PAT only exists to CREATE a new connection, so reveal it only when one is
-  // needed: reuse is off (temporary connection) or a reuse test just failed.
+  // needed: reuse is off (create a saved connection) or a reuse test just failed.
   const needPat = !reuseChecked() || connTestState === "fail";
   $("patWrap").style.display = needPat ? "flex" : "none";
   $("pat").disabled = false;
   if (connTestState === "fail") {
     $("patNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
   } else if (needPat) {
-    $("patNote").textContent = "\u2014 needed to create a temporary connection";
+    $("patNote").textContent = "\u2014 needed to create a reusable connection";
   } else {
     $("patNote").textContent = "";
   }
