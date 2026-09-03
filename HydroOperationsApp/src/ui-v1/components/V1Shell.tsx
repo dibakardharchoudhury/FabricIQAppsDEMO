@@ -49,7 +49,7 @@ function V1ShellContent() {
     <header className="v2-topbar">
       <div className="v2-brand"><span className="v2-brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="v2-header-status source-actions">
-        <button className={data.stidState === 'connected' ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{stidLabel}</button>
+        <button className={data.stidState === 'connected' ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectStid()} disabled={data.stidState === 'loading'} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{stidLabel}</button>
         <div className="telemetry-source">
           <button className={telemetryLive ? 'source-chip connected' : 'source-chip'} onClick={() => void data.actions.connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryLabel}</button>
           {telemetryLive && <span className={`live-pill ${data.telemetryStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimes.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{data.telemetryStatusLabel}<em>· {data.telemetryAgeLabel}</em></span>}

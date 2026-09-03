@@ -24,6 +24,8 @@ const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
 const QUEUED_PCT_CAP = 15
+const STID_READINESS_RETRIES = 12
+const STID_READINESS_DELAY_MS = 5_000
 
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
@@ -167,21 +169,37 @@ function useHydroOperationsDataController() {
 
   const connectStid = useCallback(async (opts?: { retries?: number; interactive?: boolean }) => {
     setStidState('loading'); setNotice(undefined)
-    const retries = opts?.retries ?? 0
+    const retries = opts?.retries ?? STID_READINESS_RETRIES
     const interactive = opts?.interactive ?? true
     clearWorkspaceConfigCache()
     try {
-      let data = await queryStid()
-      for (let attempt = 0; !data && attempt < retries; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, 8_000))
+      let data: StidData | null = null
+      let lastError: unknown
+      for (let attempt = 0; attempt <= retries && !data; attempt++) {
+        try {
+          data = await queryStid()
+          lastError = undefined
+        } catch (error) {
+          lastError = error
+        }
+        if (data || attempt === retries) break
+        // A thrown GraphQL/schema response proves a token was already accepted; retry it silently.
+        // Open consent only when the query returned no data because discovery or a token is absent.
+        if (interactive && attempt === 0 && !lastError) {
+          try {
+            await beginInteractiveConnect('stid')
+          } catch (error) {
+            lastError = error
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, STID_READINESS_DELAY_MS))
         clearWorkspaceConfigCache()
-        data = await queryStid()
       }
-      if (!data && interactive) { await beginInteractiveConnect('stid'); data = await queryStid() }
       if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
       else {
         setStidState('unavailable')
-        if (!interactive) setNotice('Fabric provisioning completed. The STID GraphQL API is still publishing or needs permission. Wait a moment, then click Connect STID.')
+        const detail = lastError instanceof Error ? ` ${lastError.message}` : ''
+        setNotice(`The STID GraphQL API is still publishing or needs permission. Try Connect STID again shortly.${detail}`)
       }
     } catch (error) {
       setStidState('error')
@@ -231,7 +249,7 @@ function useHydroOperationsDataController() {
       setProvisionState('error')
       setNotice(`Fabric provisioning failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally { endJob('seed') }
-    if (completed) await connectStid({ retries: 5, interactive: false })
+    if (completed) await connectStid({ interactive: false })
   }, [connectStid, loadOperationalData])
 
   const seedAndProvision = useCallback(async () => {
