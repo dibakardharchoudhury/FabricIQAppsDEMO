@@ -742,11 +742,39 @@
 .v2-signal-identity,
 .v2-signal-metric,
 .v2-chart-panel,
+.v2-embed-panel,
 .v2-signal-table-panel {
   border: 1px solid var(--cp-border);
   border-radius: 14px;
   background: var(--cp-surface);
   box-shadow: var(--cp-shadow-card);
+}
+
+.v2-embed-panel {
+  padding: 8px;
+  overflow: hidden;
+}
+
+/* The embed SDK injects an iframe with no intrinsic height. */
+.v2-embed-frame {
+  height: clamp(560px, calc(100vh - 320px), 1100px);
+}
+
+.v2-embed-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 10px;
+  display: block;
+}
+
+.v2-embed-state {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+  color: var(--cp-text-muted);
+  font-size: 13px;
 }
 
 .v2-signal-identity {

@@ -1,11 +1,15 @@
 import { useCallback, useMemo, useState } from 'react'
 
-export type TelemetryExplorerMode = 'filter' | 'tree'
+export type TelemetryExplorerMode = 'filter' | 'tree' | 'dashboard'
 
 const MODE_STORAGE_KEY = 'hydro.telemetry.explorer-mode.v1'
+const MODES: readonly TelemetryExplorerMode[] = ['filter', 'tree', 'dashboard']
 
 function readMode(): TelemetryExplorerMode {
-  try { return localStorage.getItem(MODE_STORAGE_KEY) === 'tree' ? 'tree' : 'filter' }
+  try {
+    const stored = localStorage.getItem(MODE_STORAGE_KEY) as TelemetryExplorerMode | null
+    return stored && MODES.includes(stored) ? stored : 'filter'
+  }
   catch { return 'filter' }
 }
 

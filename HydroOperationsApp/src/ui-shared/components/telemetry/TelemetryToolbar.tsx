@@ -14,6 +14,7 @@ export function TelemetryToolbar({ mode, onModeChange, range, onRangeChange, fil
   return <section className="v2-telemetry-toolbar">
     <TelemetryViewToggle mode={mode} onModeChange={onModeChange} />
     {filters}
-    <TelemetryRangeControl range={range} onRangeChange={onRangeChange} />
+    {/* The embedded dashboard carries its own time-range parameter. */}
+    {mode !== 'dashboard' && <TelemetryRangeControl range={range} onRangeChange={onRangeChange} />}
   </section>
 }

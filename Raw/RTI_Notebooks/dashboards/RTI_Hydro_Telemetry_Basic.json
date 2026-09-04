@@ -1,0 +1,556 @@
+{
+  "$schema": "https://dataexplorer.azure.com/static/d/schema/77/dashboard.json",
+  "schema_version": 77,
+  "title": "RTI Hydro Telemetry (Basic)",
+  "flavor": "RTDashboard_Regular",
+  "autoRefresh": {
+    "enabled": true,
+    "defaultInterval": "1m",
+    "minInterval": "30s"
+  },
+  "baseQueries": [],
+  "embeddedApps": [],
+  "dataSources": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000001",
+      "kind": "kusto-trident",
+      "clusterUri": "__CLUSTER_QUERY_URI__",
+      "databaseArtifactId": "__KQL_DB_ID__",
+      "database": "__KQL_DB_NAME__",
+      "workspace": "__WORKSPACE_ID__",
+      "name": "__KQL_DB_NAME__"
+    }
+  ],
+  "pages": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000002",
+      "name": "Telemetry"
+    }
+  ],
+  "parameters": [
+    {
+      "kind": "duration",
+      "id": "a1b2c3d4-0000-4000-8000-000000000003",
+      "displayName": "Time range",
+      "description": "Time window applied to every tile.",
+      "beginVariableName": "_startTime",
+      "endVariableName": "_endTime",
+      "defaultValue": {
+        "kind": "dynamic",
+        "count": 4,
+        "unit": "hours"
+      },
+      "showOnPages": {
+        "kind": "all"
+      }
+    },
+    {
+      "kind": "string",
+      "id": "a1b2c3d4-0000-4000-8000-000000000004",
+      "displayName": "Station",
+      "description": "Populated from silver_facilities through the AssetMaster() function.",
+      "variableName": "_station",
+      "selectionType": "array",
+      "includeAllOption": true,
+      "allIsNull": true,
+      "defaultValue": {
+        "kind": "all"
+      },
+      "showOnPages": {
+        "kind": "all"
+      },
+      "dataSource": {
+        "kind": "query",
+        "queryRef": {
+          "kind": "query",
+          "queryId": "a1b2c3d4-0000-4000-8000-000000000011"
+        },
+        "columns": {
+          "value": "Station"
+        }
+      }
+    },
+    {
+      "kind": "string",
+      "id": "a1b2c3d4-0000-4000-8000-000000000005",
+      "displayName": "Turbine",
+      "description": "Populated from silver_equipment through the AssetMaster() function, narrowed by the selected stations.",
+      "variableName": "_turbine",
+      "selectionType": "array",
+      "includeAllOption": true,
+      "allIsNull": true,
+      "defaultValue": {
+        "kind": "all"
+      },
+      "showOnPages": {
+        "kind": "all"
+      },
+      "dataSource": {
+        "kind": "query",
+        "autoReset": true,
+        "queryRef": {
+          "kind": "query",
+          "queryId": "a1b2c3d4-0000-4000-8000-000000000012"
+        },
+        "columns": {
+          "value": "Turbine"
+        }
+      }
+    }
+  ],
+  "queries": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000011",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [],
+      "text": "// Station options come from the Lakehouse silver tables, never from a hard coded list.\nAssetMaster()\n| distinct Station\n| sort by Station asc"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000012",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_station"
+      ],
+      "text": "// Turbine options, narrowed by the selected stations.\nAssetMaster()\n| where Station in (_station) or isempty(_station)\n| distinct Turbine\n| sort by Turbine asc"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000021",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "TelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| summarize ['Readings'] = count()"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000022",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "TelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| summarize ['Turbines reporting'] = dcount(Turbine)"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000023",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "TelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'power'\n| summarize ['Avg power (MW)'] = round(avg(value), 1)"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000024",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "TelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| summarize Total = count(), Good = countif(quality =~ 'GOOD')\n| project ['Good quality %'] = iff(Total == 0, 0.0, round(100.0 * Good / Total, 1))"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000031",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "let Bin = case(_endTime - _startTime > 7d, 1h, _endTime - _startTime > 1d, 15m, _endTime - _startTime > 6h, 5m, 30s);\nTelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'power'\n| summarize Value = round(avg(value), 2) by Turbine, event_time = bin(event_time, Bin)\n| project event_time, Turbine, Value\n| sort by event_time asc\n| render timechart"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000032",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "let Bin = case(_endTime - _startTime > 7d, 1h, _endTime - _startTime > 1d, 15m, _endTime - _startTime > 6h, 5m, 30s);\nTelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'pressure'\n| summarize Value = round(avg(value), 2) by Turbine, event_time = bin(event_time, Bin)\n| project event_time, Turbine, Value\n| sort by event_time asc\n| render timechart"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000033",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "let Bin = case(_endTime - _startTime > 7d, 1h, _endTime - _startTime > 1d, 15m, _endTime - _startTime > 6h, 5m, 30s);\nTelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'speed'\n| summarize Value = round(avg(value), 2) by Turbine, event_time = bin(event_time, Bin)\n| project event_time, Turbine, Value\n| sort by event_time asc\n| render timechart"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000034",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "let Bin = case(_endTime - _startTime > 7d, 1h, _endTime - _startTime > 1d, 15m, _endTime - _startTime > 6h, 5m, 30s);\nTelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'temperature'\n| summarize Value = round(avg(value), 2) by Turbine, event_time = bin(event_time, Bin)\n| project event_time, Turbine, Value\n| sort by event_time asc\n| render timechart"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000035",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "// Two vibration sensors per turbine, so the series key carries both.\nlet Bin = case(_endTime - _startTime > 7d, 1h, _endTime - _startTime > 1d, 15m, _endTime - _startTime > 6h, 5m, 30s);\nTelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| where SignalGroup =~ 'vibration'\n| summarize Value = round(avg(value), 2) by Sensor = strcat(Turbine, ' ', Signal), event_time = bin(event_time, Bin)\n| project event_time, Sensor, Value\n| sort by event_time asc\n| render timechart"
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000036",
+      "dataSource": {
+        "kind": "inline",
+        "dataSourceId": "a1b2c3d4-0000-4000-8000-000000000001"
+      },
+      "usedVariables": [
+        "_startTime",
+        "_endTime",
+        "_station",
+        "_turbine"
+      ],
+      "text": "TelemetryEnriched(_startTime, _endTime, _station, _turbine)\n| summarize arg_max(event_time, value, quality) by Station, Turbine, SignalGroup, Signal, Unit\n| project Station, Turbine, ['Group'] = SignalGroup, Signal, ['Last value'] = round(value, 2), Unit, ['Quality'] = quality, ['Last seen'] = event_time\n| sort by Station asc, Turbine asc, Signal asc"
+    }
+  ],
+  "tiles": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000041",
+      "title": "Readings",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 6,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000021"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "large",
+        "multiStat__valueColumn": "Readings",
+        "multiStat__labelColumn": null,
+        "colorRulesDisabled": true,
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000042",
+      "title": "Turbines reporting",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 6,
+        "y": 0,
+        "width": 6,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000022"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "large",
+        "multiStat__valueColumn": "Turbines reporting",
+        "multiStat__labelColumn": null,
+        "colorRulesDisabled": true,
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000043",
+      "title": "Avg power output (MW)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 0,
+        "width": 6,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000023"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "large",
+        "multiStat__valueColumn": "Avg power (MW)",
+        "multiStat__labelColumn": null,
+        "colorRulesDisabled": true,
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000044",
+      "title": "Good quality %",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 18,
+        "y": 0,
+        "width": 6,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000024"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "large",
+        "multiStat__valueColumn": "Good quality %",
+        "multiStat__labelColumn": null,
+        "colorRulesDisabled": true,
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000045",
+      "title": "Power output (MW)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 3,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000031"
+      },
+      "visualType": "timechart",
+      "visualOptions": {
+        "xColumn": "event_time",
+        "yColumns": [
+          "Value"
+        ],
+        "seriesColumns": [
+          "Turbine"
+        ],
+        "xColumnTitle": "",
+        "yColumnTitle": "MW",
+        "hideLegend": false,
+        "legendLocation": "right",
+        "xAxisScale": "linear",
+        "yAxisScale": "linear",
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000046",
+      "title": "Inlet pressure (bar)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 3,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000032"
+      },
+      "visualType": "timechart",
+      "visualOptions": {
+        "xColumn": "event_time",
+        "yColumns": [
+          "Value"
+        ],
+        "seriesColumns": [
+          "Turbine"
+        ],
+        "xColumnTitle": "",
+        "yColumnTitle": "bar",
+        "hideLegend": false,
+        "legendLocation": "right",
+        "xAxisScale": "linear",
+        "yAxisScale": "linear",
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000047",
+      "title": "Turbine speed (rpm)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 11,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000033"
+      },
+      "visualType": "timechart",
+      "visualOptions": {
+        "xColumn": "event_time",
+        "yColumns": [
+          "Value"
+        ],
+        "seriesColumns": [
+          "Turbine"
+        ],
+        "xColumnTitle": "",
+        "yColumnTitle": "rpm",
+        "hideLegend": false,
+        "legendLocation": "right",
+        "xAxisScale": "linear",
+        "yAxisScale": "linear",
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000048",
+      "title": "Turbine temperature (C)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 11,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000034"
+      },
+      "visualType": "timechart",
+      "visualOptions": {
+        "xColumn": "event_time",
+        "yColumns": [
+          "Value"
+        ],
+        "seriesColumns": [
+          "Turbine"
+        ],
+        "xColumnTitle": "",
+        "yColumnTitle": "C",
+        "hideLegend": false,
+        "legendLocation": "right",
+        "xAxisScale": "linear",
+        "yAxisScale": "linear",
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000049",
+      "title": "Vibration (mm/s)",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 19,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000035"
+      },
+      "visualType": "timechart",
+      "visualOptions": {
+        "xColumn": "event_time",
+        "yColumns": [
+          "Value"
+        ],
+        "seriesColumns": [
+          "Sensor"
+        ],
+        "xColumnTitle": "",
+        "yColumnTitle": "mm/s",
+        "hideLegend": false,
+        "legendLocation": "right",
+        "xAxisScale": "linear",
+        "yAxisScale": "linear",
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true,
+        "selectedDataOnLoad": {
+          "all": false,
+          "limit": 10
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000050",
+      "title": "Latest reading per signal",
+      "pageId": "a1b2c3d4-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 19,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "a1b2c3d4-0000-4000-8000-000000000036"
+      },
+      "visualType": "table",
+      "visualOptions": {
+        "crossFilterDisabled": true,
+        "drillthroughDisabled": true,
+        "colorRulesDisabled": true
+      }
+    }
+  ]
+}
