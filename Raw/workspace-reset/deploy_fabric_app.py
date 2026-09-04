@@ -123,23 +123,63 @@ def az(*args: str) -> list[str]:
     return command_argv("az", *args)
 
 
-def node24(command: str) -> list[str]:
-    """Run a repo command under the Node 24 wrapper required by the app."""
-    # npx resolves the project's node_modules/.bin from ITS OWN launch cwd, not
-    # from the inner `cd`, so bare `rayfin` (and other local bins) would be
-    # unresolved whenever this launcher runs from outside APP_DIR. Put the app's
-    # local .bin on PATH explicitly so the wrapper works from any directory.
-    bin_dir = APP_DIR / "node_modules" / ".bin"
-    if os.name == "nt":
-        inner = f'cd /d "{APP_DIR}" && set "PATH={bin_dir};%PATH%" && {command}'
-    else:
-        import shlex
+_NODE24_EXECUTABLE: Path | None = None
 
-        inner = (
-            f"cd {shlex.quote(str(APP_DIR))} && "
-            f'export PATH={shlex.quote(str(bin_dir))}:"$PATH" && {command}'
-        )
-    return command_argv("npx", "-y", "-p", "node@24", "-c", inner)
+
+def node24_executable() -> Path:
+    """Resolve and verify the Node 24 executable supplied by npx."""
+    global _NODE24_EXECUTABLE
+    if _NODE24_EXECUTABLE and _NODE24_EXECUTABLE.is_file():
+        return _NODE24_EXECUTABLE
+    executable = Path(
+        run_capture(command_argv("npx", "-y", "-p", "node@24", "-c", "node -p process.execPath"))
+    )
+    if not executable.is_file():
+        raise DeployError(f"Node 24 executable was not found at {executable}.")
+    version = run_capture([str(executable), "-p", "process.versions.node"])
+    if version.split(".", 1)[0] != "24":
+        raise DeployError(f"Expected Node 24, but npx resolved Node {version} at {executable}.")
+    _NODE24_EXECUTABLE = executable
+    return executable
+
+
+def npm_cli_path() -> Path:
+    """Locate npm's JavaScript entry point so Node 24 can host it explicitly."""
+    executable = shutil.which("npm")
+    if not executable:
+        raise DeployError("Required command 'npm' was not found on PATH.")
+    npm_path = Path(executable)
+    resolved = npm_path.resolve()
+    candidates = [
+        resolved if resolved.name == "npm-cli.js" else None,
+        npm_path.parent / "node_modules" / "npm" / "bin" / "npm-cli.js",
+        npm_path.parent.parent / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js",
+        npm_path.parent.parent / "share" / "nodejs" / "npm" / "bin" / "npm-cli.js",
+    ]
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return candidate
+    raise DeployError(f"Could not locate npm-cli.js for {npm_path}.")
+
+
+def npm24(*arguments: str) -> list[str]:
+    """Run npm's CLI with Node 24, bypassing a global npm shim's Node version."""
+    return [str(node24_executable()), str(npm_cli_path()), *arguments]
+
+
+def rayfin24(*arguments: str) -> list[str]:
+    """Run the installed Rayfin CLI directly with Node 24."""
+    package_dir = APP_DIR / "node_modules" / "@microsoft" / "rayfin-cli"
+    package = json.loads((package_dir / "package.json").read_text(encoding="utf-8"))
+    entrypoint = package_dir / str((package.get("bin") or {}).get("rayfin") or "")
+    if not entrypoint.is_file():
+        raise DeployError("Installed Rayfin CLI entry point is unavailable.")
+    return [str(node24_executable()), str(entrypoint), *arguments]
+
+
+def node24_script(script: Path, *arguments: str) -> list[str]:
+    """Run a repository JavaScript file directly with Node 24."""
+    return [str(node24_executable()), str(script), *arguments]
 
 
 def installed_rayfin_version() -> str:
@@ -211,7 +251,7 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        run_stream(node24("npm ci --no-audit --no-fund"))
+        run_stream(npm24("ci", "--no-audit", "--no-fund"), cwd=APP_DIR)
         version = installed_rayfin_version()
     except DeployError as exc:
         raise DeployError(
@@ -653,17 +693,17 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
 
 def ensure_rayfin_login(tenant: str) -> None:
     try:
-        status = run_stream(node24("rayfin login status"))
+        status = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
     except DeployError:
         status = ""
     if tenant.casefold() in status.casefold():
         print("Rayfin is already signed into the target tenant.", flush=True)
         return
     if status:
-        run_stream(node24("rayfin logout"))
+        run_stream(rayfin24("logout"), cwd=APP_DIR)
     print("Rayfin sign-in is opening in your browser...", flush=True)
-    run_stream(node24(f"rayfin login --tenant {tenant} --select"))
-    verified = run_stream(node24("rayfin login status"))
+    run_stream(rayfin24("login", "--tenant", tenant, "--select"), cwd=APP_DIR)
+    verified = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
     if tenant.casefold() not in verified.casefold():
         raise DeployError("Rayfin sign-in completed, but its tenant does not match the requested tenant.")
 
@@ -857,7 +897,7 @@ def deploy(args: argparse.Namespace) -> None:
     ensure_rayfin_login(args.tenant)
 
     print("[5/8] Provisioning backend, database schema, and static app", flush=True)
-    output = run_stream(node24(f"rayfin up --workspace-id {workspace_id} --yes"))
+    output = run_stream(rayfin24("up", "--workspace-id", workspace_id, "--yes"), cwd=APP_DIR)
     urls = HOSTING_URL_RE.findall(output)
     if not urls:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
@@ -876,16 +916,20 @@ def deploy(args: argparse.Namespace) -> None:
         flush=True,
     )
     run_stream(
-        node24(
-            f"rayfin up --workspace-id {workspace_id} "
-            "--exclude-services staticHosting --yes"
-        )
+        rayfin24(
+            "up", "--workspace-id", workspace_id,
+            "--exclude-services", "staticHosting", "--yes",
+        ),
+        cwd=APP_DIR,
     )
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
         try:
-            run_stream(node24("npm run setup-live-auth"))
+            run_stream(
+                node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                cwd=APP_DIR,
+            )
         except DeployError as exc:
             warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
     else:

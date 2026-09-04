@@ -15,6 +15,18 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_npm24_hosts_npm_cli_with_node24(self):
+        npm_cli = Path("C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js")
+        node = Path("C:/node24/node.exe")
+
+        with (
+            patch.object(DEPLOY, "npm_cli_path", return_value=npm_cli),
+            patch.object(DEPLOY, "node24_executable", return_value=node),
+        ):
+            command = DEPLOY.npm24("ci", "--no-audit")
+
+        self.assertEqual(command, [str(node), str(npm_cli), "ci", "--no-audit"])
+
     def test_stops_only_hydro_node_tooling_before_dependency_restore(self):
         with (
             patch.object(DEPLOY.os, "name", "nt"),
@@ -39,8 +51,8 @@ class DeployOrderTests(unittest.TestCase):
         with (
             patch.object(DEPLOY.shutil, "which", return_value="npx"),
             patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
-            patch.object(DEPLOY, "node24", return_value=["npm-ci"]),
-            patch.object(DEPLOY, "run_stream", side_effect=lambda _argv: events.append("npm")),
+            patch.object(DEPLOY, "npm24", return_value=["npm-ci"]),
+            patch.object(DEPLOY, "run_stream", side_effect=lambda _argv, **_kwargs: events.append("npm")),
             patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
         ):
             DEPLOY.ensure_deploy_dependencies()
