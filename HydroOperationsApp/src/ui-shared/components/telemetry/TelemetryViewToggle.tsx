@@ -1,9 +1,10 @@
-import { ListTree, SlidersHorizontal } from 'lucide-react'
+import { LayoutDashboard, ListTree, SlidersHorizontal } from 'lucide-react'
 import type { TelemetryExplorerMode } from '../../hooks/useTelemetryExplorerMode'
 
 const OPTIONS: Array<{ mode: TelemetryExplorerMode; label: string; icon: typeof ListTree }> = [
   { mode: 'tree', label: 'Tree', icon: ListTree },
   { mode: 'filter', label: 'Filter', icon: SlidersHorizontal },
+  { mode: 'dashboard', label: 'RT Dashboard', icon: LayoutDashboard },
 ]
 
 export function TelemetryViewToggle({ mode, onModeChange }: { mode: TelemetryExplorerMode; onModeChange: (mode: TelemetryExplorerMode) => void }) {

@@ -27,7 +27,7 @@
 # `runMultiple` session has a real default lakehouse. Every child inherits it, so their relative
 # `spark.read.table(...)` / `saveAsTable(...)` calls resolve — no per-notebook attach, no ABFS rewrite.
 # 
-# - Runs **NB02–NB06, NB08–NB10** in one Spark session (VNet cold start paid once); independent
+# - Runs **NB02–NB06, NB08–NB10, NB12** in one Spark session (VNet cold start paid once); independent
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
@@ -85,13 +85,15 @@ setup_dag = {
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse"],                  "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        # NB12 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
+        {"name": "NB12_basicdash", "path": "RTI_012_build_basic_telemetry_dashboard",          "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,
 }
 
 results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
-print("✅ Setup orchestration complete (NB02–06, 08–10).")
+print("✅ Setup orchestration complete (NB02–06, 08–10, 12).")
 results
 
 # METADATA ********************

@@ -42,10 +42,16 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 | **RTI_009_build_data_agent** | Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Operations Agent + `Pipe_SendEmailAlert` for Teams/email alerts. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On‑demand: seeds the app's SQL tables, creates + binds the STID GraphQL API, adds the SQL DB as a Data Agent source. Run by the app's **Seed & provision** button. | — |
-| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, then runs NB02–06, 08–10 in one Spark session. | Stage 2 |
+| **RTI_012_build_basic_telemetry_dashboard** | Basic hydro telemetry Real‑Time Dashboard (Station/Turbine filters + one chart per sensor group). Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
+| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, then runs NB02–06, 08–10, 12 in one Spark session. | Stage 2 |
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).
+
+> [!TIP]
+> Changing, adding or embedding a Real‑Time Dashboard? See [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
+> `RTI_012` and its `.ipynb` mirror are **generated** — edit `Raw/RTI_Notebooks/tools/build_rti_012.py`
+> or the definition JSON, then re‑run the generator.
 
 ## Prerequisites (one‑time)
 
@@ -135,6 +141,7 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 - **Sensors/signals:** edit the STID source CSVs, re‑run `Pipe_Setup` (rebuilds silver + ontology), then `Pipe_Stream`.
 - **Telemetry values:** edit the simulator in `RTI_007` (ranges, quality, drift/spikes).
 - **Signal schema:** keep `RTI_004` (ontology properties) ↔ `RTI_002` (`OPCUAEvents`) ↔ `RTI_007` (payload) ↔ `RTI_006` (binding) aligned.
+- **Dashboards:** edit in the Fabric UI, download the JSON over `Raw/RTI_Notebooks/dashboards/`, re‑run the generator — [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
 - **New environment:** change `env_suffix` and re‑run `Pipe_Setup`.
 
 ## Notes

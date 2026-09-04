@@ -3,6 +3,7 @@ import type { Instrument, TelemetryReading } from '../../services/fabric'
 import { FacilityContext } from '../components/FacilityContext'
 import { SelectedSignalCards, SelectedSignalPanel } from '../components/telemetry/SelectedSignalPanel'
 import { TelemetryDetail } from '../components/telemetry/TelemetryDetail'
+import { TelemetryDashboardPanel } from '../components/telemetry/TelemetryDashboardPanel'
 import { TelemetryEmptyPanel, type Tone } from '../components/telemetry/TelemetryCards'
 import { TelemetryFilterBar } from '../components/telemetry/TelemetryFilterBar'
 import { TelemetryStatusBar, TelemetryStatusCards, type TelemetryStatusSummary } from '../components/telemetry/TelemetryStatusBar'
@@ -25,6 +26,8 @@ const qualityTone = (reading?: TelemetryReading): Tone => {
 export function TelemetryPage() {
   const data = useHydroOperationsData()
   const { mode, setMode } = useTelemetryExplorerMode()
+  const treeMode = mode === 'tree'
+  const dashboardMode = mode === 'dashboard'
   const { assetId: selectedAssetId, signalId: selectedSignalId, range } = data.telemetryExplorerSelection
 
   const asset = data.facilityEquipment.find(item => item.equipment_id === selectedAssetId) ?? data.facilityEquipment[0]
@@ -36,33 +39,39 @@ export function TelemetryPage() {
 
   const readings = useMemo(() => new Map(data.telemetry.map(item => [item.opcuaNodeId, item])), [data.telemetry])
   const readingOf = (opcuaNodeId: string) => readings.get(opcuaNodeId)
-  const history = useTelemetryHistory(signal?.opcua_node_id, range)
+  // Dashboard mode renders no chart, so don't pay for the history poll.
+  const history = useTelemetryHistory(dashboardMode ? undefined : signal?.opcua_node_id, range)
 
   const stations = useMemo(() => data.stid ? buildTelemetryTree(data.stid) : [], [data.stid])
   const revealPath = useMemo(() => pathToSignal(stations, signal?.instrument_id), [stations, signal])
   const expansion = useTreeExpansion(revealPath)
 
   const selectedAssetTelemetry = data.mappedTelemetry.filter(item => item.instrument?.equipment_id === asset?.equipment_id)
-  const qualityIssueCount = selectedAssetTelemetry.filter(item => issueQualities.has((item.reading.quality ?? '').toLowerCase())).length
+  // The embedded dashboard has its own station/turbine filters, so the app's asset selection
+  // would only contradict it - scope the status cards to the whole facility instead.
+  const scopedTelemetry = dashboardMode ? data.mappedTelemetry : selectedAssetTelemetry
 
-  const blocker = data.stidState !== 'connected'
-    ? { title: 'STID not connected', text: 'Use Administration to connect STID before exploring telemetry by asset and signal.' }
-    : data.telemetryState !== 'connected'
-      ? { title: 'Telemetry not connected', text: 'Use Administration to connect telemetry before viewing latest readings and history.' }
-      : !data.facilityEquipment.length
-        ? { title: 'No assets for this facility', text: 'The selected facility has no STID equipment records.' }
-        : undefined
+  const blocker = dashboardMode
+    ? data.telemetryState !== 'connected'
+      ? { title: 'Telemetry not connected', text: 'Use Administration to connect telemetry before opening the Real-Time Dashboard.' }
+      : undefined
+    : data.stidState !== 'connected'
+      ? { title: 'STID not connected', text: 'Use Administration to connect STID before exploring telemetry by asset and signal.' }
+      : data.telemetryState !== 'connected'
+        ? { title: 'Telemetry not connected', text: 'Use Administration to connect telemetry before viewing latest readings and history.' }
+        : !data.facilityEquipment.length
+          ? { title: 'No assets for this facility', text: 'The selected facility has no STID equipment records.' }
+          : undefined
 
   const status: TelemetryStatusSummary = {
     telemetryStatus: data.telemetryStatus,
     telemetryStatusLabel: data.telemetryStatusLabel,
     telemetryAgeLabel: data.telemetryAgeLabel,
-    liveSignalCount: selectedAssetTelemetry.length,
-    assetLabel: asset?.tag ?? 'Selected turbine',
-    qualityIssueCount,
+    liveSignalCount: scopedTelemetry.length,
+    assetLabel: dashboardMode ? data.selectedFacility?.facility_name ?? 'All turbines' : asset?.tag ?? 'Selected turbine',
+    qualityIssueCount: scopedTelemetry.filter(item => issueQualities.has((item.reading.quality ?? '').toLowerCase())).length,
   }
   const latest = signal ? readingOf(signal.opcua_node_id) : undefined
-  const treeMode = mode === 'tree'
 
   const detail = <TelemetryDetail
     signal={signal}
@@ -83,16 +92,16 @@ export function TelemetryPage() {
     />}
   </TelemetryDetail>
 
-  return <div className={`v2-domain-page v2-telemetry-page${treeMode ? ' is-wide' : ''}`}>
-    {/* The tree already carries station and turbine selection. */}
-    {!treeMode && <FacilityContext />}
+  return <div className={`v2-domain-page v2-telemetry-page${treeMode || dashboardMode ? ' is-wide' : ''}`}>
+    {/* The tree carries station and turbine selection; the embedded dashboard has its own filters. */}
+    {!treeMode && !dashboardMode && <FacilityContext />}
 
     <TelemetryToolbar
       mode={mode}
       onModeChange={setMode}
       range={range}
       onRangeChange={next => data.actions.updateTelemetryExplorerSelection({ range: next })}
-      filters={!treeMode && !blocker ? <TelemetryFilterBar
+      filters={!treeMode && !dashboardMode && !blocker ? <TelemetryFilterBar
         assets={data.facilityEquipment}
         assetId={asset?.equipment_id}
         onAssetChange={id => data.actions.updateTelemetryExplorerSelection({ assetId: id, signalId: undefined })}
@@ -105,20 +114,22 @@ export function TelemetryPage() {
     {!treeMode && <TelemetryStatusBar {...status} />}
 
     {blocker ? <TelemetryEmptyPanel title={blocker.title} text={blocker.text} />
-      : treeMode
-        ? <div className="v2-telemetry-layout">
-            <TelemetryTree
-              stations={stations}
-              selectedSignalId={signal?.instrument_id}
-              handlers={{
-                isExpanded: expansion.isExpanded,
-                onToggle: expansion.toggle,
-                onSelectSignal: (treeAssetId, treeSignalId, facilityId) => data.actions.selectTelemetrySignal(facilityId, treeAssetId, treeSignalId),
-                toneOf: instrument => qualityTone(readingOf(instrument.opcua_node_id)),
-              }}
-            />
-            <div className="v2-telemetry-detail-column">{detail}</div>
-          </div>
-        : detail}
+      : dashboardMode
+        ? <TelemetryDashboardPanel />
+        : treeMode
+          ? <div className="v2-telemetry-layout">
+              <TelemetryTree
+                stations={stations}
+                selectedSignalId={signal?.instrument_id}
+                handlers={{
+                  isExpanded: expansion.isExpanded,
+                  onToggle: expansion.toggle,
+                  onSelectSignal: (treeAssetId, treeSignalId, facilityId) => data.actions.selectTelemetrySignal(facilityId, treeAssetId, treeSignalId),
+                  toneOf: instrument => qualityTone(readingOf(instrument.opcua_node_id)),
+                }}
+              />
+              <div className="v2-telemetry-detail-column">{detail}</div>
+            </div>
+          : detail}
   </div>
 }

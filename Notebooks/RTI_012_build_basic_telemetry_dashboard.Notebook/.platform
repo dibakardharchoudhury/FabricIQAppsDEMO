@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "RTI_012_build_basic_telemetry_dashboard",
+    "description": "Provisions the basic hydro telemetry Real-Time Dashboard from a definition file."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "6d2f0f1a-6c1e-4f6e-9a2b-3c9d5e7f1a24"
+  }
+}

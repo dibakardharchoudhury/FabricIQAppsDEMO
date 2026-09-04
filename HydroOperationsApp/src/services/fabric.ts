@@ -13,6 +13,7 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
+const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Hydro_Telemetry_Basic'
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
@@ -27,6 +28,8 @@ const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/use
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
 const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
+// Fabric Embed needs its own delegated scope. Named, not `.default`, for the same reason as kustoScope.
+const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
@@ -89,7 +92,7 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
 type WorkspaceItem = { id: string; type: string; displayName: string }
-type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string }
+type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; kqlDashboardId?: string }
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
 
@@ -106,6 +109,7 @@ function envConfig(): ResolvedConfig {
     eventhouseQueryUri: import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined,
     kqlDatabase: import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined,
     graphqlUrl: graphqlUrlOverride,
+    kqlDashboardId: import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_ID as string | undefined,
   }
 }
 
@@ -174,6 +178,7 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
     const dataAgentUrl = da
       ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
+    const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
@@ -181,12 +186,42 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
       graphqlUrl: graphqlUrl ?? env.graphqlUrl,
       dataAgentUrl,
+      kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
     }
     return configCache
   } catch (error) {
     console.warn('Workspace discovery failed; using configured fallback values.', error)
     return env
   }
+}
+
+// ---- Fabric Embed (Real-Time Dashboard) ----
+
+export type DashboardEmbedTarget = { workspaceId: string; itemId: string }
+
+/** Resolve the Real-Time Dashboard to embed; null when the workspace has none. */
+export async function getDashboardEmbedTarget(interactive: boolean): Promise<DashboardEmbedTarget | null> {
+  const config = await ensureConfig(interactive)
+  if (!config?.kqlDashboardId) return null
+  return { workspaceId: requireWorkspaceId(), itemId: config.kqlDashboardId }
+}
+
+// The embedded dashboard requests tokens per audience. A Kusto `.default` would escalate to
+// "Need admin approval" for the same reason kustoScope() exists, so rewrite those too.
+function embedScopes(requested?: string[]): string[] {
+  if (!requested?.length) return EMBED_SCOPES
+  return requested.map(scope => /\.kusto\.(fabric\.microsoft\.com|windows\.net)\/\.default$/i.test(scope)
+    ? kustoScope(scope.replace(/\/\.default$/i, ''))
+    : scope)
+}
+
+/** A token for the Fabric Embed iframe. Silent first; popup only when interactive is allowed. */
+export async function fabricEmbedToken(interactive: boolean, requested?: string[]): Promise<string | null> {
+  const scopes = embedScopes(requested)
+  const silent = await silentToken(scopes)
+  if (silent) return silent
+  if (!interactive) return null
+  return popupToken(scopes)
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
