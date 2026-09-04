@@ -515,14 +515,31 @@
   font-size: 12px;
 }
 
-.v2-telemetry-explorer {
-  display: grid;
-  gap: 16px;
+/* Tree mode needs more horizontal room than the 1500px reading width used elsewhere. */
+.v2-main:has(.v2-telemetry-page.is-wide) {
+  max-width: none;
 }
 
-.v2-selector-row {
+.v2-telemetry-detail {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 16px;
+  min-width: 0;
+}
+
+.v2-telemetry-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.v2-telemetry-detail-column {
+  min-width: 0;
+}
+
+.v2-telemetry-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: end;
   padding: 14px;
@@ -532,14 +549,144 @@
   box-shadow: var(--cp-shadow-card);
 }
 
-.v2-selector-row label {
+.v2-telemetry-toolbar > .v2-range-control {
+  margin-left: auto;
+}
+
+.v2-filter-bar {
+  flex: 1 1 460px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+  gap: 12px;
+}
+
+.v2-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--cp-border);
+  border-radius: 9px;
+  background: var(--cp-bg-elevated);
+}
+
+.v2-view-toggle button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--cp-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.v2-view-toggle button.active {
+  background: var(--cp-surface);
+  color: var(--cp-accent-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cp-accent) 45%, var(--cp-border));
+}
+
+.v2-tree-panel {
+  position: sticky;
+  top: 74px;
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--cp-border);
+  border-radius: 14px;
+  background: var(--cp-surface);
+  box-shadow: var(--cp-shadow-card);
+}
+
+.v2-tree-root,
+.v2-tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-tree-root {
+  margin-top: 10px;
+}
+
+.v2-tree-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--cp-text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.v2-tree-row.signal {
+  grid-template-columns: 16px 16px minmax(0, 1fr) 8px auto;
+}
+
+.v2-tree-row:hover {
+  background: var(--cp-bg-elevated);
+}
+
+.v2-tree-row.active {
+  background: color-mix(in srgb, var(--cp-accent) 12%, var(--cp-surface));
+  color: var(--cp-accent-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cp-accent) 45%, var(--cp-border));
+}
+
+.v2-tree-row.level-0 { font-weight: 800; }
+.v2-tree-row.level-1 { padding-left: 18px; }
+.v2-tree-row.level-2 { padding-left: 32px; color: var(--cp-text-soft); }
+.v2-tree-row.level-3 { padding-left: 46px; font-weight: 600; }
+
+.v2-tree-caret {
+  display: grid;
+  place-items: center;
+  color: var(--cp-text-muted);
+}
+
+.v2-tree-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-tree-meta {
+  color: var(--cp-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.v2-tree-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cp-border-strong);
+}
+
+.v2-tree-dot.good { background: var(--cp-success); }
+.v2-tree-dot.warn { background: var(--cp-warning); }
+.v2-tree-dot.bad { background: var(--cp-danger); }
+
+.v2-filter-bar label {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.v2-selector-row label span {
+.v2-filter-bar label span {
   color: var(--cp-text-muted);
   font-size: 10px;
   font-weight: 800;
@@ -547,7 +694,7 @@
   text-transform: uppercase;
 }
 
-.v2-selector-row select {
+.v2-filter-bar select {
   min-width: 0;
   width: 100%;
   border: 1px solid var(--cp-border);
@@ -592,7 +739,7 @@
   align-items: stretch;
 }
 
-.v2-current-signal > div:first-child,
+.v2-signal-identity,
 .v2-signal-metric,
 .v2-chart-panel,
 .v2-signal-table-panel {
@@ -602,24 +749,65 @@
   box-shadow: var(--cp-shadow-card);
 }
 
-.v2-current-signal > div:first-child {
+.v2-signal-identity {
   min-width: 0;
   padding: 18px;
 }
 
-.v2-current-signal h1 {
+.v2-signal-identity h1 {
   margin: 6px 0 4px;
   font-family: var(--cp-font-display);
   font-size: 24px;
   letter-spacing: 0;
 }
 
-.v2-current-signal p {
+.v2-signal-identity p {
   margin: 0;
   color: var(--cp-text-muted);
   font-family: Consolas, monospace;
   font-size: 10px;
   overflow-wrap: anywhere;
+}
+
+/* Tree mode folds the status cards into the selected-signal row; they float and wrap together. */
+.v2-telemetry-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.v2-telemetry-cards > * {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.v2-telemetry-cards > .v2-signal-identity {
+  flex: 1 1 260px;
+}
+
+/* Below the chart's natural width the fixed card grids become floating, wrapping rows. */
+@media (max-width: 1180px) {
+  .v2-telemetry-status,
+  .v2-current-signal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .v2-telemetry-status > *,
+  .v2-current-signal > * {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  .v2-current-signal > .v2-signal-identity {
+    flex: 1 1 260px;
+  }
+
+  .v2-telemetry-cards > * {
+    flex: 1 1 220px;
+  }
 }
 
 .v2-signal-metric {
@@ -1649,7 +1837,8 @@ button.v2-signal-row:hover,
   .v2-summary-grid,
   .v2-health-grid,
   .v2-telemetry-status,
-  .v2-selector-row,
+  .v2-filter-bar,
+  .v2-telemetry-layout,
   .v2-current-signal,
   .v2-twin-summary,
   .v2-admin-status-grid,
@@ -1658,6 +1847,13 @@ button.v2-signal-row:hover,
   .v2-overview-workspace {
     grid-template-columns: 1fr;
   }
+
+  .v2-tree-panel {
+    position: static;
+    max-height: 320px;
+  }
+
+  .v2-telemetry-toolbar > .v2-range-control { margin-left: 0; }
 
   .v2-page-head { align-items: flex-start; flex-direction: column; }
   .v2-page-metrics strong { text-align: left; }
