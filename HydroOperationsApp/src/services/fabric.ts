@@ -21,6 +21,9 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+// A named scope, not `.default`: `.default` only returns permissions already statically configured
+// for the exact cluster audience, so Entra escalates to "Need admin approval" instead of consenting.
+const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/user_impersonation`
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
 const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
@@ -330,7 +333,7 @@ export async function beginInteractiveConnect(target: ConnectTarget) {
     await popupToken([GRAPHQL_SCOPE])
   } else if (target === 'telemetry') {
     if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
-    await popupToken([`${config.eventhouseQueryUri.replace(/\/$/, '')}/.default`])
+    await popupToken([kustoScope(config.eventhouseQueryUri)])
   }
   // 'stream' needs only the Fabric token already acquired by ensureConfig.
 }
@@ -579,7 +582,7 @@ export async function queryLatestTelemetry(): Promise<TelemetryReading[] | null>
   const config = await ensureConfig(false)
   if (!config?.eventhouseQueryUri || !config.kqlDatabase) return null
   const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
-  const token = await silentToken([`${cluster}/.default`])
+  const token = await silentToken([kustoScope(cluster)])
   if (!token) return null
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
@@ -601,7 +604,7 @@ export async function queryTelemetryHistory(opcuaNodeId: string, range: Telemetr
   const window = TELEMETRY_HISTORY_WINDOWS[range]
   if (!window) throw new Error(`Unsupported telemetry range: ${range}`)
   const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
-  const token = await silentToken([`${cluster}/.default`])
+  const token = await silentToken([kustoScope(cluster)])
   if (!token) return null
   const node = kqlString(opcuaNodeId)
   const response = await fetch(`${cluster}/v1/rest/query`, {

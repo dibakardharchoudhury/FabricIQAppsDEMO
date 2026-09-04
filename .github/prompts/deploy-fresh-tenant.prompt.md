@@ -41,8 +41,9 @@ manual portal steps for the exact action the script prints it lacks a role to pe
 > handoff from DEPLOY.md. Do not report browser sign-in or live Fabric data as ready. An
 > **Application Administrator / Cloud Application
 > Administrator** must create the app and its enterprise application/service principal, then add
-> SPA redirects/delegated permissions; a **Privileged
-> Role Administrator / Global Administrator** must grant tenant-wide admin consent. Run
+> SPA redirects/delegated permissions and grant tenant-wide admin consent (Global Administrator is
+> not required — none of the scopes is directory-privileged, and consent is optional altogether
+> where the tenant allows user consent). Run
 > `npm run setup-live-auth:dry` to print the concrete hosting origins and scopes. After the admin
 > supplies the client ID, set `RAYFIN_PUBLIC_AAD_CLIENT_ID` and rerun the idempotent live-auth flow.
 
