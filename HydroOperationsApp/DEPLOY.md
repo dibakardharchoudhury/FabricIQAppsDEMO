@@ -16,8 +16,9 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 > sign-in and live Fabric data remain unavailable. Use
 > [No admin rights? Hand this to your Entra admin](#no-admin-rights-hand-this-to-your-entra-admin):
 > an **Application Administrator / Cloud Application Administrator** creates the app and adds its
-> SPA redirects and delegated permissions; a **Privileged Role Administrator / Global
-> Administrator** grants tenant-wide admin consent. Register the deployed
+> SPA redirects and delegated permissions, and the same role grants tenant-wide admin consent
+> (none of these scopes is directory-privileged, so Global Administrator is not required).
+> Register the deployed
 > `*.webapp.fabricapps.net` origin recorded in `rayfin/rayfin.yml` `allowedRedirectUris`.
 
 ## Which scenario am I in?
@@ -137,7 +138,7 @@ The complete live-auth contract is:
    - **Power BI Service** (resource app id `00000009-0000-0000-c000-000000000000`) → `GraphQLApi.Execute.All` (STID Lakehouse GraphQL), `Workspace.Read.All` (workspace item discovery), **`Item.Read.All`** (read the Eventhouse query URI — **required for live telemetry**; without it the app reports “No Eventhouse found”), and `Item.Execute.All` (run notebooks/pipelines from the app).
 
    *Fixes AADSTS650057.*
-3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Privileged Role Administrator / Global Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead.
+3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Application Administrator / Cloud Application Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead — all five scopes are user-consentable, so this step is optional in most tenants.
 
 `setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`), so **no in‑app consent popup appears** — do these by hand only for the exact grant the script prints it couldn't make.
 
@@ -158,7 +159,7 @@ Send your admin this checklist (the dry run prints the concrete values for each 
 | 1 | **Create** the SPA app registration (single‑tenant, no secret), ensure its **enterprise application/service principal** exists (`az ad sp create --id <spa-client-id>`), and give you the **Application (client) ID** | Entra ID → App registrations / Enterprise applications | **Application Administrator** (or self‑service app registration enabled) |
 | 2 | **Authentication → Single‑page application** → preserve every existing redirect and add the current origin from `rayfin/rayfin.yml` `allowedRedirectUris` **+** `http://localhost:5173` | that app | **Application Administrator** on the app (or make you an **Owner** — then you can do 2 yourself) |
 | 3 | **API permissions** → add the delegated scopes from the list above (ADX `user_impersonation`; Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` + `Item.Read.All` + `Item.Execute.All`) | that app | **Application Administrator** on the app |
-| 4 | **Grant admin consent** for the directory | that app | **Privileged Role Administrator / Global Administrator** |
+| 4 | **Grant admin consent** for the directory | that app | **Application Administrator / Cloud Application Administrator** |
 
 Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner** of the app — then you run `npm run setup-live-auth` yourself and it applies **2 and 3** (redirect URIs + permissions) with no further admin involvement. If the admin does all four by hand, you never run `setup-live-auth`; just make sure the hosting origins in step 2 match `rayfin/rayfin.yml` after each deploy that changes the hostname. If admin consent (step 4) is impossible but **user consent is allowed** in the tenant, skip it — each signer is prompted to consent on their first sign‑in instead.
 

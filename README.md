@@ -58,9 +58,11 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 | 2 | **Workspace access** | SPN has **Contributor** (or higher) on the Fabric workspace. |
 | 3 | **Tenant settings** *(Admin portal)* | **Service principals can use Fabric APIs** (SPN in the allowed security group) **+ Copilot / AI** on a supported capacity — required by `RTI_009` / `RTI_010`. |
 | 4 | **Private endpoint to Key Vault** | Only if the vault blocks public access — add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault. |
+| 5 | **Tenant settings for the companion app** *(Admin portal)* | **Enable Fabric App Items (preview)** — without it `rayfin up` gets `403 FeatureNotAvailable`. Add **Users can sync workspace items with GitHub repositories** if you populate the workspace via Git; the generic Git switch alone is not enough. |
+| 6 | **Capacity region** | *Fabric App (preview)* is unavailable in some regions (West US 3, East US 2, UK South, North Europe, …) and a capacity's region is fixed at creation. Sweden Central covers Fabric App, Ontology, Digital twin builder and the Operations agent. See [region availability](https://learn.microsoft.com/fabric/admin/region-availability). |
 
 > [!IMPORTANT]
-> **5 · Email‑alert connection (OAuth2) — the one step you must do by hand.**
+> **7 · Email‑alert connection (OAuth2) — the one step you must do by hand.**
 >
 > The `Pipe_SendEmailAlert` pipeline sends mail via the **Office 365 Outlook “Send an email”** activity,
 > which posts **from a mailbox** and so needs an **OAuth2** connection. It **cannot** be created from a
@@ -86,8 +88,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > or delegated permissions, or grant tenant-wide admin consent. This does **not** fail AppBackend
 > or static-host deployment; it produces degraded-auth warnings, and browser sign-in/live Fabric
 > data remain unavailable until configured. An **Application Administrator /
-> Cloud Application Administrator** must create/configure the app, and a **Privileged Role
-> Administrator / Global Administrator** must grant admin consent. Use the copy-pasteable handoff
+> Cloud Application Administrator** must create/configure the app and grant admin consent
+> (Global Administrator is not required). Consent itself is optional where the tenant allows user
+> consent, because every scope the app requests is user-consentable. Use the copy-pasteable handoff
 > in [`HydroOperationsApp/DEPLOY.md` → No admin rights?](HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin).
 
 ## Deploy

@@ -57,6 +57,19 @@ situation.
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as
   is the identity that performs the changes.
 - **Workspace Admin** on the target workspace (required to connect / sync / delete).
+- **Fabric tenant settings** (Admin portal → Tenant settings). Each is a hard 403
+  `FeatureNotAvailable` when off, and only a Fabric administrator can change them:
+  - **Enable Fabric App Items (preview)** (`AppBackendTenant`) — required by **Deploy app**;
+    without it `rayfin up` cannot create the `AppBackend` item.
+  - **Users can sync workspace items with GitHub repositories** (`GitHubTenantSettings`) —
+    required by the Git sync. The generic *Users can synchronize workspace items with their Git
+    repositories* switch is **not** sufficient; GitHub needs its own.
+- **Capacity region.** *Fabric App (preview)* is unavailable in several regions — including
+  West US 3, East US 2, UK South and North Europe — and the workspace must sit on a capacity in a
+  supported one. A capacity's region is fixed at creation, so an unsupported one must be replaced.
+  Sweden Central supports Fabric App together with Ontology, Digital twin builder and the
+  Operations agent, which is what the notebooks in this repo need. See
+  [Fabric region availability](https://learn.microsoft.com/fabric/admin/region-availability).
 - **Workspace Admin** is also required to create a Fabric managed private endpoint
   during the pipeline Key Vault preflight. The Azure subscription must have the
   `Microsoft.Network` resource provider registered.
@@ -75,11 +88,16 @@ situation.
   access to npm and write access to `HydroOperationsApp/node_modules` are required.
 - Permission to create an Entra app registration when the target tenant does not already
   contain `Hydro Operations Fabric Client`. The deploy action reuses the existing SPA
-  registration when exactly one is present.
-- Directory rights to configure that SPA: **Application Administrator / Cloud Application
-  Administrator** for creation, SPA redirect URIs, and delegated API permissions; **Privileged
-  Role Administrator / Global Administrator** for tenant-wide admin consent. These rights cannot
-  be automated away. Without them, use the administrator handoff below.
+  registration when exactly one is present. No admin role is needed when the tenant leaves
+  *Users can register applications* enabled (`allowedToCreateApps`), because the creator becomes
+  the app's owner and owners may set SPA redirect URIs and delegated API permissions themselves.
+- Tenant-wide admin consent is **optional**. Every scope the app requests is user-consentable
+  (Power BI `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
+  and Azure Data Explorer `user_impersonation` are all `type: User`), so where the tenant permits
+  user consent each person simply accepts a one-time prompt at first sign-in. Granting consent for
+  the whole directory just suppresses that prompt and requires **Application Administrator** or
+  **Cloud Application Administrator** — not Global Administrator. Without it the deploy still
+  finishes and reports degraded-success warnings; see the administrator handoff below.
 - **GitHub PAT** for the sync (unless you reuse an existing connection) with **`repo`**
   scope (classic) or fine-grained **Contents: Read** on the repo. The PAT is never a
   CLI flag and never logged — it comes from an env var or a hidden prompt.
@@ -102,6 +120,21 @@ everything required.
 | `FABRIC_GIT_PAT` / `GITHUB_PAT` | sync | GitHub PAT (only if not reusing a connection) |
 
 ## Run the setup pipeline and Key Vault preflight
+
+`01_Pipe_Setup` chains the `RTI_*` notebooks, and nearly all of them call
+`notebookutils.credentials.getSecret(key_vault_uri, ...)` to load a service principal. **A Key
+Vault holding that principal is a hard prerequisite** — create one with three secrets whose
+default names are `tenantid`, `clientid` and `clientsecret`, give the identity that starts the
+pipeline permission to read them (for example *Key Vault Secrets User*), and add the service
+principal to the workspace as Contributor or Admin. The tenant must also leave *Service principals
+can call Fabric public APIs* enabled.
+
+The pipeline's declared parameter defaults point at the tenant it was authored in, so
+**every environment-specific parameter must be overridden** — at minimum `workspace_id`,
+`key_vault_uri` and `ops_agent_run_as_user`. Leave `env_suffix` at `V6` unless you also change
+`rayfin/.env`, because the app discovers `RTI_Demo_Eventhouse_V6` and `Energy_IQ_LakehouseRTI_V6`
+by name. `ops_agent_teams_team_id` / `ops_agent_teams_channel_id` are optional; when they do not
+resolve, `RTI_010` falls back to an Operations Agent without Teams delivery.
 
 The **Run pipeline** tab accepts either the target workspace display name or GUID in
 the sidebar. Its workspace parameter mirrors that value, and the runner resolves it
@@ -234,6 +267,9 @@ the **Status** column must show **Granted for &lt;tenant&gt;**. Blank Status mea
 configured, not consented. A disabled **Grant admin consent** button means the current administrator
 lacks a consent-granting directory role. A per-user grant for one person does not authorize others.
 
+Step 3 is only necessary where the tenant blocks user consent. All five scopes are user-consentable,
+so otherwise each person consents for themselves at first sign-in and the app works without it.
+
 1. **Application Administrator / Cloud Application Administrator:** create the registration if it
   does not exist, ensure its **enterprise application/service principal** exists, and add a
   **Single-page application** platform containing the generated
@@ -242,9 +278,10 @@ lacks a consent-granting directory role. A per-user grant for one person does no
 2. **Application Administrator / Cloud Application Administrator:** add delegated Azure Data
   Explorer `user_impersonation` and Power BI Service `GraphQLApi.Execute.All`,
   `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
-3. **Privileged Role Administrator / Global Administrator:** select **Grant admin consent for the
-  directory**. Per-user `Principal` consent works only for that user; enterprise rollout requires
-  tenant-wide `AllPrincipals` consent.
+3. **Application Administrator / Cloud Application Administrator:** select **Grant admin consent
+  for the directory**. None of these scopes is directory-privileged, so Global Administrator and
+  Privileged Role Administrator are not required. Per-user `Principal` consent works only for that
+  user; suppressing the prompt for everyone requires tenant-wide `AllPrincipals` consent.
 4. Enter the administrator-provided Application (client) ID in the local app's optional **SPA
   client id** field and redeploy, or put it in `rayfin/.env` and run `npm run setup-live-auth`.
   The workflow is idempotent and validates redirects, scopes, and consent after redeployment.

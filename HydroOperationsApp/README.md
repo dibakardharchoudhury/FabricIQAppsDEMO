@@ -15,8 +15,9 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > or grant admin consent, AppBackend/static-host deployment still succeeds with degraded-auth
 > warnings; browser sign-in and live Fabric data remain unavailable. Use the role split and portal fallback in
 > [DEPLOY.md → No admin rights?](DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin): an
-> Application Administrator configures the SPA and a Privileged Role Administrator or Global
-> Administrator grants tenant-wide consent.
+> Application Administrator / Cloud Application Administrator configures the SPA and grants
+> tenant-wide consent. That consent is optional where the tenant allows user consent, since every
+> requested scope is user-consentable.
 
 | Store | Owns | Accessed via |
 |---|---|---|

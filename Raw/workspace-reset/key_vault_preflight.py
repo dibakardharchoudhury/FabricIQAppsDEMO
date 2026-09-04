@@ -157,10 +157,19 @@ def _find_vault(client: CloudClient, vault_name: str) -> dict[str, Any]:
         subscription_id = subscription.get("subscriptionId")
         if not subscription_id:
             continue
-        url = f"{ARM_BASE}/subscriptions/{subscription_id}/resources?api-version={ARM_RESOURCES_API}&$filter={resource_filter}"
-        response = client.request(ARM_SCOPE, "GET", url)
-        if response.status_code == 200:
-            matches.extend(response.json().get("value", []))
+        url: str | None = (
+            f"{ARM_BASE}/subscriptions/{subscription_id}/resources"
+            f"?api-version={ARM_RESOURCES_API}&$filter={resource_filter}"
+        )
+        # ARM pages this list and the first page is often empty with only a nextLink,
+        # so a single request can miss the vault entirely.
+        while url:
+            response = client.request(ARM_SCOPE, "GET", url)
+            if response.status_code != 200:
+                break
+            page = response.json()
+            matches.extend(page.get("value", []))
+            url = page.get("nextLink")
     if not matches:
         raise PreflightError(f"Key Vault '{vault_name}' was not found in any accessible Azure subscription.")
     if len(matches) > 1:
