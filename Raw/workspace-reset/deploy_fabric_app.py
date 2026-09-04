@@ -9,6 +9,7 @@ the local "Initialize Your Fabric Demo" web app and can also be run directly.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
+DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 
 
 class DeployError(RuntimeError):
@@ -126,11 +128,45 @@ def az(*args: str) -> list[str]:
 _NODE24_EXECUTABLE: Path | None = None
 
 
+def cached_node24_executable() -> Path | None:
+    """Find a previously downloaded npx Node 24 runtime without invoking npx."""
+    cache_roots = {
+        Path(value).expanduser()
+        for value in (
+            os.environ.get("npm_config_cache"),
+            str(Path(os.environ["LOCALAPPDATA"]) / "npm-cache")
+            if os.environ.get("LOCALAPPDATA") else None,
+            str(Path.home() / ".npm"),
+        )
+        if value
+    }
+    executable_name = "node.exe" if os.name == "nt" else "node"
+    candidates = (
+        executable
+        for cache_root in cache_roots
+        for executable in cache_root.glob(
+            f"_npx/*/node_modules/node/bin/{executable_name}"
+        )
+    )
+    for executable in sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True):
+        try:
+            version = run_capture([str(executable), "-p", "process.versions.node"])
+        except (DeployError, OSError):
+            continue
+        if version.split(".", 1)[0] == "24":
+            return executable
+    return None
+
+
 def node24_executable() -> Path:
     """Resolve and verify the Node 24 executable supplied by npx."""
     global _NODE24_EXECUTABLE
     if _NODE24_EXECUTABLE and _NODE24_EXECUTABLE.is_file():
         return _NODE24_EXECUTABLE
+    cached = cached_node24_executable()
+    if cached:
+        _NODE24_EXECUTABLE = cached
+        return cached
     executable = Path(
         run_capture(command_argv("npx", "-y", "-p", "node@24", "-c", "node -p process.execPath"))
     )
@@ -232,6 +268,30 @@ def stop_hydro_node_tooling() -> None:
         )
 
 
+def deploy_dependencies_ready() -> bool:
+    """Return true when the locked top-level dependency tree is already usable."""
+    package_lock = APP_DIR / "package-lock.json"
+    required = (
+        APP_DIR / "node_modules" / ".bin" / ("vite.cmd" if os.name == "nt" else "vite"),
+        APP_DIR / "node_modules" / ".bin" / ("tsc.cmd" if os.name == "nt" else "tsc"),
+    )
+    if not all(path.is_file() for path in required):
+        return False
+    expected_fingerprint = hashlib.sha256(package_lock.read_bytes()).hexdigest()
+    try:
+        installed_fingerprint = DEPENDENCY_STAMP.read_text(encoding="ascii").strip()
+    except OSError:
+        return False
+    if installed_fingerprint != expected_fingerprint:
+        return False
+    try:
+        installed_rayfin_version()
+        run_capture(npm24("ls", "--depth=0", "--json"), cwd=APP_DIR)
+        return True
+    except DeployError:
+        return False
+
+
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
@@ -248,11 +308,23 @@ def ensure_deploy_dependencies() -> None:
             "The deployer downloads Node 24 and installs Rayfin automatically afterward."
         )
 
+    if deploy_dependencies_ready():
+        print(
+            f"Locked Hydro Operations dependencies already ready "
+            f"(Rayfin {installed_rayfin_version()}); skipping npm ci.",
+            flush=True,
+        )
+        return
+
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
         run_stream(npm24("ci", "--no-audit", "--no-fund"), cwd=APP_DIR)
         version = installed_rayfin_version()
+        DEPENDENCY_STAMP.write_text(
+            hashlib.sha256((APP_DIR / "package-lock.json").read_bytes()).hexdigest(),
+            encoding="ascii",
+        )
     except DeployError as exc:
         raise DeployError(
             "Could not restore or verify the locked Hydro Operations npm dependencies. "
@@ -497,7 +569,7 @@ def fabric_item_exists(workspace_id: str, item_id: str) -> bool:
 
 def prepare_rayfin_env(
     tenant: str, workspace_id: str, workspace_name: str, client_id: str | None
-) -> None:
+) -> bool:
     values, deployment = current_rayfin_target()
     target_matches = deployment and all(
         (
@@ -514,7 +586,7 @@ def prepare_rayfin_env(
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id):
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
-            return
+            return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -540,6 +612,7 @@ def prepare_rayfin_env(
         template = template.replace(placeholder, value)
     (RAYFIN_DIR / ".env").write_text(template, encoding="utf-8", newline="\n")
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
+    return False
 
 
 def validate_fabric_app(workspace_id: str) -> str:
@@ -890,14 +963,19 @@ def deploy(args: argparse.Namespace) -> None:
     )
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
-    prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
+    reuse_deployment = prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
     ensure_deploy_dependencies()
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
     ensure_rayfin_login(args.tenant)
 
     print("[5/8] Provisioning backend, database schema, and static app", flush=True)
-    output = run_stream(rayfin24("up", "--workspace-id", workspace_id, "--yes"), cwd=APP_DIR)
+    if reuse_deployment:
+        print("Existing backend is healthy; deploying static content without reprovisioning it.", flush=True)
+        command = rayfin24("up", "staticapp", "deploy")
+    else:
+        command = rayfin24("up", "--workspace-id", workspace_id, "--yes")
+    output = run_stream(command, cwd=APP_DIR)
     urls = HOSTING_URL_RE.findall(output)
     if not urls:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
@@ -915,13 +993,16 @@ def deploy(args: argparse.Namespace) -> None:
         f"Rayfin redirect configuration now contains {len(preserved_redirects)} URI(s).",
         flush=True,
     )
-    run_stream(
-        rayfin24(
-            "up", "--workspace-id", workspace_id,
-            "--exclude-services", "staticHosting", "--yes",
-        ),
-        cwd=APP_DIR,
-    )
+    if hosting_url not in original_entra_redirects:
+        run_stream(
+            rayfin24(
+                "up", "--workspace-id", workspace_id,
+                "--exclude-services", "staticHosting", "--yes",
+            ),
+            cwd=APP_DIR,
+        )
+    else:
+        print("Hosting origin is already configured; skipping backend reprovisioning.", flush=True)
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:

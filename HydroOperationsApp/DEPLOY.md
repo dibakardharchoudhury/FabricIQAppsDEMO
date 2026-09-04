@@ -186,8 +186,10 @@ npm ci
 ```
 
 `npm ci` installs the exact versions in `package-lock.json`, including the repository-local Rayfin
-CLI — don't install Rayfin globally. The local **Deploy app** action runs this automatically before
-it changes Fabric; this manual command is only for direct CLI development/deployment.
+CLI — don't install Rayfin globally. The local **Deploy app** action runs this automatically when
+`node_modules` is missing, invalid, or does not match the current lockfile. Otherwise it reuses the
+verified dependency tree, avoiding a clean reinstall on every deployment. This manual command is
+only for direct CLI development/deployment.
 
 ## 3. Configure
 
@@ -228,6 +230,11 @@ npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (crea
 ```powershell
 npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploys the static app
 ```
+
+The local **Deploy app** action uses this static-only command when its saved AppBackend still exists
+in the selected workspace. It runs full `rayfin up` for a fresh or changed target, and updates the
+backend after static deployment only when the generated hosting origin was not already registered.
+This preserves full new-workspace provisioning while keeping routine code redeploys short.
 
 The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
 `services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run

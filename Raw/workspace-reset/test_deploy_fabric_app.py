@@ -15,6 +15,49 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_node24_uses_cached_runtime_without_invoking_npx(self):
+        cached = Path("C:/npm-cache/_npx/node24/node_modules/node/bin/node.exe")
+
+        with (
+            patch.object(DEPLOY, "_NODE24_EXECUTABLE", None),
+            patch.object(DEPLOY, "cached_node24_executable", return_value=cached),
+            patch.object(DEPLOY, "command_argv") as command,
+        ):
+            self.assertEqual(DEPLOY.node24_executable(), cached)
+
+        command.assert_not_called()
+
+    def test_reuses_healthy_dependencies_without_npm_ci(self):
+        with (
+            patch.object(DEPLOY.shutil, "which", return_value="npx"),
+            patch.object(DEPLOY, "deploy_dependencies_ready", return_value=True),
+            patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+            patch.object(DEPLOY, "stop_hydro_node_tooling") as stop_tooling,
+            patch.object(DEPLOY, "run_stream") as run_stream,
+        ):
+            DEPLOY.ensure_deploy_dependencies()
+
+        stop_tooling.assert_not_called()
+        run_stream.assert_not_called()
+
+    def test_dependency_tree_requires_current_lockfile_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_dir = Path(temp_dir)
+            (app_dir / "node_modules" / ".bin").mkdir(parents=True)
+            for executable in ("vite.cmd", "tsc.cmd"):
+                (app_dir / "node_modules" / ".bin" / executable).write_text("", encoding="utf-8")
+            (app_dir / "package-lock.json").write_text('{"lockfileVersion": 3}', encoding="utf-8")
+
+            with (
+                patch.object(DEPLOY, "APP_DIR", app_dir),
+                patch.object(DEPLOY, "DEPENDENCY_STAMP", app_dir / "node_modules" / ".stamp"),
+                patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+                patch.object(DEPLOY, "run_capture") as run_capture,
+            ):
+                self.assertFalse(DEPLOY.deploy_dependencies_ready())
+
+            run_capture.assert_not_called()
+
     def test_npm24_hosts_npm_cli_with_node24(self):
         npm_cli = Path("C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js")
         node = Path("C:/node24/node.exe")
@@ -48,14 +91,17 @@ class DeployOrderTests(unittest.TestCase):
     def test_dependency_restore_stops_hydro_tooling_before_npm_ci(self):
         events = []
 
-        with (
-            patch.object(DEPLOY.shutil, "which", return_value="npx"),
-            patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
-            patch.object(DEPLOY, "npm24", return_value=["npm-ci"]),
-            patch.object(DEPLOY, "run_stream", side_effect=lambda _argv, **_kwargs: events.append("npm")),
-            patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
-        ):
-            DEPLOY.ensure_deploy_dependencies()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(DEPLOY.shutil, "which", return_value="npx"),
+                patch.object(DEPLOY, "deploy_dependencies_ready", return_value=False),
+                patch.object(DEPLOY, "DEPENDENCY_STAMP", Path(temp_dir) / ".stamp"),
+                patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
+                patch.object(DEPLOY, "npm24", return_value=["npm-ci"]),
+                patch.object(DEPLOY, "run_stream", side_effect=lambda _argv, **_kwargs: events.append("npm")),
+                patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+            ):
+                DEPLOY.ensure_deploy_dependencies()
 
         self.assertEqual(events, ["stop", "npm"])
 
@@ -152,6 +198,74 @@ class DeployOrderTests(unittest.TestCase):
             "Demo Workspace",
             None,
         )
+
+    def test_reuses_existing_backend_for_static_deploy(self):
+        args = argparse.Namespace(
+            tenant="tenant.example",
+            workspace="workspace-id",
+            client_id=None,
+            push_config=False,
+        )
+
+        with (
+            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(DEPLOY, "resolve_spa", return_value=None),
+            patch.object(DEPLOY, "write_rayfin_redirects", return_value=["http://localhost:5173"]),
+            patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
+            patch.object(DEPLOY, "ensure_deploy_dependencies"),
+            patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(
+                DEPLOY,
+                "rayfin24",
+                side_effect=lambda *arguments: list(arguments),
+            ),
+            patch.object(
+                DEPLOY,
+                "run_stream",
+                side_effect=[
+                    "Hosting URL: https://fast.webapp.fabricapps.net",
+                    "backend updated",
+                ],
+            ) as run_stream,
+            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
+            patch.object(DEPLOY, "validate_fabric_app"),
+        ):
+            DEPLOY.deploy(args)
+
+        self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
+
+    def test_existing_registered_origin_skips_backend_reprovisioning(self):
+        hosting_url = "https://fast.webapp.fabricapps.net"
+        args = argparse.Namespace(
+            tenant="tenant.example",
+            workspace="workspace-id",
+            client_id="11111111-1111-1111-1111-111111111111",
+            push_config=False,
+        )
+
+        with (
+            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(DEPLOY, "resolve_spa", return_value=args.client_id),
+            patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[hosting_url]),
+            patch.object(DEPLOY, "write_rayfin_redirects", side_effect=lambda redirects: redirects),
+            patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
+            patch.object(DEPLOY, "ensure_deploy_dependencies"),
+            patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
+            patch.object(DEPLOY, "node24_script", return_value=["setup-live-auth"]),
+            patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,
+            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
+            patch.object(DEPLOY, "validate_fabric_app"),
+            patch.object(DEPLOY, "validate_spa_redirect_preservation"),
+            patch.object(DEPLOY, "validate_entra_live_auth"),
+        ):
+            DEPLOY.deploy(args)
+
+        self.assertEqual(run_stream.call_count, 2)
+        self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
+        self.assertEqual(run_stream.call_args_list[1].args[0], ["setup-live-auth"])
 
     def test_verifies_installed_rayfin_without_running_the_cli(self):
         with tempfile.TemporaryDirectory() as temp_dir:
