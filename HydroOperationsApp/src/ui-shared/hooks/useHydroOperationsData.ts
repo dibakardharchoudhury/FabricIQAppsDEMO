@@ -560,6 +560,21 @@ function useHydroOperationsDataController() {
     })
   }, [selectedFacility, setSelectedAssetId])
 
+  // Tree browsing can jump across facilities, so facility/asset/signal must move together rather
+  // than through the facility-scoped setters, which would still be keyed to the previous facility.
+  const selectTelemetrySignal = useCallback((facilityId: string, assetId: string, signalId: string) => {
+    setSelectedFacilityIdState(facilityId)
+    setSelectedAssetIds(current => {
+      const next = { ...current, [facilityId]: assetId }
+      writePersistedSetup({ selectedFacilityId: facilityId, selectedAssetIds: next })
+      return next
+    })
+    setTelemetrySelections(current => ({
+      ...current,
+      [facilityId]: { ...(current[facilityId] ?? { range: '24h' as TelemetryHistoryRange }), assetId, signalId },
+    }))
+  }, [])
+
   const addWorkOrder = useCallback(async (equipmentId: string, instrumentId?: string, opcuaNodeId?: string) => {
     setMutationKey(opcuaNodeId ?? equipmentId)
     setNotice(undefined)
@@ -676,6 +691,7 @@ function useHydroOperationsDataController() {
       connectStid,
       connectTelemetry,
       updateTelemetryExplorerSelection,
+      selectTelemetrySignal,
       addWorkOrder,
       changeWorkOrderStatus,
       removeWorkOrder,
