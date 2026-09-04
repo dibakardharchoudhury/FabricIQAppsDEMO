@@ -15,6 +15,38 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_stops_only_hydro_node_tooling_before_dependency_restore(self):
+        with (
+            patch.object(DEPLOY.os, "name", "nt"),
+            patch.object(DEPLOY, "command_argv", return_value=["powershell", "script"]) as command,
+            patch.object(DEPLOY, "run_capture", return_value="101,202") as run_capture,
+        ):
+            DEPLOY.stop_hydro_node_tooling()
+
+        command.assert_called_once()
+        powershell_script = command.call_args.args[-1]
+        self.assertIn(str(DEPLOY.APP_DIR), powershell_script)
+        self.assertIn("$_.ProcessId -ne $PID", powershell_script)
+        self.assertIn("IndexOf", powershell_script)
+        self.assertIn("vite", powershell_script)
+        self.assertIn("esbuild.exe", powershell_script)
+        self.assertNotIn("Get-Process node", powershell_script)
+        run_capture.assert_called_once_with(["powershell", "script"])
+
+    def test_dependency_restore_stops_hydro_tooling_before_npm_ci(self):
+        events = []
+
+        with (
+            patch.object(DEPLOY.shutil, "which", return_value="npx"),
+            patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
+            patch.object(DEPLOY, "node24", return_value=["npm-ci"]),
+            patch.object(DEPLOY, "run_stream", side_effect=lambda _argv: events.append("npm")),
+            patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+        ):
+            DEPLOY.ensure_deploy_dependencies()
+
+        self.assertEqual(events, ["stop", "npm"])
+
     def test_does_not_write_redirects_when_entra_snapshot_fails(self):
         args = argparse.Namespace(
             tenant="tenant.example",

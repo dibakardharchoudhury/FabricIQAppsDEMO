@@ -15,6 +15,8 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://valid-iris-08bca88f8e-swedencentral.webapp.fabricapps.net
+      - https://rural-haze-8e8396be06-swedencentral.webapp.fabricapps.net
       - https://early-iris-f14ccec1b4-swedencentral.webapp.fabricapps.net
       - https://soft-cape-3e48fdb831-swedencentral.webapp.fabricapps.net
       - https://agile-peak-bb55ff4436-swedencentral.webapp.fabricapps.net
@@ -26,7 +28,6 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://rural-haze-8e8396be06-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist

@@ -158,6 +158,40 @@ def installed_rayfin_version() -> str:
     return version
 
 
+def stop_hydro_node_tooling() -> None:
+    """Stop this app's Vite/esbuild processes before npm replaces node_modules."""
+    if os.name != "nt":
+        return
+
+    app_path = str(APP_DIR).replace("'", "''")
+    script = (
+        "$app = '" + app_path + "'; "
+        "$matches = Get-CimInstance Win32_Process | Where-Object { "
+        "$_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.IndexOf($app, "
+        "[System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and ("
+        "$_.Name -eq 'esbuild.exe' -or $_.CommandLine -match "
+        "'(?i)(vite(?:\\.js)?|npm(?:-cli\\.js)?\\s+run\\s+(dev|preview))') }; "
+        "$ids = @($matches.ProcessId | Sort-Object -Unique); "
+        "if ($ids.Count -gt 0) { Stop-Process -Id $ids -Force -ErrorAction SilentlyContinue; "
+        "$ids -join ',' }"
+    )
+    stopped = run_capture(
+        command_argv(
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        )
+    )
+    if stopped:
+        print(
+            f"Stopped Hydro Operations development tooling that was locking node_modules "
+            f"(process IDs: {stopped}).",
+            flush=True,
+        )
+
+
 def ensure_deploy_dependencies() -> None:
     """Restore the locked Node toolchain and verify the local Rayfin CLI."""
     manifests = (APP_DIR / "package.json", APP_DIR / "package-lock.json")
@@ -174,6 +208,7 @@ def ensure_deploy_dependencies() -> None:
             "The deployer downloads Node 24 and installs Rayfin automatically afterward."
         )
 
+    stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
         run_stream(node24("npm ci --no-audit --no-fund"))
