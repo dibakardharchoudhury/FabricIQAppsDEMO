@@ -50,6 +50,12 @@ RESOURCE_NAMES = {
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
 }
+STALE_TOKEN_CHALLENGE_RE = re.compile(
+    r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"
+    r"AADSTS50076|AADSTS50079|AADSTS50173",
+    re.IGNORECASE,
+)
+AZURE_CLI_TOKEN_CACHE_FILES = ("msal_token_cache.bin", "msal_http_cache.bin")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -695,6 +701,27 @@ def read_entra_spa_redirects(client_id: str) -> list[str]:
     ]
 
 
+def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[str]:
+    """Retry an Entra redirect snapshot after a stale-token CAE challenge."""
+    try:
+        return read_entra_spa_redirects(client_id)
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+
+    print(
+        "Azure CLI token was rejected by Conditional Access because it predates a tenant "
+        "policy change. Re-authenticating before reading the existing SPA redirects...",
+        flush=True,
+    )
+    azure_dir = Path.home() / ".azure"
+    for filename in AZURE_CLI_TOKEN_CACHE_FILES:
+        (azure_dir / filename).unlink(missing_ok=True)
+    run_stream(az("login", "--tenant", tenant, "--only-show-errors"))
+    ensure_azure_tenant(tenant)
+    return read_entra_spa_redirects(client_id)
+
+
 def _rayfin_redirect_block() -> tuple[Path, list[str], int, int, int, str]:
     """Locate services.auth.allowedRedirectUris in rayfin.yml."""
     config = RAYFIN_DIR / "rayfin.yml"
@@ -768,7 +795,7 @@ def deploy(args: argparse.Namespace) -> None:
     original_entra_redirects: list[str] = []
     if client_id:
         try:
-            original_entra_redirects = read_entra_spa_redirects(client_id)
+            original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
         except (DeployError, json.JSONDecodeError) as exc:
             raise DeployError(
                 f"Could not snapshot existing SPA redirect URIs for {client_id}. "
