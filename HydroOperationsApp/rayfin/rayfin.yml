@@ -28,8 +28,7 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://merry-birch-f03aa74f0e-swedencentral.webapp.fabricapps.net
-      - https://right-forge-2c0b55c94f-swedencentral.webapp.fabricapps.net
+      - https://close-brook-a77ff8be4f-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
