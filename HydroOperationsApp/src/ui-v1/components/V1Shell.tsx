@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V1_TABS, resolveV1Tab, type V1Tab } from '../navigation'
+import { TabViewActions } from '../../ui-shared/components/TabViewActions'
+import { ExplorerModeProvider } from '../../ui-shared/hooks/ExplorerModeProvider'
 import { HydroOperationsDataProvider, useHydroOperationsData } from '../../ui-shared/hooks/useHydroOperationsData'
 
 const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -19,7 +21,7 @@ function setTabInUrl(tab: V1Tab) {
 }
 
 export function V1Shell() {
-  return <HydroOperationsDataProvider><V1ShellContent /></HydroOperationsDataProvider>
+  return <HydroOperationsDataProvider><ExplorerModeProvider><V1ShellContent /></ExplorerModeProvider></HydroOperationsDataProvider>
 }
 
 function V1ShellContent() {
@@ -75,6 +77,7 @@ function V1ShellContent() {
             <span>{tab.label}</span>
           </button>
         })}
+        <TabViewActions tabId={activeTab.id} />
       </div>
     </nav>
 

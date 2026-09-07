@@ -144,6 +144,25 @@
   overflow-x: auto;
 }
 
+.v2-tab-view-actions {
+  position: absolute;
+  top: 50%;
+  right: max(28px, calc((100% - 1500px) / 2 + 28px));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.v2-tab-view-actions .v2-view-toggle {
+  padding: 3px;
+}
+
+.v2-tab-view-actions .v2-view-toggle button {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
 .v2-tab {
   flex: 0 0 auto;
   gap: 7px;
@@ -516,7 +535,7 @@
 }
 
 /* Tree mode needs more horizontal room than the 1500px reading width used elsewhere. */
-.v2-main:has(.v2-telemetry-page.is-wide) {
+.v2-main:has(.v2-domain-page.is-wide) {
   max-width: none;
 }
 
@@ -630,8 +649,13 @@
   cursor: pointer;
 }
 
-.v2-tree-row.signal {
+.v2-tree-row.signal,
+.v2-tree-row.status {
   grid-template-columns: 16px 16px minmax(0, 1fr) 8px auto;
+}
+
+.v2-tree-row.station-status {
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto;
 }
 
 .v2-tree-row:hover {
@@ -676,8 +700,34 @@
 }
 
 .v2-tree-dot.good { background: var(--cp-success); }
+.v2-tree-dot.ok { background: var(--cp-success); }
 .v2-tree-dot.warn { background: var(--cp-warning); }
 .v2-tree-dot.bad { background: var(--cp-danger); }
+.v2-tree-dot.crit { background: var(--cp-danger); }
+.v2-tree-dot.nodata { background: var(--cp-text-soft); }
+
+.v2-tree-status-summary,
+.v2-tree-status-summary > span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.v2-tree-status-summary {
+  gap: 7px;
+}
+
+.v2-tree-status-summary > span {
+  gap: 3px;
+  color: var(--cp-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.v2-tree-status-summary .v2-tree-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+}
 
 .v2-filter-bar label {
   min-width: 0;
@@ -1081,7 +1131,8 @@ button.v2-signal-row:hover,
   font-weight: 700;
 }
 
-.v2-twin-selector {
+.v2-twin-selector,
+.v2-twin-toolbar {
   padding: 14px;
   border: 1px solid var(--cp-border);
   border-radius: 14px;
@@ -1089,14 +1140,24 @@ button.v2-signal-row:hover,
   box-shadow: var(--cp-shadow-card);
 }
 
-.v2-twin-selector label {
+.v2-twin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.v2-twin-selector label,
+.v2-twin-toolbar label {
+  min-width: min(360px, 100%);
   max-width: 360px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.v2-twin-selector span {
+.v2-twin-selector label > span,
+.v2-twin-toolbar label > span {
   color: var(--cp-text-muted);
   font-size: 10px;
   font-weight: 800;
@@ -1104,7 +1165,9 @@ button.v2-signal-row:hover,
   text-transform: uppercase;
 }
 
-.v2-twin-selector select {
+.v2-twin-selector select,
+.v2-twin-toolbar select {
+  width: 100%;
   border: 1px solid var(--cp-border);
   border-radius: 8px;
   padding: 9px 10px;
@@ -1112,6 +1175,19 @@ button.v2-signal-row:hover,
   color: var(--cp-text);
   font-size: 12px;
   font-weight: 700;
+}
+
+.v2-twin-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.v2-twin-detail-column {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
 }
 
 .v2-twin-summary {
@@ -1867,6 +1943,7 @@ button.v2-signal-row:hover,
   .v2-telemetry-status,
   .v2-filter-bar,
   .v2-telemetry-layout,
+  .v2-twin-layout,
   .v2-current-signal,
   .v2-twin-summary,
   .v2-admin-status-grid,
