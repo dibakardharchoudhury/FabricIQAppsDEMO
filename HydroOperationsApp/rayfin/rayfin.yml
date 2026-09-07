@@ -15,6 +15,7 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://rusty-zeal-4211d47473-swedencentral.webapp.fabricapps.net
       - https://valid-iris-08bca88f8e-swedencentral.webapp.fabricapps.net
       - https://rural-haze-8e8396be06-swedencentral.webapp.fabricapps.net
       - https://early-iris-f14ccec1b4-swedencentral.webapp.fabricapps.net
@@ -28,7 +29,6 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://rusty-zeal-4211d47473-swedencentral.webapp.fabricapps.net
       - https://right-forge-2c0b55c94f-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
