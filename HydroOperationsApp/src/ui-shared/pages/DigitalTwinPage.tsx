@@ -4,7 +4,6 @@ import type { TwinSignal, TwinStatus } from '../../twin'
 import { ageLabel, freshnessOf, twinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
-import { DigitalTwinViewToggle } from '../components/digitalTwin/DigitalTwinViewToggle'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
 import { useDigitalTwinExplorerMode } from '../hooks/useDigitalTwinExplorerMode'
 import { useExpandedView } from '../hooks/useExpandedView'
@@ -16,7 +15,7 @@ const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].in
 
 export function DigitalTwinPage() {
   const data = useHydroOperationsData()
-  const { mode, setMode } = useDigitalTwinExplorerMode()
+  const { mode } = useDigitalTwinExplorerMode()
   const twinView = useExpandedView()
   const selectedAsset = data.selectedAsset
   const selectedModel = data.assetModels.find(item => item.equipmentId === selectedAsset?.equipment_id)
@@ -106,11 +105,6 @@ export function DigitalTwinPage() {
 
   return <div className={`v2-domain-page v2-digital-twin-page${treeMode ? ' is-wide' : ''}`}>
     {!treeMode && <FacilityContext />}
-
-    <section className="v2-twin-toolbar">
-      <DigitalTwinViewToggle mode={mode} onModeChange={setMode} />
-      {!treeMode && !blocker && <label><span>Asset</span><select value={selectedAsset?.equipment_id ?? ''} onChange={event => data.setSelectedAssetId(event.target.value)}>{data.facilityEquipment.map(asset => <option key={asset.equipment_id} value={asset.equipment_id}>{asset.tag ?? asset.equipment_id}</option>)}</select></label>}
-    </section>
 
     {blocker ? <EmptyTwin title={blocker.title} text={blocker.text} />
       : treeMode

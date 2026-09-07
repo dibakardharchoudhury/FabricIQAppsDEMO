@@ -8,6 +8,7 @@ const statusLabel: Record<TwinStatus, string> = {
   crit: 'Critical',
   nodata: 'No data',
 }
+const statusOrder: TwinStatus[] = ['crit', 'warn', 'ok', 'nodata']
 
 export type DigitalTwinTreeHandlers = {
   isExpanded: (id: string) => boolean
@@ -47,12 +48,22 @@ function StationBranch({ node, selectedAssetId, handlers }: {
   handlers: DigitalTwinTreeHandlers
 }) {
   const expanded = handlers.isExpanded(node.id)
+  const counts = node.children.reduce<Record<TwinStatus, number>>((result, asset) => {
+    result[handlers.statusOf(asset.id)]++
+    return result
+  }, { ok: 0, warn: 0, crit: 0, nodata: 0 })
+  const aggregateLabel = statusOrder
+    .filter(status => counts[status])
+    .map(status => `${counts[status]} ${statusLabel[status].toLowerCase()}`)
+    .join(', ')
   return <li className="v2-tree-branch">
-    <button type="button" className="v2-tree-row level-0" aria-expanded={expanded} onClick={() => handlers.onToggle(node.id)}>
+    <button type="button" className="v2-tree-row level-0 station-status" aria-expanded={expanded} aria-label={`${node.label}, ${aggregateLabel}`} onClick={() => handlers.onToggle(node.id)}>
       <span className="v2-tree-caret">{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
       <Factory size={14} />
       <span className="v2-tree-label">{node.label}</span>
-      <span className="v2-tree-meta">{node.children.length}</span>
+      <span className="v2-tree-status-summary" aria-hidden="true">
+        {statusOrder.filter(status => counts[status]).map(status => <span key={status}><i className={`v2-tree-dot ${status}`} />{counts[status]}</span>)}
+      </span>
     </button>
     {expanded && <ul className="v2-tree-children">{node.children.map(asset => <AssetLeaf key={asset.id} node={asset} facilityId={node.id} selectedAssetId={selectedAssetId} handlers={handlers} />)}</ul>}
   </li>
