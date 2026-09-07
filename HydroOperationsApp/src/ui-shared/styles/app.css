@@ -150,6 +150,7 @@
   right: max(28px, calc((100% - 1500px) / 2 + 28px));
   z-index: 1;
   display: flex;
+  gap: 8px;
   align-items: center;
   transform: translateY(-50%);
 }
@@ -159,6 +160,15 @@
 }
 
 .v2-tab-view-actions .v2-view-toggle button {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.v2-tab-view-actions .v2-range-control {
+  padding: 3px;
+}
+
+.v2-tab-view-actions .v2-range-control button {
   padding-top: 6px;
   padding-bottom: 6px;
 }
@@ -566,10 +576,6 @@
   border-radius: 14px;
   background: var(--cp-surface);
   box-shadow: var(--cp-shadow-card);
-}
-
-.v2-telemetry-toolbar > .v2-range-control {
-  margin-left: auto;
 }
 
 .v2-filter-bar {
@@ -1929,8 +1935,6 @@ button.v2-signal-row:hover,
     position: static;
     max-height: 320px;
   }
-
-  .v2-telemetry-toolbar > .v2-range-control { margin-left: 0; }
 
   .v2-page-head { align-items: flex-start; flex-direction: column; }
   .v2-page-metrics strong { text-align: left; }

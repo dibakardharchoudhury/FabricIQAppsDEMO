@@ -25,7 +25,7 @@ const qualityTone = (reading?: TelemetryReading): Tone => {
 
 export function TelemetryPage() {
   const data = useHydroOperationsData()
-  const { mode, setMode } = useTelemetryExplorerMode()
+  const { mode } = useTelemetryExplorerMode()
   const { assetId: selectedAssetId, signalId: selectedSignalId, range } = data.telemetryExplorerSelection
 
   const asset = data.facilityEquipment.find(item => item.equipment_id === selectedAssetId) ?? data.facilityEquipment[0]
@@ -89,10 +89,6 @@ export function TelemetryPage() {
     {!treeMode && <FacilityContext />}
 
     <TelemetryToolbar
-      mode={mode}
-      onModeChange={setMode}
-      range={range}
-      onRangeChange={next => data.actions.updateTelemetryExplorerSelection({ range: next })}
       filters={!treeMode && !blocker ? <TelemetryFilterBar
         assets={data.facilityEquipment}
         assetId={asset?.equipment_id}
