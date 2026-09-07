@@ -29,6 +29,7 @@ services:
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
       - https://rusty-zeal-4211d47473-swedencentral.webapp.fabricapps.net
+      - https://right-forge-2c0b55c94f-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist

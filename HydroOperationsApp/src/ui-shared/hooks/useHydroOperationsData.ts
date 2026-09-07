@@ -496,6 +496,16 @@ function useHydroOperationsDataController() {
       return next
     })
   }, [facilityEquipment, selectedFacility])
+  const selectAsset = useCallback((facilityId: string, assetId: string) => {
+    if (!stid?.facilities.some(facility => facility.facility_id === facilityId)) return
+    if (!stid.equipment.some(asset => asset.facility_id === facilityId && asset.equipment_id === assetId)) return
+    setSelectedFacilityIdState(facilityId)
+    setSelectedAssetIds(current => {
+      const next = { ...current, [facilityId]: assetId }
+      writePersistedSetup({ selectedFacilityId: facilityId, selectedAssetIds: next })
+      return next
+    })
+  }, [stid])
   const facilityInstruments = useMemo(
     () => stid?.instruments.filter(item => !selectedFacility || item.facility_id === selectedFacility.facility_id) ?? [],
     [stid, selectedFacility],
@@ -690,6 +700,7 @@ function useHydroOperationsDataController() {
       startStream,
       connectStid,
       connectTelemetry,
+      selectAsset,
       updateTelemetryExplorerSelection,
       selectTelemetrySignal,
       addWorkOrder,

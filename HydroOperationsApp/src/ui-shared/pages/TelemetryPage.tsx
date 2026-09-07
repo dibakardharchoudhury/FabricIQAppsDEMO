@@ -11,8 +11,9 @@ import { TelemetryTree } from '../components/telemetry/TelemetryTree'
 import { SignalTablePanel } from '../components/telemetry/SignalTablePanel'
 import { buildTelemetryTree, pathToSignal } from '../components/telemetry/telemetryTreeModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
-import { useTelemetryExplorerMode, useTreeExpansion } from '../hooks/useTelemetryExplorerMode'
+import { useTelemetryExplorerMode } from '../hooks/useTelemetryExplorerMode'
 import { useTelemetryHistory } from '../hooks/useTelemetryHistory'
+import { useTreeExpansion } from '../hooks/useTreeExpansion'
 
 const issueQualities = new Set(['bad', 'uncertain'])
 
