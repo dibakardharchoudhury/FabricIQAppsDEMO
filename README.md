@@ -38,19 +38,18 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 | **RTI_005_entity_DataBinding_rti_structured** | Static Lakehouse data bindings + relationship contextualizations. | ✅ |
 | **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
-| **RTI_008_build_realtime_dashboard** | Real‑Time Dashboard over `OPCUAEvents`. | ✅ |
+| **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Operations Agent + `Pipe_SendEmailAlert` for Teams/email alerts. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On‑demand: seeds the app's SQL tables, creates + binds the STID GraphQL API, adds the SQL DB as a Data Agent source. Run by the app's **Seed & provision** button. | — |
-| **RTI_012_build_basic_telemetry_dashboard** | Basic hydro telemetry Real‑Time Dashboard (Station/Turbine filters + one chart per sensor group). Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
-| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, then runs NB02–06, 08–10, 12 in one Spark session. | Stage 2 |
+| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, then runs NB02–06, 08–10 in one Spark session. | Stage 2 |
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).
 
 > [!TIP]
 > Changing, adding or embedding a Real‑Time Dashboard? See [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
-> `RTI_012` and its `.ipynb` mirror are **generated** — edit `Raw/RTI_Notebooks/tools/build_rti_012.py`
+> `RTI_008` and its `.ipynb` mirror are **generated** — edit `Raw/RTI_Notebooks/tools/build_rti_008.py`
 > or the definition JSON, then re‑run the generator.
 
 ## Prerequisites (one‑time)

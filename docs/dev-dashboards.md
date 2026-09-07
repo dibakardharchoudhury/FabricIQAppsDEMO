@@ -12,9 +12,9 @@ For *why* the current dashboard is built the way it is, see
 | Path | What it is |
 | --- | --- |
 | `Raw/RTI_Notebooks/dashboards/*.json` | **Dashboard definitions — the source of truth** |
-| `Raw/RTI_Notebooks/tools/build_rti_012.py` | Generator: owns the notebook cell text, emits all three artifacts |
-| `Notebooks/RTI_012_….Notebook/` | The Fabric git item the provisioner actually deploys |
-| `Raw/RTI_Notebooks/RTI_012_….ipynb` | Readable mirror — **generated, do not hand-edit** |
+| `Raw/RTI_Notebooks/tools/build_rti_008.py` | Generator: owns the notebook cell text, emits all three artifacts |
+| `Notebooks/RTI_008_….Notebook/` | The Fabric git item the provisioner actually deploys |
+| `Raw/RTI_Notebooks/RTI_008_….ipynb` | Readable mirror — **generated, do not hand-edit** |
 | `Notebooks/RTI_Orchestrator_Setup.Notebook/` | Stage 2 DAG that runs the provisioning notebooks |
 
 > [!IMPORTANT]
@@ -31,14 +31,14 @@ The definition file round-trips, so do the visual work in Fabric rather than in 
 
 1. Open the dashboard in Fabric, switch to **Editing**, change what you want, **Save**.
 2. **Manage → Download file**.
-3. Overwrite `Raw/RTI_Notebooks/dashboards/RTI_Hydro_Telemetry_Basic.json` with the download.
+3. Overwrite `Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json` with the download.
 4. Refresh the embedded seed and both notebook copies:
 
    ```powershell
-   python Raw\RTI_Notebooks\tools\build_rti_012.py
+   python Raw\RTI_Notebooks\tools\build_rti_008.py
    ```
 
-5. Re-run `RTI_012_build_basic_telemetry_dashboard` (or the whole `Pipe_Setup`).
+5. Re-run `RTI_008_build_realtime_dashboard` (or the whole `Pipe_Setup`).
 
 The notebook overwrites `dataSources[*]` unconditionally, so a file downloaded from *any* workspace
 redeploys correctly into the current one — cluster URI, database id, workspace id and name are all
@@ -47,8 +47,14 @@ replaced from live settings. That is what makes the definition portable across t
 Run `--check` before opening a PR; it exits non-zero when the generated files are stale:
 
 ```powershell
-python Raw\RTI_Notebooks\tools\build_rti_012.py --check
+python Raw\RTI_Notebooks\tools\build_rti_008.py --check
 ```
+
+> [!IMPORTANT]
+> **The Lakehouse copy wins.** A workspace that ran an earlier version still has the old JSON at
+> `Files/dashboards/<dashboard name>.json`, and the notebook prefers it over the embedded seed — so a
+> change to the definition's *shape* silently doesn't land. When upgrading, either delete that file or
+> set `FORCE_SEED = True` in CELL 0 for one run. CELL 7 rewrites the file afterwards, so it self-heals.
 
 ## Recipe B — add a new dashboard
 
@@ -56,7 +62,7 @@ python Raw\RTI_Notebooks\tools\build_rti_012.py --check
    `Raw/RTI_Notebooks/dashboards/`. Replace the concrete data-source values with the placeholder
    tokens `__CLUSTER_QUERY_URI__`, `__KQL_DB_ID__`, `__KQL_DB_NAME__`, `__WORKSPACE_ID__` so the
    checked-in file is tenant-neutral.
-2. Copy `build_rti_012.py` to a new generator, change `DASHBOARD_NAME`, `NOTEBOOK_NAME` and
+2. Copy `build_rti_008.py` to a new generator, change `DEFINITION_NAME`, `NOTEBOOK_NAME` and
    **generate a fresh `LOGICAL_ID`** (a duplicate collides on Git sync).
 3. Generate, then add the notebook to the Stage 2 DAG in
    [RTI_Orchestrator_Setup](../Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py) —
@@ -126,8 +132,30 @@ medallion run, with no dashboard edit.
 
 ---
 
-## RTD schema 77 cheat sheet
+## Pages and the embed
 
+`pages` is an **ordered** array and an embedded dashboard always opens the first entry. The embed
+SDK has no page selector — `KQLDashboardSettings` exposes only `viewMode`, with `panes` and `bars`
+typed `never` — so there is no way to deep-link page 2.
+
+That is why `Hydro Telemetry` is page 1 in
+[RTI_Demo_OPCUA_TelemetryStats.json](../Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json):
+the app's **RT Dashboard** view embeds this item, and page order is the only lever over what it
+shows. Reordering the array changes what the app displays — treat it as an app-facing change.
+
+Scope parameters to the pages that use them, or their pills clutter every page:
+
+```jsonc
+"showOnPages": { "kind": "selection", "pageIds": ["<page-id>"] }
+```
+
+`Station` and `Turbine` are scoped to the hydro page; `Time range` stays `{ "kind": "all" }` because
+both pages filter on `_startTime` / `_endTime`. Two parameters must never declare the same variable
+name — when merging definitions, drop the duplicate and let the surviving one feed both pages.
+
+---
+
+## RTD schema 77 cheat sheet
 Authoritative schemas (fetch them, don't guess):
 `https://dataexplorer.azure.com/static/d/schema/77/{dashboard,tile,query,parameter,baseQuery,dataSource}.json`
 
@@ -180,7 +208,7 @@ so a casing change doesn't silently blank a chart.
 
 ## Validate before you deploy
 
-A dashboard that deploys is not a dashboard that renders. `RTI_012` executes **every** query with the
+A dashboard that deploys is not a dashboard that renders. `RTI_008` executes **every** query with the
 parameters bound and aborts the deploy on any failure — keep that step in any new provisioning
 notebook:
 
@@ -227,7 +255,7 @@ hand in the Entra portal — see the repo Copilot instructions. `Item.Read.All` 
 `FABRIC_SCOPES`.
 
 **3. Discover the dashboard id** rather than hard-coding it. `discoverConfig()` already enumerates
-workspace items, so this is one more filter; `rti_demo_settings.basic_dashboard_id` is the fallback.
+workspace items, so this is one more filter; `rti_demo_settings.dashboard_id` is the fallback.
 
 **4. Render it.** `silentToken` / `popupToken` are module-private in `fabric.ts`, so export a small
 token provider next to them rather than reaching into MSAL again:
@@ -290,6 +318,8 @@ so the preview SDK can't take the demo down.
 
 | Symptom | Cause |
 | --- | --- |
+| Definition change doesn't appear after a re-run | Stale `Files/dashboards/<name>.json` in the Lakehouse wins over the seed — delete it or use `FORCE_SEED` |
+| Embed shows the wrong page | `pages[0]` is not the page you expected; the SDK can't deep-link |
 | Deploy succeeds, tile is blank | `visualOptions` column name doesn't match a query result column |
 | Filter dropdown empty | Parameter query returned no rows, or `columns.value` names a missing column |
 | Everything empty when a filter is on "all" | Missing `or isempty(_param)` guard |

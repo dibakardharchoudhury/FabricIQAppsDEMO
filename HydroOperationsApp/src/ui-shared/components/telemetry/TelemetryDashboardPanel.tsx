@@ -79,7 +79,7 @@ export function TelemetryDashboardPanel() {
   if (state.kind === 'missing') {
     return <TelemetryEmptyPanel
       title="No Real-Time Dashboard in this workspace"
-      text="Run RTI_012_build_basic_telemetry_dashboard (or the whole Pipe_Setup) to provision it, then reload."
+      text="Run RTI_008_build_realtime_dashboard (or the whole Pipe_Setup) to provision it, then reload."
     />
   }
 

@@ -47,7 +47,7 @@ Verified live: 90 nodes → 3 stations, 15 turbines, 5 sensor groups (`power`, `
 
 ## Phase 2 — Dashboard definition as a file (done)
 
-**File:** [Raw/RTI_Notebooks/dashboards/RTI_Hydro_Telemetry_Basic.json](../Raw/RTI_Notebooks/dashboards/RTI_Hydro_Telemetry_Basic.json)
+**File:** [Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json](../Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json)
 (schema_version 77, `RTDashboard_Regular`).
 
 The file — not notebook code — is the source of truth. RTI_008 embeds its definition in a Python
@@ -88,18 +88,21 @@ downloaded from *any* workspace redeploys correctly into the current one.
 
 ## Phase 3 — Provisioning notebook, wired into the provisioner (done)
 
-**Generated from one source.** [Raw/RTI_Notebooks/tools/build_rti_012.py](../Raw/RTI_Notebooks/tools/build_rti_012.py)
+`RTI_008` owns the dashboard end to end. There is no separate notebook or item — the hydro page
+was folded into the existing `RTI_Demo_OPCUA_TelemetryStats_V6` as its **first** page.
+
+**Generated from one source.** [Raw/RTI_Notebooks/tools/build_rti_008.py](../Raw/RTI_Notebooks/tools/build_rti_008.py)
 holds the cell text and emits all three artifacts:
 
 | Output | Role |
 | --- | --- |
-| `Raw/RTI_Notebooks/RTI_012_build_basic_telemetry_dashboard.ipynb` | readable copy |
-| `Notebooks/RTI_012_build_basic_telemetry_dashboard.Notebook/notebook-content.py` | the Fabric git item the provisioner actually deploys |
-| `…/.platform` | item manifest (`logicalId` `6d2f0f1a-…`) |
+| `Raw/RTI_Notebooks/RTI_008_build_realtime_dashboard.ipynb` | readable copy |
+| `Notebooks/RTI_008_build_realtime_dashboard.Notebook/notebook-content.py` | the Fabric git item the provisioner actually deploys |
+| `…/.platform` | item manifest (`logicalId` `63e9621d-…`, unchanged so git sync updates rather than collides) |
 
 ```powershell
-python Raw\RTI_Notebooks\tools\build_rti_012.py           # regenerate
-python Raw\RTI_Notebooks\tools\build_rti_012.py --check   # non-zero if stale
+python Raw\RTI_Notebooks\tools\build_rti_008.py           # regenerate
+python Raw\RTI_Notebooks\tools\build_rti_008.py --check   # non-zero if stale
 ```
 
 Run `--check` before opening a PR — the dashboard JSON is embedded in the notebook as a seed, and
@@ -114,7 +117,7 @@ this is what stops the two copies drifting.
 | 2 | Creates the shortcuts + functions from phase 1 |
 | 3 | **Generated** embedded seed of the definition |
 | 4 | Loads the definition: Lakehouse `Files/dashboards/` → `DASHBOARD_SOURCE_URL` → embedded seed |
-| 5 | Re-points the data source, then **executes all 12 queries and aborts the deploy if any fail** |
+| 5 | Re-points the data source, then **executes all 20 queries and aborts the deploy if any fail** |
 | 6 | Creates or `updateDefinition`s the `KQLDashboard` item |
 | 7 | Writes the resolved copy back to `Files/dashboards/`, records ids in `rti_demo_settings` |
 
@@ -123,15 +126,16 @@ so a fresh tenant provisions with no external network access. The **file always 
 which preserves the redesign loop.
 
 **Provisioner wiring.** `Raw/workspace-reset/` deploys items only through Fabric Git integration, so
-the `Notebooks/…​.Notebook/` folder above is what ships. Execution is hooked into the Stage 2 DAG in
-[RTI_Orchestrator_Setup](../Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py):
+the `Notebooks/…​.Notebook/` folder above is what ships. Execution is the existing Stage 2 DAG entry in
+[RTI_Orchestrator_Setup](../Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py), with one
+dependency added:
 
 ```python
-{"name": "NB12_basicdash", "path": "RTI_012_build_basic_telemetry_dashboard",
+{"name": "NB08_dashboard", "path": "RTI_008_build_realtime_dashboard",
  "dependencies": ["NB02_eventhouse", "NB03_medallion"], ...}
 ```
 
-It depends on **NB03 as well as NB02** — the shortcuts read `silver_instruments` /
+It now depends on **NB03 as well as NB02** — the shortcuts read `silver_instruments` /
 `silver_equipment` / `silver_facilities`, so the medallion tables must exist first.
 
 End-to-end chain:
@@ -139,20 +143,20 @@ End-to-end chain:
 ```
 launch.py → sync_workspace_from_git.py → run_pipeline.py (01_Pipe_Setup)
   → RTI_001 → RTI_Orchestrator_Setup
-                └─ runMultiple: NB02, NB03, NB04, NB05, NB06, NB08, NB09, NB10, NB12
+                └─ runMultiple: NB02, NB03, NB04, NB05, NB06, NB08, NB09, NB10
 ```
 
 **Redesign loop:**
 1. Edit the dashboard in Fabric.
 2. `Manage → Download file`.
-3. Drop the JSON into the Lakehouse at `Files/dashboards/RTI_Hydro_Telemetry_Basic.json` and commit
-   it to `Raw/RTI_Notebooks/dashboards/`.
-4. `python Raw\RTI_Notebooks\tools\build_rti_012.py` to refresh the seed, then re-run RTI_012.
+3. Drop the JSON into the Lakehouse at `Files/dashboards/RTI_Demo_OPCUA_TelemetryStats_V6.json` and
+   commit it to `Raw/RTI_Notebooks/dashboards/RTI_Demo_OPCUA_TelemetryStats.json`.
+4. `python Raw\RTI_Notebooks\tools\build_rti_008.py` to refresh the seed, then re-run RTI_008.
 
 **Verified this session** in workspace `hkton2026`:
 
-- Dashboard `RTI_Hydro_Telemetry_Basic` = `0b7f7c49-85ea-4998-a597-500373a78f25`; read-back confirms
-  10 tiles, 12 queries, 3 parameters, data source on `RTI_Demo_Eventhouse_V6`.
+- Dashboard `RTI_Demo_OPCUA_TelemetryStats_V6` = `6168b506-419e-4ec2-a5e8-fc8eb5bc0f97`; read-back
+  confirms 2 pages, 18 tiles, 20 queries, 3 parameters, data source on `RTI_Demo_Eventhouse_V6`.
 - The git-format artifact (`notebook-content.py`, `dependencies: {}`) was pushed and run **standalone
   with no default lakehouse and with the Lakehouse definition copy deleted** — it fell back to REST
   discovery, resolved the right lakehouse by name, bootstrapped from the embedded seed, redeployed the
@@ -175,7 +179,7 @@ Planned work:
    (not the portal). `Item.Read.All` is already requested in
    [HydroOperationsApp/src/services/fabric.ts](../HydroOperationsApp/src/services/fabric.ts).
 3. Extend `discoverConfig()` to pick up the `KQLDashboard` item id — it already enumerates workspace
-   items, so this is one more filter. `rti_demo_settings.basic_dashboard_id` is the fallback.
+   items, so this is one more filter. `rti_demo_settings.dashboard_id` is the fallback.
 4. Render `EmbedManager` + `KQLDashboardEmbedClient` (`viewMode: View`, `accessTokenProvider` wired
    to the existing `silentToken` / `popupToken` pair) behind the existing
    [TelemetryViewToggle](../HydroOperationsApp/src/ui-shared/components/telemetry/TelemetryViewToggle.tsx).
@@ -194,5 +198,5 @@ preview SDK contract shifts.
 - Dashboard tiles consume capacity. Auto-refresh is set to 1 min with a 30 s floor; lower it before a
   long demo on the F2.
 - `external_table()` re-reads the Delta log on every query. Fine for 90 rows; if tile latency becomes
-  visible, materialise `AssetMaster()` into a real Kusto table with `.set-or-replace` in RTI_012 and
+  visible, materialise `AssetMaster()` into a real Kusto table with `.set-or-replace` in RTI_008 and
   point the function at it.
