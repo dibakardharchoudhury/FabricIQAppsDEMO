@@ -33,7 +33,8 @@
 // pre-granted here too (served by the Power BI Service resource behind
 // api.fabric.microsoft.com): Workspace.Read.All (List Items), Item.Read.All
 // (Get Eventhouse -> queryServiceUri, required for telemetry), Item.Execute.All
-// (run pipelines/notebooks). Item.Read.All is essential: without it Get Eventhouse
+// (run pipelines/notebooks), Fabric.Embed (embed the Real-Time Dashboard).
+// Item.Read.All is essential: without it Get Eventhouse
 // returns 403 InsufficientScopes and the app reports "No Eventhouse found".
 //
 // WHY THIS EXISTS:
@@ -93,7 +94,8 @@ const REQUIRED_DELEGATED = [
     resourceAppId: '00000009-0000-0000-c000-000000000000',
     // GraphQLApi.Execute.All = STID GraphQL query. Workspace.Read.All = List Items.
     // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
-    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All'],
+    // Fabric.Embed = render the Real-Time Dashboard in the RT Dashboard telemetry view.
+    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'Fabric.Embed'],
   },
 ]
 

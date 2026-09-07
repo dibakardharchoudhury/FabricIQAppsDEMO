@@ -19,7 +19,7 @@ function TelemetryActions() {
   const { range } = data.telemetryExplorerSelection
   return <>
     <TelemetryViewToggle mode={mode} onModeChange={setMode} />
-    <TelemetryRangeControl range={range} onRangeChange={next => data.actions.updateTelemetryExplorerSelection({ range: next })} />
+    {mode !== 'dashboard' && <TelemetryRangeControl range={range} onRangeChange={next => data.actions.updateTelemetryExplorerSelection({ range: next })} />}
   </>
 }
 

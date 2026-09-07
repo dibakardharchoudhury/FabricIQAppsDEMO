@@ -3,7 +3,7 @@
   "metadata": {
     "type": "Notebook",
     "displayName": "RTI_008_build_realtime_dashboard",
-    "description": "New notebook"
+    "description": "Builds and deploys the two-page Real-Time Dashboard from a definition file."
   },
   "config": {
     "version": "2.0",

@@ -38,7 +38,7 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 | **RTI_005_entity_DataBinding_rti_structured** | Static Lakehouse data bindings + relationship contextualizations. | ✅ |
 | **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
-| **RTI_008_build_realtime_dashboard** | Real‑Time Dashboard over `OPCUAEvents`. | ✅ |
+| **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Operations Agent + `Pipe_SendEmailAlert` for Teams/email alerts. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On‑demand: seeds the app's SQL tables, creates + binds the STID GraphQL API, adds the SQL DB as a Data Agent source. Run by the app's **Seed & provision** button. | — |
@@ -46,6 +46,11 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).
+
+> [!TIP]
+> Changing, adding or embedding a Real‑Time Dashboard? See [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
+> `RTI_008` and its `.ipynb` mirror are **generated** — edit `Raw/RTI_Notebooks/tools/build_rti_008.py`
+> or the definition JSON, then re‑run the generator.
 
 ## Prerequisites (one‑time)
 
@@ -135,6 +140,7 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 - **Sensors/signals:** edit the STID source CSVs, re‑run `Pipe_Setup` (rebuilds silver + ontology), then `Pipe_Stream`.
 - **Telemetry values:** edit the simulator in `RTI_007` (ranges, quality, drift/spikes).
 - **Signal schema:** keep `RTI_004` (ontology properties) ↔ `RTI_002` (`OPCUAEvents`) ↔ `RTI_007` (payload) ↔ `RTI_006` (binding) aligned.
+- **Dashboards:** edit in the Fabric UI, download the JSON over `Raw/RTI_Notebooks/dashboards/`, re‑run the generator — [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
 - **New environment:** change `env_suffix` and re‑run `Pipe_Setup`.
 
 ## Notes
