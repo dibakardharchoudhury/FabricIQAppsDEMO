@@ -3,6 +3,7 @@ import test from 'node:test'
 import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, createStreamState, splitSseEvents } from '../src/services/copilot/chatStream.ts'
 import { defaultCopilotSettings, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
+import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
 
 test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)
@@ -88,8 +89,30 @@ test('settings default everything on and preserve stored opt-outs', () => {
   assert.deepEqual(mergeCopilotSettings(null), defaults)
 })
 
+test('prefers the declared options marker over the prose heuristic', () => {
+  const answer = 'Here are the results.\n\nNext steps:\n- Guessed from prose\n\n<!--options: ["Show open work orders", "Chart power for T009"]-->'
+  assert.deepEqual(extractSuggestions(answer), ['Show open work orders', 'Chart power for T009'])
+  assert.equal(stripOptionsMarker(answer).includes('options:'), false)
+})
+
+test('falls back to the prose list when no marker is present', () => {
+  const answer = 'No model found.\n\nNext steps (pick one):\n- Pull recent telemetry for power_output\n- **Search** for work orders on T009\n\nAnything else?'
+  assert.deepEqual(extractSuggestions(answer), ['Pull recent telemetry for power_output', 'Search for work orders on T009'])
+})
+
+test('ignores data lists that no cue introduced, and malformed markers', () => {
+  assert.deepEqual(extractSuggestions('Results:\n\n- 12\n- 14'), [])
+  assert.deepEqual(extractSuggestions('Done.\n<!--options: not json-->'), [])
+})
+
+test('caps options at five', () => {
+  const many = JSON.stringify(['one two', 'three four', 'five six', 'seven eight', 'nine ten', 'eleven twelve'])
+  assert.equal(extractSuggestions(`Done.\n<!--options: ${many}-->`).length, 5)
+})
+
 test('splits SSE events and keeps the incomplete tail', () => {
   const { events, rest } = splitSseEvents('data: {"a":1}\n\ndata: [DONE]\n\ndata: {"b"')
   assert.deepEqual(events, ['{"a":1}'])
   assert.equal(rest, 'data: {"b"')
 })
+

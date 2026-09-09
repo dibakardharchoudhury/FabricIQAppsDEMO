@@ -14,6 +14,8 @@ export type AgentStep = {
   summary: string
   query?: string
   args?: string
+  // Kept for the chat's Copy action; already capped by truncateForModel.
+  result?: string
   elapsedMs: number
   error?: string
 }
@@ -140,9 +142,10 @@ export async function askFoundryCopilot(
         const outcome = await runTool(call.name, args)
         if (outcome.visualization) visualizations.push(outcome.visualization)
         if (outcome.model3d) models.push(outcome.model3d)
-        Object.assign(step, { status: 'done', summary: summarize(outcome), query: outcome.query, elapsedMs: Date.now() - startedAt })
+        const payload = JSON.stringify(outcome.result)
+        Object.assign(step, { status: 'done', summary: summarize(outcome), query: outcome.query, result: payload, elapsedMs: Date.now() - startedAt })
         publish()
-        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(outcome.result) })
+        messages.push({ role: 'tool', tool_call_id: call.id, content: payload })
       } catch (error) {
         // Feed the failure back so the model can correct itself instead of aborting the turn.
         const message = error instanceof Error ? error.message : 'The tool call failed.'

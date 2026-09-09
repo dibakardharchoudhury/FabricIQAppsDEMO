@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Bot, Box, Download, ExternalLink, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
+import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
+import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
@@ -57,6 +58,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
   const [question, setQuestion] = useState('')
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   // Follow new content only while the user is already at the bottom; scrolling up opts out.
   const stickToBottom = useRef(true)
 
@@ -75,6 +77,11 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
     setQuestion('')
     stickToBottom.current = true
     onSend(value)
+  }
+
+  const compose = (value: string) => {
+    setQuestion(value)
+    textareaRef.current?.focus()
   }
 
   return <div className="v2-domain-page v2-copilot-page">
@@ -100,14 +107,25 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
             {message.role === 'agent'
               ? <AgentMessage message={message} streaming={busy && last} />
               : <p>{message.text}</p>}
-            {message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}
+            {message.meta && <MessageFooter message={message} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />}
+            {message.role === 'agent' && last && !busy && <SuggestionChips text={message.text} onCompose={compose} onSend={send} />}
           </div>
         })}
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
-      <footer><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
+      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
+}
+
+function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose: (value: string) => void; onSend: (value: string) => void }) {
+  const suggestions = useMemo(() => extractSuggestions(text), [text])
+  if (!suggestions.length) return null
+  return <div className="v2-suggest-chips">{suggestions.map(suggestion => <span className="v2-suggest-chip" key={suggestion} title={suggestion}>
+    <em>{suggestionLabel(suggestion)}</em>
+    <button type="button" title="Put in the message box" aria-label={`Edit before sending: ${suggestion}`} onClick={() => onCompose(suggestion)}><SquarePen size={11} /></button>
+    <button type="button" title="Send now" aria-label={`Send: ${suggestion}`} onClick={() => onSend(suggestion)}><Send size={11} /></button>
+  </span>)}</div>
 }
 
 function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
@@ -122,7 +140,7 @@ function AgentMessage({ message, streaming }: { message: CopilotMessage; streami
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}
+    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripOptionsMarker(message.text)}</ReactMarkdown>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
@@ -148,6 +166,54 @@ function AgentModel({ model }: { model: Asset3DModelRecord }) {
 
 function prettyJson(raw: string): string {
   try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+}
+
+/** The whole exchange as markdown: question, every tool call with its result, then the answer. */
+function buildTranscript(question: string | undefined, message: CopilotMessage): string {
+  const block = (language: string, body: string) => `\`\`\`${language}\n${body}\n\`\`\``
+  const parts: string[] = []
+  if (question) parts.push(`## Question\n\n${question}`)
+  for (const step of message.steps ?? []) {
+    const lines = [`### Tool: ${step.tool}${step.detail ? ` — ${step.detail}` : ''}`]
+    lines.push(`${step.error ? `failed: ${step.error}` : step.summary} · ${formatDuration(step.elapsedMs)}`)
+    if (step.args) lines.push(`Arguments:\n\n${block('json', prettyJson(step.args))}`)
+    if (step.query) lines.push(`Query:\n\n${block('kusto', step.query)}`)
+    if (step.result) lines.push(`Result:\n\n${block('json', prettyJson(step.result))}`)
+    parts.push(lines.join('\n\n'))
+  }
+  if (message.text) parts.push(`## Answer\n\n${stripOptionsMarker(message.text)}`)
+  for (const visualization of message.visualizations ?? []) {
+    parts.push(`### Chart: ${visualization.title} (${visualization.chartType})\n\n${block('csv', visualization.inlineCsvData)}`)
+  }
+  for (const model of message.models ?? []) {
+    parts.push(`### 3D model: ${model.modelName}\n\n${model.equipmentId} · ${model.format}\n${model.modelUrl}`)
+  }
+  if (message.meta) {
+    parts.push(`---\n\n${formatDuration(message.meta.elapsedMs)}${message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}`)
+  }
+  return parts.join('\n\n')
+}
+
+function MessageFooter({ message, question }: { message: CopilotMessage; question?: string }) {
+  const [copied, setCopied] = useState(false)
+  const meta = message.meta
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildTranscript(question, message))
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch (error) {
+      console.warn('Clipboard write was blocked.', error)
+    }
+  }
+
+  return <div className="v2-message-footer">
+    <small>{meta ? `${formatDuration(meta.elapsedMs)}${meta.tokens ? ` · ${meta.tokens.toLocaleString()} tokens` : ''}` : ''}</small>
+    <button type="button" className="v2-copy-answer" title="Copy the question, tool calls and answer" onClick={() => void copy()}>
+      {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? 'Copied' : 'Copy'}
+    </button>
+  </div>
 }
 
 function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
