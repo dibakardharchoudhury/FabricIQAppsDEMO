@@ -108,7 +108,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'run_kql',
-      description: 'Run a read-only KQL query against the Eventhouse when the templated tools cannot express the question. The query must start with OPCUAEvents, AssetMaster or TelemetryEnriched.',
+      description: 'Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. Semicolons, let statements and multiple statements are rejected. The query must start with OPCUAEvents, AssetMaster or TelemetryEnriched.',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string', description: 'A single read-only KQL statement.' } },
@@ -209,7 +209,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
           ...tool,
           function: {
             ...tool.function,
-            description: `Run a read-only KQL query against the Eventhouse when the templated tools cannot express the question. The query must start with ${enabledKustoNames(settings).join(', ')}.`,
+            description: `Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. Semicolons, let statements and multiple statements are rejected. The query must start with ${enabledKustoNames(settings).join(', ')}.`,
           },
         }
       }

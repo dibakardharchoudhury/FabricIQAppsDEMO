@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, createStreamState, splitSseEvents } from '../src/services/copilot/chatStream.ts'
-import { defaultCopilotSettings, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
+import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
 
 test('rejects KQL control commands and cross-cluster access', () => {
@@ -87,6 +87,11 @@ test('settings default everything on and preserve stored opt-outs', () => {
   assert.equal(merged.tools.query_assets, true)
   assert.equal(merged.promptExtra, 'be terse')
   assert.deepEqual(mergeCopilotSettings(null), defaults)
+})
+
+test('prompt tells the model to stop when it has enough data', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /As soon as the returned data answers the question, stop calling tools/)
+  assert.doesNotMatch(DEFAULT_SYSTEM_PROMPT, /files\.- When/)
 })
 
 test('prefers the declared options marker over the prose heuristic', () => {

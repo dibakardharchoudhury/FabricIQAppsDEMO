@@ -21,7 +21,7 @@ export type AgentStep = {
 }
 export type FoundryAnswer = AgentAnswer & { steps?: AgentStep[]; models?: Asset3DModelRecord[] }
 
-const MAX_ITERATIONS = 6
+const MAX_TOOL_ROUNDS = 6
 const MAX_HISTORY_MESSAGES = 8
 
 /** Endpoint and deployment come from Administration, seeded from rayfin/.env, so they can be
@@ -96,7 +96,7 @@ export async function askFoundryCopilot(
   let usage: FoundryAnswer['usage']
   const publish = () => onSteps?.(steps.map(step => ({ ...step })))
 
-  for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+  for (let iteration = 0; iteration < MAX_TOOL_ROUNDS; iteration++) {
     const state = await streamCompletion(settings, token, messages, tools, onProgress)
     if (state.usage) {
       usage = usage
@@ -156,8 +156,19 @@ export async function askFoundryCopilot(
     }
   }
 
+  // A tool result on the final round still needs one tool-free completion so the model can
+  // synthesize it instead of returning an iteration-limit error.
+  const finalState = await streamCompletion(settings, token, messages, [], onProgress)
+  if (finalState.usage) {
+    usage = usage
+      ? { prompt: usage.prompt + finalState.usage.prompt, completion: usage.completion + finalState.usage.completion, total: usage.total + finalState.usage.total }
+      : finalState.usage
+  }
+  const text = finalState.content.trim() || 'The copilot returned no answer after completing its data queries.'
+  const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
+  history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
   return {
-    text: 'The copilot stopped after too many tool calls without reaching an answer. Try narrowing the question.',
+    text,
     usage,
     visualizations: visualizations.length ? visualizations : undefined,
     models: models.length ? models : undefined,
