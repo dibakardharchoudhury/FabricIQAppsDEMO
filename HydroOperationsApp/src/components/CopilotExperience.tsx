@@ -106,15 +106,22 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
 
 function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
   const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length)
-  if (!hasBody && !message.steps?.length) return <CopilotThinking />
+  const steps = message.steps ?? []
+  if (!hasBody && !steps.length) return <CopilotThinking />
+  // A running tool already shows its own progress, so only flag the gap where the model itself
+  // is working and nothing is being echoed yet.
+  const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   return <>
     <CopilotSteps steps={message.steps} />
+    {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
+      <span className="v2-spinner" aria-hidden="true" />AI processing…
+    </p>}
     {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
     {message.visualizations?.map((visualization, index) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${index}`} />)}
-    {streaming && <CopilotStreamCursor />}
+    {streaming && message.text && <CopilotStreamCursor />}
   </>
 }
 
