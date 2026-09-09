@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Bot, Download, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -50,10 +50,24 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
 export function CopilotExperience({ messages, busy, engine, foundryAvailable, onSend, onReset, onEngineChange }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
   const prompts = useMemo(() => PROMPTS[engine], [engine])
+  const listRef = useRef<HTMLDivElement>(null)
+  // Follow new content only while the user is already at the bottom; scrolling up opts out.
+  const stickToBottom = useRef(true)
+
+  const onScroll = () => {
+    const list = listRef.current
+    if (list) stickToBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48
+  }
+
+  useEffect(() => {
+    const list = listRef.current
+    if (list && stickToBottom.current) list.scrollTop = list.scrollHeight
+  }, [messages])
 
   const send = (value = question) => {
     if (!value.trim() || busy) return
     setQuestion('')
+    stickToBottom.current = true
     onSend(value)
   }
 
@@ -73,22 +87,57 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
         </span>}
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
       </span></header>
-      <div className="v2-messages">{messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && index === messages.length - 1}>{message.role === 'agent' ? message.text || message.artifacts?.length || message.visualizations?.length ? <>{message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}{message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} /> : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}{message.visualizations?.map((visualization, visualizationIndex) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${visualizationIndex}`} />)}<CopilotSteps steps={message.steps} />{busy && index === messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
+      <div className="v2-messages" ref={listRef} onScroll={onScroll}>
+        {messages.map((message, index) => {
+          const last = index === messages.length - 1
+          return <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && last}>
+            {message.role === 'agent'
+              ? <AgentMessage message={message} streaming={busy && last} />
+              : <p>{message.text}</p>}
+            {message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}
+          </div>
+        })}
+        {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
+      </div>
       <footer><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
 }
 
+function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
+  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length)
+  if (!hasBody && !message.steps?.length) return <CopilotThinking />
+  return <>
+    <CopilotSteps steps={message.steps} />
+    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}
+    {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
+      ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
+      : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
+    {message.visualizations?.map((visualization, index) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${index}`} />)}
+    {streaming && <CopilotStreamCursor />}
+  </>
+}
+
+function prettyJson(raw: string): string {
+  try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+}
+
 function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
   if (!steps?.length) return null
-  return <details className="v2-agent-steps">
-    <summary><Wrench size={13} />{steps.length} data {steps.length === 1 ? 'query' : 'queries'}</summary>
-    <ol>{steps.map((step, index) => <li key={index}>
+  return <div className="v2-agent-steps">{steps.map((step, index) => <details className={`v2-agent-step ${step.status}`} key={index}>
+    <summary>
+      <Wrench size={12} />
       <code>{step.tool}</code>
-      <span>{step.error ?? step.summary} · {formatDuration(step.elapsedMs)}</span>
+      {step.detail && <em>{step.detail}</em>}
+      <span>{step.status === 'running' ? 'running…' : `${step.error ? 'failed' : step.summary} · ${formatDuration(step.elapsedMs)}`}</span>
+    </summary>
+    <div className="v2-agent-step-body">
+      {step.error && <p className="v2-agent-step-error">{step.error}</p>}
+      {step.args && <pre>{prettyJson(step.args)}</pre>}
       {step.query && <pre>{step.query}</pre>}
-    </li>)}</ol>
-  </details>
+      {!step.error && !step.args && !step.query && <p>No arguments.</p>}
+    </div>
+  </details>)}</div>
 }
 
 function formatDuration(ms: number) { return ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` }

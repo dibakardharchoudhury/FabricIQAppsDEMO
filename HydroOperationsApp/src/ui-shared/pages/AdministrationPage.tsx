@@ -1,4 +1,5 @@
 import { AdministrationExperience, type AdministrationStep } from '../../components/AdministrationExperience'
+import { CopilotSettingsPanel } from '../../components/CopilotSettingsPanel'
 import { fmtElapsed, useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 export function AdministrationPage() {
@@ -55,5 +56,6 @@ export function AdministrationPage() {
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
     {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
     <AdministrationExperience steps={steps} />
+    <CopilotSettingsPanel />
   </>
 }

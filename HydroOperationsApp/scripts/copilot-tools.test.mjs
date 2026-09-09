@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, createStreamState, splitSseEvents } from '../src/services/copilot/chatStream.ts'
+import { defaultCopilotSettings, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 
 test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)
@@ -65,6 +66,26 @@ test('merges streamed tool call fragments by index', () => {
   assert.equal(state.content, 'Hello')
   assert.equal(state.finishReason, 'tool_calls')
   assert.equal(state.usage?.total, 15)
+})
+
+test('honours a narrowed source allow-list from Administration', () => {
+  assert.throws(() => validateKql('OPCUAEvents | take 5', ['AssetMaster']), /must start with one of AssetMaster/)
+  assert.throws(() => validateKql('OPCUAEvents | take 5', []), /no Kusto sources are enabled/)
+  assert.doesNotThrow(() => validateKql('AssetMaster() | take 5', ['AssetMaster']))
+})
+
+test('settings default everything on and preserve stored opt-outs', () => {
+  const defaults = defaultCopilotSettings()
+  assert.equal(defaults.tools.run_kql, true)
+  assert.equal(defaults.entities.work_orders, true)
+  assert.equal(defaults.kustoSources.OPCUAEvents, true)
+
+  // A key added after the settings were stored must default to enabled, not undefined.
+  const merged = mergeCopilotSettings({ tools: { run_kql: false }, promptExtra: 'be terse' })
+  assert.equal(merged.tools.run_kql, false)
+  assert.equal(merged.tools.query_assets, true)
+  assert.equal(merged.promptExtra, 'be terse')
+  assert.deepEqual(mergeCopilotSettings(null), defaults)
 })
 
 test('splits SSE events and keeps the incomplete tail', () => {

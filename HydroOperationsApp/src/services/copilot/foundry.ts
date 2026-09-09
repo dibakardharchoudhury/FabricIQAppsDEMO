@@ -2,9 +2,20 @@ import type { AgentAnswer, AgentVisualization } from '../assistantStream.ts'
 import { foundryToken } from '../fabric.ts'
 import { catalogPrompt } from './catalog.ts'
 import { readChatStream } from './chatStream.ts'
-import { createToolRuntime, TOOL_DEFINITIONS } from './tools.ts'
+import { loadCopilotSettings } from './settings.ts'
+import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 
-export type AgentStep = { tool: string; summary: string; query?: string; elapsedMs: number; error?: string }
+export type AgentStepStatus = 'running' | 'done' | 'error'
+export type AgentStep = {
+  tool: string
+  status: AgentStepStatus
+  detail: string
+  summary: string
+  query?: string
+  args?: string
+  elapsedMs: number
+  error?: string
+}
 export type FoundryAnswer = AgentAnswer & { steps?: AgentStep[] }
 
 const endpoint = (import.meta.env.VITE_RAYFIN_FOUNDRY_ENDPOINT as string | undefined)?.replace(/\/$/, '')
@@ -29,8 +40,8 @@ export function resetFoundryConversation() {
   history = []
 }
 
-function systemPrompt(): string {
-  return `You are the Hydro Operations Copilot for a Microsoft Fabric hydro power demo. You answer questions about hydro facilities, turbines, sensors, live telemetry and maintenance work.
+function systemPrompt(catalog: string, extra: string): string {
+  const base = `You are the Hydro Operations Copilot for a Microsoft Fabric hydro power demo. You answer questions about hydro facilities, turbines, sensors, live telemetry and maintenance work.
 
 Rules:
 - Answer only from data returned by the tools. Never invent identifiers, readings or counts. If a tool returns no rows, say so.
@@ -44,21 +55,21 @@ Rules:
 The current time is ${new Date().toISOString()}.
 
 Available data:
-${catalogPrompt()}`
+${catalog}`
+  return extra.trim() ? `${base}\n\nAdditional operator instructions:\n${extra.trim()}` : base
 }
 
 function summarize(outcome: { rowCount?: number }): string {
   return outcome.rowCount === undefined ? 'done' : `${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}`
 }
 
-async function streamCompletion(token: string, messages: ChatMessage[], onText?: (text: string) => void) {
+async function streamCompletion(token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
   const response = await fetch(`${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messages,
-      tools: TOOL_DEFINITIONS,
-      tool_choice: 'auto',
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
       // No `temperature`: the gpt-5 family rejects any value but the default.
       stream: true,
       stream_options: { include_usage: true },
@@ -74,21 +85,32 @@ async function streamCompletion(token: string, messages: ChatMessage[], onText?:
   return readChatStream(response.body, onText)
 }
 
-export async function askFoundryCopilot(question: string, onProgress?: (text: string) => void): Promise<FoundryAnswer> {
+export async function askFoundryCopilot(
+  question: string,
+  onProgress?: (text: string) => void,
+  onSteps?: (steps: AgentStep[]) => void,
+): Promise<FoundryAnswer> {
   if (!isFoundryConfigured()) {
     return { text: 'The Azure AI Foundry copilot is not configured. Set RAYFIN_PUBLIC_FOUNDRY_ENDPOINT and RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT in rayfin/.env, then rebuild.' }
   }
   const token = await foundryToken(true)
   if (!token) throw new Error('Azure AI Foundry sign-in is required.')
 
-  const runTool = createToolRuntime()
-  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt() }, ...history, { role: 'user', content: question }]
+  const settings = loadCopilotSettings()
+  const tools = buildToolDefinitions(settings)
+  const runTool = createToolRuntime(settings)
+  const messages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt(catalogPrompt(settings), settings.promptExtra) },
+    ...history,
+    { role: 'user', content: question },
+  ]
   const steps: AgentStep[] = []
   const visualizations: AgentVisualization[] = []
   let usage: FoundryAnswer['usage']
+  const publish = () => onSteps?.(steps.map(step => ({ ...step })))
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-    const state = await streamCompletion(token, messages, onProgress)
+    const state = await streamCompletion(token, messages, tools, onProgress)
     if (state.usage) {
       usage = usage
         ? { prompt: usage.prompt + state.usage.prompt, completion: usage.completion + state.usage.completion, total: usage.total + state.usage.total }
@@ -110,16 +132,30 @@ export async function askFoundryCopilot(question: string, onProgress?: (text: st
 
     for (const call of calls) {
       const startedAt = Date.now()
+      let args: ToolArguments = {}
+      try { args = call.arguments ? JSON.parse(call.arguments) as ToolArguments : {} } catch { /* reported below */ }
+      // Publish the step before awaiting so the chat shows what is running, not just what finished.
+      const step: AgentStep = {
+        tool: call.name,
+        status: 'running',
+        detail: describeToolCall(call.name, args),
+        summary: 'running…',
+        args: call.arguments && call.arguments !== '{}' ? call.arguments : undefined,
+        elapsedMs: 0,
+      }
+      steps.push(step)
+      publish()
       try {
-        const args = call.arguments ? JSON.parse(call.arguments) : {}
         const outcome = await runTool(call.name, args)
         if (outcome.visualization) visualizations.push(outcome.visualization)
-        steps.push({ tool: call.name, summary: summarize(outcome), query: outcome.query, elapsedMs: Date.now() - startedAt })
+        Object.assign(step, { status: 'done', summary: summarize(outcome), query: outcome.query, elapsedMs: Date.now() - startedAt })
+        publish()
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(outcome.result) })
       } catch (error) {
         // Feed the failure back so the model can correct itself instead of aborting the turn.
         const message = error instanceof Error ? error.message : 'The tool call failed.'
-        steps.push({ tool: call.name, summary: 'failed', elapsedMs: Date.now() - startedAt, error: message })
+        Object.assign(step, { status: 'error', summary: 'failed', error: message, elapsedMs: Date.now() - startedAt })
+        publish()
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: message }) })
       }
     }

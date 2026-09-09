@@ -632,18 +632,28 @@ function useHydroOperationsDataController() {
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    const setLastAgent = (value: string, meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], steps?: AgentStep[]) => setMessages(current => {
+    // Text and tool steps arrive on separate callbacks, so keep both and repaint the whole message.
+    let liveText = ''
+    let liveSteps: AgentStep[] | undefined
+    const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: value, artifacts, visualizations, steps, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, artifacts, visualizations, meta }
       return next
     })
     try {
       const answer: FoundryAnswer = copilotEngine === 'foundry'
-        ? await askFoundryCopilot(text, partial => setLastAgent(partial))
-        : await askDataAgent(text, partial => setLastAgent(partial))
-      setLastAgent(answer.text, { elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.steps)
+        ? await askFoundryCopilot(
+          text,
+          partial => { liveText = partial; paint() },
+          steps => { liveSteps = steps; paint() },
+        )
+        : await askDataAgent(text, partial => { liveText = partial; paint() })
+      liveText = answer.text
+      liveSteps = answer.steps ?? liveSteps
+      paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations)
     } catch (error) {
-      setLastAgent(error instanceof Error ? error.message : 'The copilot request failed.', { elapsedMs: Date.now() - startedAt })
+      liveText = error instanceof Error ? error.message : 'The copilot request failed.'
+      paint({ elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
   }, [copilotBusy, copilotEngine])
 

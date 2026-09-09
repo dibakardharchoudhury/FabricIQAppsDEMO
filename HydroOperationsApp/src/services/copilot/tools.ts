@@ -1,7 +1,8 @@
 import type { AgentVisualization } from '../assistantStream.ts'
 import { queryStid, runKustoQuery, type StidData } from '../fabric.ts'
 import { listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders } from '../rayfin.ts'
-import { ASSET_ENTITIES, ASSET_ENTITY_KEYS, OPERATIONS_ENTITIES, OPERATIONS_ENTITY_KEYS, type CatalogEntity } from './catalog.ts'
+import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
+import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import {
   applyFilter, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, truncateForModel, validateKql, type FilterCondition,
@@ -13,6 +14,28 @@ export type ToolDefinition = {
 }
 
 export type ToolOutcome = { result: unknown; visualization?: AgentVisualization; rowCount?: number; query?: string }
+
+/** A short label of what a call asked for, shown on the collapsed trace row in the chat. */
+export function describeToolCall(name: string, args: ToolArguments): string {
+  const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+  switch (name) {
+    case 'query_assets':
+    case 'query_operations':
+      return [args.entity ?? '?', args.where?.length ? plural(args.where.length, 'filter') : ''].filter(Boolean).join(' · ')
+    case 'query_telemetry':
+      return [
+        args.opcua_node_ids?.length ? plural(args.opcua_node_ids.length, 'signal') : 'all signals',
+        args.lookback ?? '24h',
+        `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
+      ].join(' · ')
+    case 'run_kql':
+      return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
+    case 'visualize_dataset':
+      return [args.chart_type, args.title].filter(Boolean).join(' · ')
+    default:
+      return ''
+  }
+}
 
 const whereSchema = {
   type: 'array',
@@ -37,7 +60,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          entity: { type: 'string', enum: ASSET_ENTITY_KEYS },
+          entity: { type: 'string', enum: ASSET_ENTITIES.map(entity => entity.key) },
           where: whereSchema,
           columns: { type: 'array', items: { type: 'string' }, description: 'Optional subset of columns to return.' },
           limit: { type: 'integer', description: `Maximum rows to return (default ${MAX_ROWS}).` },
@@ -54,7 +77,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          entity: { type: 'string', enum: OPERATIONS_ENTITY_KEYS },
+          entity: { type: 'string', enum: OPERATIONS_ENTITIES.map(entity => entity.key) },
           where: whereSchema,
           columns: { type: 'array', items: { type: 'string' } },
           limit: { type: 'integer' },
@@ -113,7 +136,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ]
 
-type ToolArguments = {
+export type ToolArguments = {
   entity?: string
   where?: FilterCondition[]
   columns?: string[]
@@ -132,10 +155,58 @@ type ToolArguments = {
   inline_csv_data?: string
 }
 
-function entityOrThrow(entities: CatalogEntity[], key?: string): CatalogEntity {
-  const entity = entities.find(candidate => candidate.key === key)
-  if (!entity) throw new Error(`Unknown entity '${key}'. Use one of ${entities.map(candidate => candidate.key).join(', ')}.`)
+function entityOrThrow(entities: CatalogEntity[], key: string | undefined, settings: CopilotSettings): CatalogEntity {
+  const available = entities.filter(entity => isEntityEnabled(settings, entity.key))
+  const entity = available.find(candidate => candidate.key === key)
+  if (!entity) {
+    const names = available.map(candidate => candidate.key).join(', ')
+    throw new Error(names
+      ? `Unknown or disabled entity '${key}'. Use one of ${names}.`
+      : 'No entities of this kind are enabled in Administration.')
+  }
   return entity
+}
+
+/** The tool schemas the model sees, narrowed to whatever Administration currently has enabled. */
+export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[] {
+  const enabledEntities = (entities: CatalogEntity[]) => entities
+    .filter(entity => isEntityEnabled(settings, entity.key))
+    .map(entity => entity.key)
+  return TOOL_DEFINITIONS
+    .filter(tool => isToolEnabled(settings, tool.function.name))
+    .filter(tool => {
+      if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
+      if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
+      if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
+      if (tool.function.name === 'run_kql') return enabledKustoNames(settings).length > 0
+      return true
+    })
+    .map(tool => {
+      const entities = tool.function.name === 'query_assets' ? enabledEntities(ASSET_ENTITIES)
+        : tool.function.name === 'query_operations' ? enabledEntities(OPERATIONS_ENTITIES)
+          : undefined
+      if (!entities) {
+        if (tool.function.name !== 'run_kql') return tool
+        return {
+          ...tool,
+          function: {
+            ...tool.function,
+            description: `Run a read-only KQL query against the Eventhouse when the templated tools cannot express the question. The query must start with ${enabledKustoNames(settings).join(', ')}.`,
+          },
+        }
+      }
+      const parameters = tool.function.parameters as { properties: Record<string, unknown> }
+      return {
+        ...tool,
+        function: {
+          ...tool.function,
+          parameters: {
+            ...parameters,
+            properties: { ...parameters.properties, entity: { type: 'string', enum: entities } },
+          },
+        },
+      }
+    })
 }
 
 /** Restrict to the columns declared in the catalog, then to the model's subset.
@@ -151,7 +222,7 @@ function shape(entity: CatalogEntity, rows: Record<string, unknown>[], args: Too
 }
 
 /** Per-turn caches so repeated tool calls in one answer do not refetch the same source. */
-export function createToolRuntime() {
+export function createToolRuntime(settings: CopilotSettings) {
   let stid: Promise<StidData | null> | undefined
   const operations = new Map<string, Promise<Record<string, unknown>[]>>()
 
@@ -172,9 +243,11 @@ export function createToolRuntime() {
   }
 
   return async function runTool(name: string, args: ToolArguments): Promise<ToolOutcome> {
+    // Re-check here as well as in the schema: a model can still emit a disabled tool or entity.
+    if (!isToolEnabled(settings, name)) throw new Error(`The tool '${name}' is disabled in Administration.`)
     switch (name) {
       case 'query_assets': {
-        const entity = entityOrThrow(ASSET_ENTITIES, args.entity)
+        const entity = entityOrThrow(ASSET_ENTITIES, args.entity, settings)
         stid ??= queryStid()
         const data = await stid
         if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
@@ -182,17 +255,18 @@ export function createToolRuntime() {
         return shape(entity, rows, args)
       }
       case 'query_operations': {
-        const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity)
+        const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity, settings)
         return shape(entity, await loadOperations(entity.key), args)
       }
       case 'query_telemetry': {
+        if (!enabledKustoNames(settings).includes('OPCUAEvents')) throw new Error('The OPCUAEvents table is disabled in Administration.')
         const csl = buildTelemetryQuery(args)
         const { columns, rows } = await runKustoQuery(csl, MAX_ROWS)
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
         return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }
       }
       case 'run_kql': {
-        const csl = validateKql(args.query ?? '')
+        const csl = validateKql(args.query ?? '', enabledKustoNames(settings))
         const { columns, rows } = await runKustoQuery(csl, MAX_ROWS)
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
         return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }

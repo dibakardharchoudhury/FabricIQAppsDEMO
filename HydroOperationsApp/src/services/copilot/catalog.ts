@@ -2,6 +2,9 @@
 // nothing outside this catalog is reachable by a tool, and the same text is rendered into
 // the system prompt as the schema the model plans against.
 
+// Type-only: settings.ts imports this module's values, so a value import here would be a cycle.
+import type { CopilotSettings } from './settings.ts'
+
 export type CatalogColumn = { name: string; description?: string }
 
 export type CatalogEntity = {
@@ -126,16 +129,20 @@ function describe(entities: CatalogEntity[]): string {
     .join('\n')
 }
 
-/** The schema block injected into the system prompt. Derived from the catalog so they cannot drift. */
-export function catalogPrompt(): string {
+const section = (title: string, body: string) => body ? [title, body, ''] : []
+
+/** The schema block injected into the system prompt. Derived from the catalog so they cannot drift,
+ *  and narrowed to whatever Administration currently has enabled. */
+export function catalogPrompt(settings: CopilotSettings): string {
+  const assets = ASSET_ENTITIES.filter(entity => settings.entities[entity.key] !== false)
+  const operations = OPERATIONS_ENTITIES.filter(entity => settings.entities[entity.key] !== false)
+  const kusto = KUSTO_SOURCES.filter(source => settings.kustoSources[source.name] !== false)
   return [
-    'Asset metadata (Lakehouse, tool: query_assets):',
-    describe(ASSET_ENTITIES),
-    '',
-    'Operational records (SQL, tool: query_operations):',
-    describe(OPERATIONS_ENTITIES),
-    '',
-    'Telemetry (Kusto/Eventhouse, tools: query_telemetry and run_kql):',
-    KUSTO_SOURCES.map(source => `- ${source.name}: ${source.description}`).join('\n'),
-  ].join('\n')
+    ...section('Asset metadata (Lakehouse, tool: query_assets):', describe(assets)),
+    ...section('Operational records (SQL, tool: query_operations):', describe(operations)),
+    ...section(
+      'Telemetry (Kusto/Eventhouse, tools: query_telemetry and run_kql):',
+      kusto.map(source => `- ${source.name}: ${source.description}`).join('\n'),
+    ),
+  ].join('\n').trim() || 'No data sources are currently enabled. Tell the user to enable some in Administration.'
 }

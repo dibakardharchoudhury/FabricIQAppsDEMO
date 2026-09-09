@@ -103,15 +103,16 @@ const FORBIDDEN_KQL = [
 
 /** Validate a model-authored KQL query against the catalog allow-list and cap its result size.
  *  Throws with a message the model can act on; the thrown text is fed back as the tool result. */
-export function validateKql(query: string): string {
+export function validateKql(query: string, allowedSources: string[] = KUSTO_SOURCE_NAMES): string {
   const trimmed = (query ?? '').trim()
   if (!trimmed) throw new Error('The query was empty.')
   for (const rule of FORBIDDEN_KQL) {
     if (rule.pattern.test(trimmed)) throw new Error(`Rejected: ${rule.reason}.`)
   }
+  if (!allowedSources.length) throw new Error('Rejected: no Kusto sources are enabled.')
   const leading = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)/)?.[1]
-  if (!leading || !KUSTO_SOURCE_NAMES.includes(leading)) {
-    throw new Error(`Rejected: the query must start with one of ${KUSTO_SOURCE_NAMES.join(', ')}.`)
+  if (!leading || !allowedSources.includes(leading)) {
+    throw new Error(`Rejected: the query must start with one of ${allowedSources.join(', ')}.`)
   }
   return /\|\s*take\s+\d+\s*$/i.test(trimmed) ? trimmed : `${trimmed}\n| take ${MAX_ROWS}`
 }
