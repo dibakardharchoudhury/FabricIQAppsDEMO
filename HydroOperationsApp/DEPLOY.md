@@ -223,13 +223,23 @@ RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT=<model deployment name>
 # RAYFIN_PUBLIC_FOUNDRY_API_VERSION=2024-10-21   # optional override
 ```
 
-Deploy the Foundry resource in the **same region as the workspace capacity** (Sweden Central for
-this demo). Two manual Azure steps, because both are resource-scoped rather than tenant-scoped:
+Use whichever endpoint the portal shows — an `AIServices` (Foundry) resource ends in
+`.cognitiveservices.azure.com`, a classic `OpenAI` resource in `.openai.azure.com`. Both serve the
+`/openai/deployments/<name>/chat/completions` path the app calls.
 
-- Grant each app user the **`Cognitive Services OpenAI User`** role on the Foundry resource. The
-  delegated Entra scope alone authorizes the audience, not the data-plane call.
-- Allow the app's hosting origin in the Foundry resource's **CORS** settings — the SPA calls the
-  data plane directly, with the signed-in user's token and no API key.
+**The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
+authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
+token with 401 no matter what RBAC you assign — Azure evaluates RBAC in the resource's *own* home
+tenant. Check with `az account list --all` before creating it; a personal or corp subscription is
+easy to pick by accident. Put it in the workspace capacity's region too (Sweden Central here).
+
+One manual step after creation, because it is resource-scoped rather than tenant-scoped: grant each
+app user the **`Cognitive Services OpenAI User`** role on the resource. The delegated Entra scope
+authorizes the audience, not the data-plane call.
+
+No CORS configuration is needed — the data plane already returns `Access-Control-Allow-Origin: *`
+and permits `Authorization` on POST. Do keep the resource on **public network access**: a private
+endpoint or a "selected networks" firewall cuts the browser off.
 
 No key is ever placed in the browser. Because the tools run as the signed-in user, the copilot
 cannot read anything that user could not read in Fabric.
