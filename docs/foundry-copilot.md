@@ -17,6 +17,7 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 | `src/services/copilot/query.ts` | Pure KQL builder, `run_kql` validator, structured row filter |
 | `src/services/copilot/tools.ts` | Tool schemas + executors, per-turn caches |
 | `src/services/copilot/chatStream.ts` | SSE reader + tool-call delta accumulator |
+| `src/services/copilot/suggestions.ts` | Parses the follow-up options a reply offers |
 | `src/services/copilot/foundry.ts` | The agent loop, system prompt, conversation history |
 | `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid` |
 | `scripts/copilot-tools.test.mjs` | Unit tests for the validator, filter and accumulator |
@@ -163,6 +164,31 @@ what the agent is reaching for while it works.
 
 The transcript follows new content only while the reader is already at the bottom — scrolling up
 opts out of auto-scroll until the next question is sent.
+
+**Copy** on each answer puts the whole exchange on the clipboard as markdown: the question, every
+tool call with its arguments, query and result, the answer, then chart CSV and 3D model links.
+Steps retain their result payload for this — the same JSON already sent to the model, already capped
+by `truncateForModel`. It is copy-only; rendering it in the trace would bury the one-line summary.
+
+### Follow-up options
+
+When a reply offers choices, they render as chips under the last answer, each with a button to put
+it in the composer and one to send it immediately (max 5, capped to two rows).
+
+The model is asked to declare them on a trailing line:
+
+```
+<!--options: ["Show open work orders", "Chart power output for T009"]-->
+```
+
+`react-markdown` does not render raw HTML without `rehype-raw`, so the marker is invisible in the
+chat without stripping and does not flicker mid-stream. It is stripped explicitly before the Copy
+transcript.
+
+> [!NOTE]
+> A prose heuristic (cue phrase followed by a list) remains as a fallback, because the Data Agent
+> engine never emits the marker and the system prompt is operator-editable — someone can delete the
+> rule. Declared options win whenever present; a malformed marker falls through to the heuristic.
 
 ---
 
