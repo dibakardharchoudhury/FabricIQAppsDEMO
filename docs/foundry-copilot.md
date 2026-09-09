@@ -173,7 +173,9 @@ opts out of auto-scroll until the next question is sent.
 
 | Setting | Effect |
 | --- | --- |
-| Additional instructions | Appended to the system prompt. The safety rules and schema are always included. |
+| Endpoint / deployment / API version | Which Foundry model is called. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
+| System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
+| Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |
 | Lakehouse / operational tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
 | Eventhouse tables & functions | Also narrows the `run_kql` allow-list. |
@@ -198,6 +200,7 @@ the model's schema and the enforced allow-list cannot drift apart.
 | `equipment` → `silver_equipments` | Lakehouse | GraphQL |
 | `instruments` → `silver_instruments` | Lakehouse | GraphQL |
 | `work_orders`, `inspections`, `spare_parts`, `notifications` | App SQL database | `RayfinClient` |
+| `asset_models` | App SQL database | `RayfinClient` — 3D model files per equipment |
 | `OPCUAEvents` | Eventhouse | Kusto REST |
 | `AssetMaster()`, `TelemetryEnriched(...)` | Eventhouse | Kusto REST — telemetry pre-joined to asset master via OneLake shortcuts |
 
@@ -210,6 +213,7 @@ the model's schema and the enforced allow-list cannot drift apart.
 | `query_telemetry` | node ids, lookback, bin, aggregation | Templated KQL; each fragment regex- or map-validated, node ids escaped |
 | `run_kql` | **model-authored KQL** | Allow-list + rejection rules below |
 | `visualize_dataset` | chart spec + inline CSV | Renders only; reaches no data |
+| `show_3d_model` | equipment_id or model_id | Resolves an `Asset3DModel` record and renders the GLB inline; no query text |
 
 ### `run_kql` validation
 
@@ -255,6 +259,7 @@ model call it autonomously.
 | "Asset metadata is not connected" | STID GraphQL not yet consented — use **Connect** in the app once |
 | "stopped after too many tool calls" | Hit the 6-iteration cap; narrow the question |
 | "disabled in Administration" | The tool or table was switched off in **Administration → Foundry Copilot** |
+| "Not signed in to the operational database" | The Rayfin session is separate from the Entra token — use Administration step 1 |
 
 ---
 

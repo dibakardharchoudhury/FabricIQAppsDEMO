@@ -1,6 +1,6 @@
 import type { AgentVisualization } from '../assistantStream.ts'
 import { queryStid, runKustoQuery, type StidData } from '../fabric.ts'
-import { listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders } from '../rayfin.ts'
+import { isRayfinConfigured, isRayfinSignedIn, listAsset3DModels, listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders, type Asset3DModelRecord } from '../rayfin.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import {
@@ -13,7 +13,7 @@ export type ToolDefinition = {
   function: { name: string; description: string; parameters: Record<string, unknown> }
 }
 
-export type ToolOutcome = { result: unknown; visualization?: AgentVisualization; rowCount?: number; query?: string }
+export type ToolOutcome = { result: unknown; visualization?: AgentVisualization; model3d?: Asset3DModelRecord; rowCount?: number; query?: string }
 
 /** A short label of what a call asked for, shown on the collapsed trace row in the chat. */
 export function describeToolCall(name: string, args: ToolArguments): string {
@@ -32,6 +32,8 @@ export function describeToolCall(name: string, args: ToolArguments): string {
       return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
     case 'visualize_dataset':
       return [args.chart_type, args.title].filter(Boolean).join(' · ')
+    case 'show_3d_model':
+      return args.equipment_id ?? args.model_id ?? ''
     default:
       return ''
   }
@@ -134,6 +136,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'show_3d_model',
+      description: 'Render an asset\u2019s 3D model in the chat. Call this directly with equipment_id \u2014 it resolves the model itself, so no lookup is needed first. If no model exists the tool says so and lists the equipment that do have one. Never claim an asset has no 3D model without calling this.',
+      parameters: {
+        type: 'object',
+        properties: {
+          equipment_id: { type: 'string', description: 'Equipment the model belongs to, e.g. an equipment_id from query_assets.' },
+          model_id: { type: 'string', description: 'Exact Asset3DModel id, when known.' },
+        },
+      },
+    },
+  },
 ]
 
 export type ToolArguments = {
@@ -153,6 +169,8 @@ export type ToolArguments = {
   x_axis_title?: string
   y_axis_title?: string
   inline_csv_data?: string
+  equipment_id?: string
+  model_id?: string
 }
 
 function entityOrThrow(entities: CatalogEntity[], key: string | undefined, settings: CopilotSettings): CatalogEntity {
@@ -221,6 +239,8 @@ function shape(entity: CatalogEntity, rows: Record<string, unknown>[], args: Too
   return { result: { rows: capped, row_count: capped.length, total_matched: filtered.length, truncated }, rowCount: capped.length }
 }
 
+const SIGN_IN_HINT = 'Not signed in to the operational database. Open Administration and complete step 1, “Sign in to Fabric”, then ask again. This is a sign-in step, not a permissions problem.'
+
 /** Per-turn caches so repeated tool calls in one answer do not refetch the same source. */
 export function createToolRuntime(settings: CopilotSettings) {
   let stid: Promise<StidData | null> | undefined
@@ -234,10 +254,19 @@ export function createToolRuntime(settings: CopilotSettings) {
       inspections: listInspections,
       spare_parts: listSpareParts,
       notifications: listMaintenanceNotifications,
+      asset_models: listAsset3DModels,
     }
     const loader = loaders[key]
     if (!loader) throw new Error(`Unknown entity '${key}'.`)
-    const promise = loader().then(rows => rows as Record<string, unknown>[])
+    if (!isRayfinConfigured()) throw new Error('The operational database is not configured in this build.')
+    if (!isRayfinSignedIn()) throw new Error(SIGN_IN_HINT)
+    const promise = loader()
+      .then(rows => rows as Record<string, unknown>[])
+      .catch((error: unknown) => {
+        // The backend answers 401 when the Rayfin session has expired mid-conversation.
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(/401|unauthor/i.test(message) ? SIGN_IN_HINT : message)
+      })
     operations.set(key, promise)
     return promise
   }
@@ -286,6 +315,29 @@ export function createToolRuntime(settings: CopilotSettings) {
             yAxisTitle: args.y_axis_title,
             inlineCsvData: args.inline_csv_data,
           },
+        }
+      }
+      case 'show_3d_model': {
+        if (!args.equipment_id && !args.model_id) throw new Error('Give equipment_id or model_id.')
+        const models = await loadOperations('asset_models') as unknown as Asset3DModelRecord[]
+        const wanted = (value?: string) => (value ?? '').trim().toLowerCase()
+        const model = args.model_id
+          ? models.find(candidate => wanted(candidate.id) === wanted(args.model_id))
+          : models.find(candidate => wanted(candidate.equipmentId) === wanted(args.equipment_id))
+        if (!model) {
+          const available = [...new Set(models.map(candidate => candidate.equipmentId))].slice(0, 20).join(', ')
+          throw new Error(available
+            ? `No 3D model matches that asset. Models exist for: ${available}.`
+            : 'No 3D models are available. Seed the operational data first.')
+        }
+        return {
+          result: {
+            rendered: true,
+            model_name: model.modelName,
+            format: model.format,
+            equipment_id: model.equipmentId,
+          },
+          model3d: model,
         }
       }
       default:

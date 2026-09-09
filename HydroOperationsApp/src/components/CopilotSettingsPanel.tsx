@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Bot, RotateCcw, Save } from 'lucide-react'
 import { ASSET_ENTITIES, catalogPrompt, KUSTO_SOURCES, OPERATIONS_ENTITIES, type CatalogEntity } from '../services/copilot/catalog'
-import { isFoundryConfigured } from '../services/copilot/foundry'
 import { TOOL_DEFINITIONS } from '../services/copilot/tools'
 import {
-  defaultCopilotSettings, loadCopilotSettings, resetCopilotSettings, saveCopilotSettings, type CopilotSettings,
+  CATALOG_PLACEHOLDER, defaultCopilotSettings, FOUNDRY_ENV_DEFAULTS, loadCopilotSettings, renderSystemPrompt,
+  resetCopilotSettings, saveCopilotSettings, TIME_PLACEHOLDER, type CopilotSettings,
 } from '../services/copilot/settings'
 
 type Toggle = { key: string; label: string; hint: string }
@@ -16,6 +16,7 @@ const entityToggles = (entities: CatalogEntity[]): Toggle[] => entities.map(enti
 }))
 
 export function CopilotSettingsPanel() {
+  const defaults = useMemo(() => defaultCopilotSettings(), [])
   const [saved, setSaved] = useState<CopilotSettings>(() => loadCopilotSettings())
   const [draft, setDraft] = useState<CopilotSettings>(saved)
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(saved), [draft, saved])
@@ -46,23 +47,81 @@ export function CopilotSettingsPanel() {
     </li>)}</ul>
   </div>
 
-  return <section className="copilot-settings">
-    <header>
+  return <details className="copilot-settings">
+    <summary>
       <span><Bot size={17} /></span>
       <div>
         <h2>Foundry Copilot</h2>
-        <p>Controls what the Foundry engine may read and how it is instructed. Saved in this browser and applied to the next question.</p>
+        <p>Prompt, tools and data sources. Saved in this browser and applied to the next question.</p>
       </div>
-    </header>
+    </summary>
+    <div className="copilot-settings-body">
 
-    {!isFoundryConfigured() && <p className="copilot-settings-warning">
-      The Foundry engine is not configured, so these settings have no effect yet. Set
-      <code>RAYFIN_PUBLIC_FOUNDRY_ENDPOINT</code> and <code>RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT</code>, then rebuild.
-    </p>}
+    {!draft.endpoint || !draft.deployment ? <p className="copilot-settings-warning">
+      Set the endpoint and deployment below to enable the Foundry engine. The signed-in user also needs the
+      <code>Cognitive Services OpenAI User</code> role on that resource.
+    </p> : null}
+
+    <div className="copilot-settings-group">
+      <h4>Model endpoint
+        <button type="button" className="copilot-settings-inline" disabled={draft.endpoint === defaults.endpoint && draft.deployment === defaults.deployment && draft.apiVersion === defaults.apiVersion} onClick={() => setDraft(current => ({ ...current, ...FOUNDRY_ENV_DEFAULTS }))}>Restore from rayfin/.env</button>
+      </h4>
+      <p>Applied to the next question — repointing at another deployment needs no rebuild.</p>
+      <div className="copilot-settings-fields">
+        <label>
+          <span>Endpoint</span>
+          <input
+            type="url"
+            value={draft.endpoint}
+            spellCheck={false}
+            placeholder="https://<resource>.cognitiveservices.azure.com"
+            onChange={event => setDraft(current => ({ ...current, endpoint: event.target.value }))}
+          />
+        </label>
+        <label>
+          <span>Deployment</span>
+          <input
+            value={draft.deployment}
+            spellCheck={false}
+            placeholder="gpt-5-mini"
+            onChange={event => setDraft(current => ({ ...current, deployment: event.target.value }))}
+          />
+        </label>
+        <label>
+          <span>API version</span>
+          <input
+            value={draft.apiVersion}
+            spellCheck={false}
+            placeholder="2024-10-21"
+            onChange={event => setDraft(current => ({ ...current, apiVersion: event.target.value }))}
+          />
+        </label>
+      </div>
+    </div>
+
+    <div className="copilot-settings-group">
+      <h4>System prompt
+        <button type="button" className="copilot-settings-inline" disabled={draft.systemPrompt === defaults.systemPrompt} onClick={() => setDraft(current => ({ ...current, systemPrompt: defaults.systemPrompt }))}>Restore default</button>
+      </h4>
+      <p>
+        The base instructions sent with every question. <code>{CATALOG_PLACEHOLDER}</code> is replaced with the
+        enabled schema and <code>{TIME_PLACEHOLDER}</code> with the current timestamp.
+      </p>
+      <textarea
+        className="copilot-settings-code"
+        value={draft.systemPrompt}
+        rows={14}
+        spellCheck={false}
+        onChange={event => setDraft(current => ({ ...current, systemPrompt: event.target.value }))}
+      />
+      {!draft.systemPrompt.includes(CATALOG_PLACEHOLDER) && <p className="copilot-settings-warning">
+        Without <code>{CATALOG_PLACEHOLDER}</code> the model receives no table schema and will not know what it can query.
+      </p>}
+    </div>
 
     <div className="copilot-settings-group">
       <h4>Additional instructions</h4>
-      <p>Appended to the built-in system prompt. Use it for tone, domain shorthand, or house rules — the safety rules and the data schema are always included.</p>
+      <p>Appended after the system prompt. Use it for tone, domain shorthand, or house rules.</p>
       <textarea
         value={draft.promptExtra}
         rows={4}
@@ -84,17 +143,18 @@ export function CopilotSettingsPanel() {
       'kustoSources')}
 
     <details className="copilot-settings-preview">
-      <summary>Preview the schema sent to the model</summary>
-      <pre>{catalogPrompt(draft)}</pre>
+      <summary>Preview the full prompt sent to the model</summary>
+      <pre>{renderSystemPrompt(draft, catalogPrompt(draft))}</pre>
     </details>
 
     <footer>
       <button type="button" className="copilot-settings-primary" disabled={!dirty} onClick={apply}>
         <Save size={14} />{dirty ? 'Save changes' : 'Saved'}
       </button>
-      <button type="button" disabled={JSON.stringify(draft) === JSON.stringify(defaultCopilotSettings())} onClick={restore}>
+      <button type="button" disabled={JSON.stringify(draft) === JSON.stringify(defaults)} onClick={restore}>
         <RotateCcw size={14} />Reset to defaults
       </button>
     </footer>
-  </section>
+    </div>
+  </details>
 }

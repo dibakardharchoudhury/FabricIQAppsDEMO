@@ -36,7 +36,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
 type CachedData = { stid?: StidData; telemetry?: TelemetryReading[] }
 
@@ -635,9 +635,9 @@ function useHydroOperationsDataController() {
     // Text and tool steps arrive on separate callbacks, so keep both and repaint the whole message.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
-    const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[]) => setMessages(current => {
+    const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, artifacts, visualizations, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, artifacts, visualizations, models, meta }
       return next
     })
     try {
@@ -650,7 +650,7 @@ function useHydroOperationsDataController() {
         : await askDataAgent(text, partial => { liveText = partial; paint() })
       liveText = answer.text
       liveSteps = answer.steps ?? liveSteps
-      paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations)
+      paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
       liveText = error instanceof Error ? error.message : 'The copilot request failed.'
       paint({ elapsedMs: Date.now() - startedAt })

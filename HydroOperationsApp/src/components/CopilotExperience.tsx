@@ -1,18 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Bot, Download, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { BarChart3, Bot, Box, Download, ExternalLink, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
+import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
+
+// Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
+const AssetModelViewer = lazy(() => import('./AssetModelViewer').then(module => ({ default: module.AssetModelViewer })))
+const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].includes(format.toUpperCase()))
 
 export type CopilotMessage = {
   role: 'user' | 'agent'
   text: string
   artifacts?: AgentArtifact[]
   visualizations?: AgentVisualization[]
+  models?: Asset3DModelRecord[]
   steps?: AgentStep[]
   meta?: { elapsedMs: number; tokens?: number }
 }
@@ -105,7 +111,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
 }
 
 function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
-  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length)
+  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
@@ -121,8 +127,23 @@ function AgentMessage({ message, streaming }: { message: CopilotMessage; streami
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
     {message.visualizations?.map((visualization, index) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${index}`} />)}
+    {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
+}
+
+function AgentModel({ model }: { model: Asset3DModelRecord }) {
+  return <figure className="v2-agent-model">
+    <figcaption><Box size={14} /><strong>{model.modelName}</strong><small>{model.equipmentId} · {model.format}{model.version ? ` · ${model.version}` : ''}{model.fileSizeMb ? ` · ${model.fileSizeMb} MB` : ''}</small></figcaption>
+    {canRenderModel(model.format)
+      ? <Suspense fallback={<div className="v2-agent-model-loading">Loading 3D model…</div>}>
+        <AssetModelViewer key={model.modelUrl} model={model} signals={[]} assetLabel={model.equipmentId} />
+      </Suspense>
+      : model.thumbnailUrl
+        ? <img src={model.thumbnailUrl} alt={model.modelName} />
+        : <div className="v2-agent-model-loading">{model.format} cannot be rendered inline.</div>}
+    <a href={model.modelUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />Open model</a>
+  </figure>
 }
 
 function prettyJson(raw: string): string {

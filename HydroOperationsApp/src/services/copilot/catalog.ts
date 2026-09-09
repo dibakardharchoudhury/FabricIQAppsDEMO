@@ -95,6 +95,18 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
       { name: 'severity' }, { name: 'status' }, { name: 'reportedAt' },
     ],
   },
+  {
+    key: 'asset_models',
+    source: 'sql',
+    physicalName: 'Asset3DModel',
+    description: '3D model files per equipment. Call show_3d_model to render one in the chat.',
+    columns: [
+      { name: 'id' }, { name: 'equipmentId' }, { name: 'modelName' },
+      { name: 'format', description: 'GLB and GLTF render inline; other formats show a link.' },
+      { name: 'modelUrl' }, { name: 'thumbnailUrl' }, { name: 'fileSizeMb' },
+      { name: 'version' }, { name: 'updatedAt' },
+    ],
+  },
 ]
 
 /** Kusto tables and functions the copilot may read. Anything else is rejected by the validator. */

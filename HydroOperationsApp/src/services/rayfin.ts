@@ -107,6 +107,8 @@ function currentUser(): AppUser | null {
 
 export function isRayfinConfigured() { return configured }
 
+export function isRayfinSignedIn() { return currentUser() !== null }
+
 export async function initializeRayfin(): Promise<AppUser | null> {
   if (!client) return null
   const existing = currentUser()
