@@ -13,6 +13,7 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 | Path | What it is |
 | --- | --- |
 | `src/services/copilot/catalog.ts` | **The allow-list of readable data — the governance boundary** |
+| `src/services/copilot/settings.ts` | Operator overrides edited in Administration (prompt, tools, sources) |
 | `src/services/copilot/query.ts` | Pure KQL builder, `run_kql` validator, structured row filter |
 | `src/services/copilot/tools.ts` | Tool schemas + executors, per-turn caches |
 | `src/services/copilot/chatStream.ts` | SSE reader + tool-call delta accumulator |
@@ -155,17 +156,41 @@ Notes on the implementation:
   dropped so a long session cannot grow the context unbounded.
 - **No `temperature`** is sent — the gpt-5 family rejects any value but the default.
 
-Each answer carries a trace the UI renders as an expandable list: tool name, row count, elapsed
-time, and for Kusto tools the exact KQL that ran.
+Each answer carries a trace the UI renders as one collapsible row per tool call: the tool name, a
+short label of what it asked for, the row count and elapsed time, expanding to the raw arguments and
+the exact KQL. Rows appear **as the call starts**, not when the answer finishes, so the user can see
+what the agent is reaching for while it works.
+
+The transcript follows new content only while the reader is already at the bottom — scrolling up
+opts out of auto-scroll until the next question is sent.
 
 ---
 
-## 3. Tool calls
+## 3. Operator settings
+
+**Administration → Foundry Copilot** narrows what the model may reach, persisted per browser in
+`localStorage` and applied to the next question:
+
+| Setting | Effect |
+| --- | --- |
+| Additional instructions | Appended to the system prompt. The safety rules and schema are always included. |
+| Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |
+| Lakehouse / operational tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
+| Eventhouse tables & functions | Also narrows the `run_kql` allow-list. |
+
+> [!NOTE]
+> These settings constrain the **model**, not the user. They reduce what a wandering or
+> injection-influenced agent can touch; they are not a privilege boundary, because the delegated
+> token already limits every call to what the signed-in user could read anyway.
+
+---
+
+## 4. Tool calls
 
 ### Readable data
 
-Defined once in `catalog.ts` and rendered into the system prompt, so the model's schema and the
-enforced allow-list cannot drift apart.
+Defined once in `catalog.ts`, narrowed by Administration, and rendered into the system prompt — so
+the model's schema and the enforced allow-list cannot drift apart.
 
 | Entity | Source | Reached via |
 | --- | --- | --- |
@@ -219,7 +244,7 @@ model call it autonomously.
 
 ---
 
-## 4. Troubleshooting
+## 5. Troubleshooting
 
 | Symptom | Cause |
 | --- | --- |
@@ -229,6 +254,7 @@ model call it autonomously.
 | Engine toggle missing | `RAYFIN_PUBLIC_FOUNDRY_*` unset, or the app wasn't rebuilt after setting them |
 | "Asset metadata is not connected" | STID GraphQL not yet consented — use **Connect** in the app once |
 | "stopped after too many tool calls" | Hit the 6-iteration cap; narrow the question |
+| "disabled in Administration" | The tool or table was switched off in **Administration → Foundry Copilot** |
 
 ---
 
