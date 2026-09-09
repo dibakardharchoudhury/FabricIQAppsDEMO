@@ -59,7 +59,7 @@ async function streamCompletion(token: string, messages: ChatMessage[], onText?:
       messages,
       tools: TOOL_DEFINITIONS,
       tool_choice: 'auto',
-      temperature: 0.1,
+      // No `temperature`: the gpt-5 family rejects any value but the default.
       stream: true,
       stream_options: { include_usage: true },
     }),
