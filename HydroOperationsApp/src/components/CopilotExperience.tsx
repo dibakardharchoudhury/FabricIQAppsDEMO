@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
-import { BarChart3, Bot, Download, LineChart, PieChart, Send, SquarePen } from 'lucide-react'
+import { BarChart3, Bot, Download, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
+import type { AgentStep } from '../services/copilot/foundry'
+import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 
@@ -11,24 +13,43 @@ export type CopilotMessage = {
   text: string
   artifacts?: AgentArtifact[]
   visualizations?: AgentVisualization[]
+  steps?: AgentStep[]
   meta?: { elapsedMs: number; tokens?: number }
 }
 
 type CopilotExperienceProps = {
   messages: CopilotMessage[]
   busy: boolean
+  engine: CopilotEngine
+  foundryAvailable: boolean
   onSend: (question: string) => void
   onReset: () => void
+  onEngineChange: (engine: CopilotEngine) => void
 }
 
-export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotExperienceProps) {
-  const [question, setQuestion] = useState('')
-  const prompts = useMemo(() => [
+const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
+  'data-agent': { name: 'Data Agent', source: 'Fabric Data Agent' },
+  foundry: { name: 'Foundry', source: 'Azure AI Foundry · Lakehouse + Eventhouse' },
+}
+
+const PROMPTS: Record<CopilotEngine, string[]> = {
+  'data-agent': [
     'Show all open work orders as a table with the affected asset, priority, and status.',
     'List all equipment with manufacturer, model, and criticality.',
     'Which assets have the most open work orders? Give a ranked table and chart.',
     'Summarize the facilities with their type, country, and number of assets.',
-  ], [])
+  ],
+  foundry: [
+    'Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?',
+    'Chart average power output per station over the last 24 hours.',
+    'List the most critical equipment that has an open work order.',
+    'Which spare parts are at or below their reorder level?',
+  ],
+}
+
+export function CopilotExperience({ messages, busy, engine, foundryAvailable, onSend, onReset, onEngineChange }: CopilotExperienceProps) {
+  const [question, setQuestion] = useState('')
+  const prompts = useMemo(() => PROMPTS[engine], [engine])
 
   const send = (value = question) => {
     if (!value.trim() || busy) return
@@ -37,12 +58,37 @@ export function CopilotExperience({ messages, busy, onSend, onReset }: CopilotEx
   }
 
   return <div className="v2-domain-page v2-copilot-page">
-    <section className="v2-page-head"><div><span className="v2-eyebrow">Fabric Data Agent</span><h1>Operations Copilot</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
-    <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>Connected Fabric data</small></span><button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button></header>
-      <div className="v2-messages">{messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && index === messages.length - 1}>{message.role === 'agent' ? message.text || message.artifacts?.length || message.visualizations?.length ? <>{message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}{message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} /> : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}{message.visualizations?.map((visualization, visualizationIndex) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${visualizationIndex}`} />)}{busy && index === messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
+    <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Operations Copilot</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
+    <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+      <span className="v2-copilot-actions">
+        {foundryAvailable && <span className="v2-engine-toggle" role="group" aria-label="Copilot engine">
+          {(['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
+            key={option}
+            type="button"
+            className={option === engine ? 'on' : ''}
+            aria-pressed={option === engine}
+            disabled={busy}
+            onClick={() => onEngineChange(option)}
+          >{ENGINE_LABELS[option].name}</button>)}
+        </span>}
+        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
+      </span></header>
+      <div className="v2-messages">{messages.map((message, index) => <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && index === messages.length - 1}>{message.role === 'agent' ? message.text || message.artifacts?.length || message.visualizations?.length ? <>{message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>}{message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} /> : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}{message.visualizations?.map((visualization, visualizationIndex) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${visualizationIndex}`} />)}<CopilotSteps steps={message.steps} />{busy && index === messages.length - 1 && <CopilotStreamCursor />}</> : <CopilotThinking /> : <p>{message.text}</p>}{message.meta && <small>{formatDuration(message.meta.elapsedMs)}{message.meta.tokens ? ` · ${message.meta.tokens.toLocaleString()} tokens` : ''}</small>}</div>)}{messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}</div>
       <footer><textarea value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
+}
+
+function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
+  if (!steps?.length) return null
+  return <details className="v2-agent-steps">
+    <summary><Wrench size={13} />{steps.length} data {steps.length === 1 ? 'query' : 'queries'}</summary>
+    <ol>{steps.map((step, index) => <li key={index}>
+      <code>{step.tool}</code>
+      <span>{step.error ?? step.summary} · {formatDuration(step.elapsedMs)}</span>
+      {step.query && <pre>{step.query}</pre>}
+    </li>)}</ol>
+  </details>
 }
 
 function formatDuration(ms: number) { return ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` }

@@ -210,6 +210,30 @@ Most artifact ids/URIs are **discovered at runtime** by workspace display name; 
 `AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
 (the build writes `VITE_RAYFIN_*` into it automatically).
 
+### Optional: the Azure AI Foundry copilot (v2)
+
+The Copilot page ships two engines. **Data Agent** (the published Fabric Data Agent) needs no extra
+configuration. **Foundry** runs an Azure AI Foundry model in the browser with tools scoped to the
+Lakehouse `silver_*` tables, the Eventhouse and the app database. Add these to `rayfin/.env` to
+enable it — the engine toggle only appears when both are set:
+
+```ini
+RAYFIN_PUBLIC_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com
+RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT=<model deployment name>
+# RAYFIN_PUBLIC_FOUNDRY_API_VERSION=2024-10-21   # optional override
+```
+
+Deploy the Foundry resource in the **same region as the workspace capacity** (Sweden Central for
+this demo). Two manual Azure steps, because both are resource-scoped rather than tenant-scoped:
+
+- Grant each app user the **`Cognitive Services OpenAI User`** role on the Foundry resource. The
+  delegated Entra scope alone authorizes the audience, not the data-plane call.
+- Allow the app's hosting origin in the Foundry resource's **CORS** settings — the SPA calls the
+  data plane directly, with the signed-in user's token and no API key.
+
+No key is ever placed in the browser. Because the tools run as the signed-in user, the copilot
+cannot read anything that user could not read in Fabric.
+
 ## 4. Sign in to Rayfin
 
 ```powershell
@@ -276,6 +300,7 @@ origin plus `localhost:5173` as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
 **Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
 **`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
+plus **Microsoft Cognitive Services** `user_impersonation` (the Foundry copilot),
 then grants admin consent tenant‑wide (fixes **AADSTS650057 / 65001**). Because these are pre‑granted,
 **no in‑app consent popup appears** on Seed & provision or Connect telemetry.
 

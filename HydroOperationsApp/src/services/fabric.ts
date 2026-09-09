@@ -30,6 +30,9 @@ const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/use
 const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
 // Fabric Embed needs its own delegated scope. Named, not `.default`, for the same reason as kustoScope.
 const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
+// Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
+// `Cognitive Services OpenAI User` role on the Foundry resource for the token to be authorized.
+const FOUNDRY_SCOPES = ['https://cognitiveservices.azure.com/user_impersonation']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
@@ -222,6 +225,14 @@ export async function fabricEmbedToken(interactive: boolean, requested?: string[
   if (silent) return silent
   if (!interactive) return null
   return popupToken(scopes)
+}
+
+/** A token for the Azure AI Foundry data plane. Silent first; popup only when interactive is allowed. */
+export async function foundryToken(interactive: boolean): Promise<string | null> {
+  const silent = await silentToken(FOUNDRY_SCOPES)
+  if (silent) return silent
+  if (!interactive) return null
+  return popupToken(FOUNDRY_SCOPES)
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
@@ -663,4 +674,34 @@ export async function queryTelemetryHistory(opcuaNodeId: string, range: Telemetr
   }
   const payload = JSON.parse(text) as { Tables?: Array<{ Rows?: Array<[string, string, number, string]> }> }
   return (payload.Tables?.[0]?.Rows ?? []).map(([eventTime, opcuaNodeId, value, quality]) => ({ opcuaNodeId, eventTime, value, quality }))
+}
+
+export type KustoResult = { columns: string[]; rows: unknown[][] }
+
+/** Run an already-validated KQL query against the Eventhouse as the signed-in user.
+ *  Callers outside the telemetry views must validate the query text first — see copilot/query.ts. */
+export async function runKustoQuery(csl: string, maxRows: number): Promise<KustoResult> {
+  const config = await ensureConfig(false)
+  if (!config?.eventhouseQueryUri || !config.kqlDatabase) throw new Error('No Eventhouse is connected in this workspace.')
+  const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
+  const token = await silentToken([kustoScope(cluster)])
+  if (!token) throw new Error('Eventhouse consent is required. Connect telemetry first.')
+  const response = await fetch(`${cluster}/v1/rest/query`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    // Server-side caps back up the client-side `| take`, so a runaway query cannot return a huge payload.
+    body: JSON.stringify({
+      db: config.kqlDatabase,
+      csl,
+      properties: { Options: { truncationmaxrecords: maxRows, servertimeout: '00:01:00' } },
+    }),
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`Eventhouse query failed (${response.status}): ${text.slice(0, 300)}`)
+  const payload = JSON.parse(text) as { Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }> }
+  const table = payload.Tables?.[0]
+  return {
+    columns: (table?.Columns ?? []).map((column, index) => column.ColumnName ?? `column_${index}`),
+    rows: table?.Rows ?? [],
+  }
 }
