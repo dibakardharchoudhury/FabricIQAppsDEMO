@@ -48,8 +48,21 @@ function summarize(outcome: { rowCount?: number }): string {
   return outcome.rowCount === undefined ? 'done' : `${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}`
 }
 
+// Some deployments (e.g. vLLM-backed serverless models like Phi-4-mini-reasoning) reject
+// tool_choice:"auto" unless the server was started with --enable-auto-tool-choice; that is a
+// deployment-side flag the client cannot set. Detected so the caller can retry without tools.
+class FoundryToolsUnsupportedError extends Error {}
+
+// The Foundry portal's "endpoint" copy box sometimes shows a full API URL (e.g. ending in
+// `/openai/v1/responses` or `/openai/v1/chat/completions`) rather than the bare resource origin
+// this app expects; take just the origin so pasting either form still works.
+function resourceOrigin(endpoint: string): string {
+  try { return new URL(endpoint).origin }
+  catch { return endpoint.replace(/\/$/, '') }
+}
+
 async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
-  const base = settings.endpoint.replace(/\/$/, '')
+  const base = resourceOrigin(settings.endpoint)
   const response = await fetch(`${base}/openai/deployments/${settings.deployment}/chat/completions?api-version=${settings.apiVersion}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -65,6 +78,9 @@ async function streamCompletion(settings: CopilotSettings, token: string, messag
     const detail = await response.text().catch(() => '')
     if (response.status === 401 || response.status === 403) {
       throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
+    }
+    if (response.status === 400 && tools.length && /tool[_-]choice|tool-call-parser/i.test(detail)) {
+      throw new FoundryToolsUnsupportedError(detail)
     }
     throw new Error(`Azure AI Foundry request failed (${response.status}). ${detail.slice(0, 300)}`)
   }
@@ -94,10 +110,24 @@ export async function askFoundryCopilot(
   const visualizations: AgentVisualization[] = []
   const models: Asset3DModelRecord[] = []
   let usage: FoundryAnswer['usage']
+  let toolsForRequest = tools
+  let toolsUnsupported = false
   const publish = () => onSteps?.(steps.map(step => ({ ...step })))
 
   for (let iteration = 0; iteration < MAX_TOOL_ROUNDS; iteration++) {
-    const state = await streamCompletion(settings, token, messages, tools, onProgress)
+    let state
+    try {
+      state = await streamCompletion(settings, token, messages, toolsForRequest, onProgress)
+    } catch (error) {
+      // Deployment rejects tool_choice; fall back to a plain chat completion for the rest of this turn.
+      if (error instanceof FoundryToolsUnsupportedError && toolsForRequest.length) {
+        toolsForRequest = []
+        toolsUnsupported = true
+        state = await streamCompletion(settings, token, messages, toolsForRequest, onProgress)
+      } else {
+        throw error
+      }
+    }
     if (state.usage) {
       usage = usage
         ? { prompt: usage.prompt + state.usage.prompt, completion: usage.completion + state.usage.completion, total: usage.total + state.usage.total }
@@ -105,7 +135,10 @@ export async function askFoundryCopilot(
     }
     const calls = state.toolCalls.filter(call => call.id && call.name)
     if (!calls.length) {
-      const text = state.content.trim() || 'The copilot returned no answer.'
+      const note = toolsUnsupported
+        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only \u2014 no live data was queried. Switch to a tool-calling model under Administration \u2192 Foundry Copilot for data-backed answers.\n\n'
+        : ''
+      const text = note + (state.content.trim() || 'The copilot returned no answer.')
       const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
       history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
       return {
