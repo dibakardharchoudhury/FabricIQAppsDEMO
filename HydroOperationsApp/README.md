@@ -7,8 +7,8 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
 > Moving to a different tenant, workspace, or capacity region? See
 > [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
-> (reset `.deployments.json`, re-register the SPA, `rayfin up --workspace-id <guid> --yes`, and the
-> Fabric App Items preview feature/region gating).
+> (the repository orchestrator backs up target-specific state, resolves the tenant SPA, provisions
+> the selected workspace, and checks Fabric App Items preview feature/region gating).
 >
 > **Entra prerequisite:** runtime sign-in uses a single-tenant SPA. **`Hydro Operations Fabric
 > Client`** is the deployer's configurable default discovery name, not an Entra requirement; the

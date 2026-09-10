@@ -8,7 +8,7 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
-### Agent one-shot deployment
+## Agent one-shot deployment
 
 GitHub Copilot and other same-machine agents must run the repository orchestrator from the repository
 root instead of assembling the numbered commands below:
@@ -50,10 +50,10 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
 
 | Your situation | SPA app registration | Local Rayfin state | Do this |
 |---|---|---|---|
-| **First‑ever deploy — new tenant, new workspace** | **Create** it once — [§App SPA](#b-app-spa-created-once-then-automated) | fresh (nothing to reset) | Run **Steps 1–9** in order. |
-| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | **Rotate** — [Redeploying §1](#1-rotate-local-rayfin-state) | Rotate → re‑point `.env` → [Redeploying §4](#4-provision-non-interactively) (`rayfin up --workspace-id <guid> --yes`) → **Steps 5–9**. |
-| **Different tenant** (move the whole app elsewhere) | **Create** a new SPA in that tenant — [§App SPA](#b-app-spa-created-once-then-automated) | **Rotate** — [Redeploying §1](#1-rotate-local-rayfin-state) | Rotate → create SPA → new `.env` → [Redeploying §2–4](#redeploying-to-a-different-tenant-workspace-or-region) → **Steps 5–9**. |
-| **Same tenant, same workspace — iterating on code** | already set up | keep as‑is | Just `npm run deploy`. If the hosting hostname changed, also re‑run `npm run setup-live-auth` (Step 8). |
+| **First‑ever deploy — new tenant, new workspace** | The orchestrator discovers or creates it; an admin may still be required — [§App SPA](#b-app-spa-created-once-then-automated) | fresh (nothing to rotate) | Run the **agent one-shot deployment** above. |
+| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | The orchestrator backs up and rotates target-specific state | Run the **agent one-shot deployment** above; add `--client-id` only if discovery is ambiguous. |
+| **Different tenant** (move the whole app elsewhere) | Create or discover a SPA in that tenant; never reuse a cross-tenant registration | The orchestrator backs up and rotates target-specific state | Run the **agent one-shot deployment** above against the new tenant/workspace. |
+| **Same tenant, same workspace — iterating on code** | already set up | reused automatically | Run the **agent one-shot deployment** above. It deploys, reapplies live auth, and preserves existing redirects. |
 
 > **Agents:** the canonical automated runbook is
 > [`.github/prompts/deploy-fresh-tenant.prompt.md`](../.github/prompts/deploy-fresh-tenant.prompt.md).
@@ -160,7 +160,10 @@ The complete live-auth contract is:
    *Fixes AADSTS650057.*
 3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Application Administrator / Cloud Application Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead — all five scopes are user-consentable, so this step is optional in most tenants.
 
-`setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`), so **no in‑app consent popup appears** — do these by hand only for the exact grant the script prints it couldn't make.
+`setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`),
+so no in-app consent popup should appear after setup. If Entra serves edge-cached configuration for
+a minute or two, a one-time **Accept** prompt is harmless. Do these steps by hand only for the exact
+grant the script prints it could not make.
 
 Two per-cluster grants stay manual either way: give the signed-in user **KQL Database Viewer** on the Eventhouse, and allow the app origin in the Eventhouse cluster's **CORS** settings.
 
@@ -254,6 +257,10 @@ does not replace the host or append an API route. For an `AIServices` resource, 
 in `/openai/v1/responses`. Do not use the Foundry project endpoint ending in
 `/api/projects/<project-name>`; that URL is for project SDK and management operations.
 
+The deployed values seed **Administration → Foundry Copilot**. Changes made there are stored in the
+current browser and apply to the next question without rebuilding or redeploying the app. The
+deployment value is sent as the Responses API `model`; there is no separate API-version setting.
+
 **The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
 authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
 token with 401 no matter what RBAC you assign — Azure evaluates RBAC in the resource's *own* home
@@ -287,6 +294,10 @@ npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (crea
 ```
 
 ## 6. Deploy the app
+
+> [!NOTE]
+> This command documents the underlying operator phase. Agents must invoke the repository
+> orchestrator from the root; they must not run this phase directly.
 
 ```powershell
 npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploys the static app
@@ -421,8 +432,10 @@ rayfin up --workspace-id <workspace-guid> --yes
 `--dry-run`, and `--exclude-services staticHosting`. To repoint an **existing** deployment record
 without re-provisioning, use `rayfin switch <workspace-name>` (it rewrites `rayfin/.env`).
 
-Then continue at **Step 5** (`npm run rayfin:db`) → **Step 6** (`npm run deploy`) → update
-`rayfin.yml` `allowedRedirectUris` with the new hosting URL → `npm run up` → **Steps 7–9**.
+For an agent-driven deployment, return to the repository root and run the one-shot orchestrator with
+the new tenant/workspace instead of continuing these phases individually. It provisions the schema,
+deploys the static app, preserves and extends SPA redirects, configures live auth, and verifies the
+hosted page.
 
 ### Node 24 wrapper — gotchas
 
@@ -487,9 +500,9 @@ npm version 1.0.2 --no-git-tag-version
 | **"System cancelled the Spark session"** running RTI_011 | Its lakehouse binding is stale — re‑import RTI_011 (Fabric **source control → Update**, or script it via [Raw/workspace-reset](../Raw/workspace-reset/README.md)) or re‑run `RTI_001`, then retry. |
 | **"No GraphQL API found"** / STID panels empty | Run **Seed & provision** (Step 7). If STEP B reports auto‑bind failed, bind the STID tables in the portal. |
 | Live signals stay empty | `02_Pipe_Stream` must have run (Step 9) **and** Step 8 live‑auth must be in place. |
-| **`rayfin up`/`deploy` → static deploy `401 Unauthorized`** (backend + DB apply succeed) | Rayfin's cached Fabric token is stale/expired. `npx rayfin login --select` (pick the target tenant), then retry just the static step: `rayfin up staticapp deploy`. The backend was already provisioned, so **don't re‑run the full `up`**. |
+| **Static deploy `401 Unauthorized`** | Rayfin's cached Fabric token is stale/expired. An operator can refresh it with `npx rayfin login --select`; agents rerun the one-shot orchestrator, which owns login recovery and state reuse. |
 | **Consent popup on Step 2 (Seed & provision)** | Should **not** appear anymore — `setup-live-auth` now pre‑grants all Fabric REST scopes (`GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) AllPrincipals (tenant‑wide) on the Power BI Service resource. If you still see it (edge‑cached config), click **Accept** once; it's harmless. |
-| **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it — so **redeploy** (`npm run deploy`) *and* run `npm run setup-live-auth`. Then hard‑refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed‑in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow‑list. |
+| **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it. Agents rerun the one-shot orchestrator, then hard-refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed-in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow-list. |
 | Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
 | Local **Deploy app** says the identity is missing from the MSAL token cache | The deployer opens `az login --tenant <selected-tenant>` and retries the Fabric token once automatically. Complete the browser sign-in; it does not switch the configured tenant or rotate Rayfin state. |
 | Verification says scopes are configured but consent is missing | On **App registrations → Hydro Operations Fabric Client → API permissions**, inspect **Status**, not just the permission rows. It must say **Granted for &lt;tenant&gt;**. Use **Grant admin consent for &lt;tenant&gt;** with a consent-granting admin role, or allow the intended user to consent in-app if tenant policy permits. |
@@ -501,11 +514,12 @@ npm version 1.0.2 --no-git-tag-version
 | **`npx … -c "npx rayfin …"` → npm EUSAGE** | Don't nest `npx`. Call `rayfin` / `npm run …` **directly** inside the `-c` string. |
 | `rayfin up` can't find `rayfin.yml` (wrong cwd) | The `-c` shell starts at an unspecified cwd — put the path in the string: `-c "cd /d <abs>\HydroOperationsApp && rayfin up …"`. |
 
-## Reset
+## Rotate deployment state
 
-Delete `rayfin/.env`, `rayfin/.env.local`, and `rayfin/.deployments.json`, then redo from Step 3.
-A fresh build gets a new hosting hostname — add it to `rayfin/rayfin.yml` (`allowedRedirectUris`) and
-re‑run `npm run up`, then `npm run setup-live-auth` (Step 8) after the first `npm run deploy`.
+Never delete deployment state. When switching targets, move only `rayfin/.env`,
+`rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely named temporary backup. The
+one-shot orchestrator performs this rotation, preserves every existing Entra SPA redirect, and adds
+only the current generated hosting origin.
 
 > Switching **tenant/workspace/region** (not just rebuilding)? Follow
 > [Redeploying to a different tenant, workspace, or region](#redeploying-to-a-different-tenant-workspace-or-region)

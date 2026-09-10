@@ -17,10 +17,11 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 | `src/services/copilot/query.ts` | Pure KQL builder, `run_kql` validator, structured row filter |
 | `src/services/copilot/tools.ts` | Tool schemas + executors, per-turn caches |
 | `src/services/copilot/chatStream.ts` | SSE reader + tool-call delta accumulator |
+| `src/services/copilot/responsesProtocol.ts` | Responses API request conversion and bounded completed-turn history |
 | `src/services/copilot/suggestions.ts` | Parses the follow-up options a reply offers |
 | `src/services/copilot/foundry.ts` | The agent loop, system prompt, conversation history |
 | `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid` |
-| `scripts/copilot-tools.test.mjs` | Unit tests for the validator, filter and accumulator |
+| `scripts/copilot-tools.test.mjs` | Unit tests for validation, tools, Responses streaming/context and suggestions |
 
 ---
 
@@ -154,7 +155,8 @@ Notes on the implementation:
   fragments are accumulated by output index, and final items replace fragments before execution.
 - **Tool failures are not fatal.** The error message is returned to the model as the tool result so
   it can correct itself; the step is still recorded in the trace with its error.
-- **History** keeps only completed user/assistant text turns (last 8 messages). Tool traffic is
+- **History** keeps only completed user/assistant text turns (last 8 message objects, normally four
+  user/assistant exchanges). Tool traffic is
   dropped between completed turns so a long session cannot grow the context unbounded. During an
   active turn, every function call and function output remains in the Responses input until the
   model produces the final answer. History is cleared only by the explicit conversation reset.
@@ -220,8 +222,10 @@ transcript.
 
 ### Readable data
 
-Defined once in `catalog.ts`, narrowed by Administration, and rendered into the system prompt — so
-the model's schema and the enforced allow-list cannot drift apart.
+Defined once in `catalog.ts`, narrowed by Administration, and rendered into the system prompt.
+Structured tools derive their entity choices from this catalog, while `run_kql` separately enforces
+the enabled Kusto source allow-list. Kusto itself remains the authority for function columns and
+query semantics.
 
 | Entity | Source | Reached via |
 | --- | --- | --- |
@@ -232,6 +236,11 @@ the model's schema and the enforced allow-list cannot drift apart.
 | `asset_models` | App SQL database | `RayfinClient` — 3D model files per equipment |
 | `OPCUAEvents` | Eventhouse | Kusto REST |
 | `AssetMaster()`, `TelemetryEnriched(...)` | Eventhouse | Kusto REST — telemetry pre-joined to asset master via OneLake shortcuts |
+
+Kusto identifiers are case-sensitive. `AssetMaster()` returns `opcua_node_id`, `Station`, `Turbine`,
+`Signal`, `SignalGroup`, and `Unit`. `TelemetryEnriched(...)` returns `event_time`, those five
+capitalized asset columns, `value`, and `quality`. These names mirror the functions provisioned by
+`RTI_008_build_realtime_dashboard`; lowercase `station`, `turbine`, or `unit` will not resolve.
 
 ### The tools
 
@@ -259,6 +268,11 @@ The single place model-written query text is accepted. It must start with a cata
 
 A surviving query gets `| take 500` appended unless it already ends with a `take`, and the Kusto
 request additionally sets `truncationmaxrecords` and a 60-second `servertimeout`.
+
+The validator is a read-only and source-boundary guard, not a full KQL compiler. Unknown columns,
+incorrect identifier casing, invalid function signatures, and other semantic errors are rejected
+by Eventhouse. That error is returned to the model as a failed tool result so it can correct the
+query or fall back to a structured tool.
 
 ### Result shaping
 
