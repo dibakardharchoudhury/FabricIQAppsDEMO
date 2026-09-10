@@ -65,31 +65,42 @@ const KQL_BIN = KQL_TIMESPAN
 const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }
+export const TELEMETRY_AGGREGATIONS = ['none', ...Object.keys(AGGREGATIONS)]
 
 export type TelemetryQueryArgs = {
   opcua_node_ids?: string[]
   lookback?: string
   bin?: string
   aggregation?: string
+  limit?: number
 }
 
-/** Build the binned telemetry query from validated fragments — no model text reaches the query body. */
+/** Build the telemetry query from validated fragments — no model text reaches the query body.
+ *  Always keeps the NEWEST rows so "the last N readings" is answerable. */
 export function buildTelemetryQuery(args: TelemetryQueryArgs): string {
   const lookback = args.lookback ?? '24h'
   if (!KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use a value like 30m, 6h or 7d.`)
-  const bin = args.bin ?? '5m'
-  if (!KQL_BIN.test(bin)) throw new Error(`Invalid bin '${bin}'. Use a value like 30s, 5m or 1h.`)
-  const aggregation = AGGREGATIONS[args.aggregation ?? 'avg']
-  if (!aggregation) throw new Error(`Invalid aggregation '${args.aggregation}'. Use one of ${Object.keys(AGGREGATIONS).join(', ')}.`)
+  const aggregation = args.aggregation ?? 'avg'
+  if (!TELEMETRY_AGGREGATIONS.includes(aggregation)) {
+    throw new Error(`Invalid aggregation '${args.aggregation}'. Use one of ${TELEMETRY_AGGREGATIONS.join(', ')}.`)
+  }
+  const requested = Math.trunc(Number(args.limit ?? MAX_ROWS))
+  const limit = Math.min(Math.max(Number.isFinite(requested) && requested > 0 ? requested : MAX_ROWS, 1), MAX_ROWS)
   const nodes = (args.opcua_node_ids ?? []).filter(node => typeof node === 'string' && node.trim())
   const nodeFilter = nodes.length
     ? `\n| where opcua_node_id in (${nodes.map(node => `'${escapeKqlString(node)}'`).join(', ')})`
     : ''
+  let shape = '| project event_time, opcua_node_id, value, quality'
+  if (aggregation !== 'none') {
+    const bin = args.bin ?? '5m'
+    if (!KQL_BIN.test(bin)) throw new Error(`Invalid bin '${bin}'. Use a value like 30s, 5m or 1h.`)
+    shape = `| summarize value = ${AGGREGATIONS[aggregation]}, bad = countif(tolower(quality) == 'bad') by opcua_node_id, event_time = bin(event_time, ${bin})`
+  }
   return `OPCUAEvents
 | where event_time > ago(${lookback})${nodeFilter}
-| summarize value = ${aggregation}, bad = countif(tolower(quality) == 'bad') by opcua_node_id, event_time = bin(event_time, ${bin})
-| order by event_time asc
-| take ${MAX_ROWS}`
+${shape}
+| top ${limit} by event_time desc
+| order by event_time asc`
 }
 
 const FORBIDDEN_KQL = [
@@ -98,16 +109,37 @@ const FORBIDDEN_KQL = [
   { pattern: /\bcluster\s*\(/i, reason: 'cross-cluster queries are not allowed' },
   { pattern: /\bdatabase\s*\(/i, reason: 'cross-database queries are not allowed' },
   { pattern: /\b(ingest|set|append|drop|alter|delete)\b/i, reason: 'only read-only queries are allowed' },
+  { pattern: /\blet\b/i, reason: 'let statements are not allowed — inline the value instead' },
   { pattern: /;/, reason: 'multiple statements are not allowed' },
 ]
+
+/** Blank out string literals before the forbidden-pattern scan. An OPC UA node id such as
+ *  'ns=2;s=T004.power_output' contains a semicolon that would otherwise read as a statement break. */
+function withoutStringLiterals(query: string): string {
+  let output = ''
+  let index = 0
+  while (index < query.length) {
+    const char = query[index]
+    const verbatim = char === '@' && (query[index + 1] === "'" || query[index + 1] === '"')
+    const quote = verbatim ? query[index + 1] : (char === "'" || char === '"' ? char : '')
+    if (!quote) { output += char; index += 1; continue }
+    let cursor = index + (verbatim ? 2 : 1)
+    while (cursor < query.length && query[cursor] !== quote) cursor += !verbatim && query[cursor] === '\\' ? 2 : 1
+    if (cursor >= query.length) throw new Error('Rejected: the query has an unterminated string literal.')
+    output += ' '
+    index = cursor + 1
+  }
+  return output
+}
 
 /** Validate a model-authored KQL query against the catalog allow-list and cap its result size.
  *  Throws with a message the model can act on; the thrown text is fed back as the tool result. */
 export function validateKql(query: string, allowedSources: string[] = KUSTO_SOURCE_NAMES): string {
   const trimmed = (query ?? '').trim()
   if (!trimmed) throw new Error('The query was empty.')
+  const scanned = withoutStringLiterals(trimmed)
   for (const rule of FORBIDDEN_KQL) {
-    if (rule.pattern.test(trimmed)) throw new Error(`Rejected: ${rule.reason}.`)
+    if (rule.pattern.test(scanned)) throw new Error(`Rejected: ${rule.reason}.`)
   }
   if (!allowedSources.length) throw new Error('Rejected: no Kusto sources are enabled.')
   const leading = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)/)?.[1]

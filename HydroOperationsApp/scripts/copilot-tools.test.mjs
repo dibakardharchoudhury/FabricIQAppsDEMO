@@ -9,7 +9,27 @@ test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)
   assert.throws(() => validateKql('OPCUAEvents | join cluster("other").database("db").T on x'), /cross-cluster/)
   assert.throws(() => validateKql('OPCUAEvents | take 1; OPCUAEvents | take 2'), /multiple statements/)
+  assert.throws(() => validateKql('let x = 1 | OPCUAEvents | take 1'), /let statements/)
   assert.throws(() => validateKql('externaldata(x: string) [@"https://evil.example/x"]'), /externaldata/)
+})
+
+test('allows the semicolon inside an OPC UA node id literal', () => {
+  const query = "OPCUAEvents | where opcua_node_id == 'ns=2;s=T004.power_output' | top 100 by event_time desc"
+  assert.match(validateKql(query), /ns=2;s=T004\.power_output/)
+  // A statement break outside the literal is still rejected.
+  assert.throws(() => validateKql(`${query}; OPCUAEvents | take 1`), /multiple statements/)
+  assert.throws(() => validateKql("OPCUAEvents | where opcua_node_id == 'ns=2;s=T004"), /unterminated string/)
+})
+
+test('telemetry returns the most recent rows, raw when aggregation is none', () => {
+  const raw = buildTelemetryQuery({ opcua_node_ids: ['ns=2;s=T004.power_output'], lookback: '7d', aggregation: 'none', limit: 100 })
+  assert.match(raw, /\| project event_time, opcua_node_id, value, quality/)
+  assert.match(raw, /\| top 100 by event_time desc/)
+  assert.doesNotMatch(raw, /summarize/)
+
+  const binned = buildTelemetryQuery({ bin: '1m', limit: 10_000 })
+  assert.match(binned, /summarize value = avg\(value\)/)
+  assert.match(binned, /\| top 500 by event_time desc/)
 })
 
 test('rejects tables outside the catalog', () => {

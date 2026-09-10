@@ -5,7 +5,7 @@ import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catal
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import {
   applyFilter, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
-  projectColumns, truncateForModel, validateKql, type FilterCondition,
+  projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
 export type ToolDefinition = {
@@ -26,7 +26,7 @@ export function describeToolCall(name: string, args: ToolArguments): string {
       return [
         args.opcua_node_ids?.length ? plural(args.opcua_node_ids.length, 'signal') : 'all signals',
         args.lookback ?? '24h',
-        `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
+        args.aggregation === 'none' ? `latest ${args.limit ?? MAX_ROWS} readings` : `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
       ].join(' · ')
     case 'run_kql':
       return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
@@ -92,14 +92,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'query_telemetry',
-      description: 'Aggregate OPC UA telemetry over a time window. Prefer this over run_kql for simple trends.',
+      description: 'Read OPC UA telemetry over a time window, newest rows first. Prefer this over run_kql for both trends and "the last N readings". Returns the individual readings when aggregation is "none".',
       parameters: {
         type: 'object',
         properties: {
           opcua_node_ids: { type: 'array', items: { type: 'string' }, description: 'Signals to include. Omit for all signals.' },
           lookback: { type: 'string', description: 'Window ending now, e.g. 30m, 6h, 7d. Default 24h.' },
-          bin: { type: 'string', description: 'Bucket size, e.g. 30s, 5m, 1h. Default 5m.' },
-          aggregation: { type: 'string', enum: ['avg', 'min', 'max', 'sum', 'count'], description: 'Default avg.' },
+          bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none".' },
+          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings rather than bucketed values.' },
+          limit: { type: 'integer', description: `How many of the most recent rows to return (default ${MAX_ROWS}, max ${MAX_ROWS}).` },
         },
       },
     },
@@ -108,7 +109,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'run_kql',
-      description: 'Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. Semicolons, let statements and multiple statements are rejected. The query must start with OPCUAEvents, AssetMaster or TelemetryEnriched.',
+      description: 'Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. One statement only: no let statements and no semicolon outside a string literal (a node id like \'ns=2;s=T004.power_output\' is fine). The query must start with OPCUAEvents, AssetMaster or TelemetryEnriched.',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string', description: 'A single read-only KQL statement.' } },
@@ -209,7 +210,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
           ...tool,
           function: {
             ...tool.function,
-            description: `Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. Semicolons, let statements and multiple statements are rejected. The query must start with ${enabledKustoNames(settings).join(', ')}.`,
+            description: `Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. One statement only: no let statements and no semicolon outside a string literal (a node id like 'ns=2;s=T004.power_output' is fine). The query must start with ${enabledKustoNames(settings).join(', ')}.`,
           },
         }
       }
