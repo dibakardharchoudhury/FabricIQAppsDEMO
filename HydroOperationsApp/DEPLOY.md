@@ -8,6 +8,23 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
+### Agent one-shot deployment
+
+GitHub Copilot and other same-machine agents must run the repository orchestrator from the repository
+root instead of assembling the numbered commands below:
+
+```powershell
+python Raw/workspace-reset/deploy_fabric_app.py `
+  --tenant <tenant-guid-or-domain> `
+  --workspace <workspace-guid-or-name> `
+  --push-config
+```
+
+Use `--client-id <spa-app-guid>` only when SPA discovery is ambiguous. The script owns environment
+validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA setup, redirect
+preservation, permission/consent checks, hosted-page verification, and generated-origin persistence.
+The remaining numbered sections document those phases for operators and troubleshooting.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform
@@ -183,8 +200,8 @@ create the STID GraphQL API or seed the operational SQL DB — those happen in S
 ## 2. Clone and install
 
 ```powershell
-git clone https://github.com/dibakardharchoudhury/FabricOntologyHydro.git
-cd FabricOntologyHydro/HydroOperationsApp
+git clone https://github.com/dibakardharchoudhury/FabricIQAppsDEMO.git
+cd FabricIQAppsDEMO/HydroOperationsApp
 npm ci
 ```
 

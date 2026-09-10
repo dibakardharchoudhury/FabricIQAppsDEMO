@@ -10,12 +10,28 @@ tenant, workspace, or region. This repo already automates almost everything. **F
 existing scripts and docs — do not reinvent the wheel or click through the Entra portal by
 hand when a script does it.**
 
+## Mandatory one-shot command
+
+From the repository root, deploy through the orchestrator only:
+
+```powershell
+python Raw/workspace-reset/deploy_fabric_app.py `
+  --tenant <TENANT_GUID_OR_DOMAIN> `
+  --workspace <WORKSPACE_GUID_OR_NAME> `
+  --push-config
+```
+
+Add `--client-id <SPA_APP_GUID>` only when SPA discovery is ambiguous or the user supplied one.
+Do not run the individual commands later in this document as a replacement deployment flow; they
+explain what the orchestrator owns and are retained for diagnosis or administrator handoff. Success
+requires both `DEPLOYED_APP_URL=<url>` and `SUCCESS: Hydro Operations is live at <url>`.
+
 ## Which scenario (pick one)
-- **New / different tenant** → create a new SPA (step 2) + reset local state (step 1) → full **Canonical flow** below.
-- **Same tenant, new workspace or region** → **reuse** the SPA client id, reset local state, read
-  [Same tenant, different workspace/region](#same-tenant-different-workspaceregion), then run Canonical-flow steps 3–8.
-- **Same tenant, same workspace (iterating on code)** → no reset, no SPA change: `npm run deploy`;
-  re-run `npm run setup-live-auth` only if the hosting hostname changed.
+- **New / different tenant** → run the one-shot command; the orchestrator discovers or creates the SPA.
+- **Same tenant, new workspace or region** → run the one-shot command; it reuses the tenant SPA and
+  safely rotates only mismatched local Rayfin state into a temporary backup.
+- **Same tenant, same workspace** → run the same one-shot command; it reuses the healthy backend and
+  performs a static-only update before revalidating auth and the hosted page.
 
 ## Source of truth — READ THESE FIRST, then follow them
 - [HydroOperationsApp/DEPLOY.md](../../HydroOperationsApp/DEPLOY.md) — the 9-step guide + the
@@ -26,8 +42,8 @@ hand when a script does it.**
   admin consent). Read its header comment; it explains every AADSTS error it prevents.
 
 ## The ONE golden rule
-SPA **redirect URIs**, **delegated permissions**, and **admin consent** are all done by
-`npm run setup-live-auth` (STEP 1 + STEP 2 in that script). **Do NOT** add redirect URIs, add
+SPA **redirect URIs**, **delegated permissions**, and **admin consent** are all done by the
+one-shot orchestrator through the idempotent `setup-live-auth` script. **Do NOT** add redirect URIs, add
 API permissions, or grant consent manually in the Entra portal, and **do NOT** hand-edit
 `rayfin/rayfin.yml` `allowedRedirectUris`. Snapshot and preserve every redirect currently registered
 in Entra, then add only the hosting origin produced by the current deployment. Never remove an
@@ -43,31 +59,22 @@ manual portal steps for the exact action the script prints it lacks a role to pe
 > Administrator** must create the app and its enterprise application/service principal, then add
 > SPA redirects/delegated permissions and grant tenant-wide admin consent (Global Administrator is
 > not required — none of the scopes is directory-privileged, and consent is optional altogether
-> where the tenant allows user consent). Run
-> `npm run setup-live-auth:dry` to print the concrete hosting origins and scopes. After the admin
-> supplies the client ID, set `RAYFIN_PUBLIC_AAD_CLIENT_ID` and rerun the idempotent live-auth flow.
+> where the tenant allows user consent). The orchestrator prints the concrete administrator handoff.
+> After the admin supplies the client ID, rerun the one-shot command with `--client-id <SPA_APP_GUID>`.
 
-## Node 24 wrapper (Windows) — gotchas
-Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
-`npx -y -p node@24 -c "<cmd>"`. Inside `-c`:
-- **Don't nest npx** (`-c "npx rayfin …"` → npm EUSAGE). Call `rayfin` / `npm run` directly.
-- The `-c` shell starts at an **unspecified cwd**; embed the cd:
-  `-c "cd /d C:\DBA\VSCodeRepo\FabricOntologyHydro\HydroOperationsApp && rayfin up …"`.
+## Node 24 (Windows)
+The orchestrator resolves Node 24, sets the application working directory, and invokes the local
+Rayfin CLI. Agents must not wrap, nest, or reconstruct its Node/npm/Rayfin commands.
 
-## Canonical flow (fresh / new-tenant)
+## Orchestrator-owned phases (do not run separately)
 
 1. **(Re-deploy only) Rotate local Rayfin state.** Move only `rayfin/.env`,
    `rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely created temporary backup.
    Do not delete files or directories. A stale `active` pointer in `.deployments.json` makes
    `rayfin up` **404 "workspace not found"** against the old endpoint.
 
-2. **Create the SPA app registration** (the only genuinely manual step — an app reg is
-   tenant-scoped). Make sure `az` is in the TARGET tenant first:
-   ```powershell
-   az login --tenant <TENANT_GUID> --allow-no-subscriptions
-   az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audience AzureADMyOrg --query appId -o tsv
-   ```
-   (No secret — it's a public SPA. Needs Application Administrator or self-service app reg.)
+2. **Resolve the tenant SPA.** Reuse an explicit/configured client ID, discover the configurable
+  display name, or create a public single-tenant SPA when permissions allow. No client secret is used.
 
 3. **Fill `rayfin/.env`** (copy from `.env.example`) — four values, no secrets:
    `FABRIC_WORKSPACE_NAME`, `RAYFIN_PUBLIC_WORKSPACE_ID` (workspace GUID),
@@ -75,23 +82,14 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    Resolve the workspace GUID by name via `GET https://api.fabric.microsoft.com/v1/workspaces`.
   Run `npm run validate-env` and do not continue unless it passes.
 
-4. **Point Rayfin at the tenant:** `rayfin logout` → `rayfin login --select` (pick the tenant
-   that owns the workspace) → `rayfin login status`.
+4. **Authenticate to the target tenant.** Verify the active Azure CLI tenant and acquire the Fabric
+  token; when the local MSAL token is missing or stale, perform one tenant-scoped login and retry.
 
-5. **Provision non-interactively** (the interactive "Enter a Fabric workspace name" TUI redraw
-   is NOT captured by the terminal tool — always pass the id):
-   ```powershell
-   npx -y -p node@24 -c "cd /d C:\DBA\VSCodeRepo\FabricOntologyHydro\HydroOperationsApp && rayfin up --workspace-id <WORKSPACE_GUID> --yes"
-   ```
-   Then `npm run rayfin:db` (SQL schema) and `npm run deploy` (static hosting — this records the
-   new `*.webapp.fabricapps.net` hosting origin into `rayfin.yml`).
+5. **Provision non-interactively.** Pass the resolved workspace ID to Rayfin, apply the SQL schema,
+  and deploy static hosting. For an unchanged healthy target, reuse the backend and update static
+  hosting only. The resulting `*.webapp.fabricapps.net` origin is recorded in `rayfin.yml`.
 
-6. **Configure the SPA — run the script, don't click:**
-   ```powershell
-   az login --tenant <TENANT_GUID> --allow-no-subscriptions   # if not already
-   npm run setup-live-auth          # STEP 1 redirect URIs + STEP 2 perms + consent (idempotent)
-   npm run setup-live-auth:dry      # preview only; --redirect-only / --grant-only to scope
-   ```
+6. **Configure the SPA through the orchestrator, not by clicking:**
    It reads `RAYFIN_PUBLIC_AAD_CLIENT_ID` / `TENANT_ID` from `rayfin/.env` and the hosting
   current origin from `rayfin/rayfin.yml`, then preserves all existing Entra redirects and adds it
   plus `localhost:5173`; it never removes an existing redirect
@@ -100,8 +98,7 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    `GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`
    (all `AllPrincipals`, tenant-wide). `Item.Read.All` is what lets the app read the Eventhouse
    query URI — without it live telemetry fails with "No Eventhouse found". If it lacks a role it
-   prints the exact portal action and continues. **If the user has no admin rights at all**, run
-   `npm run setup-live-auth:dry` to print every URI/scope/consent, then point them to
+  prints the exact portal action and continues. **If the user has no admin rights at all**, point them to
    [DEPLOY.md → "No admin rights? Hand this to your Entra admin"](../../HydroOperationsApp/DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin)
    — fastest split: the admin creates the SPA + grants consent and makes the user an **Owner**, then
    `setup-live-auth` applies redirect URIs + permissions with no further admin involvement.
@@ -123,13 +120,12 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
 ## Same tenant, different workspace/region (the common redeploy)
 If the target is the SAME tenant as a prior deploy (only the workspace or capacity region changed):
 - **REUSE the existing SPA** `RAYFIN_PUBLIC_AAD_CLIENT_ID` — an app registration is tenant-scoped, so
-  do NOT run `az ad app create`. Keep the same client id + `RAYFIN_PUBLIC_TENANT_ID` in `.env`; only
-  `FABRIC_WORKSPACE_NAME` + `RAYFIN_PUBLIC_WORKSPACE_ID` change.
-- Still reset local state (step 1) and re-point `.env` to the new workspace GUID (resolve by name via
-  `GET /v1/workspaces`). Preserve the SPA redirects currently registered in Entra, add only the new
-  hosting origin, and re-confirm consent (already `AllPrincipals` → no-op).
-- Verify the app afterwards: `az ad app show --id <appId> --query spa.redirectUris` and the SP's
-  `oauth2PermissionGrants` — Power BI `GraphQLApi.Execute.All` + `Workspace.Read.All` +
+  do not create another registration. Let the orchestrator retain the client ID and update only the
+  target workspace values.
+- Let the orchestrator rotate mismatched local state, preserve every Entra SPA redirect, add only the
+  new hosting origin, and re-confirm consent.
+- The orchestrator verifies the SPA redirects and delegated grants: Power BI
+  `GraphQLApi.Execute.All` + `Workspace.Read.All` +
   `Item.Read.All` + `Item.Execute.All`, and ADX `user_impersonation`, all as `AllPrincipals`.
 
 ## Feature & region gating (Fabric App Items preview)
@@ -145,17 +141,17 @@ setting (`AppBackendTenant`). If it fails with **403 "The feature is not availab
 ## Common failures → fix
 | Symptom | Cause / Fix |
 |---|---|
-| `rayfin up` 404 "workspace not found" | Stale `active` pointer in `.deployments.json` → delete it (step 1). |
+| `rayfin up` 404 "workspace not found" | Run the one-shot orchestrator. It moves stale state into a unique temporary backup and regenerates the target configuration without deleting it. |
 | `rayfin up` 403 "feature is not available" | AppBackendTenant off/propagating, or region-gated → verify setting; move to Sweden Central. |
-| `rayfin up`/`deploy` static step **401 Unauthorized** (backend + DB apply already succeeded) | Cached Fabric token stale → `rayfin login --select` (target tenant), then retry ONLY `rayfin up staticapp deploy`. Do NOT re-run full `up`. After it prints the new hosting URL, `rayfin up --exclude-services staticHosting --yes` to push the redirect to the backend, then `npm run setup-live-auth`. |
+| `rayfin up`/`deploy` static step **401 Unauthorized** | Rerun the one-shot command. Its tenant-scoped Azure CLI recovery retries a recognized missing/stale token once. |
 | Consent popup on **Seed & provision** / **Connect telemetry** | Should NOT appear — `setup-live-auth` pre-grants all Fabric scopes tenant-wide. If it does (edge-cached config), click **Accept**; harmless. |
-| **Connect telemetry → "No Eventhouse found"** (STID works) | Token lacks **`Item.Read.All`** → `GET /eventhouses/{id}` returns **403 InsufficientScopes**. Fix: redeploy the app (it now requests `Item.Read.All` in `FABRIC_SCOPES`) **and** `npm run setup-live-auth` (pre-grants it). RBAC admin ≠ OAuth scope. |
-| Deployed to the wrong workspace (e.g. a `*Test` ws) | `.env` `FABRIC_WORKSPACE_NAME`/`RAYFIN_PUBLIC_WORKSPACE_ID` pointed at the wrong ws → resolve the intended ws GUID by name via `GET /v1/workspaces`, fix `.env`, re-run `rayfin up --workspace-id <guid> --yes`. |
-| npm **EUSAGE** | Nested `npx` inside `-c` → call `rayfin`/`npm run` directly. |
-| "Project name not found in rayfin.yml" | `-c` shell ran from repo root → embed `cd /d …\HydroOperationsApp &&`. |
-| Connect popup **AADSTS50011** | Redirect URI missing → `npm run setup-live-auth` (don't add by hand). |
-| **AADSTS650057** / **AADSTS65001** | Missing delegated perm / consent → `npm run setup-live-auth`. |
-| `az` **AADSTS90072** | `az` in the wrong tenant → `az login --tenant <TENANT_GUID> --allow-no-subscriptions`. |
+| **Connect telemetry → "No Eventhouse found"** (STID works) | Token lacks **`Item.Read.All`** → `GET /eventhouses/{id}` returns **403 InsufficientScopes**. Rerun the one-shot command so deployment and live-auth validation remain atomic. RBAC admin ≠ OAuth scope. |
+| Deployed to the wrong workspace (e.g. a `*Test` ws) | Rerun the one-shot command with the intended workspace name or GUID. |
+| npm **EUSAGE** | An agent bypassed the orchestrator and nested npm/npx commands. Return to the one-shot command. |
+| "Project name not found in rayfin.yml" | An agent bypassed the orchestrator and used the wrong working directory. Return to the one-shot command. |
+| Connect popup **AADSTS50011** | Redirect URI missing. Rerun the one-shot command; do not add it by hand. |
+| **AADSTS650057** / **AADSTS65001** | Missing delegated permission or consent. Rerun the one-shot command and follow only its administrator handoff if required. |
+| `az` **AADSTS90072** | Azure CLI is authenticated to another tenant. Rerun the one-shot command with the correct `--tenant`; it never silently switches deployment targets. |
 
 ## Git note
 `main` is wired to Fabric git integration → `git fetch` and merge any Fabric commit-back BEFORE
