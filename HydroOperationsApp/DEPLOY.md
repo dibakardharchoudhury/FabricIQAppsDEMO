@@ -210,6 +210,40 @@ Most artifact ids/URIs are **discovered at runtime** by workspace display name; 
 `AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
 (the build writes `VITE_RAYFIN_*` into it automatically).
 
+### Optional: the Azure AI Foundry copilot (v2)
+
+The Copilot page ships two engines. **Data Agent** (the published Fabric Data Agent) needs no extra
+configuration. **Foundry** runs an Azure AI Foundry model in the browser with tools scoped to the
+Lakehouse `silver_*` tables, the Eventhouse and the app database. Add these to `rayfin/.env` to
+enable it — the engine toggle only appears when both are set:
+
+```ini
+RAYFIN_PUBLIC_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com
+RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT=<model deployment name>
+# RAYFIN_PUBLIC_FOUNDRY_API_VERSION=2024-10-21   # optional override
+```
+
+Use whichever endpoint the portal shows — an `AIServices` (Foundry) resource ends in
+`.cognitiveservices.azure.com`, a classic `OpenAI` resource in `.openai.azure.com`. Both serve the
+`/openai/deployments/<name>/chat/completions` path the app calls.
+
+**The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
+authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
+token with 401 no matter what RBAC you assign — Azure evaluates RBAC in the resource's *own* home
+tenant. Check with `az account list --all` before creating it; a personal or corp subscription is
+easy to pick by accident. Put it in the workspace capacity's region too (Sweden Central here).
+
+One manual step after creation, because it is resource-scoped rather than tenant-scoped: grant each
+app user the **`Cognitive Services OpenAI User`** role on the resource. The delegated Entra scope
+authorizes the audience, not the data-plane call.
+
+No CORS configuration is needed — the data plane already returns `Access-Control-Allow-Origin: *`
+and permits `Authorization` on POST. Do keep the resource on **public network access**: a private
+endpoint or a "selected networks" firewall cuts the browser off.
+
+No key is ever placed in the browser. Because the tools run as the signed-in user, the copilot
+cannot read anything that user could not read in Fabric.
+
 ## 4. Sign in to Rayfin
 
 ```powershell
@@ -276,6 +310,7 @@ origin plus `localhost:5173` as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
 **Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
 **`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
+plus **Microsoft Cognitive Services** `user_impersonation` (the Foundry copilot),
 then grants admin consent tenant‑wide (fixes **AADSTS650057 / 65001**). Because these are pre‑granted,
 **no in‑app consent popup appears** on Seed & provision or Connect telemetry.
 

@@ -24,6 +24,7 @@
 //           to the app AND create the tenant-wide consent grant:
 //             - Azure Data Explorer  user_impersonation   (telemetry)
 //             - Power BI Service      GraphQLApi.Execute.All (STID GraphQL)
+//             - Cognitive Services    user_impersonation   (Foundry copilot)
 //           Scope ids are resolved live from each resource service principal so
 //           they stay correct across clouds/tenants. Without the permission you
 //           get AADSTS650057 (Invalid resource); without consent, AADSTS65001
@@ -96,6 +97,14 @@ const REQUIRED_DELEGATED = [
     // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
     // Fabric.Embed = render the Real-Time Dashboard in the RT Dashboard telemetry view.
     scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'Fabric.Embed'],
+  },
+  {
+    label: 'Microsoft Cognitive Services (Azure AI Foundry copilot)',
+    // Resource behind *.openai.azure.com / *.services.ai.azure.com. The signed-in user also
+    // needs the `Cognitive Services OpenAI User` Azure role on the Foundry resource itself;
+    // this delegated scope only authorizes the audience, not the data-plane action.
+    resourceAppId: '7d312290-28c8-473c-a0ed-8e53749b6d6d',
+    scopeValues: ['user_impersonation'],
   },
 ]
 

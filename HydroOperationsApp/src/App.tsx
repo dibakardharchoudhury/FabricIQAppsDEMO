@@ -734,8 +734,11 @@ export default function App() {
       {activeTab === 'copilot' && <CopilotExperience
         messages={messages}
         busy={busy}
+        engine="data-agent"
+        foundryAvailable={false}
         onSend={value => void sendQuestion(value)}
         onReset={resetChat}
+        onEngineChange={() => undefined}
       />}
 
       <section className="metrics">
