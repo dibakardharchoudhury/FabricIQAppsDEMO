@@ -15,6 +15,7 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://handy-dale-a30ee3c824-swedencentral.webapp.fabricapps.net
       - https://stark-oasis-b6e6c562b0-swedencentral.webapp.fabricapps.net
       - https://quiet-quay-0ba3c996e3-swedencentral.webapp.fabricapps.net
       - https://rusty-zeal-4211d47473-swedencentral.webapp.fabricapps.net
@@ -31,7 +32,6 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://handy-dale-a30ee3c824-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
