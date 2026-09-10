@@ -45,11 +45,14 @@ REQUIRED_DELEGATED = {
         "Workspace.Read.All",
         "Item.Read.All",
         "Item.Execute.All",
+        "Fabric.Embed",
     },
+    "7d312290-28c8-473c-a0ed-8e53749b6d6d": {"user_impersonation"},
 }
 RESOURCE_NAMES = {
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
+    "7d312290-28c8-473c-a0ed-8e53749b6d6d": "Microsoft Cognitive Services",
 }
 STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"
@@ -589,14 +592,14 @@ def prepare_rayfin_env(
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup_dir = Path(tempfile.gettempdir()) / "fabric-demo-rayfin-backups" / timestamp
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_root = Path(tempfile.gettempdir()) / "fabric-demo-rayfin-backups"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ-")
+    backup_dir = Path(tempfile.mkdtemp(prefix=timestamp, dir=backup_root))
     for name in (".env", ".env.local", ".deployments.json"):
         source = RAYFIN_DIR / name
         if source.exists():
-            shutil.copy2(source, backup_dir / name)
-            source.unlink()
+            shutil.move(source, backup_dir / name)
     print(f"Previous Rayfin state backed up to {backup_dir}", flush=True)
 
     template = (RAYFIN_DIR / ".env.example").read_text(encoding="utf-8")
@@ -936,25 +939,30 @@ def deploy(args: argparse.Namespace) -> None:
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
     client_id = resolve_spa(args.client_id, args.tenant)
+    if not client_id:
+        raise DeployError(
+            "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
+            "changing Rayfin state so the app cannot be published with broken browser sign-in. "
+            "Ask an Entra administrator to create or identify 'Hydro Operations Fabric Client', "
+            "then retry with --client-id <guid>."
+        )
 
     # Capture both configuration sources BEFORE any Rayfin command can modify Entra.
     # A shared SPA may already serve several Fabric webapps, so losing even one existing
     # redirect URI is a deployment failure.
-    original_entra_redirects: list[str] = []
-    if client_id:
-        try:
-            original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
-        except (DeployError, json.JSONDecodeError) as exc:
-            raise DeployError(
-                f"Could not snapshot existing SPA redirect URIs for {client_id}. "
-                "Refusing to deploy because redirect preservation cannot be guaranteed. "
-                f"Underlying error: {exc}"
-            ) from exc
-        print(
-            f"Captured {len(original_entra_redirects)} existing Entra SPA redirect URI(s) "
-            "for preservation.",
-            flush=True,
-        )
+    try:
+        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
+    except (DeployError, json.JSONDecodeError) as exc:
+        raise DeployError(
+            f"Could not snapshot existing SPA redirect URIs for {client_id}. "
+            "Refusing to deploy because redirect preservation cannot be guaranteed. "
+            f"Underlying error: {exc}"
+        ) from exc
+    print(
+        f"Captured {len(original_entra_redirects)} existing Entra SPA redirect URI(s) "
+        "for preservation.",
+        flush=True,
+    )
 
     # Entra is authoritative for existing redirects. Do not resurrect historical hosts
     # that remain only in rayfin.yml; seed Rayfin with the live snapshot plus localhost.

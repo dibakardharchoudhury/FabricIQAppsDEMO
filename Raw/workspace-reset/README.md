@@ -214,9 +214,11 @@ tenant and workspace selected in the sidebar:
   an install link; repository packages are installed automatically rather than treated as manual prerequisites.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
-  continue without working browser authentication and print an administrator handoff.
-3. Reuse matching active Rayfin state for idempotent redeploys; otherwise back up and
-  reset stale state, then generate a fresh ignored `rayfin/.env`.
+  stop before changing Rayfin state and print an administrator handoff. A deployment never ships
+  with an empty SPA client ID.
+3. Reuse matching active Rayfin state for idempotent redeploys; otherwise move only the three
+  Rayfin state files into a unique temporary backup, then generate and validate a fresh ignored
+  `rayfin/.env`. Existing state is not deleted.
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, and apply the generated hosting origin to backend auth.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,

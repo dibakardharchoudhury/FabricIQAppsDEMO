@@ -172,7 +172,7 @@ class DeployOrderTests(unittest.TestCase):
 
         run_stream.assert_not_called()
 
-    def test_generates_rayfin_env_before_verifying_dependencies(self):
+    def test_missing_spa_stops_before_rayfin_state_is_touched(self):
         args = argparse.Namespace(
             tenant="tenant.example",
             workspace="workspace-id",
@@ -185,32 +185,31 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "ensure_azure_tenant"),
             patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
             patch.object(DEPLOY, "resolve_spa", return_value=None),
-            patch.object(DEPLOY, "write_rayfin_redirects", return_value=["http://localhost:5173"]),
+            patch.object(DEPLOY, "write_rayfin_redirects") as write_redirects,
             patch.object(DEPLOY, "prepare_rayfin_env", prepare),
-            patch.object(DEPLOY, "ensure_deploy_dependencies", side_effect=DEPLOY.DeployError("stop")),
+            patch.object(DEPLOY, "ensure_deploy_dependencies") as ensure_dependencies,
         ):
-            with self.assertRaisesRegex(DEPLOY.DeployError, "stop"):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "usable Entra SPA"):
                 DEPLOY.deploy(args)
 
-        prepare.assert_called_once_with(
-            "tenant.example",
-            "workspace-id",
-            "Demo Workspace",
-            None,
-        )
+        write_redirects.assert_not_called()
+        prepare.assert_not_called()
+        ensure_dependencies.assert_not_called()
 
     def test_reuses_existing_backend_for_static_deploy(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
         args = argparse.Namespace(
             tenant="tenant.example",
             workspace="workspace-id",
-            client_id=None,
+            client_id=client_id,
             push_config=False,
         )
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
             patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
-            patch.object(DEPLOY, "resolve_spa", return_value=None),
+            patch.object(DEPLOY, "resolve_spa", return_value=client_id),
+            patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
             patch.object(DEPLOY, "write_rayfin_redirects", return_value=["http://localhost:5173"]),
             patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
@@ -226,10 +225,13 @@ class DeployOrderTests(unittest.TestCase):
                 side_effect=[
                     "Hosting URL: https://fast.webapp.fabricapps.net",
                     "backend updated",
+                    "live auth configured",
                 ],
             ) as run_stream,
             patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
             patch.object(DEPLOY, "validate_fabric_app"),
+            patch.object(DEPLOY, "validate_spa_redirect_preservation"),
+            patch.object(DEPLOY, "validate_entra_live_auth"),
         ):
             DEPLOY.deploy(args)
 
@@ -281,6 +283,61 @@ class DeployOrderTests(unittest.TestCase):
 
             with patch.object(DEPLOY, "APP_DIR", app_dir):
                 self.assertEqual(DEPLOY.installed_rayfin_version(), "1.33.2")
+
+    def test_live_auth_contract_covers_foundry_and_fabric_embed(self):
+        self.assertEqual(
+            DEPLOY.REQUIRED_DELEGATED["7d312290-28c8-473c-a0ed-8e53749b6d6d"],
+            {"user_impersonation"},
+        )
+        self.assertIn(
+            "Fabric.Embed",
+            DEPLOY.REQUIRED_DELEGATED["00000009-0000-0000-c000-000000000000"],
+        )
+
+    def test_state_rotation_moves_only_known_files_to_temp_backup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rayfin_dir = root / "rayfin"
+            backup_root = root / "temp"
+            rayfin_dir.mkdir()
+            backup_root.mkdir()
+            template = "\n".join(
+                (
+                    "FABRIC_WORKSPACE_NAME=<your Fabric workspace display name>",
+                    "RAYFIN_PUBLIC_WORKSPACE_ID=<your Fabric workspace GUID>",
+                    "RAYFIN_PUBLIC_AAD_CLIENT_ID=<your Entra SPA app (client) id>",
+                    "RAYFIN_PUBLIC_TENANT_ID=<your Entra tenant id>",
+                )
+            )
+            (rayfin_dir / ".env.example").write_text(template, encoding="utf-8")
+            prior = {
+                ".env": "old env",
+                ".env.local": "old generated env",
+                ".deployments.json": "{}",
+            }
+            for name, content in prior.items():
+                (rayfin_dir / name).write_text(content, encoding="utf-8")
+
+            with (
+                patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir),
+                patch.object(DEPLOY.tempfile, "gettempdir", return_value=str(backup_root)),
+                patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete state")),
+            ):
+                DEPLOY.prepare_rayfin_env(
+                    "ad340c84-1886-4202-a483-2da2cb9168eb",
+                    "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
+                    "Demo Workspace",
+                    "22dedc54-8b7e-442c-929d-497c4df086e6",
+                )
+
+            backup_dirs = list((backup_root / "fabric-demo-rayfin-backups").iterdir())
+            self.assertEqual(len(backup_dirs), 1)
+            for name, content in prior.items():
+                self.assertEqual((backup_dirs[0] / name).read_text(encoding="utf-8"), content)
+            self.assertIn(
+                "RAYFIN_PUBLIC_AAD_CLIENT_ID=22dedc54-8b7e-442c-929d-497c4df086e6",
+                (rayfin_dir / ".env").read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

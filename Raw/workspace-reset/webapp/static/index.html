@@ -345,10 +345,10 @@
         <ul>
           <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
           <li>A tenant administrator may need to approve those permissions.</li>
-          <li>If approval is blocked, deployment still succeeds. The job shows a warning and the app works without sign-in or live data.</li>
+          <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>
         </ul>
-        <strong>Next step if warned:</strong> send the app URL, SPA client ID, and warning to your
-        Entra administrator, then enter the approved client ID below and redeploy.
+        <strong>Next step if stopped:</strong> ask your Entra administrator for the SPA client ID,
+        enter it below, and redeploy.
         Technical details: <code>HydroOperationsApp/DEPLOY.md</code>.
       </aside>
       <div class="grid">

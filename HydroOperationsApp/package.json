@@ -9,10 +9,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "predev": "rayfin env --framework vite",
+    "predev": "npm run validate-env && rayfin env --framework vite",
     "build": "tsc -b && vite build",
-    "prebuild": "rayfin env --framework vite",
+    "prebuild": "npm run validate-env && rayfin env --framework vite",
     "env": "rayfin env --framework vite",
+    "validate-env": "node ./scripts/validate-env.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",

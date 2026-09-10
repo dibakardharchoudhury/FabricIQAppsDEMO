@@ -11,9 +11,9 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA named `Hydro Operations Fabric Client`.**
 > The local deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot
-> bypass tenant policy or directory roles. A missing or incomplete SPA does **not** fail Fabric
-> AppBackend/static-host deployment; the job succeeds with degraded-auth warnings, while browser
-> sign-in and live Fabric data remain unavailable. Use
+> bypass tenant policy or directory roles. Deployment now stops before changing Rayfin state when
+> no usable SPA client ID is available; it never publishes a bundle with broken browser sign-in.
+> Use
 > [No admin rights? Hand this to your Entra admin](#no-admin-rights-hand-this-to-your-entra-admin):
 > an **Application Administrator / Cloud Application Administrator** creates the app and adds its
 > SPA redirects and delegated permissions, and the same role grants tenant-wide admin consent
@@ -31,8 +31,8 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
 | Your situation | SPA app registration | Local Rayfin state | Do this |
 |---|---|---|---|
 | **First‑ever deploy — new tenant, new workspace** | **Create** it once — [§App SPA](#b-app-spa-created-once-then-automated) | fresh (nothing to reset) | Run **Steps 1–9** in order. |
-| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | **Reset** — [Redeploying §1](#1-reset-local-rayfin-state) | Reset → re‑point `.env` → [Redeploying §4](#4-provision-non-interactively) (`rayfin up --workspace-id <guid> --yes`) → **Steps 5–9**. |
-| **Different tenant** (move the whole app elsewhere) | **Create** a new SPA in that tenant — [§App SPA](#b-app-spa-created-once-then-automated) | **Reset** — [Redeploying §1](#1-reset-local-rayfin-state) | Reset → create SPA → new `.env` → [Redeploying §2–4](#redeploying-to-a-different-tenant-workspace-or-region) → **Steps 5–9**. |
+| **Existing tenant, new / different workspace or capacity region** | **Reuse** the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID` — don't recreate | **Rotate** — [Redeploying §1](#1-rotate-local-rayfin-state) | Rotate → re‑point `.env` → [Redeploying §4](#4-provision-non-interactively) (`rayfin up --workspace-id <guid> --yes`) → **Steps 5–9**. |
+| **Different tenant** (move the whole app elsewhere) | **Create** a new SPA in that tenant — [§App SPA](#b-app-spa-created-once-then-automated) | **Rotate** — [Redeploying §1](#1-rotate-local-rayfin-state) | Rotate → create SPA → new `.env` → [Redeploying §2–4](#redeploying-to-a-different-tenant-workspace-or-region) → **Steps 5–9**. |
 | **Same tenant, same workspace — iterating on code** | already set up | keep as‑is | Just `npm run deploy`. If the hosting hostname changed, also re‑run `npm run setup-live-auth` (Step 8). |
 
 > **Agents:** the canonical automated runbook is
@@ -206,6 +206,13 @@ RAYFIN_PUBLIC_AAD_CLIENT_ID=<Entra SPA app (client) id>
 RAYFIN_PUBLIC_TENANT_ID=<Entra tenant id>
 ```
 
+Validate them before provisioning or deploying. The same check runs automatically before every
+development server and production build, including deployments started by the local app or Copilot:
+
+```powershell
+npm run validate-env
+```
+
 Most artifact ids/URIs are **discovered at runtime** by workspace display name; the
 `AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
 (the build writes `VITE_RAYFIN_*` into it automatically).
@@ -331,20 +338,24 @@ Moving the app to a **new tenant, workspace, or capacity** requires resetting Ra
 state and re-pointing every tenant-scoped identity — otherwise a stale `active` deployment pointer
 makes `rayfin up` target the old (now non-existent) workspace and fail with a 404.
 
-### 1. Reset local Rayfin state
+### 1. Rotate local Rayfin state
 
 ```powershell
 # from HydroOperationsApp/
-Move-Item   rayfin/.env rayfin/.env.<old>-old -Force                 # back up the old-tenant env
-Remove-Item rayfin/.deployments.json, rayfin/.env.local -ErrorAction SilentlyContinue
+$backup = Join-Path ([IO.Path]::GetTempPath()) ("fabric-demo-rayfin-backup-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $backup | Out-Null
+Get-Item rayfin/.env, rayfin/.env.local, rayfin/.deployments.json -ErrorAction SilentlyContinue |
+  Move-Item -Destination $backup
 ```
 
 - `rayfin/.deployments.json` holds an `active` pointer to the previous workspace/backend. Left in
   place, `rayfin up` calls the **old** endpoint and fails with **404 "The provided workspace was not
-  found."** Delete it (and `.env.local`) when switching tenants.
+  found."** Move it (and `.env.local`) into the temporary backup when switching tenants; do not
+  delete either file.
 - Recreate `rayfin/.env` from `.env.example` with the **new** `FABRIC_WORKSPACE_NAME`,
   `RAYFIN_PUBLIC_WORKSPACE_ID`, `RAYFIN_PUBLIC_TENANT_ID`, and the new tenant's SPA
-  `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Resolve the workspace GUID by display name:
+  `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Run `npm run validate-env` before continuing. Resolve the workspace
+  GUID by display name:
 
   ```powershell
   $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
@@ -438,6 +449,7 @@ Work through these in order:
    (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/capacities" -Headers @{Authorization="Bearer $tok"}).value |
      Select-Object displayName,sku,region,state | Sort-Object region | Format-Table -AutoSize
    ```
+
 ## Update the app version
 
 The version shown in the Hydro Operations UI comes from `package.json`.
@@ -446,6 +458,7 @@ From the `HydroOperationsApp` folder, run:
 
 ```powershell
 npm version 1.0.2 --no-git-tag-version
+```
 
 ## Troubleshooting
 

@@ -36,9 +36,9 @@ existing Entra SPA redirect or recreate an origin found only in stale local conf
 manual portal steps for the exact action the script prints it lacks a role to perform.
 
 > **Do not hide an Entra authorization failure.** The required single-tenant SPA is **`Hydro
-> Operations Fabric Client`**. If the operator cannot create/configure it, continue the Fabric
-> AppBackend and static-host deployment, report degraded-auth warnings, and print the administrator
-> handoff from DEPLOY.md. Do not report browser sign-in or live Fabric data as ready. An
+> Operations Fabric Client`**. If the operator cannot create or identify it, stop before changing
+> Rayfin state and print the administrator handoff from DEPLOY.md. Never publish a bundle with an
+> empty `RAYFIN_PUBLIC_AAD_CLIENT_ID`. An
 > **Application Administrator / Cloud Application
 > Administrator** must create the app and its enterprise application/service principal, then add
 > SPA redirects/delegated permissions and grant tenant-wide admin consent (Global Administrator is
@@ -56,9 +56,10 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
 
 ## Canonical flow (fresh / new-tenant)
 
-1. **(Re-deploy only) Reset local Rayfin state.** Back up + delete `rayfin/.env`,
-   `rayfin/.env.local`, `rayfin/.deployments.json`. A stale `active` pointer in
-   `.deployments.json` makes `rayfin up` **404 "workspace not found"** against the old endpoint.
+1. **(Re-deploy only) Rotate local Rayfin state.** Move only `rayfin/.env`,
+   `rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely created temporary backup.
+   Do not delete files or directories. A stale `active` pointer in `.deployments.json` makes
+   `rayfin up` **404 "workspace not found"** against the old endpoint.
 
 2. **Create the SPA app registration** (the only genuinely manual step — an app reg is
    tenant-scoped). Make sure `az` is in the TARGET tenant first:
@@ -72,6 +73,7 @@ Default Node here is newer than the app's pin (`>=24 <25`). Prefix commands:
    `FABRIC_WORKSPACE_NAME`, `RAYFIN_PUBLIC_WORKSPACE_ID` (workspace GUID),
    `RAYFIN_PUBLIC_AAD_CLIENT_ID` (the appId from step 2), `RAYFIN_PUBLIC_TENANT_ID`.
    Resolve the workspace GUID by name via `GET https://api.fabric.microsoft.com/v1/workspaces`.
+  Run `npm run validate-env` and do not continue unless it passes.
 
 4. **Point Rayfin at the tenant:** `rayfin logout` → `rayfin login --select` (pick the tenant
    that owns the workspace) → `rayfin login status`.
