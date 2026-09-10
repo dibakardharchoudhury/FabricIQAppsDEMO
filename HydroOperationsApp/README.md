@@ -10,10 +10,10 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > (reset `.deployments.json`, re-register the SPA, `rayfin up --workspace-id <guid> --yes`, and the
 > Fabric App Items preview feature/region gating).
 >
-> **Entra prerequisite:** runtime sign-in uses the single-tenant SPA
-> **`Hydro Operations Fabric Client`**. When the operator cannot create/configure app registrations
-> or grant admin consent, AppBackend/static-host deployment still succeeds with degraded-auth
-> warnings; browser sign-in and live Fabric data remain unavailable. Use the role split and portal fallback in
+> **Entra prerequisite:** runtime sign-in uses a single-tenant SPA. **`Hydro Operations Fabric
+> Client`** is the deployer's configurable default discovery name, not an Entra requirement; the
+> tenant-specific client ID is resolved dynamically. When the operator cannot create or identify
+> the SPA, deployment stops before changing Rayfin state. Use the role split and portal fallback in
 > [DEPLOY.md → No admin rights?](DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin): an
 > Application Administrator / Cloud Application Administrator configures the SPA and grants
 > tenant-wide consent. That consent is optional where the tenant allows user consent, since every

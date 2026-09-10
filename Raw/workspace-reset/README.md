@@ -87,7 +87,10 @@ situation.
   React, TypeScript, Vite, and Rayfin therefore need no separate/global installation. Internet/proxy
   access to npm and write access to `HydroOperationsApp/node_modules` are required.
 - Permission to create an Entra app registration when the target tenant does not already
-  contain `Hydro Operations Fabric Client`. The deploy action reuses the existing SPA
+  contain `Hydro Operations Fabric Client`. This display name is the default discovery/creation
+  convention, not an Entra requirement; override it with `HYDRO_SPA_DISPLAY_NAME`. The tenant's
+  actual application/client ID is discovered dynamically or supplied in the Deploy app form.
+  The deploy action reuses the existing SPA
   registration when exactly one is present. No admin role is needed when the tenant leaves
   *Users can register applications* enabled (`allowedToCreateApps`), because the creator becomes
   the app's owner and owners may set SPA redirect URIs and delegated API permissions themselves.
@@ -210,7 +213,9 @@ The **Deploy app** tab runs the complete Rayfin application deployment against t
 tenant and workspace selected in the sidebar:
 
 1. Restore the exact locked npm dependencies under Node 24 (including Rayfin), validate the active
-  Azure CLI tenant, and resolve the exact workspace GUID/name. Missing Node/npm/npx is reported with
+  Azure CLI tenant, and resolve the exact workspace GUID/name. If the selected identity is missing
+  from the Azure CLI token cache or its token is stale, deployment opens tenant-scoped Microsoft
+  sign-in once and retries automatically. Missing Node/npm/npx is reported with
   an install link; repository packages are installed automatically rather than treated as manual prerequisites.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,

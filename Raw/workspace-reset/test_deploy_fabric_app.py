@@ -15,6 +15,10 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_spa_name_has_a_stable_configurable_default(self):
+        self.assertEqual(DEPLOY.DEFAULT_APP_DISPLAY_NAME, "Hydro Operations Fabric Client")
+        self.assertTrue(DEPLOY.APP_DISPLAY_NAME)
+
     def test_node24_uses_cached_runtime_without_invoking_npx(self):
         cached = Path("C:/npm-cache/_npx/node24/node_modules/node/bin/node.exe")
 
@@ -144,8 +148,6 @@ class DeployOrderTests(unittest.TestCase):
                 "read_entra_spa_redirects",
                 side_effect=[stale, ["https://existing.webapp.fabricapps.net"]],
             ) as read_redirects,
-            patch.object(DEPLOY.Path, "home", return_value=Path("C:/Users/test")),
-            patch.object(DEPLOY.Path, "unlink") as unlink,
             patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
             patch.object(DEPLOY, "run_stream") as run_stream,
             patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
@@ -154,11 +156,53 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(redirects, ["https://existing.webapp.fabricapps.net"])
         self.assertEqual(read_redirects.call_count, 2)
-        self.assertEqual(unlink.call_count, 2)
         run_stream.assert_called_once_with(
-            ["login", "--tenant", "tenant-id", "--only-show-errors"]
+            ["login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors"]
         )
         ensure_tenant.assert_called_once_with("tenant-id")
+
+    def test_fabric_token_missing_from_msal_cache_reauthenticates_once(self):
+        missing = DEPLOY.DeployError(
+            "ERROR: User 'admin@example.test' does not exist in MSAL token cache. Run 'az login'."
+        )
+
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=[missing, "fabric-token"]) as run_capture,
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+        ):
+            headers = DEPLOY.fabric_headers("tenant-id")
+
+        self.assertEqual(headers, {"Authorization": "Bearer fabric-token"})
+        self.assertEqual(run_capture.call_count, 2)
+        reauthenticate.assert_called_once_with("tenant-id", "accessing the Fabric workspace")
+
+    def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_stream") as run_stream,
+            patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+            patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete cache")),
+        ):
+            DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+
+        run_stream.assert_called_once_with([
+            "login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors",
+        ])
+        ensure_tenant.assert_called_once_with("tenant-id")
+
+    def test_fabric_token_authorization_error_does_not_trigger_login(self):
+        denied = DEPLOY.DeployError("Authorization_RequestDenied")
+
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=denied),
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Authorization_RequestDenied"):
+                DEPLOY.fabric_headers("tenant-id")
+
+        reauthenticate.assert_not_called()
 
     def test_does_not_reauthenticate_for_non_cae_redirect_failure(self):
         failure = DEPLOY.DeployError("Authorization_RequestDenied")

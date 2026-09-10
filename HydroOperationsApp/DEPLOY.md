@@ -9,7 +9,10 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
 > [!IMPORTANT]
-> **Browser sign-in requires a tenant-scoped Entra SPA named `Hydro Operations Fabric Client`.**
+> **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
+> deployer's deterministic default display name for discovery/creation, not an Entra platform
+> requirement. Override it with `HYDRO_SPA_DISPLAY_NAME`, or provide the SPA client ID directly.
+> Runtime code uses only the dynamically resolved `RAYFIN_PUBLIC_AAD_CLIENT_ID`.
 > The local deployer and `npm run setup-live-auth` attempt to create/configure it, but they cannot
 > bypass tenant policy or directory roles. Deployment now stops before changing Rayfin state when
 > no usable SPA client ID is available; it never publishes a bundle with broken browser sign-in.
@@ -471,6 +474,7 @@ npm version 1.0.2 --no-git-tag-version
 | **Consent popup on Step 2 (Seed & provision)** | Should **not** appear anymore — `setup-live-auth` now pre‑grants all Fabric REST scopes (`GraphQLApi.Execute.All`, `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`) AllPrincipals (tenant‑wide) on the Power BI Service resource. If you still see it (edge‑cached config), click **Accept** once; it's harmless. |
 | **Connect telemetry → "No Eventhouse found in the workspace"** (STID/GraphQL works) | **Root cause (proven): an OAuth scope gap, not RBAC.** Discovery reads the Eventhouse's `queryServiceUri` via `GET /v1/workspaces/{ws}/eventhouses/{id}`, which needs **`Item.Read.All`** (or `Eventhouse.Read.All`). Without it the call returns **403 InsufficientScopes** and the app reports "No Eventhouse found" — even for a workspace admin (admin RBAC ≠ token scope). `List Items` (used to find STID's GraphQL) only needs `Workspace.Read.All`, which is why STID works but telemetry doesn't. **Fix:** the app now requests `Item.Read.All` (`src/services/fabric.ts` `FABRIC_SCOPES`) and `setup-live-auth` pre‑grants it — so **redeploy** (`npm run deploy`) *and* run `npm run setup-live-auth`. Then hard‑refresh (Ctrl+F5). If telemetry connects but shows no data, ensure the signed‑in user has **KQL Database Viewer** on the Eventhouse and the app origin is in the Eventhouse **CORS** allow‑list. |
 | Sign‑in fails with **AADSTS** | Ensure your deployed hosting URL is in `rayfin/rayfin.yml` (`allowedRedirectUris`), then run `npm run setup-live-auth` (after `az login`). 50011 = redirect URI; 650057 = missing permission; 65001 = no consent. Hard‑refresh (Ctrl+F5) after. |
+| Local **Deploy app** says the identity is missing from the MSAL token cache | The deployer opens `az login --tenant <selected-tenant>` and retries the Fabric token once automatically. Complete the browser sign-in; it does not switch the configured tenant or rotate Rayfin state. |
 | Verification says scopes are configured but consent is missing | On **App registrations → Hydro Operations Fabric Client → API permissions**, inspect **Status**, not just the permission rows. It must say **Granted for &lt;tenant&gt;**. Use **Grant admin consent for &lt;tenant&gt;** with a consent-granting admin role, or allow the intended user to consent in-app if tenant policy permits. |
 | KQL reachable but "no live readings" | F12 → Console: `HTTP 401` = re‑connect for the cluster scope; `HTTP 403` = grant **KQL Database Viewer**; network error with no status = **CORS** not allowing the app origin. |
 | Operational writes fail with **Internal server error** | An unbounded `@text()` column maps to `NVARCHAR(MAX)`, which some ops reject. Bound it in `rayfin/data/schema.ts` and re‑run `npm run rayfin:db`. |

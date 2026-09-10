@@ -90,9 +90,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > single-tenant SPA app registration **`Hydro Operations Fabric Client`** (no secret), distinct
 > from this notebook SPN. The local deployer attempts to create and configure it, but ordinary
 > users in locked-down tenants commonly cannot create app registrations, add SPA redirect URIs
-> or delegated permissions, or grant tenant-wide admin consent. This does **not** fail AppBackend
-> or static-host deployment; it produces degraded-auth warnings, and browser sign-in/live Fabric
-> data remain unavailable until configured. An **Application Administrator /
+> or delegated permissions, or grant tenant-wide admin consent. The name is a configurable
+> discovery convention (`HYDRO_SPA_DISPLAY_NAME`); the tenant-specific client ID is dynamic.
+> If no usable SPA can be resolved, deployment stops before changing Rayfin state. An **Application Administrator /
 > Cloud Application Administrator** must create/configure the app and grant admin consent
 > (Global Administrator is not required). Consent itself is optional where the tenant allows user
 > consent, because every scope the app requests is user-consentable. Use the copy-pasteable handoff

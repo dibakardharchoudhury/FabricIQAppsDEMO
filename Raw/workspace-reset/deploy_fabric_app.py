@@ -31,7 +31,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
-APP_DISPLAY_NAME = "Hydro Operations Fabric Client"
+DEFAULT_APP_DISPLAY_NAME = "Hydro Operations Fabric Client"
+APP_DISPLAY_NAME = os.environ.get("HYDRO_SPA_DISPLAY_NAME", "").strip() or DEFAULT_APP_DISPLAY_NAME
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -56,10 +57,10 @@ RESOURCE_NAMES = {
 }
 STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"
-    r"AADSTS50076|AADSTS50079|AADSTS50173",
+    r"AADSTS50076|AADSTS50079|AADSTS50173|does not exist in MSAL token cache|"
+    r"Please run ['\"]?az login|Run ['\"]?az login",
     re.IGNORECASE,
 )
-AZURE_CLI_TOKEN_CACHE_FILES = ("msal_token_cache.bin", "msal_http_cache.bin")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -349,19 +350,34 @@ def ensure_azure_tenant(tenant: str) -> None:
     print(f"Azure identity: {user} (tenant {active})", flush=True)
 
 
-def fabric_headers() -> dict[str, str]:
-    token = run_capture(
-        az(
-            "account",
-            "get-access-token",
-            "--resource",
-            "https://api.fabric.microsoft.com",
-            "--query",
-            "accessToken",
-            "-o",
-            "tsv",
-        )
+def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
+    print(
+        f"Azure CLI authentication needs to be refreshed before {operation}. "
+        f"Opening Microsoft sign-in for tenant {tenant}...",
+        flush=True,
     )
+    run_stream(az("login", "--tenant", tenant, "--allow-no-subscriptions", "--only-show-errors"))
+    ensure_azure_tenant(tenant)
+
+
+def fabric_headers(tenant: str) -> dict[str, str]:
+    command = az(
+        "account",
+        "get-access-token",
+        "--resource",
+        "https://api.fabric.microsoft.com",
+        "--query",
+        "accessToken",
+        "-o",
+        "tsv",
+    )
+    try:
+        token = run_capture(command)
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+        reauthenticate_azure_cli(tenant, "accessing the Fabric workspace")
+        token = run_capture(command)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -372,8 +388,8 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
-def resolve_workspace(workspace: str) -> tuple[str, str]:
-    headers = fabric_headers()
+def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
+    headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
         item = fabric_get(f"workspaces/{workspace}", headers)
         return workspace, str(item.get("displayName") or workspace)
@@ -551,13 +567,13 @@ def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
         return values, None
 
 
-def fabric_item_exists(workspace_id: str, item_id: str) -> bool:
+def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     """Return false for deleted saved items; fail for other Fabric API errors."""
     if not GUID_RE.fullmatch(item_id):
         return False
     response = requests.get(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item_id}",
-        headers=fabric_headers(),
+        headers=fabric_headers(tenant),
         timeout=60,
     )
     if response.status_code == 200:
@@ -587,7 +603,7 @@ def prepare_rayfin_env(
     )
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
-        if fabric_item_exists(workspace_id, item_id):
+        if fabric_item_exists(workspace_id, item_id, tenant):
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
@@ -618,13 +634,13 @@ def prepare_rayfin_env(
     return False
 
 
-def validate_fabric_app(workspace_id: str) -> str:
+def validate_fabric_app(workspace_id: str, tenant: str) -> str:
     """Fail unless the expected Fabric AppBackend exists in the target workspace."""
     _, deployment = current_rayfin_target()
     item_id = str((deployment or {}).get("fabricItemId") or "")
     if not GUID_RE.fullmatch(item_id):
         raise DeployError("Rayfin deployment state does not contain a valid Fabric AppBackend item id.")
-    item = fabric_get(f"workspaces/{workspace_id}/items/{item_id}", fabric_headers())
+    item = fabric_get(f"workspaces/{workspace_id}/items/{item_id}", fabric_headers(tenant))
     if item.get("type") != "AppBackend" or str(item.get("workspaceId")) != workspace_id:
         raise DeployError(
             f"Fabric item validation failed for {item_id}: expected AppBackend in workspace {workspace_id}."
@@ -674,7 +690,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
         raise DeployError(
             "Delegated API permission configuration is incomplete:\n"
             + "\n".join(permission_issues)
-            + "\nFix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            + f"\nFix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Add a permission."
         )
     print("Entra API permission check passed: all required delegated scopes are configured.", flush=True)
@@ -750,7 +766,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             + "\n".join(consent_issues)
             + "\nThe API permissions list declares requested scopes; it is not proof of consent. "
             "In its Status column, each API must show 'Granted for <tenant>'.\n"
-            "Fix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            f"Fix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Grant admin consent for <tenant>. A disabled button means the "
             "signed-in administrator lacks a consent-granting directory role. Alternatively, if "
             "tenant policy allows user consent, sign in to the deployed app as the intended user "
@@ -860,16 +876,7 @@ def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[st
         if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             raise
 
-    print(
-        "Azure CLI token was rejected by Conditional Access because it predates a tenant "
-        "policy change. Re-authenticating before reading the existing SPA redirects...",
-        flush=True,
-    )
-    azure_dir = Path.home() / ".azure"
-    for filename in AZURE_CLI_TOKEN_CACHE_FILES:
-        (azure_dir / filename).unlink(missing_ok=True)
-    run_stream(az("login", "--tenant", tenant, "--only-show-errors"))
-    ensure_azure_tenant(tenant)
+    reauthenticate_azure_cli(tenant, "reading the existing SPA redirects")
     return read_entra_spa_redirects(client_id)
 
 
@@ -934,7 +941,7 @@ def deploy(args: argparse.Namespace) -> None:
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name = resolve_workspace(args.workspace)
+    workspace_id, workspace_name = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
@@ -943,7 +950,7 @@ def deploy(args: argparse.Namespace) -> None:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
             "changing Rayfin state so the app cannot be published with broken browser sign-in. "
-            "Ask an Entra administrator to create or identify 'Hydro Operations Fabric Client', "
+            f"Ask an Entra administrator to create or identify '{APP_DISPLAY_NAME}', "
             "then retry with --client-id <guid>."
         )
 
@@ -1033,7 +1040,7 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    validate_fabric_app(workspace_id)
+    validate_fabric_app(workspace_id, args.tenant)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed before deployment (or was configured in rayfin.yml) disappeared.
