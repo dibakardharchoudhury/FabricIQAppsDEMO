@@ -2,7 +2,6 @@ import type { AgentAnswer, AgentVisualization } from '../assistantStream.ts'
 import { foundryToken } from '../fabric.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
-import { readChatStream } from './chatStream.ts'
 import { loadCopilotSettings, renderSystemPrompt, type CopilotSettings } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 
@@ -53,53 +52,113 @@ function summarize(outcome: { rowCount?: number }): string {
 // deployment-side flag the client cannot set. Detected so the caller can retry without tools.
 class FoundryToolsUnsupportedError extends Error {}
 
-// The Foundry portal's "endpoint" copy box sometimes shows a full API URL (e.g. ending in
-// `/openai/v1/responses` or `/openai/v1/chat/completions`) rather than the bare resource origin
-// this app expects; take just the origin so pasting either form still works.
-function resourceOrigin(endpoint: string): string {
-  try { return new URL(endpoint).origin }
-  catch { return endpoint.replace(/\/$/, '') }
+type ResponsesInput =
+  | { role: 'system' | 'user' | 'assistant'; content: string }
+  | { type: 'function_call'; call_id: string; name: string; arguments: string }
+  | { type: 'function_call_output'; call_id: string; output: string }
+
+function responsesInput(messages: ChatMessage[]): ResponsesInput[] {
+  return messages.flatMap(message => {
+    if (message.role === 'tool') {
+      return [{ type: 'function_call_output', call_id: message.tool_call_id, output: message.content }]
+    }
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      return [
+        ...(message.content ? [{ role: 'assistant' as const, content: message.content }] : []),
+        ...message.tool_calls.map(call => ({
+          type: 'function_call' as const,
+          call_id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        })),
+      ]
+    }
+    return message.content ? [{ role: message.role, content: message.content }] : []
+  })
 }
 
-async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
-  const base = resourceOrigin(settings.endpoint)
-  const requestUrl = `${base}/openai/deployments/${settings.deployment}/chat/completions?api-version=${settings.apiVersion}`
-  const request = () => fetch(requestUrl, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages,
-        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
-        // No `temperature`: the gpt-5 family rejects any value but the default.
-        stream: true,
-        stream_options: { include_usage: true },
-      }),
-    })
-  let response: Response
-  try {
-    response = await request()
-  } catch {
-    try {
-      response = await request()
-    } catch (error) {
+async function responsesCompletion(
+  settings: CopilotSettings,
+  token: string,
+  messages: ChatMessage[],
+  tools: ReturnType<typeof buildToolDefinitions>,
+  onText?: (text: string) => void,
+) {
+  const response = await fetchWithRetry(settings.endpoint, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: settings.deployment,
+      input: responsesInput(messages),
+      ...(tools.length ? {
+        tools: tools.map(tool => ({ type: 'function', ...tool.function })),
+        tool_choice: 'auto',
+      } : {}),
+      stream: false,
+    }),
+  })
+  const payload = await response.json().catch(() => null) as {
+    output?: Array<{
+      type?: string
+      call_id?: string
+      name?: string
+      arguments?: string
+      content?: Array<{ type?: string; text?: string }>
+    }>
+    usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+    error?: { message?: string }
+  } | null
+  if (!response.ok) handleFoundryError(response.status, payload?.error?.message ?? '', tools.length)
+
+  const state = {
+    content: '',
+    toolCalls: [] as Array<{ id: string; name: string; arguments: string }>,
+    usage: payload?.usage ? {
+      prompt: payload.usage.input_tokens ?? 0,
+      completion: payload.usage.output_tokens ?? 0,
+      total: payload.usage.total_tokens ?? 0,
+    } : undefined,
+  }
+  for (const item of payload?.output ?? []) {
+    if (item.type === 'message') {
+      state.content += (item.content ?? [])
+        .filter(content => content.type === 'output_text')
+        .map(content => content.text ?? '')
+        .join('')
+    } else if (item.type === 'function_call' && item.call_id && item.name) {
+      state.toolCalls.push({ id: item.call_id, name: item.name, arguments: item.arguments ?? '{}' })
+    }
+  }
+  if (state.content) onText?.(state.content)
+  return state
+}
+
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  try { return await fetch(url, init) }
+  catch {
+    try { return await fetch(url, init) }
+    catch (error) {
       throw new Error(
-        `Azure AI Foundry could not be reached from this browser (${base}). Refresh after completing ` +
+        `Azure AI Foundry could not be reached from this browser (${url}). Refresh after completing ` +
         'Cognitive Services consent, and verify that the resource allows public network access.',
         { cause: error },
       )
     }
   }
-  if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => '')
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
-    }
-    if (response.status === 400 && tools.length && /tool[_-]choice|tool-call-parser/i.test(detail)) {
-      throw new FoundryToolsUnsupportedError(detail)
-    }
-    throw new Error(`Azure AI Foundry request failed (${response.status}). ${detail.slice(0, 300)}`)
+}
+
+function handleFoundryError(status: number, detail: string, toolCount: number): never {
+  if (status === 401 || status === 403) {
+    throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
   }
-  return readChatStream(response.body, onText)
+  if (status === 400 && toolCount && /tool[_-]choice|tool-call-parser/i.test(detail)) {
+    throw new FoundryToolsUnsupportedError(detail)
+  }
+  throw new Error(`Azure AI Foundry request failed (${status}). ${detail.slice(0, 300)}`)
+}
+
+async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
+  return responsesCompletion(settings, token, messages, tools, onText)
 }
 
 export async function askFoundryCopilot(

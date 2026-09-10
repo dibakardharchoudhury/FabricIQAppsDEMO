@@ -245,14 +245,14 @@ Lakehouse `silver_*` tables, the Eventhouse and the app database. Add these to `
 enable it — the engine toggle only appears when both are set:
 
 ```ini
-RAYFIN_PUBLIC_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com
+RAYFIN_PUBLIC_FOUNDRY_ENDPOINT=https://<resource>.services.ai.azure.com/openai/v1/responses
 RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT=<model deployment name>
-# RAYFIN_PUBLIC_FOUNDRY_API_VERSION=2024-10-21   # optional override
 ```
 
-Use whichever endpoint the portal shows — an `AIServices` (Foundry) resource ends in
-`.cognitiveservices.azure.com`, a classic `OpenAI` resource in `.openai.azure.com`. Both serve the
-`/openai/deployments/<name>/chat/completions` path the app calls.
+Set the complete model inference URL. The app sends every model request to this exact value; it
+does not replace the host or append an API route. For an `AIServices` resource, use the URL ending
+in `/openai/v1/responses`. Do not use the Foundry project endpoint ending in
+`/api/projects/<project-name>`; that URL is for project SDK and management operations.
 
 **The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
 authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the

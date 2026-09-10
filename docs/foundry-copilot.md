@@ -130,9 +130,8 @@ sequenceDiagram
   U->>A: question
   A->>A: build [system + history + question]
   loop max 6 iterations
-    A->>M: POST chat/completions (stream, tools)
-    M-->>A: SSE deltas: content and/or tool_calls
-    A-->>U: stream partial text
+    A->>M: POST configured model endpoint (Responses API + tools)
+    M-->>A: output text and/or function_call items
     alt model requested tools
       A->>T: runTool(name, args)
       T->>D: Kusto / GraphQL / SQL (as the user)
@@ -148,9 +147,8 @@ sequenceDiagram
 
 Notes on the implementation:
 
-- **Streaming.** Tool-call fragments arrive split across chunks and keyed by `index`, so they are
-  merged positionally, not appended. Azure's first SSE event carries `"choices": []`
-  (content-filter results only) and the next sends `delta.content: ""` — both are tolerated.
+- **Dynamic endpoint.** Administration stores the complete Responses API URL. The client posts to
+  that exact value and sends the configured deployment as `model`; it does not construct a route.
 - **Tool failures are not fatal.** The error message is returned to the model as the tool result so
   it can correct itself; the step is still recorded in the trace with its error.
 - **History** keeps only completed user/assistant text turns (last 8 messages). Tool traffic is
@@ -278,6 +276,7 @@ model call it autonomously.
 
 | Symptom | Cause |
 | --- | --- |
+| Project URL ending in `/api/projects/...` | Project SDK/management endpoint, not model inference. Use the same origin with `/openai/v1/responses`. |
 | `400 unsupported_value` on `temperature` | gpt-5 family allows only the default; don't send the parameter |
 | `401`/`403` from Foundry | Missing `Cognitive Services OpenAI User`, or the resource is in another tenant |
 | "Need admin approval" | A `.default` scope was requested instead of a named one |
