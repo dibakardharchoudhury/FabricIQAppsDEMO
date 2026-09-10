@@ -59,12 +59,12 @@ async function ensureInit() {
 }
 
 /** Acquire a token silently. Returns null when interactive sign-in/consent is required. */
-async function silentToken(scopes: string[]): Promise<string | null> {
+async function silentToken(scopes: string[], forceRefresh = false): Promise<string | null> {
   await ensureInit()
   const account = msal!.getAllAccounts()[0]
   if (!account) return null
   try {
-    return (await msal!.acquireTokenSilent({ account, scopes })).accessToken
+    return (await msal!.acquireTokenSilent({ account, scopes, forceRefresh })).accessToken
   } catch (error) {
     console.warn('Silent token acquisition failed; interactive consent required.', error)
     return null
@@ -229,7 +229,9 @@ export async function fabricEmbedToken(interactive: boolean, requested?: string[
 
 /** A token for the Azure AI Foundry data plane. Silent first; popup only when interactive is allowed. */
 export async function foundryToken(interactive: boolean): Promise<string | null> {
-  const silent = await silentToken(FOUNDRY_SCOPES)
+  // Consent may have been granted after this page loaded. Bypass MSAL's cached token so the
+  // first Foundry turn immediately observes the new grant instead of requiring a hard refresh.
+  const silent = await silentToken(FOUNDRY_SCOPES, true)
   if (silent) return silent
   if (!interactive) return null
   return popupToken(FOUNDRY_SCOPES)

@@ -63,17 +63,32 @@ function resourceOrigin(endpoint: string): string {
 
 async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
   const base = resourceOrigin(settings.endpoint)
-  const response = await fetch(`${base}/openai/deployments/${settings.deployment}/chat/completions?api-version=${settings.apiVersion}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages,
-      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
-      // No `temperature`: the gpt-5 family rejects any value but the default.
-      stream: true,
-      stream_options: { include_usage: true },
-    }),
-  })
+  const requestUrl = `${base}/openai/deployments/${settings.deployment}/chat/completions?api-version=${settings.apiVersion}`
+  const request = () => fetch(requestUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+        // No `temperature`: the gpt-5 family rejects any value but the default.
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+  let response: Response
+  try {
+    response = await request()
+  } catch {
+    try {
+      response = await request()
+    } catch (error) {
+      throw new Error(
+        `Azure AI Foundry could not be reached from this browser (${base}). Refresh after completing ` +
+        'Cognitive Services consent, and verify that the resource allows public network access.',
+        { cause: error },
+      )
+    }
+  }
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '')
     if (response.status === 401 || response.status === 403) {
