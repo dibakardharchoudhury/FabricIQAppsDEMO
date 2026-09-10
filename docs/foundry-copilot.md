@@ -131,7 +131,8 @@ sequenceDiagram
   A->>A: build [system + history + question]
   loop max 6 iterations
     A->>M: POST configured model endpoint (Responses API + tools)
-    M-->>A: output text and/or function_call items
+    M-->>A: SSE text deltas and/or function_call items
+    A-->>U: stream partial text
     alt model requested tools
       A->>T: runTool(name, args)
       T->>D: Kusto / GraphQL / SQL (as the user)
@@ -149,10 +150,14 @@ Notes on the implementation:
 
 - **Dynamic endpoint.** Administration stores the complete Responses API URL. The client posts to
   that exact value and sends the configured deployment as `model`; it does not construct a route.
+- **Streaming.** Responses API SSE text deltas are rendered progressively. Function-call argument
+  fragments are accumulated by output index, and final items replace fragments before execution.
 - **Tool failures are not fatal.** The error message is returned to the model as the tool result so
   it can correct itself; the step is still recorded in the trace with its error.
 - **History** keeps only completed user/assistant text turns (last 8 messages). Tool traffic is
-  dropped so a long session cannot grow the context unbounded.
+  dropped between completed turns so a long session cannot grow the context unbounded. During an
+  active turn, every function call and function output remains in the Responses input until the
+  model produces the final answer. History is cleared only by the explicit conversation reset.
 - **No `temperature`** is sent — the gpt-5 family rejects any value but the default.
 
 Each answer carries a trace the UI renders as one collapsible row per tool call: the tool name, a
@@ -175,7 +180,7 @@ it in the composer and one to send it immediately (max 5, capped to two rows).
 
 The model is asked to declare them on a trailing line:
 
-```
+```html
 <!--options: ["Show open work orders", "Chart power output for T009"]-->
 ```
 
@@ -197,7 +202,7 @@ transcript.
 
 | Setting | Effect |
 | --- | --- |
-| Endpoint / deployment / API version | Which Foundry model is called. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
+| Endpoint / deployment | Which Foundry model is called. The endpoint is the complete `/openai/v1/responses` URL, so there is no separate API-version setting. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
 | System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
 | Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |

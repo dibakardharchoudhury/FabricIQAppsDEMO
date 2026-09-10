@@ -2,6 +2,8 @@ import type { AgentAnswer, AgentVisualization } from '../assistantStream.ts'
 import { foundryToken } from '../fabric.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
+import { readResponsesStream } from './chatStream.ts'
+import { appendCompletedTurn, buildResponsesRequest, type ChatMessage } from './responsesProtocol.ts'
 import { loadCopilotSettings, renderSystemPrompt, type CopilotSettings } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 
@@ -30,11 +32,6 @@ export function isFoundryConfigured() {
   return Boolean(settings.endpoint && settings.deployment)
 }
 
-type ChatMessage =
-  | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
-  | { role: 'tool'; tool_call_id: string; content: string }
-
 // Only completed user/assistant text turns are replayed; tool traffic is dropped so a long
 // session cannot push the context window over the limit.
 let history: ChatMessage[] = []
@@ -52,31 +49,6 @@ function summarize(outcome: { rowCount?: number }): string {
 // deployment-side flag the client cannot set. Detected so the caller can retry without tools.
 class FoundryToolsUnsupportedError extends Error {}
 
-type ResponsesInput =
-  | { role: 'system' | 'user' | 'assistant'; content: string }
-  | { type: 'function_call'; call_id: string; name: string; arguments: string }
-  | { type: 'function_call_output'; call_id: string; output: string }
-
-function responsesInput(messages: ChatMessage[]): ResponsesInput[] {
-  return messages.flatMap(message => {
-    if (message.role === 'tool') {
-      return [{ type: 'function_call_output', call_id: message.tool_call_id, output: message.content }]
-    }
-    if (message.role === 'assistant' && message.tool_calls?.length) {
-      return [
-        ...(message.content ? [{ role: 'assistant' as const, content: message.content }] : []),
-        ...message.tool_calls.map(call => ({
-          type: 'function_call' as const,
-          call_id: call.id,
-          name: call.function.name,
-          arguments: call.function.arguments,
-        })),
-      ]
-    }
-    return message.content ? [{ role: message.role, content: message.content }] : []
-  })
-}
-
 async function responsesCompletion(
   settings: CopilotSettings,
   token: string,
@@ -87,50 +59,13 @@ async function responsesCompletion(
   const response = await fetchWithRetry(settings.endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: settings.deployment,
-      input: responsesInput(messages),
-      ...(tools.length ? {
-        tools: tools.map(tool => ({ type: 'function', ...tool.function })),
-        tool_choice: 'auto',
-      } : {}),
-      stream: false,
-    }),
+    body: JSON.stringify(buildResponsesRequest(settings.deployment, messages, tools)),
   })
-  const payload = await response.json().catch(() => null) as {
-    output?: Array<{
-      type?: string
-      call_id?: string
-      name?: string
-      arguments?: string
-      content?: Array<{ type?: string; text?: string }>
-    }>
-    usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
-    error?: { message?: string }
-  } | null
-  if (!response.ok) handleFoundryError(response.status, payload?.error?.message ?? '', tools.length)
-
-  const state = {
-    content: '',
-    toolCalls: [] as Array<{ id: string; name: string; arguments: string }>,
-    usage: payload?.usage ? {
-      prompt: payload.usage.input_tokens ?? 0,
-      completion: payload.usage.output_tokens ?? 0,
-      total: payload.usage.total_tokens ?? 0,
-    } : undefined,
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    handleFoundryError(response.status, payload?.error?.message ?? '', tools.length)
   }
-  for (const item of payload?.output ?? []) {
-    if (item.type === 'message') {
-      state.content += (item.content ?? [])
-        .filter(content => content.type === 'output_text')
-        .map(content => content.text ?? '')
-        .join('')
-    } else if (item.type === 'function_call' && item.call_id && item.name) {
-      state.toolCalls.push({ id: item.call_id, name: item.name, arguments: item.arguments ?? '{}' })
-    }
-  }
-  if (state.content) onText?.(state.content)
-  return state
+  return readResponsesStream(response.body, onText)
 }
 
 async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
@@ -210,11 +145,10 @@ export async function askFoundryCopilot(
     const calls = state.toolCalls.filter(call => call.id && call.name)
     if (!calls.length) {
       const note = toolsUnsupported
-        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only \u2014 no live data was queried. Switch to a tool-calling model under Administration \u2192 Foundry Copilot for data-backed answers.\n\n'
+        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only — no live data was queried. Switch to a tool-calling model under Administration → Foundry Copilot for data-backed answers.\n\n'
         : ''
       const text = note + (state.content.trim() || 'The copilot returned no answer.')
-      const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
-      history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
+      history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
       return {
         text,
         usage,
@@ -272,8 +206,7 @@ export async function askFoundryCopilot(
       : finalState.usage
   }
   const text = finalState.content.trim() || 'The copilot returned no answer after completing its data queries.'
-  const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
-  history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
+  history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
   return {
     text,
     usage,
