@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
-import { applyChunk, createStreamState, splitSseEvents } from '../src/services/copilot/chatStream.ts'
+import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
+import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'
 import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
 
@@ -87,6 +88,107 @@ test('merges streamed tool call fragments by index', () => {
   assert.equal(state.content, 'Hello')
   assert.equal(state.finishReason, 'tool_calls')
   assert.equal(state.usage?.total, 15)
+})
+
+test('folds Responses API text, function calls and usage into the agent state', () => {
+  const state = createStreamState()
+  applyResponsesEvent(state, { type: 'response.output_text.delta', delta: 'Station ' })
+  applyResponsesEvent(state, { type: 'response.output_text.delta', delta: 'A' })
+  applyResponsesEvent(state, { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_1', name: 'query_assets', arguments: '' } })
+  applyResponsesEvent(state, { type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"entity":' })
+  applyResponsesEvent(state, { type: 'response.function_call_arguments.delta', output_index: 0, delta: '"facilities"}' })
+  applyResponsesEvent(state, { type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', call_id: 'call_1', name: 'query_assets', arguments: '{"entity":"facilities"}' } })
+  applyResponsesEvent(state, { type: 'response.completed', response: { usage: { input_tokens: 20, output_tokens: 8, total_tokens: 28 } } })
+
+  assert.equal(state.content, 'Station A')
+  assert.deepEqual(state.toolCalls, [{ id: 'call_1', name: 'query_assets', arguments: '{"entity":"facilities"}' }])
+  assert.deepEqual(state.usage, { prompt: 20, completion: 8, total: 28 })
+})
+
+test('preserves conversation history and in-turn tool context for Responses', () => {
+  const input = buildResponsesInput([
+    { role: 'system', content: 'Use only governed data.' },
+    { role: 'user', content: 'Which station is highest?' },
+    { role: 'assistant', content: 'Station A.' },
+    { role: 'user', content: 'Chart its power.' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'query_telemetry', arguments: '{"opcua_node_ids":["A.power"]}' } }] },
+    { role: 'tool', tool_call_id: 'call_1', content: '[{"mw":42}]' },
+  ])
+
+  assert.deepEqual(input, [
+    { role: 'system', content: 'Use only governed data.' },
+    { role: 'user', content: 'Which station is highest?' },
+    { role: 'assistant', content: 'Station A.' },
+    { role: 'user', content: 'Chart its power.' },
+    { type: 'function_call', call_id: 'call_1', name: 'query_telemetry', arguments: '{"opcua_node_ids":["A.power"]}' },
+    { type: 'function_call_output', call_id: 'call_1', output: '[{"mw":42}]' },
+  ])
+})
+
+test('builds a streaming Responses request for the configured deployment', () => {
+  const request = buildResponsesRequest('gpt-5-mini', [{ role: 'user', content: 'Status?' }], [{
+    function: { name: 'query_assets', description: 'Read assets', parameters: { type: 'object' } },
+  }])
+
+  assert.deepEqual(request, {
+    model: 'gpt-5-mini',
+    input: [{ role: 'user', content: 'Status?' }],
+    tools: [{ type: 'function', name: 'query_assets', description: 'Read assets', parameters: { type: 'object' } }],
+    tool_choice: 'auto',
+    stream: true,
+  })
+  assert.equal('temperature' in request, false)
+})
+
+test('keeps only the last eight completed user and assistant messages', () => {
+  let history = []
+  for (let index = 1; index <= 5; index++) {
+    history = appendCompletedTurn(history, `question ${index}`, `answer ${index}`)
+  }
+
+  assert.equal(history.length, 8)
+  assert.deepEqual(history[0], { role: 'user', content: 'question 2' })
+  assert.deepEqual(history.at(-1), { role: 'assistant', content: 'answer 5' })
+  assert.equal(history.some(message => 'tool_call_id' in message || 'tool_calls' in message), false)
+})
+
+test('streams fragmented Responses events progressively and preserves final tool arguments', async () => {
+  const encoder = new TextEncoder()
+  const payload = [
+    'data: {"type":"response.output_text.delta","delta":"Station "}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"A"}\n\n',
+    'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"query_assets","arguments":""}}\n\n',
+    'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\"entity\\":"}\n\n',
+    'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"\\"facilities\\"}"}\n\n',
+    'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"query_assets","arguments":"{\\"entity\\":\\"facilities\\"}"}}\n\n',
+    'data: {"type":"response.completed","response":{"usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28}}}\n\n',
+  ].join('')
+  const chunks = [payload.slice(0, 37), payload.slice(37, 211), payload.slice(211)]
+  const body = new ReadableStream({
+    start(controller) {
+      chunks.forEach(chunk => controller.enqueue(encoder.encode(chunk)))
+      controller.close()
+    },
+  })
+  const progress = []
+
+  const state = await readResponsesStream(body, text => progress.push(text))
+
+  assert.deepEqual(progress, ['Station ', 'Station A'])
+  assert.equal(state.content, 'Station A')
+  assert.deepEqual(state.toolCalls, [{ id: 'call_1', name: 'query_assets', arguments: '{"entity":"facilities"}' }])
+  assert.deepEqual(state.usage, { prompt: 20, completion: 8, total: 28 })
+})
+
+test('surfaces a streamed Responses failure', async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"response.failed","response":{"error":{"message":"quota exceeded"}}}\n\n'))
+      controller.close()
+    },
+  })
+
+  await assert.rejects(() => readResponsesStream(body), /quota exceeded/)
 })
 
 test('honours a narrowed source allow-list from Administration', () => {
