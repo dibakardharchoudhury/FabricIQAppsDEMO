@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
+import { catalogPrompt } from '../src/services/copilot/catalog.ts'
 import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'
 import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
@@ -187,6 +188,13 @@ test('honours a narrowed source allow-list from Administration', () => {
   assert.throws(() => validateKql('OPCUAEvents | take 5', ['AssetMaster']), /must start with one of AssetMaster/)
   assert.throws(() => validateKql('OPCUAEvents | take 5', []), /no Kusto sources are enabled/)
   assert.doesNotThrow(() => validateKql('AssetMaster() | take 5', ['AssetMaster']))
+})
+
+test('advertises the deployed case-sensitive Kusto function columns', () => {
+  const prompt = catalogPrompt(defaultCopilotSettings())
+  assert.match(prompt, /AssetMaster.*opcua_node_id, Station, Turbine, Signal, SignalGroup, Unit/)
+  assert.match(prompt, /TelemetryEnriched.*event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality/)
+  assert.doesNotMatch(prompt, /station, turbine, sensor_group/)
 })
 
 test('settings default everything on and preserve stored opt-outs', () => {
