@@ -17,7 +17,6 @@ test('rejects KQL control commands and cross-cluster access', () => {
 test('allows the semicolon inside an OPC UA node id literal', () => {
   const query = "OPCUAEvents | where opcua_node_id == 'ns=2;s=T004.power_output' | top 100 by event_time desc"
   assert.match(validateKql(query), /ns=2;s=T004\.power_output/)
-  // A statement break outside the literal is still rejected.
   assert.throws(() => validateKql(`${query}; OPCUAEvents | take 1`), /multiple statements/)
   assert.throws(() => validateKql("OPCUAEvents | where opcua_node_id == 'ns=2;s=T004"), /unterminated string/)
 })
@@ -27,7 +26,6 @@ test('telemetry returns the most recent rows, raw when aggregation is none', () 
   assert.match(raw, /\| project event_time, opcua_node_id, value, quality/)
   assert.match(raw, /\| top 100 by event_time desc/)
   assert.doesNotMatch(raw, /summarize/)
-
   const binned = buildTelemetryQuery({ bin: '1m', limit: 10_000 })
   assert.match(binned, /summarize value = avg\(value\)/)
   assert.match(binned, /\| top 500 by event_time desc/)
@@ -57,11 +55,7 @@ test('rejects malformed telemetry arguments instead of interpolating them', () =
 })
 
 test('filters rows with the structured predicate', () => {
-  const rows = [
-    { id: 'a', status: 'Open', criticality: 5 },
-    { id: 'b', status: 'closed', criticality: 1 },
-    { id: 'c', status: 'Open', criticality: 3 },
-  ]
+  const rows = [{ id: 'a', status: 'Open', criticality: 5 }, { id: 'b', status: 'closed', criticality: 1 }, { id: 'c', status: 'Open', criticality: 3 }]
   assert.deepEqual(applyFilter(rows, [{ column: 'status', op: 'eq', value: 'open' }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'criticality', op: 'gte', value: 3 }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'id', op: 'in', value: ['b'] }]).map(row => row.id), ['b'])
@@ -69,8 +63,7 @@ test('filters rows with the structured predicate', () => {
 })
 
 test('projection drops columns outside the requested set', () => {
-  const projected = projectColumns([{ id: '1', secretOid: 'x', title: 'T' }], ['id', 'title'])
-  assert.deepEqual(projected, [{ id: '1', title: 'T' }])
+  assert.deepEqual(projectColumns([{ id: '1', secretOid: 'x', title: 'T' }], ['id', 'title']), [{ id: '1', title: 'T' }])
 })
 
 test('folds Kusto column metadata into objects', () => {
@@ -83,7 +76,6 @@ test('merges streamed tool call fragments by index', () => {
   applyChunk(state, { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'assets', arguments: 'ity":"facilities"}' } }] } }] })
   applyChunk(state, { choices: [{ delta: { content: 'Hello' } }] })
   applyChunk(state, { choices: [{ finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })
-
   assert.deepEqual(state.toolCalls, [{ id: 'call_1', name: 'query_assets', arguments: '{"entity":"facilities"}' }])
   assert.equal(state.content, 'Hello')
   assert.equal(state.finishReason, 'tool_calls')
@@ -202,8 +194,6 @@ test('settings default everything on and preserve stored opt-outs', () => {
   assert.equal(defaults.tools.run_kql, true)
   assert.equal(defaults.entities.work_orders, true)
   assert.equal(defaults.kustoSources.OPCUAEvents, true)
-
-  // A key added after the settings were stored must default to enabled, not undefined.
   const merged = mergeCopilotSettings({ tools: { run_kql: false }, promptExtra: 'be terse' })
   assert.equal(merged.tools.run_kql, false)
   assert.equal(merged.tools.query_assets, true)
@@ -242,4 +232,3 @@ test('splits SSE events and keeps the incomplete tail', () => {
   assert.deepEqual(events, ['{"a":1}'])
   assert.equal(rest, 'data: {"b"')
 })
-

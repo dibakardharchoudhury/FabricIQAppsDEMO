@@ -145,7 +145,7 @@ export async function askFoundryCopilot(
     const calls = state.toolCalls.filter(call => call.id && call.name)
     if (!calls.length) {
       const note = toolsUnsupported
-        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only \u2014 no live data was queried. Switch to a tool-calling model under Administration \u2192 Foundry Copilot for data-backed answers.\n\n'
+        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only — no live data was queried. Switch to a tool-calling model under Administration → Foundry Copilot for data-backed answers.\n\n'
         : ''
       const text = note + (state.content.trim() || 'The copilot returned no answer.')
       history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
