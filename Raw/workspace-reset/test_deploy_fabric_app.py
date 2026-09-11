@@ -157,7 +157,10 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(redirects, ["https://existing.webapp.fabricapps.net"])
         self.assertEqual(read_redirects.call_count, 2)
         run_stream.assert_called_once_with(
-            ["login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors"]
+            [
+                "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+                "--use-device-code", "--only-show-errors",
+            ]
         )
         ensure_tenant.assert_called_once_with("tenant-id")
 
@@ -244,7 +247,8 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
         run_stream.assert_called_once_with([
-            "login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors",
+            "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+            "--use-device-code", "--only-show-errors",
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 

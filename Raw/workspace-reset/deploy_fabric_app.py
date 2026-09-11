@@ -356,7 +356,16 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    run_stream(az("login", "--tenant", tenant, "--allow-no-subscriptions", "--only-show-errors"))
+    run_stream(
+        az(
+            "login",
+            "--tenant",
+            tenant,
+            "--allow-no-subscriptions",
+            "--use-device-code",
+            "--only-show-errors",
+        )
+    )
     ensure_azure_tenant(tenant)
 
 
@@ -479,15 +488,23 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         "json",
     )
     try:
-        try:
-            discovery_output = run_capture(discovery_command)
-        except DeployError as exc:
-            if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-                raise
+        discovery_output = run_capture(discovery_command)
+    except DeployError as exc:
+        if STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             reauthenticate_azure_cli(tenant, "discovering the tenant SPA app registration")
             discovery_output = run_capture(discovery_command)
+        elif fallback:
+            warn_live_auth(
+                f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
+                f"from the existing Rayfin environment: {fallback}."
+            )
+            return fallback
+        else:
+            warn_live_auth(f"Tenant SPA discovery failed and no existing client ID is available ({exc}).")
+            return None
+    try:
         apps = json.loads(discovery_output)
-    except (DeployError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         if fallback:
             warn_live_auth(
                 f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
