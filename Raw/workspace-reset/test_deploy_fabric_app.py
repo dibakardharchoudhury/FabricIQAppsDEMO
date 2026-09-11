@@ -161,6 +161,63 @@ class DeployOrderTests(unittest.TestCase):
         )
         ensure_tenant.assert_called_once_with("tenant-id")
 
+    def test_reauthenticates_after_stale_token_before_discovering_spa(self):
+        stale = DEPLOY.DeployError(
+            "Continuous access evaluation resulted in challenge with result: "
+            "InteractionRequired and code: TokenCreatedWithOutdatedPolicies"
+        )
+        client_id = "11111111-1111-1111-1111-111111111111"
+
+        with (
+            patch.object(DEPLOY, "existing_spa_candidate", return_value=None),
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=[stale, json.dumps([client_id])]) as run_capture,
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+            patch.object(DEPLOY, "ensure_spa_service_principal") as ensure_service_principal,
+        ):
+            resolved = DEPLOY.resolve_spa(None, "tenant-id")
+
+        self.assertEqual(resolved, client_id)
+        self.assertEqual(run_capture.call_count, 2)
+        reauthenticate.assert_called_once_with("tenant-id", "discovering the tenant SPA app registration")
+        ensure_service_principal.assert_called_once_with(client_id)
+
+    def test_git_push_target_uses_matching_feature_upstream(self):
+        with (
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=["feat/dibakar", "origin/feat/dibakar"],
+            ),
+        ):
+            target = DEPLOY.current_git_push_target()
+
+        self.assertEqual(target, ("feat/dibakar", "origin/feat/dibakar"))
+
+    def test_git_push_target_refuses_main(self):
+        with (
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(DEPLOY, "run_capture", return_value="main"),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "refuses to commit or push the main branch"):
+                DEPLOY.current_git_push_target()
+
+    def test_persist_generated_origin_pushes_current_feature_branch(self):
+        with (
+            patch.object(
+                DEPLOY,
+                "current_git_push_target",
+                return_value=("feat/dibakar", "origin/feat/dibakar"),
+            ),
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(DEPLOY, "run_capture", side_effect=["changed", "0 0"]),
+            patch.object(DEPLOY, "run_stream") as run_stream,
+        ):
+            DEPLOY.persist_generated_origin("Demo Workspace")
+
+        self.assertEqual(run_stream.call_args_list[-1].args[0], ["git", "push", "origin", "feat/dibakar"])
+
     def test_fabric_token_missing_from_msal_cache_reauthenticates_once(self):
         missing = DEPLOY.DeployError(
             "ERROR: User 'admin@example.test' does not exist in MSAL token cache. Run 'az login'."

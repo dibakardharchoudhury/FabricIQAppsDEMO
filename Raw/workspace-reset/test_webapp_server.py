@@ -65,6 +65,32 @@ class WorkspaceActionTests(unittest.TestCase):
         finally:
             response.close()
 
+    def test_deploy_app_forwards_optional_spa_client_id(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post(
+                "/api/deploy-app",
+                json={
+                    "tenant": "tenant.example",
+                    "workspace": "Demo Workspace",
+                    "clientId": client_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[-2:], ["--client-id", client_id])
+
+    def test_deploy_app_omits_client_id_for_automatic_resolution(self):
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post(
+                "/api/deploy-app",
+                json={"tenant": "tenant.example", "workspace": "Demo Workspace"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertNotIn("--client-id", start.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()
