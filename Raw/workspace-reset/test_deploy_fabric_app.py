@@ -159,7 +159,7 @@ class DeployOrderTests(unittest.TestCase):
         run_stream.assert_called_once_with(
             [
                 "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
-                "--use-device-code", "--only-show-errors",
+                "--only-show-errors",
             ]
         )
         ensure_tenant.assert_called_once_with("tenant-id")
@@ -248,7 +248,7 @@ class DeployOrderTests(unittest.TestCase):
 
         run_stream.assert_called_once_with([
             "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
-            "--use-device-code", "--only-show-errors",
+            "--only-show-errors",
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 

@@ -362,7 +362,6 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
             "--tenant",
             tenant,
             "--allow-no-subscriptions",
-            "--use-device-code",
             "--only-show-errors",
         )
     )
