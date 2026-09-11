@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -162,9 +163,11 @@ class Job:
         self.lines: list[str] = []
         self.phases = phases
         self.phase_index = 0
-        self.status = "running"  # running | succeeded | failed
+        self.status = "running"  # running | succeeded | failed | cancelled
         self.returncode: int | None = None
         self.exclusive = exclusive
+        self.process: subprocess.Popen[str] | None = None
+        self.cancel_requested = False
 
 
 JOBS: dict[str, Job] = {}
@@ -174,6 +177,37 @@ JOBS_LOCK = threading.Lock()
 # Windows a child process would then pop its own window, so suppress it. Output
 # is still captured through the pipe.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+def _terminate_owned_process(proc: subprocess.Popen[str]) -> None:
+    """Terminate one job's process tree without affecting unrelated processes."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
+            check=False,
+        )
+        if result.returncode != 0 and proc.poll() is None:
+            proc.kill()
+    else:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+
+def _cancel_job(job: Job) -> bool:
+    with job.lock:
+        if job.status != "running":
+            return False
+        job.cancel_requested = True
+        proc = job.process
+        job.lines.append("[cancel requested from local app]")
+    if proc is not None:
+        _terminate_owned_process(proc)
+    return True
 
 
 def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
@@ -201,6 +235,7 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             errors="replace",
             bufsize=1,
             creationflags=NO_WINDOW,
+            start_new_session=os.name != "nt",
         )
     except OSError as exc:
         with job.lock:
@@ -209,7 +244,13 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             job.returncode = -1
         return
 
-    timer = threading.Timer(timeout, proc.kill)
+    with job.lock:
+        job.process = proc
+        cancel_requested = job.cancel_requested
+    if cancel_requested:
+        _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, _terminate_owned_process, args=(proc,))
     timer.start()
     try:
         assert proc.stdout is not None
@@ -225,9 +266,13 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
         timer.cancel()
 
     with job.lock:
+        job.process = None
         job.returncode = proc.returncode
-        job.status = "succeeded" if proc.returncode == 0 else "failed"
-        if proc.returncode == 0:
+        if job.cancel_requested:
+            job.status = "cancelled"
+        else:
+            job.status = "succeeded" if proc.returncode == 0 else "failed"
+        if job.status == "succeeded":
             job.phase_index = len(job.phases) - 1
 
 
@@ -523,6 +568,15 @@ def api_job(job_id: str):
         lines=new_lines,
         nextSince=total,
     )
+
+
+@app.post("/api/jobs/cancel-all")
+def api_cancel_all_jobs():
+    """Cancel every child process currently owned by this local server."""
+    with JOBS_LOCK:
+        running = [job for job in JOBS.values() if job.status == "running"]
+    cancelled = sum(_cancel_job(job) for job in running)
+    return jsonify(ok=True, cancelled=cancelled)
 
 
 def _detached_popen_kwargs() -> dict[str, object]:
