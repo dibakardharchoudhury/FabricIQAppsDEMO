@@ -324,7 +324,16 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        run_stream(npm24("ci", "--no-audit", "--no-fund"), cwd=APP_DIR)
+        command = npm24("ci", "--no-audit", "--no-fund")
+        try:
+            run_stream(command, cwd=APP_DIR)
+        except DeployError:
+            print(
+                "The first npm restore failed; stopping app tooling again and retrying once...",
+                flush=True,
+            )
+            stop_hydro_node_tooling()
+            run_stream(command, cwd=APP_DIR)
         version = installed_rayfin_version()
         DEPENDENCY_STAMP.write_text(
             hashlib.sha256((APP_DIR / "package-lock.json").read_bytes()).hexdigest(),

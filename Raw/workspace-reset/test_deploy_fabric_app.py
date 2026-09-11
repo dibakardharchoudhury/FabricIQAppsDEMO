@@ -110,6 +110,27 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(events, ["stop", "npm"])
 
+    def test_dependency_restore_retries_once_after_transient_npm_failure(self):
+        events = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(DEPLOY.shutil, "which", return_value="npx"),
+                patch.object(DEPLOY, "deploy_dependencies_ready", return_value=False),
+                patch.object(DEPLOY, "DEPENDENCY_STAMP", Path(temp_dir) / ".stamp"),
+                patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
+                patch.object(DEPLOY, "npm24", return_value=["npm-ci"]),
+                patch.object(
+                    DEPLOY,
+                    "run_stream",
+                    side_effect=[DEPLOY.DeployError("ENOTEMPTY"), ""],
+                ),
+                patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+            ):
+                DEPLOY.ensure_deploy_dependencies()
+
+        self.assertEqual(events, ["stop", "stop"])
+
     def test_does_not_write_redirects_when_entra_snapshot_fails(self):
         args = argparse.Namespace(
             tenant="tenant.example",
