@@ -261,8 +261,9 @@ class DeployOrderTests(unittest.TestCase):
 
     def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
-        try:
+        with tempfile.TemporaryDirectory() as temp_dir:
             with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
                 patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
                 patch.object(DEPLOY, "run_stream") as run_stream,
                 patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
@@ -271,22 +272,34 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
 
             isolated_config = os.environ.get("AZURE_CONFIG_DIR")
-            self.assertTrue(isolated_config)
+            self.assertEqual(isolated_config, str(Path(temp_dir) / "tenant-id"))
             self.assertNotEqual(isolated_config, shared_config)
-        finally:
-            if shared_config is None:
-                os.environ.pop("AZURE_CONFIG_DIR", None)
-            else:
-                os.environ["AZURE_CONFIG_DIR"] = shared_config
-            for session in DEPLOY.AZURE_CLI_SESSIONS:
-                session.cleanup()
-            DEPLOY.AZURE_CLI_SESSIONS.clear()
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
 
         run_stream.assert_called_once_with([
             "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
             "--only-show-errors", "--output", "none",
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
+
+    def test_cached_isolated_session_is_reused_for_the_same_tenant(self):
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir) / "tenant-id"
+            config_dir.mkdir()
+            (config_dir / "azureProfile.json").write_text("{}", encoding="utf-8")
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                self.assertTrue(DEPLOY.activate_cached_azure_cli_session("TENANT-ID"))
+                self.assertEqual(os.environ.get("AZURE_CONFIG_DIR"), str(config_dir))
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
 
     def test_fabric_token_authorization_error_does_not_trigger_login(self):
         denied = DEPLOY.DeployError("Authorization_RequestDenied")

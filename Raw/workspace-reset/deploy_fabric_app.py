@@ -67,7 +67,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
-AZURE_CLI_SESSIONS: list[tempfile.TemporaryDirectory[str]] = []
+AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 
 
 class DeployError(RuntimeError):
@@ -360,15 +360,31 @@ def ensure_azure_tenant(tenant: str) -> None:
     print(f"Azure identity: {user} (tenant {active})", flush=True)
 
 
+def isolated_azure_cli_config(tenant: str) -> Path:
+    """Return the stable per-tenant cache used after a CAE reauthentication."""
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    return AZURE_CLI_SESSION_ROOT / safe_tenant
+
+
+def activate_cached_azure_cli_session(tenant: str) -> bool:
+    """Reuse a previous isolated login without changing the user's default CLI cache."""
+    config_dir = isolated_azure_cli_config(tenant)
+    if not (config_dir / "azureProfile.json").is_file():
+        return False
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    print(f"Reusing isolated Azure CLI session for tenant {tenant}.", flush=True)
+    return True
+
+
 def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    session = tempfile.TemporaryDirectory(prefix="fabric-demo-azure-cli-")
-    AZURE_CLI_SESSIONS.append(session)
-    os.environ["AZURE_CONFIG_DIR"] = session.name
+    config_dir = isolated_azure_cli_config(tenant)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
     run_stream(
         az(
             "login",
@@ -992,6 +1008,7 @@ def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> N
 
 
 def deploy(args: argparse.Namespace) -> None:
+    activate_cached_azure_cli_session(args.tenant)
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
