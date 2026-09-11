@@ -82,10 +82,12 @@ situation.
 - **Python deps:** `python -m pip install -r requirements.txt`
   (`azure-identity`, `requests`, `flask`).
 - **Node.js/npm/npx available on PATH** for app deployment. The launcher does not globally install
-  machine software. When **Deploy app** starts, it uses npx to download the required Node 24 runtime,
-  runs `npm ci` from the checked-in `package-lock.json`, and verifies the repository-local Rayfin CLI.
-  React, TypeScript, Vite, and Rayfin therefore need no separate/global installation. Internet/proxy
-  access to npm and write access to `HydroOperationsApp/node_modules` are required.
+  machine software. **Deploy app** reuses a cached Node 24 runtime and the repository's existing
+  `node_modules` when their lockfile fingerprint and top-level dependency tree validate. It runs
+  `npm ci` from the checked-in `package-lock.json` only when that cache is missing, changed, or
+  invalid. React, TypeScript, Vite, and Rayfin therefore need no separate/global installation.
+  Internet/proxy access to npm and write access to `HydroOperationsApp/node_modules` are required
+  only when dependencies must be restored.
 - Permission to create an Entra app registration when the target tenant does not already
   contain `Hydro Operations Fabric Client`. This display name is the default discovery/creation
   convention, not an Entra requirement; override it with `HYDRO_SPA_DISPLAY_NAME`. The tenant's
@@ -212,11 +214,11 @@ Flags: `--tenant --workspace --yes --dry-run`.
 The **Deploy app** tab runs the complete Rayfin application deployment against the
 tenant and workspace selected in the sidebar:
 
-1. Restore the exact locked npm dependencies under Node 24 (including Rayfin), validate the active
-  Azure CLI tenant, and resolve the exact workspace GUID/name. If the selected identity is missing
-  from the Azure CLI token cache or its token is stale, deployment opens tenant-scoped Microsoft
-  sign-in once and retries automatically. Missing Node/npm/npx is reported with
-  an install link; repository packages are installed automatically rather than treated as manual prerequisites.
+1. Reuse the validated locked npm dependencies under Node 24 (restoring them only when missing or
+  invalid), validate the active Azure CLI tenant, and resolve the exact workspace GUID/name. If the
+  selected identity is missing from the Azure CLI token cache or its token is stale, deployment opens
+  tenant-scoped Microsoft sign-in and retains that recovery in an isolated per-tenant cache for later
+  deploys. Missing Node/npm/npx is reported with an install link.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   stop before changing Rayfin state and print an administrator handoff. A deployment never ships

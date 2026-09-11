@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,6 +110,27 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(events, ["stop", "npm"])
 
+    def test_dependency_restore_retries_once_after_transient_npm_failure(self):
+        events = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(DEPLOY.shutil, "which", return_value="npx"),
+                patch.object(DEPLOY, "deploy_dependencies_ready", return_value=False),
+                patch.object(DEPLOY, "DEPENDENCY_STAMP", Path(temp_dir) / ".stamp"),
+                patch.object(DEPLOY, "stop_hydro_node_tooling", side_effect=lambda: events.append("stop")),
+                patch.object(DEPLOY, "npm24", return_value=["npm-ci"]),
+                patch.object(
+                    DEPLOY,
+                    "run_stream",
+                    side_effect=[DEPLOY.DeployError("ENOTEMPTY"), ""],
+                ),
+                patch.object(DEPLOY, "installed_rayfin_version", return_value="1.33.2"),
+            ):
+                DEPLOY.ensure_deploy_dependencies()
+
+        self.assertEqual(events, ["stop", "stop"])
+
     def test_does_not_write_redirects_when_entra_snapshot_fails(self):
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -157,9 +179,69 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(redirects, ["https://existing.webapp.fabricapps.net"])
         self.assertEqual(read_redirects.call_count, 2)
         run_stream.assert_called_once_with(
-            ["login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors"]
+            [
+                "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+                "--only-show-errors", "--output", "none",
+            ]
         )
         ensure_tenant.assert_called_once_with("tenant-id")
+
+    def test_reauthenticates_after_stale_token_before_discovering_spa(self):
+        stale = DEPLOY.DeployError(
+            "Continuous access evaluation resulted in challenge with result: "
+            "InteractionRequired and code: TokenCreatedWithOutdatedPolicies"
+        )
+        client_id = "11111111-1111-1111-1111-111111111111"
+
+        with (
+            patch.object(DEPLOY, "existing_spa_candidate", return_value=None),
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=[stale, json.dumps([client_id])]) as run_capture,
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+            patch.object(DEPLOY, "ensure_spa_service_principal") as ensure_service_principal,
+        ):
+            resolved = DEPLOY.resolve_spa(None, "tenant-id")
+
+        self.assertEqual(resolved, client_id)
+        self.assertEqual(run_capture.call_count, 2)
+        reauthenticate.assert_called_once_with("tenant-id", "discovering the tenant SPA app registration")
+        ensure_service_principal.assert_called_once_with(client_id)
+
+    def test_git_push_target_uses_matching_feature_upstream(self):
+        with (
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=["feat/dibakar", "origin/feat/dibakar"],
+            ),
+        ):
+            target = DEPLOY.current_git_push_target()
+
+        self.assertEqual(target, ("feat/dibakar", "origin/feat/dibakar"))
+
+    def test_git_push_target_refuses_main(self):
+        with (
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(DEPLOY, "run_capture", return_value="main"),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "refuses to commit or push the main branch"):
+                DEPLOY.current_git_push_target()
+
+    def test_persist_generated_origin_pushes_current_feature_branch(self):
+        with (
+            patch.object(
+                DEPLOY,
+                "current_git_push_target",
+                return_value=("feat/dibakar", "origin/feat/dibakar"),
+            ),
+            patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
+            patch.object(DEPLOY, "run_capture", side_effect=["changed", "0 0"]),
+            patch.object(DEPLOY, "run_stream") as run_stream,
+        ):
+            DEPLOY.persist_generated_origin("Demo Workspace")
+
+        self.assertEqual(run_stream.call_args_list[-1].args[0], ["git", "push", "origin", "feat/dibakar"])
 
     def test_fabric_token_missing_from_msal_cache_reauthenticates_once(self):
         missing = DEPLOY.DeployError(
@@ -178,18 +260,46 @@ class DeployOrderTests(unittest.TestCase):
         reauthenticate.assert_called_once_with("tenant-id", "accessing the Fabric workspace")
 
     def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
-        with (
-            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
-            patch.object(DEPLOY, "run_stream") as run_stream,
-            patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
-            patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete cache")),
-        ):
-            DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
+                patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+                patch.object(DEPLOY, "run_stream") as run_stream,
+                patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+                patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete cache")),
+            ):
+                DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+
+            isolated_config = os.environ.get("AZURE_CONFIG_DIR")
+            self.assertEqual(isolated_config, str(Path(temp_dir) / "tenant-id"))
+            self.assertNotEqual(isolated_config, shared_config)
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
 
         run_stream.assert_called_once_with([
-            "login", "--tenant", "tenant-id", "--allow-no-subscriptions", "--only-show-errors",
+            "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
+            "--only-show-errors", "--output", "none",
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
+
+    def test_cached_isolated_session_is_reused_for_the_same_tenant(self):
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir) / "tenant-id"
+            config_dir.mkdir()
+            (config_dir / "azureProfile.json").write_text("{}", encoding="utf-8")
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                self.assertTrue(DEPLOY.activate_cached_azure_cli_session("TENANT-ID"))
+                self.assertEqual(os.environ.get("AZURE_CONFIG_DIR"), str(config_dir))
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
 
     def test_fabric_token_authorization_error_does_not_trigger_login(self):
         denied = DEPLOY.DeployError("Authorization_RequestDenied")

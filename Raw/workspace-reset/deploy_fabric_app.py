@@ -67,6 +67,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
+AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 
 
 class DeployError(RuntimeError):
@@ -323,7 +324,16 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        run_stream(npm24("ci", "--no-audit", "--no-fund"), cwd=APP_DIR)
+        command = npm24("ci", "--no-audit", "--no-fund")
+        try:
+            run_stream(command, cwd=APP_DIR)
+        except DeployError:
+            print(
+                "The first npm restore failed; stopping app tooling again and retrying once...",
+                flush=True,
+            )
+            stop_hydro_node_tooling()
+            run_stream(command, cwd=APP_DIR)
         version = installed_rayfin_version()
         DEPENDENCY_STAMP.write_text(
             hashlib.sha256((APP_DIR / "package-lock.json").read_bytes()).hexdigest(),
@@ -350,13 +360,42 @@ def ensure_azure_tenant(tenant: str) -> None:
     print(f"Azure identity: {user} (tenant {active})", flush=True)
 
 
+def isolated_azure_cli_config(tenant: str) -> Path:
+    """Return the stable per-tenant cache used after a CAE reauthentication."""
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    return AZURE_CLI_SESSION_ROOT / safe_tenant
+
+
+def activate_cached_azure_cli_session(tenant: str) -> bool:
+    """Reuse a previous isolated login without changing the user's default CLI cache."""
+    config_dir = isolated_azure_cli_config(tenant)
+    if not (config_dir / "azureProfile.json").is_file():
+        return False
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    print(f"Reusing isolated Azure CLI session for tenant {tenant}.", flush=True)
+    return True
+
+
 def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
-    run_stream(az("login", "--tenant", tenant, "--allow-no-subscriptions", "--only-show-errors"))
+    config_dir = isolated_azure_cli_config(tenant)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    run_stream(
+        az(
+            "login",
+            "--tenant",
+            tenant,
+            "--allow-no-subscriptions",
+            "--only-show-errors",
+            "--output",
+            "none",
+        )
+    )
     ensure_azure_tenant(tenant)
 
 
@@ -467,23 +506,35 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         return client_id
 
     fallback = existing_spa_candidate(tenant)
+    discovery_command = az(
+        "ad",
+        "app",
+        "list",
+        "--display-name",
+        APP_DISPLAY_NAME,
+        "--query",
+        "[].appId",
+        "-o",
+        "json",
+    )
     try:
-        apps = json.loads(
-            run_capture(
-                az(
-                    "ad",
-                    "app",
-                    "list",
-                    "--display-name",
-                    APP_DISPLAY_NAME,
-                    "--query",
-                    "[].appId",
-                    "-o",
-                    "json",
-                )
+        discovery_output = run_capture(discovery_command)
+    except DeployError as exc:
+        if STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            reauthenticate_azure_cli(tenant, "discovering the tenant SPA app registration")
+            discovery_output = run_capture(discovery_command)
+        elif fallback:
+            warn_live_auth(
+                f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
+                f"from the existing Rayfin environment: {fallback}."
             )
-        )
-    except (DeployError, json.JSONDecodeError) as exc:
+            return fallback
+        else:
+            warn_live_auth(f"Tenant SPA discovery failed and no existing client ID is available ({exc}).")
+            return None
+    try:
+        apps = json.loads(discovery_output)
+    except json.JSONDecodeError as exc:
         if fallback:
             warn_live_auth(
                 f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
@@ -800,30 +851,50 @@ def ensure_rayfin_login(tenant: str) -> None:
         raise DeployError("Rayfin sign-in completed, but its tenant does not match the requested tenant.")
 
 
-def validate_git_push_ready() -> None:
-    """Ensure automatic config persistence cannot absorb unrelated local work."""
+def current_git_push_target() -> tuple[str, str]:
+    """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
-    if branch != "main":
-        raise DeployError("Automatic config persistence requires the repository to be on main.")
-    if run_capture(command_argv("git", "status", "--porcelain"), cwd=REPO_ROOT):
+    if not branch or branch == "main":
+        raise DeployError("Automatic config persistence refuses to commit or push the main branch.")
+    upstream = run_capture(
+        command_argv(
+            "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}",
+        ),
+        cwd=REPO_ROOT,
+    )
+    if upstream != f"origin/{branch}":
         raise DeployError(
-            "Automatic config persistence requires a clean Git working tree. "
-            "Commit/stash local changes or clear 'Commit generated hosting origin'."
+            f"Current branch '{branch}' must track 'origin/{branch}' before deployment; "
+            f"found '{upstream or '(none)'}'."
+        )
+    return branch, upstream
+
+
+def validate_git_push_ready() -> None:
+    """Ensure automatic config persistence cannot absorb unrelated tracked work."""
+    branch, upstream = current_git_push_target()
+    if run_capture(
+        command_argv("git", "status", "--porcelain", "--untracked-files=no"), cwd=REPO_ROOT,
+    ):
+        raise DeployError(
+            "Automatic config persistence requires a clean tracked working tree. "
+            "Commit tracked changes or clear 'Commit generated hosting origin'."
         )
     run_stream(command_argv("git", "fetch", "origin"), cwd=REPO_ROOT)
     counts = run_capture(
-        command_argv("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"),
+        command_argv("git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"),
         cwd=REPO_ROOT,
     ).split()
     if len(counts) != 2:
-        raise DeployError("Could not determine main/origin-main divergence.")
+        raise DeployError(f"Could not determine divergence from {upstream}.")
     if counts[0] != "0":
-        raise DeployError("Local main has unpushed commits. Push or reconcile them before deploying.")
+        raise DeployError(f"Local {branch} has unpushed commits. Push or reconcile them before deploying.")
     if counts[1] != "0":
-        run_stream(command_argv("git", "merge", "--ff-only", "origin/main"), cwd=REPO_ROOT)
+        run_stream(command_argv("git", "merge", "--ff-only", upstream), cwd=REPO_ROOT)
 
 
 def persist_generated_origin(workspace_name: str) -> None:
+    branch, upstream = current_git_push_target()
     config = APP_DIR / "rayfin" / "rayfin.yml"
     relative = config.relative_to(REPO_ROOT).as_posix()
     if not run_capture(command_argv("git", "diff", "--", relative), cwd=REPO_ROOT):
@@ -831,17 +902,17 @@ def persist_generated_origin(workspace_name: str) -> None:
         return
     run_stream(command_argv("git", "fetch", "origin"), cwd=REPO_ROOT)
     counts = run_capture(
-        command_argv("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"),
+        command_argv("git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"),
         cwd=REPO_ROOT,
     ).split()
     if len(counts) != 2 or counts[1] != "0":
-        raise DeployError("origin/main changed during deployment. Merge the Fabric commit-back, then rerun deploy.")
+        raise DeployError(f"{upstream} changed during deployment. Merge it, then rerun deploy.")
     run_stream(command_argv("git", "add", relative), cwd=REPO_ROOT)
     run_stream(
         command_argv("git", "commit", "-m", f"deploy: register {workspace_name} app origin"),
         cwd=REPO_ROOT,
     )
-    run_stream(command_argv("git", "push", "origin", "main"), cwd=REPO_ROOT)
+    run_stream(command_argv("git", "push", "origin", branch), cwd=REPO_ROOT)
 
 
 def _unique_redirect_uris(*groups: list[str]) -> list[str]:
@@ -937,6 +1008,7 @@ def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> N
 
 
 def deploy(args: argparse.Namespace) -> None:
+    activate_cached_azure_cli_session(args.tenant)
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
@@ -1059,7 +1131,8 @@ def deploy(args: argparse.Namespace) -> None:
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:
-        print("Persisting Rayfin redirect configuration to origin/main...", flush=True)
+        branch, _ = current_git_push_target()
+        print(f"Persisting Rayfin redirect configuration to origin/{branch}...", flush=True)
         persist_generated_origin(workspace_name)
     print(f"SUCCESS: Hydro Operations is live at {hosting_url}", flush=True)
 
@@ -1072,7 +1145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--push-config",
         action="store_true",
-        help="Commit and push Rayfin's generated hosting origin to origin/main.",
+        help="Commit and push Rayfin's generated hosting origin to the current tracked feature branch.",
     )
     args = parser.parse_args()
     args.tenant = args.tenant.strip()
