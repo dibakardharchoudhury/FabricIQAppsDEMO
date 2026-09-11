@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -159,7 +160,7 @@ class DeployOrderTests(unittest.TestCase):
         run_stream.assert_called_once_with(
             [
                 "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
-                "--only-show-errors",
+                "--only-show-errors", "--output", "none",
             ]
         )
         ensure_tenant.assert_called_once_with("tenant-id")
@@ -238,17 +239,31 @@ class DeployOrderTests(unittest.TestCase):
         reauthenticate.assert_called_once_with("tenant-id", "accessing the Fabric workspace")
 
     def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
-        with (
-            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
-            patch.object(DEPLOY, "run_stream") as run_stream,
-            patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
-            patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete cache")),
-        ):
-            DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        try:
+            with (
+                patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+                patch.object(DEPLOY, "run_stream") as run_stream,
+                patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+                patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete cache")),
+            ):
+                DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+
+            isolated_config = os.environ.get("AZURE_CONFIG_DIR")
+            self.assertTrue(isolated_config)
+            self.assertNotEqual(isolated_config, shared_config)
+        finally:
+            if shared_config is None:
+                os.environ.pop("AZURE_CONFIG_DIR", None)
+            else:
+                os.environ["AZURE_CONFIG_DIR"] = shared_config
+            for session in DEPLOY.AZURE_CLI_SESSIONS:
+                session.cleanup()
+            DEPLOY.AZURE_CLI_SESSIONS.clear()
 
         run_stream.assert_called_once_with([
             "login", "--tenant", "tenant-id", "--allow-no-subscriptions",
-            "--only-show-errors",
+            "--only-show-errors", "--output", "none",
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 

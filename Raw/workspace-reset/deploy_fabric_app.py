@@ -67,6 +67,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
+AZURE_CLI_SESSIONS: list[tempfile.TemporaryDirectory[str]] = []
 
 
 class DeployError(RuntimeError):
@@ -356,6 +357,9 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
         f"Opening Microsoft sign-in for tenant {tenant}...",
         flush=True,
     )
+    session = tempfile.TemporaryDirectory(prefix="fabric-demo-azure-cli-")
+    AZURE_CLI_SESSIONS.append(session)
+    os.environ["AZURE_CONFIG_DIR"] = session.name
     run_stream(
         az(
             "login",
@@ -363,6 +367,8 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
             tenant,
             "--allow-no-subscriptions",
             "--only-show-errors",
+            "--output",
+            "none",
         )
     )
     ensure_azure_tenant(tenant)
