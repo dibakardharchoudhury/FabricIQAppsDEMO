@@ -15,6 +15,7 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://jolly-finch-7f6703b628-swedencentral.webapp.fabricapps.net
       - https://handy-acorn-2c888a6362-swedencentral.webapp.fabricapps.net
       - https://handy-dale-a30ee3c824-swedencentral.webapp.fabricapps.net
       - https://stark-oasis-b6e6c562b0-swedencentral.webapp.fabricapps.net

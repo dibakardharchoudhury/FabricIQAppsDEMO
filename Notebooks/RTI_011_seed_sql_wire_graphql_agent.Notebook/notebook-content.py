@@ -213,7 +213,7 @@ SQL_TABLES = [
 
 # --- STID GraphQL API binding over the Lakehouse SQL analytics endpoint ------
 # The web app (HydroOperationsApp) issues exactly this query, so the GraphQL API
-# must expose these three silver tables with these fields (identity-mapped to the
+# must expose these four silver tables with these fields (identity-mapped to the
 # lakehouse columns). graphqlType == the generated query field name.
 GRAPHQL_DEFINITION_SCHEMA_URL = (
     "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/"
@@ -223,6 +223,8 @@ GRAPHQL_DEFINITION_PATH = "graphql-definition.json"
 GRAPHQL_OBJECTS = [
     ("silver_facilities",
      ["facility_id", "facility_name", "type", "country", "lat", "lon", "commissioned_date"]),
+    ("silver_systems",
+     ["system_id", "facility_id", "system_name", "oag_rds_system_code"]),
     ("silver_equipment",
      ["equipment_id", "facility_id", "system_id", "equipment_type_code", "equipment_type_name",
       "tag", "manufacturer", "model", "criticality", "install_date", "status", "is_active"]),
@@ -670,7 +672,7 @@ def resolve_sql_analytics_endpoint_id(
 
 def build_graphql_definition(source_endpoint_id: str) -> dict:
     """graphql-definition.json binding the STID GraphQL API to the Lakehouse SQL analytics
-    endpoint, exposing the three silver tables the web app queries."""
+    endpoint, exposing the four silver tables the web app queries."""
     objects = []
     for table, cols in GRAPHQL_OBJECTS:
         objects.append({
@@ -884,9 +886,9 @@ try:
     graphql_item = create_graphql_api(graphql_api_name)
     stid_graphql_id = (graphql_item or {}).get("id")
 
-    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose the three
-    # silver tables the web app queries (silver_facilities / silver_equipment /
-    # silver_instruments). Without this the GraphQL item is created empty.
+    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose the four
+    # silver tables the web app queries (silver_facilities / silver_systems /
+    # silver_equipment / silver_instruments). Without this the GraphQL item is created empty.
     lakehouse_endpoint_id = resolve_sql_analytics_endpoint_id(
         lakehouse_name, parent_kind="lakehouse", parent_id=lakehouse_id
     )
@@ -913,8 +915,8 @@ except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the f
     print("   ", exc)
     print(
         f"   Manual fallback: open '{graphql_api_name}' → Get data → Lakehouse SQL analytics "
-        f"endpoint of '{lakehouse_name}' → expose silver_facilities / silver_equipment / "
-        "silver_instruments."
+        f"endpoint of '{lakehouse_name}' → expose silver_facilities / silver_systems / "
+        "silver_equipment / silver_instruments."
     )
 
 

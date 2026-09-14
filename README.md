@@ -157,6 +157,7 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
 GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
 Knowledge Graph provides selected-asset, facility, and all-entity views over that federated context;
-the current graph is Ontology-aligned, with the live Ontology definition planned as the authoritative
-runtime semantic contract. See [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
+the live Ontology child Graph Model supplies materialized nodes and relationships through GQL,
+Eventhouse supplies fresh readings, and SQL contributes explicit external overlays. See
+[`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).
