@@ -26,7 +26,7 @@ const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
-const WEATHER_ETA_MS = 8 * 60_000
+const WEATHER_ETA_MS = 12 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
@@ -319,11 +319,11 @@ function useHydroOperationsDataController() {
     try {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setWeatherState('idle'); setNotice('Sign in with Fabric to load weather data.'); return }
-      beginProgress('weather', 'Creating the weather tables and loading UKMet forecasts and observations (Weather_001, Weather_003)...', WEATHER_ETA_MS)
+      beginProgress('weather', 'Creating the weather tables and loading Aurora and UKMet forecasts (Weather_001, Weather_002, Weather_003)...', WEATHER_ETA_MS)
       const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
       if (status === 'Completed') {
         setWeatherState('complete')
-        setNotice('Weather tables created and UKMet data loaded. Run Seed & provision if the Weather tab still reports no GraphQL access.')
+        setNotice('Weather tables created and Aurora + UKMet data loaded. Run Seed & provision if the Weather tab still reports no GraphQL access.')
       } else {
         setWeatherState('error')
         setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)

@@ -13,6 +13,7 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
 const weatherSetupNotebookName = 'Weather_001_create_lakehouse'
+const weatherAreaNotebookName = 'Weather_002_fetch_area_weather'
 const weatherUkmetNotebookName = 'Weather_003_fetch_ukmet'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
@@ -600,9 +601,10 @@ async function resolvePostseedNotebookId(): Promise<string> {
   return resolveNotebookId(postseedNotebookName)
 }
 
-/** Create the weather tables (Weather_001), then load UKMet forecasts and observations (Weather_003). */
+/** Create the weather tables (Weather_001), then load Aurora area forecasts (Weather_002)
+ *  and UKMet forecasts and observations (Weather_003). */
 export const runWeatherNotebooks = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
-  for (const name of [weatherSetupNotebookName, weatherUkmetNotebookName]) {
+  for (const name of [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName]) {
     const notebookId = await resolveNotebookId(name)
     const status = await runJob(notebookId, 'RunNotebook', onStatus, { timeoutMs: 20 * 60_000, reuseActive: true })
     if (status !== 'Completed') return status
