@@ -1,7 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
+  queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
@@ -395,6 +395,15 @@ function useHydroOperationsDataController() {
     if (job.kind === 'seed') {
       setProvisionState('running')
       await awaitProvision(() => resumePostSeedNotebook(status => updateJob('seed', humanStatus(status)), sinceIso))
+    } else if (job.kind === 'weather') {
+      setWeatherState('running')
+      try {
+        const status = await resumeWeatherNotebooks(update => updateJob('weather', humanStatus(update)), sinceIso)
+        setWeatherState(status === 'Completed' ? 'complete' : 'error')
+      } catch (error) {
+        setWeatherState('error')
+        setNotice(error instanceof Error ? error.message : 'Weather load failed.')
+      } finally { endJob('weather') }
     } else {
       setStreamState('running')
       await awaitStream(() => resumeStreamingPipeline(status => updateJob('stream', humanStatus(status)), sinceIso), job.startedAt)

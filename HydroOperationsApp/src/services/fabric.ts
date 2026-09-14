@@ -601,20 +601,39 @@ async function resolvePostseedNotebookId(): Promise<string> {
   return resolveNotebookId(postseedNotebookName)
 }
 
-/** Create the weather tables (Weather_001), then load Aurora area forecasts (Weather_002)
- *  and UKMet forecasts and observations (Weather_003). */
-export const runWeatherNotebooks = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
-  const names = [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName]
-  for (const [index, name] of names.entries()) {
+/** Status of the newest run of `itemId` started since `sinceIso`, or undefined if it never ran. */
+async function statusSince(itemId: string, sinceIso: string): Promise<JobStatus | undefined> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  return (await latestInstance(token, itemId, sinceIso))?.status
+}
+
+const weatherNotebookNames = [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName]
+
+async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: string): Promise<JobStatus> {
+  for (const [index, name] of weatherNotebookNames.entries()) {
     const notebookId = await resolveNotebookId(name)
-    const isLast = index === names.length - 1
+    // On resume, skip the notebooks that already finished earlier in this same sequence.
+    if (resumeSinceIso && (await statusSince(notebookId, resumeSinceIso)) === 'Completed') continue
+    const isLast = index === weatherNotebookNames.length - 1
     // A mid-sequence 'Completed' would pin the caller's progress bar at 100%, so only the last one reports it.
     const report = onStatus && ((status: JobStatus) => onStatus(status === 'Completed' && !isLast ? 'InProgress' : status))
     const status = await runJob(notebookId, 'RunNotebook', report, { timeoutMs: 20 * 60_000, reuseActive: true })
     if (status !== 'Completed') return status
   }
   return 'Completed'
-})
+}
+
+/** Create the weather tables (Weather_001), then load Aurora area forecasts (Weather_002)
+ *  and UKMet forecasts and observations (Weather_003). */
+export const runWeatherNotebooks = createSingleFlight(
+  async (onStatus?: JobProgress): Promise<JobStatus> => runWeatherSequence(onStatus),
+)
+
+/** Resume a weather sequence started before a page reload, continuing from the first unfinished notebook. */
+export async function resumeWeatherNotebooks(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
+  return runWeatherSequence(onStatus, sinceIso)
+}
 
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
