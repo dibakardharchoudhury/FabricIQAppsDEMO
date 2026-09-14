@@ -1,4 +1,4 @@
-import { Activity, Bot, Factory, Gauge, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Settings, Wrench } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { AdministrationPage } from './pages/AdministrationPage'
 import { CopilotPage } from './pages/CopilotPage'
@@ -6,8 +6,9 @@ import { DigitalTwinPage } from './pages/DigitalTwinPage'
 import { MaintenancePage } from './pages/MaintenancePage'
 import { OverviewPage } from './pages/OverviewPage'
 import { TelemetryPage } from './pages/TelemetryPage'
+import { WeatherPage } from './pages/WeatherPage'
 
-export type V2TabId = 'overview' | 'telemetry' | 'digital-twin' | 'copilot' | 'maintenance' | 'administration'
+export type V2TabId = 'overview' | 'telemetry' | 'weather' | 'digital-twin' | 'copilot' | 'maintenance' | 'administration'
 
 export type V2Tab = {
   id: V2TabId
@@ -20,6 +21,7 @@ export type V2Tab = {
 export const V2_TABS: V2Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: OverviewPage },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: TelemetryPage },
+  { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: WeatherPage },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: DigitalTwinPage },
   { id: 'copilot', label: 'Copilot', title: 'Copilot', icon: Bot, Page: CopilotPage },
   { id: 'maintenance', label: 'Work Orders & Maintenance', title: 'Work Orders & Maintenance', icon: Wrench, Page: MaintenancePage },

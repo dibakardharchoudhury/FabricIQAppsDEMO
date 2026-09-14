@@ -434,6 +434,75 @@ type StidPayload = {
 
 export type StidData = { facilities: Facility[]; equipment: Equipment[]; instruments: Instrument[] }
 
+export type WeatherLocation = {
+  location_id: string
+  location_name: string
+  latitude: number
+  longitude: number
+  elevation_m?: number
+}
+
+export type WeatherArea = {
+  area_id: string
+  area_name: string
+  geometry_geojson: string
+  crs: string
+}
+
+export type WeatherObservation = {
+  source_id: string
+  variable_id: string
+  location_id: string
+  observed_at_utc: string
+  value?: number
+  unit: string
+  quality?: string
+}
+
+export type WeatherForecast = {
+  source_id: string
+  variable_id: string
+  location_id: string
+  reference_time_utc: string
+  valid_time_utc: string
+  lead_hours: number
+  value?: number
+  unit: string
+}
+
+export type WeatherAreaMetric = {
+  source_id: string
+  variable_id: string
+  area_id: string
+  data_kind: 'observation' | 'forecast'
+  reference_time_utc?: string
+  valid_time_utc: string
+  lead_hours?: number
+  area_coverage_fraction: number
+  area_weighted_value?: number
+  unit: string
+  rainfall_volume_m3?: number
+}
+
+export type WeatherData = {
+  locations: WeatherLocation[]
+  areas: WeatherArea[]
+  observations: WeatherObservation[]
+  forecasts: WeatherForecast[]
+  areaMetrics: WeatherAreaMetric[]
+}
+
+type WeatherPayload = {
+  data?: {
+    locations?: { items?: WeatherLocation[] }
+    areas?: { items?: WeatherArea[] }
+    observations?: { items?: WeatherObservation[] }
+    forecasts?: { items?: WeatherForecast[] }
+    areaMetrics?: { items?: WeatherAreaMetric[] }
+  }
+  errors?: Array<{ message?: string }>
+}
+
 export function isStidConfigured() { return Boolean(msal) }
 
 export async function queryStid(): Promise<StidData | null> {
@@ -464,6 +533,36 @@ export async function queryStid(): Promise<StidData | null> {
     facilities: payload.data?.facilities?.items ?? [],
     equipment: payload.data?.equipment?.items ?? [],
     instruments: payload.data?.instruments?.items ?? [],
+  }
+}
+
+export async function queryWeatherData(): Promise<WeatherData | null> {
+  const config = await ensureConfig(false)
+  if (!config?.graphqlUrl) return null
+  const token = await silentToken([GRAPHQL_SCOPE])
+  if (!token) return null
+  const query = `query HydroWeather {
+    locations: weather_locations(first: 500) { items { location_id location_name latitude longitude elevation_m } }
+    areas: weather_areas(first: 100) { items { area_id area_name geometry_geojson crs } }
+    observations: weather_observations(first: 1000) { items { source_id variable_id location_id observed_at_utc value unit quality } }
+    forecasts: weather_forecasts(first: 1000) { items { source_id variable_id location_id reference_time_utc valid_time_utc lead_hours value unit } }
+    areaMetrics: weather_area_metrics(first: 1000) { items { source_id variable_id area_id data_kind reference_time_utc valid_time_utc lead_hours area_coverage_fraction area_weighted_value unit rainfall_volume_m3 } }
+  }`
+  const response = await fetch(config.graphqlUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`Weather query failed (${response.status}).`)
+  const payload = JSON.parse(text) as WeatherPayload
+  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
+  return {
+    locations: payload.data?.locations?.items ?? [],
+    areas: payload.data?.areas?.items ?? [],
+    observations: payload.data?.observations?.items ?? [],
+    forecasts: payload.data?.forecasts?.items ?? [],
+    areaMetrics: payload.data?.areaMetrics?.items ?? [],
   }
 }
 
