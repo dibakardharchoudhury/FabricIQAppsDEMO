@@ -75,7 +75,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 
 1. Attach the same Lakehouse and Fabric Environment to both notebooks.
 2. Run the setup notebook once per environment, then schedule ingestion through a Fabric Data Pipeline.
-3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and pass GeoJSON areas, horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
+3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 5 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.
 6. Integration-test with a fixed small STAC item and a small polygon before enabling the global latest-item schedule.

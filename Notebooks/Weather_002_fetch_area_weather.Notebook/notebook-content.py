@@ -46,18 +46,8 @@ facilities_table = "silver_facilities"
 equipment_table = "silver_equipment"
 require_active_equipment = True
 facility_ids_json = "[]"  # Empty selects all eligible facilities.
-
-areas_geojson = json.dumps({
-    "type": "FeatureCollection",
-    "features": [{
-        "type": "Feature",
-        "properties": {"area_id": "hydro_demo_area", "area_name": "Hydro demo area"},
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [[[-5.1, 56.0], [-3.4, 56.0], [-3.4, 57.5], [-5.1, 57.5], [-5.1, 56.0]]],
-        },
-    }],
-})
+aggregation_radius_km = 5.0
+aggregation_circle_vertices = 72
 
 # METADATA ********************
 
@@ -81,7 +71,7 @@ from adlfs import AzureBlobFileSystem
 import notebookutils
 from pyproj import Geod
 from requests.adapters import HTTPAdapter
-from shapely.geometry import box, shape
+from shapely.geometry import Polygon, box, mapping
 from urllib3.util.retry import Retry
 
 TABLES = {
@@ -233,6 +223,30 @@ def nearest_grid_indices(latitudes, longitudes, latitude, longitude):
 def geodesic_area_m2(geometry) -> float:
     return abs(float(GEOD.geometry_area_perimeter(geometry)[0]))
 
+
+def station_aggregation_area(point: dict, radius_km: float, vertices: int) -> dict:
+    """Create a geodesic circle centered on one inventory station."""
+    if radius_km <= 0 or vertices < 12:
+        raise ValueError("Aggregation radius must be positive and circle vertices must be at least 12")
+    bearings = np.linspace(0.0, 360.0, vertices, endpoint=False)
+    longitudes, latitudes, _ = GEOD.fwd(
+        np.full(vertices, float(point["longitude"])),
+        np.full(vertices, float(point["latitude"])),
+        bearings,
+        np.full(vertices, radius_km * 1000.0),
+    )
+    polygon = Polygon(zip(longitudes, latitudes))
+    if not polygon.is_valid:
+        raise ValueError(f"Could not create aggregation area for {point['location_id']}")
+    return {
+        "area_id": f"weather_{point['location_id']}_{radius_km:g}km",
+        "area_name": f"{point['location_name']} · {radius_km:g} km radius",
+        "location_id": point["location_id"],
+        "radius_km": radius_km,
+        "geometry": polygon,
+        "geometry_json": json.dumps(mapping(polygon), separators=(",", ":")),
+    }
+
 # METADATA ********************
 
 # META {
@@ -336,26 +350,16 @@ points = load_station_points(
     selected_facility_ids,
     require_active_equipment,
 )
-area_collection = json.loads(areas_geojson)
-if area_collection.get("type") != "FeatureCollection":
-    raise ValueError("areas_geojson must be a GeoJSON FeatureCollection")
 
 for point in points:
     if not (-90 <= point["latitude"] <= 90 and -180 <= point["longitude"] <= 180):
         raise ValueError(f"Invalid point coordinates: {point}")
 
-areas = []
-for feature in area_collection.get("features", []):
-    geometry = shape(feature["geometry"])
-    if geometry.is_empty or not geometry.is_valid or geometry.geom_type not in ("Polygon", "MultiPolygon"):
-        raise ValueError(f"Invalid area geometry: {feature.get('properties', {})}")
-    properties = feature.get("properties", {})
-    areas.append({
-        "area_id": properties["area_id"],
-        "area_name": properties.get("area_name", properties["area_id"]),
-        "geometry": geometry,
-        "geometry_json": json.dumps(feature["geometry"], separators=(",", ":")),
-    })
+areas = [
+    station_aggregation_area(point, aggregation_radius_km, aggregation_circle_vertices)
+    for point in points
+]
+print(f"Created {len(areas)} station aggregation areas at {aggregation_radius_km:g} km radius")
 
 api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
 run_id = str(uuid4())
@@ -529,7 +533,12 @@ for area in areas:
         "area_name": area["area_name"],
         "geometry_geojson": area["geometry_json"],
         "crs": "EPSG:4326",
-        "metadata_json": json.dumps({"geodesic_area_m2": area_size_m2}),
+        "metadata_json": json.dumps({
+            "geodesic_area_m2": area_size_m2,
+            "generation_method": "station_geodesic_buffer",
+            "location_id": area["location_id"],
+            "radius_km": area["radius_km"],
+        }),
         "updated_at_utc": started_at,
     })
     min_lon, min_lat, max_lon, max_lat = area["geometry"].bounds
@@ -630,6 +639,8 @@ area_metrics_df = spark.createDataFrame(
 )
 areas_df.createOrReplaceTempView("incoming_weather_areas")
 area_metrics_df.createOrReplaceTempView("incoming_weather_area_metrics")
+spark.sql(f"DELETE FROM {TABLES['area_metrics']} WHERE area_id = 'hydro_demo_area'")
+spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id = 'hydro_demo_area'")
 spark.sql(f"""
 MERGE INTO {TABLES['areas']} target USING incoming_weather_areas source
 ON target.area_id = source.area_id

@@ -107,7 +107,7 @@ export function WeatherPage() {
 
   return <div className="weather-page">
     <section className="weather-head">
-      <div><span className="v2-eyebrow">Weather Operations</span><h1>Stations and catchment outlook</h1><p>Observed conditions and 72-hour Aurora forecasts across hydro assets and operating areas.</p></div>
+      <div><span className="v2-eyebrow">Weather Operations</span><h1>Stations and local-area outlook</h1><p>Observed conditions and 72-hour Aurora forecasts at each asset and within its 5 km operating area.</p></div>
       <div className="weather-actions">
         <label>Location<select value={selection ? `${selection.kind}:${selection.id}` : ''} onChange={event => {
           const [kind, ...id] = event.target.value.split(':')
