@@ -411,11 +411,16 @@
 .weather-timeline article::before { position: absolute; top: 4px; left: -18px; width: 7px; height: 7px; border: 2px solid var(--cp-surface); border-radius: 50%; background: var(--cp-accent); content: ''; }
 .weather-timeline article > time { color: var(--cp-text); font-size: 11px; font-weight: 800; }
 .weather-timeline article > small { margin-left: 7px; color: var(--cp-text-muted); font-size: 9px; text-transform: uppercase; }
-.weather-timeline article > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 7px; }
+.weather-timeline article > div { display: grid; gap: 5px; margin-top: 7px; }
+.weather-timeline article > .weather-primary-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.weather-timeline article > .weather-secondary-values { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .weather-timeline article > div > span { display: grid; min-width: 0; padding: 6px 7px; border: 1px solid var(--cp-border); border-radius: 5px; background: var(--cp-surface); }
 .weather-timeline em { overflow: hidden; color: var(--cp-text-muted); font-size: 8px; font-style: normal; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .weather-timeline strong { margin-top: 2px; overflow-wrap: anywhere; color: var(--cp-text); font-size: 11px; }
 .weather-timeline span small { margin-top: 2px; color: #0369a1; font-size: 8px; }
+.weather-more { margin-top: 7px; border: 0; padding: 2px 0; background: transparent; color: var(--cp-accent-hover); font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.weather-more:hover { text-decoration: underline; }
+.weather-more:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
 .weather-timeline-empty { margin: 0 0 14px 8px; color: var(--cp-text-muted); font-size: 11px; }
 
 .v2-notice {
@@ -2247,7 +2252,7 @@ button.v2-signal-row:hover,
     max-height: none;
   }
 
-  .weather-timeline article > div {
+  .weather-timeline article > .weather-secondary-values {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

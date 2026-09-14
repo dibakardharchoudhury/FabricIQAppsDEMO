@@ -8,6 +8,12 @@ const VARIABLE_LABELS: Record<string, string> = {
   precipitation: 'Rain', pressure: 'Pressure', temperature: 'Temperature', relative_humidity: 'Humidity',
   dew_point: 'Dew point', solar_radiation: 'Sunlight', wind_speed: 'Wind', wind_gust: 'Gust', wind_direction: 'Direction',
 }
+const VARIABLE_ORDER = ['temperature', 'precipitation', 'pressure', 'relative_humidity', 'dew_point', 'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction']
+const PRIMARY_VARIABLES = new Set(['temperature', 'precipitation'])
+const variableRank = (variableId: string) => {
+  const index = VARIABLE_ORDER.indexOf(variableId)
+  return index < 0 ? VARIABLE_ORDER.length : index
+}
 
 type TimelineValue = { variableId: string; value?: number; unit: string; volume?: number }
 type TimelineRow = { timestamp: string; source: string; values: TimelineValue[] }
@@ -32,7 +38,9 @@ function groupRows(items: Array<WeatherObservation | WeatherForecast | WeatherAr
     })
     groups.set(timestamp, current)
   }
-  return [...groups.values()].sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+  return [...groups.values()]
+    .map(row => ({ ...row, values: row.values.sort((left, right) => variableRank(left.variableId) - variableRank(right.variableId)) }))
+    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
 }
 
 export function WeatherPage() {
@@ -42,6 +50,8 @@ export function WeatherPage() {
   const [state, setState] = useState<'loading' | 'ready' | 'unavailable' | 'error'>('loading')
   const [error, setError] = useState<string>()
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now())
+  const [forecastVendor, setForecastVendor] = useState('')
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set())
 
   const applyWeather = (data: WeatherData) => {
     setWeather(data)
@@ -82,14 +92,24 @@ export function WeatherPage() {
     ? weather?.locations.find(item => item.location_id === selection.id)?.location_name
     : weather?.areas.find(item => item.area_id === selection?.id)?.area_name
 
+  const forecastVendors = useMemo(() => {
+    if (!weather) return []
+    return [...new Set([
+      ...weather.forecasts.map(item => item.source_id),
+      ...weather.areaMetrics.filter(item => item.data_kind === 'forecast').map(item => item.source_id),
+    ])].sort()
+  }, [weather])
+  const selectedVendor = forecastVendor || forecastVendors[0] || ''
+
   const timelines = useMemo(() => {
     if (!weather || !selection) return { observations: [], forecasts: [] }
     const now = timeAnchor
     const duration = rangeHours * 3_600_000
     if (selection.kind === 'location') {
       const observations = weather.observations.filter(item => item.location_id === selection.id && Date.parse(item.observed_at_utc) >= now - duration)
-      const latestIssue = Math.max(0, ...weather.forecasts.filter(item => item.location_id === selection.id).map(item => Date.parse(item.reference_time_utc)))
-      const forecasts = weather.forecasts.filter(item => item.location_id === selection.id && Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
+      const vendorForecasts = weather.forecasts.filter(item => item.location_id === selection.id && item.source_id === selectedVendor)
+      const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc)))
+      const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
       return {
         observations: groupRows(observations, item => (item as WeatherObservation).observed_at_utc),
         forecasts: groupRows(forecasts, item => (item as WeatherForecast).valid_time_utc),
@@ -97,13 +117,21 @@ export function WeatherPage() {
     }
     const metrics = weather.areaMetrics.filter(item => item.area_id === selection.id)
     const observations = metrics.filter(item => item.data_kind === 'observation' && Date.parse(item.valid_time_utc) >= now - duration)
-    const latestIssue = Math.max(0, ...metrics.filter(item => item.data_kind === 'forecast').map(item => Date.parse(item.reference_time_utc ?? '')))
-    const forecasts = metrics.filter(item => item.data_kind === 'forecast' && Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
+    const vendorForecasts = metrics.filter(item => item.data_kind === 'forecast' && item.source_id === selectedVendor)
+    const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc ?? '')))
+    const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
     return {
       observations: groupRows(observations, item => (item as WeatherAreaMetric).valid_time_utc),
       forecasts: groupRows(forecasts, item => (item as WeatherAreaMetric).valid_time_utc),
     }
-  }, [rangeHours, selection, timeAnchor, weather])
+  }, [rangeHours, selectedVendor, selection, timeAnchor, weather])
+
+  const toggleRow = (key: string) => setExpandedRows(current => {
+    const next = new Set(current)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
 
   return <div className="weather-page">
     <section className="weather-head">
@@ -113,6 +141,7 @@ export function WeatherPage() {
           const [kind, ...id] = event.target.value.split(':')
           if ((kind === 'location' || kind === 'area') && id.length) setSelection({ kind, id: id.join(':') })
         }}><option value="" disabled>Select</option>{weather?.locations.map(item => <option value={`location:${item.location_id}`} key={`location:${item.location_id}`}>{item.location_name}</option>)}{weather?.areas.map(item => <option value={`area:${item.area_id}`} key={`area:${item.area_id}`}>{item.area_name}</option>)}</select></label>
+        <label>Vendor<select value={selectedVendor} onChange={event => setForecastVendor(event.target.value)} disabled={!forecastVendors.length}>{forecastVendors.map(vendor => <option value={vendor} key={vendor}>{vendor === 'aurora' ? 'Aurora' : vendor}</option>)}</select></label>
         <label>Window<select value={rangeHours} onChange={event => setRangeHours(Number(event.target.value))}>{RANGES.map(value => <option value={value} key={value}>{value} hours</option>)}</select></label>
         <button className="v2-icon-action" type="button" onClick={() => void load()} disabled={state === 'loading'} title="Refresh weather data" aria-label="Refresh weather data"><RefreshCw size={16} className={state === 'loading' ? 'spin' : undefined} /></button>
       </div>
@@ -126,19 +155,30 @@ export function WeatherPage() {
       </article>
       <aside className="weather-detail" aria-live="polite">
         <div className="weather-detail-head"><span className="weather-detail-icon"><CloudSun size={18} /></span><div><span>{selection?.kind === 'area' ? 'Weather area' : 'Weather station'}</span><h2>{selectedName ?? 'Select a station or area'}</h2></div></div>
-        <TimelineSection title={`Observations · past ${rangeHours}h`} rows={timelines.observations} empty="No observations in this window." />
-        <TimelineSection title={`Forecast · next ${rangeHours}h`} rows={timelines.forecasts} empty="No forecast values in this window." />
+        <TimelineSection title={`Observations · past ${rangeHours}h`} rows={timelines.observations} empty="No observations in this window." expandedRows={expandedRows} onToggle={toggleRow} />
+        <TimelineSection title={`Forecast · next ${rangeHours}h`} rows={timelines.forecasts} empty="No forecast values in this window." expandedRows={expandedRows} onToggle={toggleRow} />
       </aside>
     </section>
   </div>
 }
 
-function TimelineSection({ title, rows, empty }: { title: string; rows: TimelineRow[]; empty: string }) {
+function TimelineSection({ title, rows, empty, expandedRows, onToggle }: { title: string; rows: TimelineRow[]; empty: string; expandedRows: Set<string>; onToggle: (key: string) => void }) {
   return <section className="weather-timeline-section"><div className="weather-timeline-title"><h3>{title}</h3><span>{rows.length}</span></div>
-    <div className="weather-timeline">{rows.map(row => <article key={`${title}-${row.timestamp}`}>
-      <time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>
-      <small>{row.source}</small>
-      <div>{row.values.map(value => <span key={value.variableId}><em>{VARIABLE_LABELS[value.variableId] ?? value.variableId}</em><strong>{formatValue(value)}</strong>{value.volume != null && <small>{Math.round(value.volume).toLocaleString()} m³</small>}</span>)}</div>
-    </article>)}{!rows.length && <p className="weather-timeline-empty">{empty}</p>}</div>
+    <div className="weather-timeline">{rows.map(row => {
+      const rowKey = `${title}-${row.timestamp}`
+      const expanded = expandedRows.has(rowKey)
+      const primary = row.values.filter(value => PRIMARY_VARIABLES.has(value.variableId))
+      const secondary = row.values.filter(value => !PRIMARY_VARIABLES.has(value.variableId))
+      return <article key={rowKey}>
+        <time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}</time>
+        <div className="weather-primary-values">{primary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>
+        {expanded && <div className="weather-secondary-values">{secondary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>}
+        {!!secondary.length && <button className="weather-more" type="button" aria-expanded={expanded} onClick={() => onToggle(rowKey)}>{expanded ? 'Less…' : 'More…'}</button>}
+      </article>
+    })}{!rows.length && <p className="weather-timeline-empty">{empty}</p>}</div>
   </section>
+}
+
+function WeatherValue({ value }: { value: TimelineValue }) {
+  return <span><em>{VARIABLE_LABELS[value.variableId] ?? value.variableId}</em><strong>{formatValue(value)}</strong>{value.volume != null && <small>{Math.round(value.volume).toLocaleString()} m³</small>}</span>
 }
