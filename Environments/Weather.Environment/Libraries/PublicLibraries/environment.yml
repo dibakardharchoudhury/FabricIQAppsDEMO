@@ -1,0 +1,7 @@
+dependencies:
+  - xarray
+  - shapely
+  - pyproj
+  - pip:
+      - adlfs
+      - zarr<3

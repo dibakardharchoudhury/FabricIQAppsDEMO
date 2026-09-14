@@ -943,7 +943,38 @@ chain_notebooks = [
     "RTI_009_build_data_agent",
     "RTI_010_build_operations_agent",
     "RTI_011_seed_sql_wire_graphql_agent",
+    "Weather_001_create_lakehouse",
+    "Weather_002_fetch_area_weather",
 ]
+weather_environment_name = "Weather"
+
+
+def _workspace_item_id(display_name: str, item_type: str) -> str:
+    """Resolve one workspace item by exact display name and type."""
+    matches = []
+    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    while url:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Failed to list workspace items (HTTP {response.status_code}): {response.text}"
+            )
+        body = response.json()
+        matches.extend(
+            item
+            for item in body.get("value", [])
+            if item.get("displayName") == display_name and item.get("type") == item_type
+        )
+        url = body.get("continuationUri")
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected one {item_type} named '{display_name}', found {len(matches)}."
+        )
+    return matches[0]["id"]
+
+
+weather_environment_id = _workspace_item_id(weather_environment_name, "Environment")
 
 
 def _rebind_lakehouse(nb_name: str) -> tuple:
@@ -958,11 +989,19 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             "default_lakehouse_workspace_id": workspace_id,
             "known_lakehouses": [{"id": lakehouse_id}],
         }
+        if nb_name == "Weather_002_fetch_area_weather":
+            deps["environment"] = {
+                "environmentId": weather_environment_id,
+                "workspaceId": workspace_id,
+            }
         ok = notebookutils.notebook.updateDefinition(
             name=nb_name,
             content=json.dumps(nb_json),
         )
-        return (nb_name, bool(ok), "bound to current lakehouse successfully!")
+        detail = "bound to current lakehouse"
+        if nb_name == "Weather_002_fetch_area_weather":
+            detail += f" and Environment '{weather_environment_name}'"
+        return (nb_name, bool(ok), detail + " successfully!")
     except Exception as exc:
         return (nb_name, False, exc)
 

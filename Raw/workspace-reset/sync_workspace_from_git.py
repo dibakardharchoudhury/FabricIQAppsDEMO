@@ -89,6 +89,12 @@ FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+WEATHER_ENVIRONMENT_NAME = "Weather"
+WEATHER_NOTEBOOK_FOLDER = "Notebooks"
+WEATHER_NOTEBOOK_NAMES = {
+    "Weather_001_create_lakehouse",
+    "Weather_002_fetch_area_weather",
+}
 
 
 class Fabric:
@@ -184,6 +190,43 @@ class Fabric:
                 matches.append(conn)
         matches.sort(key=lambda c: c.get("displayName", ""), reverse=True)
         return [c["id"] for c in matches if c.get("id")]
+
+    def list_workspace_items(self, workspace_id: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        url: str | None = f"{FABRIC_BASE}/workspaces/{workspace_id}/items"
+        while url:
+            resp = self.request("GET", url)
+            if resp.status_code != 200:
+                raise SystemExit(
+                    f"Failed to list workspace items: HTTP {resp.status_code} {resp.text}"
+                )
+            data = resp.json()
+            out.extend(data.get("value", []))
+            url = data.get("continuationUri")
+            if not url and data.get("continuationToken"):
+                token = data["continuationToken"]
+                url = f"{FABRIC_BASE}/workspaces/{workspace_id}/items?continuationToken={token}"
+        return out
+
+    def list_workspace_folders(self, workspace_id: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        url: str | None = f"{FABRIC_BASE}/workspaces/{workspace_id}/folders?recursive=true"
+        while url:
+            resp = self.request("GET", url)
+            if resp.status_code != 200:
+                raise SystemExit(
+                    f"Failed to list workspace folders: HTTP {resp.status_code} {resp.text}"
+                )
+            data = resp.json()
+            out.extend(data.get("value", []))
+            url = data.get("continuationUri")
+            if not url and data.get("continuationToken"):
+                token = data["continuationToken"]
+                url = (
+                    f"{FABRIC_BASE}/workspaces/{workspace_id}/folders"
+                    f"?recursive=true&continuationToken={token}"
+                )
+        return out
 
     def resolve_workspace_id(self, workspace: str) -> tuple[str, str]:
         if GUID_RE.match(workspace):
@@ -365,6 +408,110 @@ def test_connection_flow(
             fab.delete_connection(created_id)
 
 
+def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
+    """Validate weather Git items, publish their Environment, and print secret guidance."""
+    items = fab.list_workspace_items(workspace_id)
+    folders = fab.list_workspace_folders(workspace_id)
+    notebook_folder = next(
+        (
+            folder
+            for folder in folders
+            if folder.get("displayName") == WEATHER_NOTEBOOK_FOLDER
+            and not folder.get("parentFolderId")
+        ),
+        None,
+    )
+    if not notebook_folder:
+        raise SystemExit("Weather provisioning failed: workspace folder 'Notebooks' was not created.")
+
+    weather_notebooks = {
+        item.get("displayName"): item
+        for item in items
+        if item.get("type") == "Notebook"
+        and item.get("displayName") in WEATHER_NOTEBOOK_NAMES
+    }
+    missing = sorted(WEATHER_NOTEBOOK_NAMES - weather_notebooks.keys())
+    if missing:
+        raise SystemExit("Weather provisioning failed: missing notebook(s): " + ", ".join(missing))
+    misplaced = sorted(
+        name
+        for name, item in weather_notebooks.items()
+        if item.get("folderId") != notebook_folder.get("id")
+    )
+    if misplaced:
+        raise SystemExit(
+            "Weather provisioning failed: notebook(s) are not in workspace folder 'Notebooks': "
+            + ", ".join(misplaced)
+        )
+    print("Weather notebooks are present in workspace folder 'Notebooks'.")
+
+    environments = [
+        item
+        for item in items
+        if item.get("type") == "Environment"
+        and item.get("displayName") == WEATHER_ENVIRONMENT_NAME
+    ]
+    if len(environments) != 1:
+        raise SystemExit(
+            f"Weather provisioning failed: expected one '{WEATHER_ENVIRONMENT_NAME}' "
+            f"Environment, found {len(environments)}."
+        )
+    environment = environments[0]
+    environment_id = environment["id"]
+    metadata = fab.request(
+        "GET", f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}"
+    )
+    if metadata.status_code != 200:
+        raise SystemExit(
+            f"Failed to inspect Weather Environment: HTTP {metadata.status_code} {metadata.text}"
+        )
+    publish_state = (
+        metadata.json().get("properties", {}).get("publishDetails", {}).get("state")
+    )
+    if git_updated or publish_state != "Success":
+        print("Publishing Weather Environment libraries...")
+        response = fab.request(
+            "POST",
+            f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/"
+            f"{environment_id}/staging/publish?beta=false",
+        )
+        response = fab.poll_lro(response)
+        if response.status_code not in (200, 201):
+            raise SystemExit(
+                f"Weather Environment publish failed: HTTP {response.status_code} {response.text}"
+            )
+        deadline = time.time() + 900
+        while time.time() < deadline:
+            status = fab.request(
+                "GET",
+                f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}",
+            )
+            if status.status_code != 200:
+                raise SystemExit(
+                    f"Failed to check Weather Environment publish: "
+                    f"HTTP {status.status_code} {status.text}"
+                )
+            publish_state = (
+                status.json().get("properties", {}).get("publishDetails", {}).get("state")
+            )
+            if publish_state == "Success":
+                break
+            if publish_state in ("Failed", "Cancelled"):
+                raise SystemExit(f"Weather Environment publish ended in state {publish_state}.")
+            print(f"  Weather Environment publish state: {publish_state or 'Waiting'}")
+            time.sleep(15)
+        else:
+            raise SystemExit("Timed out waiting for the Weather Environment to publish.")
+        print("Weather Environment publish completed.")
+    else:
+        print("Weather Environment is already published; no publish required.")
+
+    print("\nWeather API prerequisite (the provisioner does not read or create this secret):")
+    print("  In the Key Vault passed to Pipe_Setup, create secret 'mai-weather-api-key'.")
+    print("  Portal: Key Vault > Objects > Secrets > Generate/Import")
+    print("  CLI: az keyvault secret set --vault-name <vault> --name mai-weather-api-key")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", help="Tenant id or domain to sign in against.")
@@ -460,6 +607,7 @@ def main() -> int:
     repo_url = f"https://github.com/{args.owner}/{args.repository}"
     created_connection_id: str | None = None
     sync_completed = False
+    git_updated = False
 
     # Ordered list of existing connection ids to try before creating a new one.
     candidate_ids: list[str] = []
@@ -528,6 +676,7 @@ def main() -> int:
                 print(f"updateFromGit failed: HTTP {r.status_code} {r.text}", file=sys.stderr)
                 return 1
             print("  update complete.")
+            git_updated = True
         else:
             print("  nothing to update (workspace already matches Git).")
         sync_completed = True
@@ -550,11 +699,12 @@ def main() -> int:
         elif created_connection_id:
             print(f"Retained connection {created_connection_id} for future reuse.")
 
-    # 6. Report resulting inventory.
-    items = fab.request("GET", f"{FABRIC_BASE}/workspaces/{ws_id}/items")
-    folders = fab.request("GET", f"{FABRIC_BASE}/workspaces/{ws_id}/folders?recursive=true")
-    n_items = len(items.json().get("value", [])) if items.status_code == 200 else "?"
-    n_folders = len(folders.json().get("value", [])) if folders.status_code == 200 else "?"
+    # 6. Publish the Git-imported weather runtime and validate item placement.
+    configure_weather_assets(fab, ws_id, git_updated)
+
+    # 7. Report resulting inventory.
+    n_items = len(fab.list_workspace_items(ws_id))
+    n_folders = len(fab.list_workspace_folders(ws_id))
     print(f"\nDone. Workspace '{ws_name}' now has {n_items} items across {n_folders} folders.")
     return 0
 

@@ -129,6 +129,13 @@ pipeline permission to read them (for example *Key Vault Secrets User*), and add
 principal to the workspace as Contributor or Admin. The tenant must also leave *Service principals
 can call Fabric public APIs* enabled.
 
+Weather provisioning also imports and publishes the `Weather` Fabric Environment with `xarray`,
+`shapely`, `pyproj`, `adlfs` and `zarr<3`. The Git sync verifies that
+`Weather_001_create_lakehouse` and `Weather_002_fetch_area_weather` are in the workspace
+`Notebooks` folder. Before running the fetch notebook, create a secret named
+`mai-weather-api-key` in the same Key Vault passed to `Pipe_Setup`. The provisioner prints this
+instruction but intentionally never requests, reads or stores the weather API key.
+
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,
 `key_vault_uri` and `ops_agent_run_as_user`. Leave `env_suffix` at `V6` unless you also change

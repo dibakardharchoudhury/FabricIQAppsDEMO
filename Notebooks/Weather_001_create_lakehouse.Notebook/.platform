@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Weather_001_create_lakehouse",
+    "description": "Creates the multi-source weather Lakehouse schema."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "356a7570-381d-42a7-aca9-32e1c4d11d67"
+  }
+}
