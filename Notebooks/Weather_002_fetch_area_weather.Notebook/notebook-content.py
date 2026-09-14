@@ -323,7 +323,7 @@ if source_variable not in dataset:
 latitudes = np.asarray(dataset["latitude"].values, dtype=float)
 longitudes = np.asarray(dataset["longitude"].values, dtype=float)
 available_hours = lead_hours(dataset["step"].values)
-requested_hours = set(range(0, max_lead_hours + 1, interval_hours))
+requested_hours = set(range(interval_hours, max_lead_hours + 1, interval_hours))
 step_indices = [index for index, value in enumerate(available_hours) if int(value) in requested_hours]
 if not step_indices:
     raise RuntimeError("No requested forecast lead hours are present in the dataset")
@@ -385,8 +385,21 @@ for step_index in step_indices:
             "ingested_at_utc": started_at,
         })
 
-if any(not np.isfinite(row["value"]) or row["value"] < 0 for row in forecast_rows):
-    raise ValueError("Point forecasts contain invalid precipitation values")
+invalid_forecasts = [
+    row
+    for row in forecast_rows
+    if not np.isfinite(row["value"]) or row["value"] < 0
+]
+if invalid_forecasts:
+    sample = [
+        {
+            "location_id": row["location_id"],
+            "lead_hours": row["lead_hours"],
+            "value": row["value"],
+        }
+        for row in invalid_forecasts[:10]
+    ]
+    raise ValueError(f"Invalid positive-lead precipitation forecasts: {sample}")
 
 locations_df = spark.createDataFrame(
     location_rows,
