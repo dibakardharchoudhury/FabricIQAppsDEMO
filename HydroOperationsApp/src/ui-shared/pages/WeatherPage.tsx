@@ -170,9 +170,12 @@ export function WeatherPage() {
     {error && <div className="v2-notice" role="alert"><AlertTriangle size={15} /><span>{error}</span></div>}
     <section className="weather-workspace">
       <article className="weather-map-panel">
-        {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>Weather data needs Fabric GraphQL access.</span><button type="button" onClick={() => void load()}>Connect weather data</button></>}</div>}
-        {selection && <div className="weather-precipitation-summary" aria-live="polite"><span>Next 24h precipitation</span><strong>{precipitationSummary?.amount == null ? 'No forecast' : `${precipitationSummary.amount.toFixed(1)} ${precipitationSummary.unit}`}</strong>{precipitationSummary?.volume != null && <small>{Math.round(precipitationSummary.volume).toLocaleString()} m³ over area</small>}</div>}
-        <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
+        <div className="weather-map-stage">
+          {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>Weather data needs Fabric GraphQL access.</span><button type="button" onClick={() => void load()}>Connect weather data</button></>}</div>}
+          {selection && <div className="weather-precipitation-summary" aria-live="polite"><span>Next 24h precipitation</span><strong>{precipitationSummary?.amount == null ? 'No forecast' : `${precipitationSummary.amount.toFixed(1)} ${precipitationSummary.unit}`}</strong>{precipitationSummary?.volume != null && <small>{Math.round(precipitationSummary.volume).toLocaleString()} m³ over area</small>}</div>}
+          <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
+        </div>
+        <WeatherChart name={selectedName} rows={timelines.forecasts} rangeHours={rangeHours} />
       </article>
       <aside className="weather-detail" aria-live="polite">
         <div className="weather-detail-head"><span className="weather-detail-icon"><CloudSun size={18} /></span><div><span>{selection?.kind === 'area' ? 'Weather area' : 'Weather station'}</span><h2>{selectedName ?? 'Select a station or area'}</h2></div></div>
@@ -202,4 +205,42 @@ function TimelineSection({ title, rows, empty, expandedRows, onToggle }: { title
 
 function WeatherValue({ value }: { value: TimelineValue }) {
   return <span><em>{VARIABLE_LABELS[value.variableId] ?? value.variableId}</em><strong>{formatValue(value)}</strong>{value.volume != null && <small>{Math.round(value.volume).toLocaleString()} m³</small>}</span>
+}
+
+function WeatherChart({ name, rows, rangeHours }: { name?: string; rows: TimelineRow[]; rangeHours: number }) {
+  const data = rows.map(row => ({
+    timestamp: row.timestamp,
+    temperature: row.values.find(value => value.variableId === 'temperature')?.value,
+    rainfall: row.values.find(value => value.variableId === 'precipitation')?.value,
+  })).filter(item => item.temperature != null || item.rainfall != null).sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+
+  const width = 720
+  const height = 210
+  const plot = { left: 46, right: 52, top: 18, bottom: 34 }
+  const plotWidth = width - plot.left - plot.right
+  const plotHeight = height - plot.top - plot.bottom
+  const temperatures = data.flatMap(item => item.temperature == null ? [] : [Number(item.temperature)])
+  const rainfall = data.flatMap(item => item.rainfall == null ? [] : [Number(item.rainfall)])
+  const temperatureMin = temperatures.length ? Math.floor(Math.min(...temperatures) - 1) : 0
+  const temperatureMax = temperatures.length ? Math.ceil(Math.max(...temperatures) + 1) : 1
+  const temperatureRange = Math.max(1, temperatureMax - temperatureMin)
+  const rainfallMax = Math.max(1, ...rainfall)
+  const x = (index: number) => data.length < 2 ? plot.left + plotWidth / 2 : plot.left + index * plotWidth / (data.length - 1)
+  const temperatureY = (value: number) => plot.top + (temperatureMax - value) / temperatureRange * plotHeight
+  const rainfallY = (value: number) => plot.top + (rainfallMax - value) / rainfallMax * plotHeight
+  const barWidth = Math.min(28, plotWidth / Math.max(1, data.length) * .55)
+  const temperaturePoints = data.flatMap((item, index) => item.temperature == null ? [] : [`${x(index)},${temperatureY(Number(item.temperature))}`]).join(' ')
+  const labelIndexes = new Set([0, Math.floor((data.length - 1) / 2), data.length - 1])
+
+  return <section className="weather-chart-panel" aria-label={`Temperature and rainfall forecast for ${name ?? 'selected weather location'}`}>
+    <div className="weather-chart-head"><div><span>Forecast chart</span><h3>{name ?? 'Select a station or area'}</h3></div><div className="weather-chart-legend"><span className="temperature">Temperature</span><span className="rainfall">Rainfall</span></div></div>
+    {data.length ? <svg className="weather-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Temperature line and rainfall bars for the next ${rangeHours} hours`}>
+      {[0, .5, 1].map(ratio => <g key={ratio}><line className="weather-chart-grid" x1={plot.left} x2={width - plot.right} y1={plot.top + ratio * plotHeight} y2={plot.top + ratio * plotHeight} /><text className="weather-chart-axis" x={plot.left - 7} y={plot.top + ratio * plotHeight + 3} textAnchor="end">{(temperatureMax - ratio * temperatureRange).toFixed(0)}°</text><text className="weather-chart-axis rainfall-axis" x={width - plot.right + 7} y={plot.top + ratio * plotHeight + 3}>{(rainfallMax - ratio * rainfallMax).toFixed(1)}</text></g>)}
+      {data.map((item, index) => item.rainfall == null ? null : <rect className="weather-chart-rain" key={`rain-${item.timestamp}`} x={x(index) - barWidth / 2} y={rainfallY(Number(item.rainfall))} width={barWidth} height={plot.top + plotHeight - rainfallY(Number(item.rainfall))}><title>{`${new Date(item.timestamp).toLocaleString()}: ${Number(item.rainfall).toFixed(1)} mm rainfall`}</title></rect>)}
+      {temperaturePoints && <polyline className="weather-chart-temperature-line" points={temperaturePoints} />}
+      {data.map((item, index) => item.temperature == null ? null : <circle className="weather-chart-temperature-point" key={`temperature-${item.timestamp}`} cx={x(index)} cy={temperatureY(Number(item.temperature))} r="3"><title>{`${new Date(item.timestamp).toLocaleString()}: ${Number(item.temperature).toFixed(1)} °C`}</title></circle>)}
+      {data.map((item, index) => labelIndexes.has(index) ? <text className="weather-chart-axis weather-chart-time" key={`time-${item.timestamp}`} x={x(index)} y={height - 10} textAnchor={index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'}>{new Date(item.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' })}</text> : null)}
+      <text className="weather-chart-unit" x="8" y="11">°C</text><text className="weather-chart-unit" x={width - 8} y="11" textAnchor="end">mm</text>
+    </svg> : <p className="weather-chart-empty">No temperature or rainfall forecast in this window.</p>}
+  </section>
 }
