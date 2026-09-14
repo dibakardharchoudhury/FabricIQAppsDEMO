@@ -28,6 +28,7 @@ const STREAM_ETA_MS = 5 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
+const STID_POLL_MS = 30_000
 const TELEMETRY_POLL_MS = 30_000
 
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
@@ -91,6 +92,7 @@ function useHydroOperationsDataController() {
   const cached = useMemo(() => readCachedData(), [])
   const [user, setUser] = useState<AppUser | null>(null)
   const [stid, setStid] = useState<StidData | null>(cached.stid ?? null)
+  const [stidSyncedAt, setStidSyncedAt] = useState<number>()
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>(cached.telemetry ?? [])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
   const [inspections, setInspections] = useState<InspectionRecord[]>([])
@@ -121,6 +123,7 @@ function useHydroOperationsDataController() {
 
   const applyStid = useCallback((data: StidData) => {
     setStid(data)
+    setStidSyncedAt(Date.now())
     writeCachedData({ stid: data })
     setSelectedFacilityIdState(current => {
       const next = current && data.facilities.some(facility => facility.facility_id === current)
@@ -130,6 +133,12 @@ function useHydroOperationsDataController() {
       return next
     })
   }, [])
+
+  const refreshStid = useCallback(async () => {
+    const data = await queryStid()
+    if (data) applyStid(data)
+    return data
+  }, [applyStid])
 
   const loadOperationalData = useCallback(async () => {
     const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([
@@ -428,6 +437,24 @@ function useHydroOperationsDataController() {
 
   const telemetryLive = telemetry.length > 0
   useEffect(() => {
+    if (stidState !== 'connected') return
+    let inFlight = false
+    const refresh = async () => {
+      if (inFlight || document.hidden) return
+      inFlight = true
+      try { await refreshStid() } catch { /* retain the latest valid ontology snapshot */ }
+      finally { inFlight = false }
+    }
+    const handleVisibility = () => { if (!document.hidden) void refresh() }
+    const id = window.setInterval(refresh, STID_POLL_MS)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [refreshStid, stidState])
+
+  useEffect(() => {
     if (!telemetryLive) return
     let inFlight = false
     const poll = async () => {
@@ -685,6 +712,7 @@ function useHydroOperationsDataController() {
     provisionState,
     streamState,
     stid,
+    stidSyncedAt,
     telemetry,
     facilities,
     selectedFacility,
@@ -728,6 +756,7 @@ function useHydroOperationsDataController() {
       seedAndProvision,
       startStream,
       connectStid,
+      refreshStid,
       connectTelemetry,
       selectAsset,
       updateTelemetryExplorerSelection,

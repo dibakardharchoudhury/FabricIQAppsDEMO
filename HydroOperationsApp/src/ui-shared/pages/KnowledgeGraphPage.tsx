@@ -1,9 +1,10 @@
 import type { Core } from 'cytoscape'
-import { Activity, Box, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, Search, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
+import { Activity, Box, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
 import { buildKnowledgeGraph, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
+import { useTheme } from '../hooks/useTheme'
 
 const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'facility', label: 'Facilities' },
@@ -43,6 +44,7 @@ function graphNeighborhood(selectedId: string | undefined, depth: number, edges:
 
 export function KnowledgeGraphPage() {
   const data = useHydroOperationsData()
+  const { theme } = useTheme()
   const controllerRef = useRef<Core | null>(null)
   const [selectedId, setSelectedId] = useState<string>()
   const [query, setQuery] = useState('')
@@ -64,7 +66,9 @@ export function KnowledgeGraphPage() {
     models: data.assetModels,
   }), [data.assetModels, data.inspections, data.notifications, data.orders, data.stid, data.telemetry])
 
-  const effectiveSelectedId = selectedId ?? graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
+  const effectiveSelectedId = graph.nodes.some(item => item.id === selectedId)
+    ? selectedId
+    : graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
 
   const neighborhood = useMemo(() => graphNeighborhood(effectiveSelectedId, depth, graph.edges), [depth, effectiveSelectedId, graph.edges])
   const visibleNodes = useMemo(() => graph.nodes.filter(node => {
@@ -107,7 +111,7 @@ export function KnowledgeGraphPage() {
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" />Ontology connected<strong>{graph.nodes.length} entities · {graph.edges.length} relationships</strong></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span>Ontology connected</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{data.stidSyncedAt ? ` · synced ${new Date(data.stidSyncedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void data.actions.refreshStid()} title="Refresh ontology now"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className="kg-workspace">
@@ -124,7 +128,7 @@ export function KnowledgeGraphPage() {
           <div className="kg-layout-control"><GitBranch size={14} /><select value={layout} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div>
           <div className="kg-graph-actions"><button title="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button title="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button title="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Maximize2 size={16} /></button><button title="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button></div>
         </div>
-        {visibleNodes.length ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} onSelect={selectNode} controllerRef={controllerRef} /> : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}
+        {visibleNodes.length ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} /> : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}
         <div className="kg-legend"><span><i className="kg-type-dot type-facility" />Facility</span><span><i className="kg-type-dot type-equipment" />Equipment</span><span><i className="kg-type-dot type-instrument" />Instrument</span><span><i className="kg-ring ring-crit" />Critical ring</span><span><i className="kg-ring ring-ok" />Healthy ring</span></div>
       </section>
 

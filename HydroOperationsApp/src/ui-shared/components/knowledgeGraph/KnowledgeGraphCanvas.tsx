@@ -1,6 +1,7 @@
 import cytoscape, { type Core, type ElementDefinition, type LayoutOptions } from 'cytoscape'
 import { useEffect, useEffectEvent, useRef } from 'react'
 import type { KnowledgeEdge, KnowledgeNode } from '../../knowledgeGraphModel'
+import type { AppTheme } from '../../hooks/useTheme'
 
 export type GraphLayout = 'breadthfirst' | 'cose' | 'concentric'
 
@@ -48,11 +49,12 @@ function layoutOptions(layout: GraphLayout): LayoutOptions {
   return { name: 'cose', idealEdgeLength: 120, nodeRepulsion: () => 6500, padding: 48, animate: true, animationDuration: 500 }
 }
 
-export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, onSelect, controllerRef }: {
+export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, onSelect, controllerRef }: {
   nodes: KnowledgeNode[]
   edges: KnowledgeEdge[]
   selectedId?: string
   layout: GraphLayout
+  theme: AppTheme
   onSelect: (nodeId: string) => void
   controllerRef: React.MutableRefObject<Core | null>
 }) {
@@ -61,6 +63,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, onSelec
 
   useEffect(() => {
     if (!containerRef.current) return
+    const css = getComputedStyle(document.documentElement)
+    const color = (token: string) => css.getPropertyValue(token).trim()
     const elements: ElementDefinition[] = [
       ...nodes.map(node => ({ data: { ...node, color: typeColor[node.type], size: typeSize[node.type], ring: statusColor[node.status] } })),
       ...edges.map(item => ({ data: { ...item, color: edgeColor[item.type] } })),
@@ -75,10 +79,10 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, onSelec
           selector: 'node',
           style: {
             shape: 'ellipse', width: 'data(size)', height: 'data(size)', 'background-color': 'data(color)',
-            'border-color': 'data(ring)', 'border-width': 4, label: 'data(label)', color: '#242424',
+            'border-color': 'data(ring)', 'border-width': 4, label: 'data(label)', color: color('--cp-text'),
             'font-family': 'Segoe UI, Aptos, sans-serif', 'font-size': 11, 'font-weight': 600,
             'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': '112px',
-            'text-background-color': '#ffffff', 'text-background-opacity': 0.88, 'text-background-padding': '2px',
+            'text-background-color': color('--cp-surface'), 'text-background-opacity': 0.9, 'text-background-padding': '2px',
           },
         },
         { selector: 'node:selected', style: { 'border-width': 7, 'border-color': '#b11f4b', 'overlay-color': '#b11f4b', 'overlay-opacity': 0.1, 'overlay-padding': 10 } },
@@ -87,8 +91,8 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, onSelec
           selector: 'edge',
           style: {
             width: 1.6, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier', label: 'data(label)', color: '#5c5c5c', 'font-size': 8, 'font-weight': 600,
-            'text-background-color': '#fcfbf8', 'text-background-opacity': 0.9, 'text-background-padding': '2px',
+            'curve-style': 'bezier', label: 'data(label)', color: color('--cp-text-muted'), 'font-size': 8, 'font-weight': 600,
+            'text-background-color': color('--cp-bg-elevated'), 'text-background-opacity': 0.92, 'text-background-padding': '2px',
             'text-rotation': 'autorotate', 'arrow-scale': 0.75,
           },
         },
@@ -99,7 +103,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, onSelec
     graph.layout(layoutOptions(layout)).run()
     controllerRef.current = graph
     return () => { controllerRef.current = null; graph.destroy() }
-  }, [controllerRef, edges, layout, nodes])
+  }, [controllerRef, edges, layout, nodes, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
