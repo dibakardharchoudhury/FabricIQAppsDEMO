@@ -128,6 +128,15 @@ source_rows = [
     "https://mai-weather-api.azure-api.net/stac/collections/mai-gridhd-eu-core-v1.2",
     True,
   ),
+  (
+    "ukmet",
+    "UK Met Office Weather DataHub",
+    "forecast_and_observation",
+    "UK Met Office",
+    "Weather DataHub terms",
+    "https://data.hub.api.metoffice.gov.uk",
+    True,
+  ),
 ]
 variable_rows = [
     ("precipitation", "precipitation", "mm", "sum", "Precipitation depth over the source interval"),

@@ -94,6 +94,7 @@ WEATHER_NOTEBOOK_FOLDER = "Notebooks"
 WEATHER_NOTEBOOK_NAMES = {
     "Weather_001_create_lakehouse",
     "Weather_002_fetch_area_weather",
+    "Weather_003_fetch_ukmet",
 }
 
 
@@ -506,10 +507,13 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     else:
         print("Weather Environment is already published; no publish required.")
 
-    print("\nWeather API prerequisite (the provisioner does not read or create this secret):")
-    print("  In the Key Vault passed to Pipe_Setup, create secret 'mai-weather-api-key'.")
+    print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
+    print("  In the Key Vault passed to Pipe_Setup, create secrets:")
+    print("    'mai-weather-api-key' for Aurora")
+    print("    'ukmet-global-spot-api-key' for UKMet Global Spot")
+    print("    'ukmet-land-observations-api-key' for UKMet Land Observations")
     print("  Portal: Key Vault > Objects > Secrets > Generate/Import")
-    print("  CLI: az keyvault secret set --vault-name <vault> --name mai-weather-api-key")
+    print("  CLI: az keyvault secret set --vault-name <vault> --name <secret-name>")
 
 
 def main() -> int:

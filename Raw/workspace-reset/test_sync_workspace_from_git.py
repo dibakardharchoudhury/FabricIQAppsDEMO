@@ -41,6 +41,12 @@ class FakeFabric:
                 "displayName": "Weather_002_fetch_area_weather",
                 "folderId": "notebooks-folder",
             },
+            {
+                "id": "weather-003",
+                "type": "Notebook",
+                "displayName": "Weather_003_fetch_ukmet",
+                "folderId": "notebooks-folder",
+            },
         ]
 
     def list_workspace_folders(self, workspace_id):
@@ -64,6 +70,8 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertFalse(any(method == "POST" for method, _ in fabric.requests))
         self.assertIn("mai-weather-api-key", output.getvalue())
+        self.assertIn("ukmet-global-spot-api-key", output.getvalue())
+        self.assertIn("ukmet-land-observations-api-key", output.getvalue())
 
     def test_git_update_publishes_environment(self):
         fabric = FakeFabric()

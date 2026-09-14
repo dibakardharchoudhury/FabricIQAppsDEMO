@@ -945,6 +945,7 @@ chain_notebooks = [
     "RTI_011_seed_sql_wire_graphql_agent",
     "Weather_001_create_lakehouse",
     "Weather_002_fetch_area_weather",
+    "Weather_003_fetch_ukmet",
 ]
 weather_environment_name = "Weather"
 
@@ -989,7 +990,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             "default_lakehouse_workspace_id": workspace_id,
             "known_lakehouses": [{"id": lakehouse_id}],
         }
-        if nb_name == "Weather_002_fetch_area_weather":
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet"}:
             deps["environment"] = {
                 "environmentId": weather_environment_id,
                 "workspaceId": workspace_id,
@@ -999,7 +1000,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             content=json.dumps(nb_json),
         )
         detail = "bound to current lakehouse"
-        if nb_name == "Weather_002_fetch_area_weather":
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet"}:
             detail += f" and Environment '{weather_environment_name}'"
         return (nb_name, bool(ok), detail + " successfully!")
     except Exception as exc:

@@ -20,10 +20,11 @@ Important findings:
 
 ## Target architecture
 
-Fabric calls this storage item a Lakehouse. The two notebooks are deployable Fabric Git items:
+Fabric calls this storage item a Lakehouse. The three notebooks are deployable Fabric Git items:
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
 - `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction.
+- `Weather_003_fetch_ukmet` implements UKMet Global Spot forecasts and Land Observations for the same facility locations and canonical tables.
 
 Logical layers:
 
@@ -61,7 +62,7 @@ Each additional adapter should:
 4. Convert units centrally, validate ranges and coordinates, and reject unknown variable mappings.
 5. Merge by the canonical natural key and finish the ingestion audit record.
 
-Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming its variables, temporal semantics, and whether it represents observations, forecasts, or both. Both MAI adapters use the shared `mai-weather-api-key` Key Vault secret. Add an observation adapter for the selected gauge/station API without changing the Lakehouse schema.
+Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming its variables and temporal semantics. MAI adapters use the shared `mai-weather-api-key` Key Vault secret. UKMet Global Spot and Land Observations use `ukmet-global-spot-api-key` and `ukmet-land-observations-api-key`; all secret values remain in Key Vault.
 
 ## Incremental loading and quality
 
@@ -73,7 +74,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 
 ## Orchestration and tests
 
-1. Attach the same Lakehouse and Fabric Environment to both notebooks.
+1. Attach the same Lakehouse and Fabric Environment to all three notebooks.
 2. Run the setup notebook once per environment, then schedule ingestion through a Fabric Data Pipeline.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
@@ -83,8 +84,9 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Delivery sequence
 
 1. Create or attach a Weather Lakehouse and configure the Fabric Environment dependencies.
-2. Store the Aurora API key in Key Vault and grant the pipeline run identity secret-read access.
+2. Store the Aurora and UKMet API keys in Key Vault and grant the pipeline run identity secret-read access.
 3. Run `Weather_001_create_lakehouse` and verify all eight tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
 5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
-6. Add a GridHD adapter and an observation-source adapter, then schedule incremental loads.
+6. Run `Weather_003_fetch_ukmet`, verify Global Spot and Land Observation rows, then schedule incremental loads.
+7. Add a GridHD adapter after confirming its product semantics.

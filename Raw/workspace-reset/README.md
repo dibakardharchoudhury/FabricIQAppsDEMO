@@ -132,10 +132,11 @@ can call Fabric public APIs* enabled.
 Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
 NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
 `numcodecs`. The Git sync verifies that
-`Weather_001_create_lakehouse` and `Weather_002_fetch_area_weather` are in the workspace
-`Notebooks` folder. Before running the fetch notebook, create a secret named
-`mai-weather-api-key` in the same Key Vault passed to `Pipe_Setup`. The provisioner prints this
-instruction but intentionally never requests, reads or stores the weather API key.
+`Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`, and
+`Weather_003_fetch_ukmet` are in the workspace `Notebooks` folder. The fetch notebooks read
+`mai-weather-api-key`, `ukmet-global-spot-api-key`, and `ukmet-land-observations-api-key` from the
+same Key Vault passed to `Pipe_Setup`. The provisioner prints these names but intentionally never
+requests, reads, or stores their values.
 
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,
