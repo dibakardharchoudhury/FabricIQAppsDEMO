@@ -536,10 +536,10 @@ export async function queryStid(): Promise<StidData | null> {
   }
 }
 
-export async function queryWeatherData(): Promise<WeatherData | null> {
+export async function queryWeatherData(interactive = false): Promise<WeatherData | null> {
   const config = await ensureConfig(false)
   if (!config?.graphqlUrl) return null
-  const token = await silentToken([GRAPHQL_SCOPE])
+  const token = await silentToken([GRAPHQL_SCOPE]) ?? (interactive ? await popupToken([GRAPHQL_SCOPE]) : null)
   if (!token) return null
   const query = `query HydroWeather {
     locations: weather_locations(first: 500) { items { location_id location_name latitude longitude elevation_m } }

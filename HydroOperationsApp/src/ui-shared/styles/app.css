@@ -325,11 +325,27 @@
 
 .weather-map-empty {
   display: grid;
+  align-content: center;
+  gap: 10px;
   place-items: center;
   padding: 24px;
   color: var(--cp-text-muted);
   font-size: 12px;
 }
+
+.weather-map-empty button {
+  border: 1px solid var(--cp-accent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--cp-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.weather-map-empty button:hover { background: var(--cp-accent-hover); }
+.weather-map-empty button:focus-visible { outline: 2px solid var(--cp-text); outline-offset: 2px; }
 
 .weather-legend {
   position: absolute;

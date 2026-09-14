@@ -55,7 +55,7 @@ export function WeatherPage() {
   const load = async () => {
     setState('loading'); setError(undefined)
     try {
-      const data = await queryWeatherData()
+      const data = await queryWeatherData(true)
       if (!data) { setState('unavailable'); return }
       applyWeather(data)
     } catch (reason) {
@@ -121,7 +121,7 @@ export function WeatherPage() {
     {error && <div className="v2-notice" role="alert"><AlertTriangle size={15} /><span>{error}</span></div>}
     <section className="weather-workspace">
       <article className="weather-map-panel">
-        {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : 'Connect the Fabric GraphQL API to load weather data.'}</div>}
+        {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>Weather data needs Fabric GraphQL access.</span><button type="button" onClick={() => void load()}>Connect weather data</button></>}</div>}
         <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
       </article>
       <aside className="weather-detail" aria-live="polite">
