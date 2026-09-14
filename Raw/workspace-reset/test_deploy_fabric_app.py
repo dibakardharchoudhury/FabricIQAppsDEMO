@@ -493,6 +493,35 @@ class DeployOrderTests(unittest.TestCase):
                 (rayfin_dir / ".env").read_text(encoding="utf-8"),
             )
 
+    def test_write_rayfin_redirects_keeps_origins_already_in_the_file(self):
+        teammate = "https://teammate-app-swedencentral.webapp.fabricapps.net"
+        mine = "https://my-app-swedencentral.webapp.fabricapps.net"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rayfin_dir = Path(temp_dir)
+            (rayfin_dir / "rayfin.yml").write_text(
+                "\n".join(
+                    (
+                        "services:",
+                        "  auth:",
+                        "    allowedRedirectUris:",
+                        f"      - {teammate}",
+                        "      - http://localhost:5173",
+                        "  staticHosting:",
+                        "    enabled: true",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                merged = DEPLOY.write_rayfin_redirects([mine])
+                written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(merged, [teammate, "http://localhost:5173", mine])
+        self.assertIn(f"      - {teammate}", written)
+        self.assertIn("  staticHosting:", written)
+
 
 if __name__ == "__main__":
     unittest.main()
