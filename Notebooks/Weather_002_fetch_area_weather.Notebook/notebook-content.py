@@ -525,6 +525,7 @@ latitude_step = float(np.median(np.abs(np.diff(latitudes))))
 longitude_step = float(np.median(np.abs(np.diff(longitudes))))
 area_rows = []
 area_metric_rows = []
+area_contexts = []
 
 for area in areas:
     area_size_m2 = geodesic_area_m2(area["geometry"])
@@ -572,11 +573,13 @@ for area in areas:
     covered_area_m2 = sum(overlap[2] for overlap in overlaps)
     if not overlaps or covered_area_m2 <= 0:
         raise RuntimeError(f"No grid coverage found for area {area['area_id']}")
+    area_contexts.append((area, area_size_m2, overlaps))
 
-    for step_index in step_indices:
-        lead = int(available_hours[step_index])
-        valid_time = reference_time + timedelta(hours=lead)
-        grids = weather_grids(dataset, step_index)
+for step_index in step_indices:
+    lead = int(available_hours[step_index])
+    valid_time = reference_time + timedelta(hours=lead)
+    grids = weather_grids(dataset, step_index)
+    for area, area_size_m2, overlaps in area_contexts:
         for variable_id, variable_grid in grids.items():
             valid_overlaps = [
                 (lat, lon, overlap)
