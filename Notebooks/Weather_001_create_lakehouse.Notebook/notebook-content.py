@@ -131,8 +131,14 @@ source_rows = [
 ]
 variable_rows = [
     ("precipitation", "precipitation", "mm", "sum", "Precipitation depth over the source interval"),
+  ("pressure", "surface_air_pressure", "hPa", "mean", "Surface pressure at terrain elevation"),
     ("temperature", "air_temperature", "degC", "mean", "Near-surface air temperature"),
+  ("relative_humidity", "relative_humidity", "%", "mean", "Relative humidity derived from temperature and dew point"),
+  ("dew_point", "dew_point_temperature", "degC", "mean", "Near-surface dew point temperature"),
+  ("solar_radiation", "surface_solar_radiation", "W/m2", "mean", "Average downward solar irradiance over the source interval"),
     ("wind_speed", "wind_speed", "m/s", "mean", "Near-surface wind speed"),
+  ("wind_gust", "wind_gust", "m/s", "max", "Maximum near-surface wind gust over the source interval"),
+  ("wind_direction", "wind_from_direction", "degree", "circular_mean", "Meteorological direction from which wind originates"),
 ]
 
 spark.createDataFrame(

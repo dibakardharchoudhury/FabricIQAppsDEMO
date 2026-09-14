@@ -3,7 +3,7 @@
   "metadata": {
     "type": "Notebook",
     "displayName": "Weather_002_fetch_area_weather",
-    "description": "Fetches Aurora point and enclosed-area precipitation forecasts."
+    "description": "Fetches 72-hour Aurora point and enclosed-area weather forecasts."
   },
   "config": {
     "version": "2.0",

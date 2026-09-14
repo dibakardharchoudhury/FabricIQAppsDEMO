@@ -23,7 +23,7 @@ Important findings:
 Fabric calls this storage item a Lakehouse. The two notebooks are deployable Fabric Git items:
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
-- `Weather_002_fetch_area_weather` implements the first source adapter for Aurora precipitation forecasts.
+- `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction.
 
 Logical layers:
 

@@ -20,7 +20,7 @@
 # # Fetch point and enclosed-area weather
 #
 # Aurora implementation of the source-adapter contract. It reads the latest signed
-# STAC Zarr asset, extracts point forecasts, calculates polygon-overlap rainfall,
+# STAC Zarr asset, extracts 72-hour point forecasts, calculates polygon-overlap weather,
 # and merges canonical records into the tables created by Weather_001.
 #
 # Configure a Fabric Environment with `xarray`, `zarr<3`, `adlfs`, `shapely`, and
@@ -36,8 +36,7 @@ endpoint = "https://mai-weather-api.azure-api.net"
 api_version = "2025-04-30-preview"
 collection = "aurora-1p5-zarr-staging"
 asset_key = "data"
-source_variable = "scaled_total_precipitation_1h_0"
-max_lead_hours = 168
+max_lead_hours = 72
 interval_hours = 6
 
 key_vault_uri = ""  # Empty reads key_vault_uri from rti_demo_settings.
@@ -90,9 +89,29 @@ TABLES = {
     for name in ["locations", "areas", "ingestion_runs", "forecasts", "area_metrics"]
 }
 SOURCE_ID = "aurora"
-VARIABLE_ID = "precipitation"
 PRECIPITATION_EPSILON_M = 1e-3
 GEOD = Geod(ellps="WGS84")
+VARIABLES = {
+    "pressure": {"unit": "hPa", "aggregation": "mean"},
+    "temperature": {"unit": "degC", "aggregation": "mean"},
+    "relative_humidity": {"unit": "%", "aggregation": "mean"},
+    "dew_point": {"unit": "degC", "aggregation": "mean"},
+    "solar_radiation": {"unit": "W/m2", "aggregation": "mean"},
+    "wind_speed": {"unit": "m/s", "aggregation": "mean"},
+    "wind_gust": {"unit": "m/s", "aggregation": "max"},
+    "wind_direction": {"unit": "degree", "aggregation": "circular_mean"},
+    "precipitation": {"unit": "mm", "aggregation": "sum"},
+}
+SOURCE_VARIABLES = {
+    "surface_pressure_0",
+    "2m_temperature_0",
+    "2m_dewpoint_temperature_0",
+    "surface_solar_radiation_downwards_1h_0",
+    "10m_u_component_of_wind_0",
+    "10m_v_component_of_wind_0",
+    "instantaneous_10m_wind_gust_0",
+    "scaled_total_precipitation_1h_0",
+}
 
 
 def service_base(service_endpoint: str) -> str:
@@ -160,6 +179,45 @@ def precipitation_mm(scaled_values):
     values = np.asarray(scaled_values, dtype=float)
     metres = np.exp(values + np.log(PRECIPITATION_EPSILON_M)) - PRECIPITATION_EPSILON_M
     return np.maximum(metres, 0.0) * 1000.0
+
+
+def relative_humidity_percent(temperature_c, dew_point_c):
+    exponent = (
+        17.625 * dew_point_c / (243.04 + dew_point_c)
+        - 17.625 * temperature_c / (243.04 + temperature_c)
+    )
+    return np.clip(100.0 * np.exp(exponent), 0.0, 100.0)
+
+
+def weather_grids(dataset: xr.Dataset, step_index: int) -> dict[str, np.ndarray]:
+    def grid(name: str) -> np.ndarray:
+        return np.asarray(
+            dataset[name].isel(time=0, step=step_index).values,
+            dtype=float,
+        )
+
+    temperature_c = grid("2m_temperature_0") - 273.15
+    dew_point_c = grid("2m_dewpoint_temperature_0") - 273.15
+    wind_u = grid("10m_u_component_of_wind_0")
+    wind_v = grid("10m_v_component_of_wind_0")
+    wind_speed = np.hypot(wind_u, wind_v)
+    wind_direction = np.degrees(np.arctan2(-wind_u, -wind_v)) % 360.0
+    wind_direction = np.where(wind_speed < 0.1, np.nan, wind_direction)
+
+    return {
+        "pressure": grid("surface_pressure_0") / 100.0,
+        "temperature": temperature_c,
+        "relative_humidity": relative_humidity_percent(temperature_c, dew_point_c),
+        "dew_point": dew_point_c,
+        "solar_radiation": np.maximum(
+            grid("surface_solar_radiation_downwards_1h_0") / 3600.0,
+            0.0,
+        ),
+        "wind_speed": wind_speed,
+        "wind_gust": np.maximum(grid("instantaneous_10m_wind_gust_0"), 0.0),
+        "wind_direction": wind_direction,
+        "precipitation": precipitation_mm(grid("scaled_total_precipitation_1h_0")),
+    }
 
 
 def longitude_180(value):
@@ -317,8 +375,12 @@ raw_path = PurePosixPath("Files/weather/bronze/stac") / collection / f"{source_i
 notebookutils.fs.put(str(raw_path), json.dumps(item, indent=2), True)
 
 dataset = open_signed_zarr(asset_href)
-if source_variable not in dataset:
-    raise KeyError(f"{source_variable!r} not found; available: {sorted(dataset.data_vars)}")
+missing_source_variables = sorted(SOURCE_VARIABLES - set(dataset.data_vars))
+if missing_source_variables:
+    raise KeyError(
+        f"Missing Aurora variables: {missing_source_variables}. "
+        f"Available: {sorted(dataset.data_vars)}"
+    )
 
 latitudes = np.asarray(dataset["latitude"].values, dtype=float)
 longitudes = np.asarray(dataset["longitude"].values, dtype=float)
@@ -328,7 +390,10 @@ step_indices = [index for index, value in enumerate(available_hours) if int(valu
 if not step_indices:
     raise RuntimeError("No requested forecast lead hours are present in the dataset")
 
-print(f"Run {run_id}: item {source_item_id}, {len(step_indices)} lead times")
+print(
+    f"Run {run_id}: item {source_item_id}, {len(step_indices)} lead times, "
+    f"{len(VARIABLES)} variables"
+)
 
 # METADATA ********************
 
@@ -364,31 +429,33 @@ forecast_rows = []
 for step_index in step_indices:
     lead = int(available_hours[step_index])
     valid_time = reference_time + timedelta(hours=lead)
-    grid = dataset[source_variable].isel(time=0, step=step_index).values
+    grids = weather_grids(dataset, step_index)
     for point, lat_index, lon_index in point_cells:
-        value_mm = float(precipitation_mm(grid[lat_index, lon_index]))
-        forecast_rows.append({
-            "source_id": SOURCE_ID,
-            "variable_id": VARIABLE_ID,
-            "location_id": point["location_id"],
-            "latitude": float(latitudes[lat_index]),
-            "longitude": float(longitude_180(longitudes[lon_index])),
-            "reference_time_utc": reference_time,
-            "valid_time_utc": valid_time,
-            "valid_date": valid_time.date(),
-            "lead_hours": lead,
-            "value": value_mm,
-            "unit": "mm",
-            "ensemble_member": "deterministic",
-            "source_item_id": source_item_id,
-            "run_id": run_id,
-            "ingested_at_utc": started_at,
-        })
+        for variable_id, variable_grid in grids.items():
+            raw_value = float(variable_grid[lat_index, lon_index])
+            value = None if variable_id == "wind_direction" and not np.isfinite(raw_value) else raw_value
+            forecast_rows.append({
+                "source_id": SOURCE_ID,
+                "variable_id": variable_id,
+                "location_id": point["location_id"],
+                "latitude": float(latitudes[lat_index]),
+                "longitude": float(longitude_180(longitudes[lon_index])),
+                "reference_time_utc": reference_time,
+                "valid_time_utc": valid_time,
+                "valid_date": valid_time.date(),
+                "lead_hours": lead,
+                "value": value,
+                "unit": VARIABLES[variable_id]["unit"],
+                "ensemble_member": "deterministic",
+                "source_item_id": source_item_id,
+                "run_id": run_id,
+                "ingested_at_utc": started_at,
+            })
 
 invalid_forecasts = [
     row
     for row in forecast_rows
-    if not np.isfinite(row["value"]) or row["value"] < 0
+    if row["value"] is not None and not np.isfinite(row["value"])
 ]
 if invalid_forecasts:
     sample = [
@@ -399,13 +466,16 @@ if invalid_forecasts:
         }
         for row in invalid_forecasts[:10]
     ]
-    raise ValueError(f"Invalid positive-lead precipitation forecasts: {sample}")
+    raise ValueError(f"Invalid positive-lead weather forecasts: {sample}")
 
 locations_df = spark.createDataFrame(
     location_rows,
     "location_id string, location_name string, latitude double, longitude double, elevation_m double, metadata_json string, updated_at_utc timestamp",
 )
-forecasts_df = spark.createDataFrame(forecast_rows)
+forecasts_df = spark.createDataFrame(
+    forecast_rows,
+    "source_id string, variable_id string, location_id string, latitude double, longitude double, reference_time_utc timestamp, valid_time_utc timestamp, valid_date date, lead_hours int, value double, unit string, ensemble_member string, source_item_id string, run_id string, ingested_at_utc timestamp",
+)
 locations_df.createOrReplaceTempView("incoming_weather_locations")
 forecasts_df.createOrReplaceTempView("incoming_weather_forecasts")
 spark.sql(f"""
@@ -435,10 +505,11 @@ display(forecasts_df.orderBy("location_id", "valid_time_utc").limit(20))
 
 # MARKDOWN ********************
 
-# ## Area-weighted precipitation
+# ## Area-weighted weather
 #
 # Each grid cell is intersected with the requested polygon in WGS84 and measured
-# geodesically. The result contains area-weighted depth and physical volume:
+# geodesically. Scalar variables use overlap-weighted means, wind direction uses
+# a circular mean, and precipitation also includes physical rainfall volume:
 #
 # $$V = (R / 1000) A$$
 #
@@ -496,30 +567,67 @@ for area in areas:
     for step_index in step_indices:
         lead = int(available_hours[step_index])
         valid_time = reference_time + timedelta(hours=lead)
-        grid_mm = precipitation_mm(dataset[source_variable].isel(time=0, step=step_index).values)
-        weighted_sum = sum(float(grid_mm[lat, lon]) * overlap for lat, lon, overlap in overlaps)
-        volume_m3 = sum(float(grid_mm[lat, lon]) / 1000.0 * overlap for lat, lon, overlap in overlaps)
-        area_metric_rows.append({
-            "source_id": SOURCE_ID,
-            "variable_id": VARIABLE_ID,
-            "area_id": area["area_id"],
-            "data_kind": "forecast",
-            "reference_time_utc": reference_time,
-            "valid_time_utc": valid_time,
-            "lead_hours": lead,
-            "area_coverage_fraction": min(covered_area_m2 / area_size_m2, 1.0),
-            "area_weighted_value": weighted_sum / covered_area_m2,
-            "unit": "mm",
-            "rainfall_volume_m3": volume_m3,
-            "contributing_cell_count": len(overlaps),
-            "aggregation_method": "grid_cell_polygon_overlap_geodesic",
-            "source_item_id": source_item_id,
-            "run_id": run_id,
-            "calculated_at_utc": started_at,
-        })
+        grids = weather_grids(dataset, step_index)
+        for variable_id, variable_grid in grids.items():
+            valid_overlaps = [
+                (lat, lon, overlap)
+                for lat, lon, overlap in overlaps
+                if np.isfinite(variable_grid[lat, lon])
+            ]
+            variable_coverage_m2 = sum(overlap for _, _, overlap in valid_overlaps)
+            if not valid_overlaps:
+                continue
+
+            if variable_id == "wind_direction":
+                sine = sum(
+                    np.sin(np.radians(float(variable_grid[lat, lon]))) * overlap
+                    for lat, lon, overlap in valid_overlaps
+                )
+                cosine = sum(
+                    np.cos(np.radians(float(variable_grid[lat, lon]))) * overlap
+                    for lat, lon, overlap in valid_overlaps
+                )
+                area_value = float(np.degrees(np.arctan2(sine, cosine)) % 360.0)
+                method = "grid_cell_polygon_overlap_circular_mean"
+            else:
+                weighted_sum = sum(
+                    float(variable_grid[lat, lon]) * overlap
+                    for lat, lon, overlap in valid_overlaps
+                )
+                area_value = weighted_sum / variable_coverage_m2
+                method = "grid_cell_polygon_overlap_geodesic"
+
+            rainfall_volume_m3 = None
+            if variable_id == "precipitation":
+                rainfall_volume_m3 = sum(
+                    float(variable_grid[lat, lon]) / 1000.0 * overlap
+                    for lat, lon, overlap in valid_overlaps
+                )
+
+            area_metric_rows.append({
+                "source_id": SOURCE_ID,
+                "variable_id": variable_id,
+                "area_id": area["area_id"],
+                "data_kind": "forecast",
+                "reference_time_utc": reference_time,
+                "valid_time_utc": valid_time,
+                "lead_hours": lead,
+                "area_coverage_fraction": min(variable_coverage_m2 / area_size_m2, 1.0),
+                "area_weighted_value": area_value,
+                "unit": VARIABLES[variable_id]["unit"],
+                "rainfall_volume_m3": rainfall_volume_m3,
+                "contributing_cell_count": len(valid_overlaps),
+                "aggregation_method": method,
+                "source_item_id": source_item_id,
+                "run_id": run_id,
+                "calculated_at_utc": started_at,
+            })
 
 areas_df = spark.createDataFrame(area_rows)
-area_metrics_df = spark.createDataFrame(area_metric_rows)
+area_metrics_df = spark.createDataFrame(
+    area_metric_rows,
+    "source_id string, variable_id string, area_id string, data_kind string, reference_time_utc timestamp, valid_time_utc timestamp, lead_hours int, area_coverage_fraction double, area_weighted_value double, unit string, rainfall_volume_m3 double, contributing_cell_count int, aggregation_method string, source_item_id string, run_id string, calculated_at_utc timestamp",
+)
 areas_df.createOrReplaceTempView("incoming_weather_areas")
 area_metrics_df.createOrReplaceTempView("incoming_weather_area_metrics")
 spark.sql(f"""
