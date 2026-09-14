@@ -1,10 +1,13 @@
 import type { Core } from 'cytoscape'
 import { Activity, Box, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDeferredValue, useMemo, useRef, useState } from 'react'
+import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
+import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
 import { buildKnowledgeGraph, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 import { useTheme } from '../hooks/useTheme'
+import { useTreeExpansion } from '../hooks/useTreeExpansion'
 
 const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'facility', label: 'Facilities' },
@@ -18,6 +21,7 @@ const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
 ]
 
 const STATUS_LABEL = { ok: 'Healthy', warn: 'Warning', crit: 'Critical', nodata: 'No live data' }
+type GraphScope = 'asset' | 'facility' | 'all'
 
 function navigateTo(tab: string) {
   const url = new URL(window.location.href)
@@ -26,33 +30,16 @@ function navigateTo(tab: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-function graphNeighborhood(selectedId: string | undefined, depth: number, edges: Array<{ source: string; target: string }>) {
-  if (!selectedId || depth === 0) return undefined
-  const visible = new Set([selectedId])
-  let frontier = new Set([selectedId])
-  for (let hop = 0; hop < depth; hop++) {
-    const next = new Set<string>()
-    for (const item of edges) {
-      if (frontier.has(item.source)) next.add(item.target)
-      if (frontier.has(item.target)) next.add(item.source)
-    }
-    next.forEach(id => visible.add(id))
-    frontier = next
-  }
-  return visible
-}
-
 export function KnowledgeGraphPage() {
   const data = useHydroOperationsData()
   const { theme } = useTheme()
   const controllerRef = useRef<Core | null>(null)
-  const [selectedId, setSelectedId] = useState<string>()
+  const [selection, setSelection] = useState<{ nodeId: string; assetId?: string }>()
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
-  const [facilityId, setFacilityId] = useState('all')
+  const [scope, setScope] = useState<GraphScope>('asset')
   const [types, setTypes] = useState<Set<KnowledgeNodeType>>(() => new Set(NODE_TYPES.map(item => item.type)))
   const [statuses, setStatuses] = useState(() => new Set<KnowledgeNode['status']>(['ok', 'warn', 'crit', 'nodata']))
-  const [depth, setDepth] = useState(0)
   const [layout, setLayout] = useState<GraphLayout>('breadthfirst')
 
   const graph = useMemo(() => buildKnowledgeGraph({
@@ -66,24 +53,52 @@ export function KnowledgeGraphPage() {
     models: data.assetModels,
   }), [data.assetModels, data.inspections, data.notifications, data.orders, data.stid, data.telemetry])
 
-  const effectiveSelectedId = graph.nodes.some(item => item.id === selectedId)
-    ? selectedId
-    : graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
+  const treeStations = useMemo(() => data.stid ? buildDigitalTwinTree(data.stid) : [], [data.stid])
+  const revealPath = useMemo(() => pathToAsset(treeStations, data.selectedAssetId), [data.selectedAssetId, treeStations])
+  const expansion = useTreeExpansion(revealPath)
+  const assetStatuses = useMemo(() => new Map(graph.nodes.filter(node => node.type === 'equipment').map(node => [node.entityId, node.status])), [graph.nodes])
 
-  const neighborhood = useMemo(() => graphNeighborhood(effectiveSelectedId, depth, graph.edges), [depth, effectiveSelectedId, graph.edges])
+  const sharedSelectedId = data.selectedAssetId ? `equipment:${data.selectedAssetId}` : undefined
+  const effectiveSelectedId = selection?.assetId === data.selectedAssetId && graph.nodes.some(item => item.id === selection.nodeId)
+    ? selection.nodeId
+    : graph.nodes.some(item => item.id === sharedSelectedId)
+      ? sharedSelectedId
+      : graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
+
+  const scopeIds = useMemo(() => {
+    if (scope === 'all') return undefined
+    const facilityId = data.selectedFacility?.facility_id
+    const assetId = data.selectedAssetId
+    const facilityEquipmentIds = new Set((data.stid?.equipment ?? []).filter(item => item.facility_id === facilityId).map(item => item.equipment_id))
+    if (scope === 'facility') return new Set(graph.nodes.filter(node => node.facilityId === facilityId || (node.equipmentId && facilityEquipmentIds.has(node.equipmentId))).map(node => node.id))
+    if (!assetId) return undefined
+    const equipmentNodeId = `equipment:${assetId}`
+    const visible = new Set(graph.nodes.filter(node => node.id === equipmentNodeId || node.equipmentId === assetId).map(node => node.id))
+    const systemIds = new Set<string>()
+    for (const edge of graph.edges) {
+      if (edge.source === equipmentNodeId && edge.target.startsWith('system:')) systemIds.add(edge.target)
+      if (edge.target === equipmentNodeId && edge.source.startsWith('system:')) systemIds.add(edge.source)
+    }
+    systemIds.forEach(id => visible.add(id))
+    if (facilityId) visible.add(`facility:${facilityId}`)
+    return visible
+  }, [data.selectedAssetId, data.selectedFacility, data.stid, graph.edges, graph.nodes, scope])
   const visibleNodes = useMemo(() => graph.nodes.filter(node => {
     const matchesQuery = !deferredQuery || `${node.label} ${node.entityId} ${node.subtitle} ${Object.values(node.properties).join(' ')}`.toLowerCase().includes(deferredQuery)
-    const matchesFacility = facilityId === 'all' || node.facilityId === facilityId || (node.equipmentId && graph.nodes.some(item => item.type === 'equipment' && item.entityId === node.equipmentId && item.facilityId === facilityId))
-    return types.has(node.type) && statuses.has(node.status) && matchesQuery && matchesFacility && (!neighborhood || neighborhood.has(node.id))
-  }), [deferredQuery, facilityId, graph.nodes, neighborhood, statuses, types])
+    return types.has(node.type) && statuses.has(node.status) && matchesQuery && (!scopeIds || scopeIds.has(node.id))
+  }), [deferredQuery, graph.nodes, scopeIds, statuses, types])
   const visibleIds = useMemo(() => new Set(visibleNodes.map(item => item.id)), [visibleNodes])
   const visibleEdges = useMemo(() => graph.edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)), [graph.edges, visibleIds])
   const selectedNode = graph.nodes.find(item => item.id === effectiveSelectedId)
 
   const selectNode = (nodeId: string) => {
-    setSelectedId(nodeId)
     const node = graph.nodes.find(item => item.id === nodeId)
+    setSelection({ nodeId, assetId: node?.equipmentId ?? data.selectedAssetId })
     if (node?.facilityId && node.equipmentId) data.actions.selectAsset(node.facilityId, node.equipmentId)
+  }
+  const selectAsset = (facilityId: string, assetId: string) => {
+    setScope('asset')
+    data.actions.selectAsset(facilityId, assetId)
   }
   const toggleType = (type: KnowledgeNodeType) => setTypes(current => {
     const next = new Set(current)
@@ -117,10 +132,9 @@ export function KnowledgeGraphPage() {
     <div className="kg-workspace">
       <aside className="kg-sidebar kg-filters">
         <label className="kg-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Find entity, ID, tag, OPC UA node…" /></label>
-        <section><div className="kg-section-title"><span>Scope</span><small>{visibleNodes.length} visible</small></div><select value={facilityId} onChange={event => setFacilityId(event.target.value)}><option value="all">All facilities</option>{data.facilities.map(item => <option key={item.facility_id} value={item.facility_id}>{item.facility_name}</option>)}</select></section>
-        <section><div className="kg-section-title"><span>Entity classes</span><button onClick={() => setTypes(new Set(NODE_TYPES.map(item => item.type)))}>All</button></div>{counts.map(item => <label className="kg-filter-row" key={item.type}><input type="checkbox" checked={types.has(item.type)} onChange={() => toggleType(item.type)} /><i className={`kg-type-dot type-${item.type}`} /><span>{item.label}</span><small>{item.count}</small></label>)}</section>
-        <section><div className="kg-section-title"><span>Operational health</span></div><div className="kg-status-filters">{(['crit', 'warn', 'ok', 'nodata'] as const).map(status => <button key={status} className={statuses.has(status) ? `active status-${status}` : ''} onClick={() => toggleStatus(status)}><i />{STATUS_LABEL[status]}<small>{graph.nodes.filter(item => item.status === status).length}</small></button>)}</div></section>
-        <section><div className="kg-section-title"><span>Neighborhood</span></div><div className="kg-segmented">{[0, 1, 2].map(value => <button key={value} className={depth === value ? 'active' : ''} onClick={() => setDepth(value)}>{value === 0 ? 'Full' : `${value} hop`}</button>)}</div></section>
+        <section className="kg-scope-section"><div className="kg-section-title"><span>Graph scope</span><small>{visibleNodes.length} visible</small></div><div className="kg-segmented">{([['asset', 'Selected'], ['facility', 'Facility'], ['all', 'All']] as const).map(([value, label]) => <button key={value} className={scope === value ? 'active' : ''} onClick={() => setScope(value)}>{label}</button>)}</div></section>
+        <div className="kg-asset-tree"><DigitalTwinTree stations={treeStations} selectedAssetId={data.selectedAssetId} handlers={{ isExpanded: expansion.isExpanded, onToggle: expansion.toggle, onSelectAsset: selectAsset, statusOf: assetId => assetStatuses.get(assetId) ?? 'nodata' }} /></div>
+        <details className="kg-display-filters"><summary>Display filters</summary><section><div className="kg-section-title"><span>Entity classes</span><button onClick={() => setTypes(new Set(NODE_TYPES.map(item => item.type)))}>All</button></div>{counts.map(item => <label className="kg-filter-row" key={item.type}><input type="checkbox" checked={types.has(item.type)} onChange={() => toggleType(item.type)} /><i className={`kg-type-dot type-${item.type}`} /><span>{item.label}</span><small>{item.count}</small></label>)}</section><section><div className="kg-section-title"><span>Operational health</span></div><div className="kg-status-filters">{(['crit', 'warn', 'ok', 'nodata'] as const).map(status => <button key={status} className={statuses.has(status) ? `active status-${status}` : ''} onClick={() => toggleStatus(status)}><i />{STATUS_LABEL[status]}<small>{graph.nodes.filter(item => item.status === status).length}</small></button>)}</div></section></details>
       </aside>
 
       <section className="kg-stage">
