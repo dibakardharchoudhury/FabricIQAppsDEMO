@@ -44,6 +44,8 @@ facility_ids_json = "[]"
 max_lead_hours = 72
 forecast_interval_hours = 6
 observation_lookback_hours = 24
+# The closest reporting area often has no observations, so several candidates are tried.
+nearest_station_candidates = 5
 
 # METADATA ********************
 
@@ -333,24 +335,47 @@ for point in points:
         session,
         f"{land_observations_endpoint}/nearest",
         land_observations_api_key,
-        {"lat": round(float(point["latitude"]), 2), "lon": round(float(point["longitude"]), 2), "max": 1},
+        {
+            "lat": round(float(point["latitude"]), 2),
+            "lon": round(float(point["longitude"]), 2),
+            "max": nearest_station_candidates,
+        },
     )
-    if not isinstance(nearest_payload, list) or not nearest_payload or not nearest_payload[0].get("geohash"):
+    if not isinstance(nearest_payload, list) or not nearest_payload:
         raise RuntimeError(f"No UKMet Land Observation station found for {point['location_id']}")
-    geohash = str(nearest_payload[0]["geohash"])
-    observations_payload = get_json(
-        session,
-        f"{land_observations_endpoint}/{geohash}",
-        land_observations_api_key,
-    )
+
+    # A listed area can still answer 404 when it holds no observations; take the next candidate.
+    station = None
+    geohash = None
+    observations_payload = None
+    for candidate in nearest_payload:
+        candidate_geohash = str(candidate.get("geohash") or "")
+        if not candidate_geohash:
+            continue
+        try:
+            payload = get_json(
+                session,
+                f"{land_observations_endpoint}/{candidate_geohash}",
+                land_observations_api_key,
+            )
+        except requests.HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                continue
+            raise
+        if isinstance(payload, list) and payload:
+            station, geohash, observations_payload = candidate, candidate_geohash, payload
+            break
+
+    if observations_payload is None:
+        print(f"No UKMet Land Observations near {point['location_id']}; keeping its forecasts only")
+        continue
+
     write_raw(
         "land-observations",
         point["location_id"],
         run_id,
-        {"nearest": nearest_payload[0], "observations": observations_payload},
+        {"nearest": station, "observations": observations_payload},
     )
-    if not isinstance(observations_payload, list):
-        raise RuntimeError(f"Unexpected Land Observations response for {point['location_id']}")
 
     for record in observations_payload:
         observed_text = record.get("datetime")
