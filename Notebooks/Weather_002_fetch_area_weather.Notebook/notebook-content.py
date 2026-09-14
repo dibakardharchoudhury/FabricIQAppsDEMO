@@ -46,7 +46,7 @@ facilities_table = "silver_facilities"
 equipment_table = "silver_equipment"
 require_active_equipment = True
 facility_ids_json = "[]"  # Empty selects all eligible facilities.
-aggregation_radius_km = 5.0
+aggregation_radius_km = 20.0
 aggregation_circle_vertices = 72
 
 # METADATA ********************
@@ -642,8 +642,10 @@ area_metrics_df = spark.createDataFrame(
 )
 areas_df.createOrReplaceTempView("incoming_weather_areas")
 area_metrics_df.createOrReplaceTempView("incoming_weather_area_metrics")
-spark.sql(f"DELETE FROM {TABLES['area_metrics']} WHERE area_id = 'hydro_demo_area'")
-spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id = 'hydro_demo_area'")
+active_area_ids = [area["area_id"] for area in areas]
+active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
+spark.sql(f"DELETE FROM {TABLES['area_metrics']} WHERE area_id NOT IN ({active_area_ids_sql})")
+spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")
 spark.sql(f"""
 MERGE INTO {TABLES['areas']} target USING incoming_weather_areas source
 ON target.area_id = source.area_id
