@@ -121,7 +121,7 @@ export const KUSTO_SOURCES = [
   },
   {
     name: 'TelemetryEnriched',
-    description: 'Function TelemetryEnriched(start:datetime, end:datetime, stations:dynamic, turbines:dynamic). Telemetry pre-joined to asset master. Case-sensitive columns: event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality. Pass dynamic(null) for stations/turbines to include all.',
+    description: 'Function with four positional arguments: TelemetryEnriched(startTime, endTime, stations, turbines). Call example: TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)). Never include parameter names or colons in the call. Telemetry is pre-joined to asset master. Case-sensitive columns: event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality. Pass dynamic(null) for stations/turbines to include all.',
   },
 ] as const
 

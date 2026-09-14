@@ -138,6 +138,9 @@ export function validateKql(query: string, allowedSources: string[] = KUSTO_SOUR
   const trimmed = (query ?? '').trim()
   if (!trimmed) throw new Error('The query was empty.')
   const scanned = withoutStringLiterals(trimmed)
+  if (/^TelemetryEnriched\s*\(\s*(?:start|startTime|end|endTime|stations|turbines)\s*:/i.test(scanned)) {
+    throw new Error('Rejected: TelemetryEnriched arguments are positional. Call TelemetryEnriched(startTime, endTime, stations, turbines) without parameter names or colons; for example TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)).')
+  }
   for (const rule of FORBIDDEN_KQL) {
     if (rule.pattern.test(scanned)) throw new Error(`Rejected: ${rule.reason}.`)
   }

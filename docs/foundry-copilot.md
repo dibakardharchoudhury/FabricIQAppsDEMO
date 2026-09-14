@@ -274,6 +274,11 @@ incorrect identifier casing, invalid function signatures, and other semantic err
 by Eventhouse. That error is returned to the model as a failed tool result so it can correct the
 query or fall back to a structured tool.
 
+`TelemetryEnriched` uses positional KQL arguments. Invoke it as
+`TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null))`; declaration notation such as
+`start:datetime` describes the function signature and is not valid named-argument call syntax. The
+client rejects named calls with an actionable correction before they reach Eventhouse.
+
 ### Result shaping
 
 Every row set is projected to the columns declared in the catalog *before* the model sees it, then

@@ -36,6 +36,10 @@ test('rejects tables outside the catalog', () => {
   assert.throws(() => validateKql('SecretTable | take 10'), /must start with/)
   assert.doesNotThrow(() => validateKql('AssetMaster() | take 10'))
   assert.doesNotThrow(() => validateKql('TelemetryEnriched(ago(1h), now(), dynamic(null), dynamic(null))'))
+  assert.throws(
+    () => validateKql('TelemetryEnriched(start: ago(1h), end: now(), stations: dynamic(null), turbines: dynamic(null))'),
+    /arguments are positional.*without parameter names or colons/i,
+  )
 })
 
 test('caps result size unless the query already ends with take', () => {
@@ -194,6 +198,7 @@ test('advertises the deployed case-sensitive Kusto function columns', () => {
   const prompt = catalogPrompt(defaultCopilotSettings())
   assert.match(prompt, /AssetMaster.*opcua_node_id, Station, Turbine, Signal, SignalGroup, Unit/)
   assert.match(prompt, /TelemetryEnriched.*event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality/)
+  assert.match(prompt, /TelemetryEnriched\(ago\(6h\), now\(\), dynamic\(null\), dynamic\(null\)\).*Never include parameter names or colons/)
   assert.doesNotMatch(prompt, /station, turbine, sensor_group/)
 })
 
