@@ -129,8 +129,9 @@ pipeline permission to read them (for example *Key Vault Secrets User*), and add
 principal to the workspace as Contributor or Admin. The tenant must also leave *Service principals
 can call Fabric public APIs* enabled.
 
-Weather provisioning also imports and publishes the `Weather` Fabric Environment with `xarray`,
-`shapely`, `pyproj`, `adlfs` and `zarr<3`. The Git sync verifies that
+Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
+NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
+`numcodecs`. The Git sync verifies that
 `Weather_001_create_lakehouse` and `Weather_002_fetch_area_weather` are in the workspace
 `Notebooks` folder. Before running the fetch notebook, create a secret named
 `mai-weather-api-key` in the same Key Vault passed to `Pipe_Setup`. The provisioner prints this
