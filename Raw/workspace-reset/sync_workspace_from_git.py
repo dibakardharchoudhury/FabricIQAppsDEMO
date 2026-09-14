@@ -66,7 +66,9 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
+import json
 import os
 import re
 import sys
@@ -96,6 +98,8 @@ WEATHER_NOTEBOOK_NAMES = {
     "Weather_002_fetch_area_weather",
     "Weather_003_fetch_ukmet",
 }
+# The demo lakehouse is named <prefix><env suffix> by RTI_001; the Ontology item makes its own.
+WEATHER_LAKEHOUSE_PREFIX = "Energy_IQ_LakehouseRTI"
 
 
 class Fabric:
@@ -409,6 +413,96 @@ def test_connection_flow(
             fab.delete_connection(created_id)
 
 
+def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dict[str, Any]:
+    """Read a notebook definition in ipynb form, following the long-running operation."""
+    url = (
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}"
+        "/getDefinition?format=ipynb"
+    )
+    response = fab.request("POST", url)
+    if response.status_code == 202:
+        operation = response.headers.get("Location")
+        fab.poll_lro(response)
+        response = fab.request("GET", f"{operation}/result")
+    if response.status_code != 200:
+        raise SystemExit(
+            f"Failed to read notebook definition: HTTP {response.status_code} {response.text}"
+        )
+    return response.json()["definition"]
+
+
+def rebind_weather_notebooks(
+    fab: Fabric,
+    workspace_id: str,
+    notebooks: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+    environment_id: str,
+) -> None:
+    """Re-apply the lakehouse/Environment binding that a Git import clears from notebook metadata."""
+    lakehouses = [
+        item
+        for item in items
+        if item.get("type") == "Lakehouse"
+        and str(item.get("displayName", "")).startswith(WEATHER_LAKEHOUSE_PREFIX)
+    ]
+    if not lakehouses:
+        print(
+            f"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; "
+            "RTI_001 will bind the weather notebooks when the setup pipeline runs."
+        )
+        return
+    if len(lakehouses) > 1:
+        names = ", ".join(sorted(str(item.get("displayName")) for item in lakehouses))
+        raise SystemExit(
+            f"Cannot rebind weather notebooks: several '{WEATHER_LAKEHOUSE_PREFIX}*' "
+            f"lakehouses exist ({names})."
+        )
+
+    lakehouse = lakehouses[0]
+    wanted_lakehouse = {
+        "default_lakehouse": lakehouse["id"],
+        "default_lakehouse_name": lakehouse["displayName"],
+        "default_lakehouse_workspace_id": workspace_id,
+        "known_lakehouses": [{"id": lakehouse["id"]}],
+    }
+    wanted_environment = {"environmentId": environment_id, "workspaceId": workspace_id}
+
+    for name, item in sorted(notebooks.items()):
+        definition = notebook_definition(fab, workspace_id, item["id"])
+        part = next(
+            (p for p in definition.get("parts", []) if str(p.get("path", "")).endswith(".ipynb")),
+            None,
+        )
+        if part is None:
+            raise SystemExit(f"Notebook '{name}' has no .ipynb definition part.")
+        content = json.loads(base64.b64decode(part["payload"]))
+        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
+        if (
+            dependencies.get("lakehouse") == wanted_lakehouse
+            and dependencies.get("environment") == wanted_environment
+        ):
+            print(f"  {name}: already bound.")
+            continue
+
+        dependencies["lakehouse"] = wanted_lakehouse
+        dependencies["environment"] = wanted_environment
+        part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
+        part["payloadType"] = "InlineBase64"
+        response = fab.poll_lro(
+            fab.request(
+                "POST",
+                f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}"
+                "/updateDefinition?updateMetadata=true",
+                json={"definition": definition},
+            )
+        )
+        if response.status_code not in (200, 202):
+            raise SystemExit(
+                f"Failed to bind notebook '{name}': HTTP {response.status_code} {response.text}"
+            )
+        print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
+
+
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
     """Validate weather Git items, publish their Environment, and print secret guidance."""
     items = fab.list_workspace_items(workspace_id)
@@ -506,6 +600,10 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
         print("Weather Environment publish completed.")
     else:
         print("Weather Environment is already published; no publish required.")
+
+    # Git stores empty notebook dependencies, so every import unbinds these notebooks.
+    print("Binding weather notebooks to the lakehouse and Environment...")
+    rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")
