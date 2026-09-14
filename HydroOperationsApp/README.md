@@ -32,11 +32,13 @@ are copied into Rayfin SQL).
 
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
-Twin, and Maintenance. The current implementation is Ontology-aligned: it reads the Ontology's bound
-Lakehouse and Eventhouse sources through GraphQL/KQL, then constructs relationships from governed
-keys. It does not claim that GraphQL is an Ontology instance API. See the canonical
+Twin, and Maintenance. It discovers the live Ontology and its child Graph Model, queries
+materialized bound nodes and relationships directly with Fabric GQL, enriches signals with current
+Eventhouse KQL readings, and adds Rayfin SQL records as external operational overlays. It requeries
+GQL every 30 seconds while visible; Fabric must first finish the child Graph Model refresh for
+upstream Lakehouse changes. See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
-scenarios, screenshots, limitations, and the Ontology-authoritative migration path.
+scenarios, screenshots, freshness behavior, and direct Graph Model architecture.
 
 ## Architecture
 
@@ -44,11 +46,11 @@ scenarios, screenshots, limitations, and the Ontology-authoritative migration pa
               ┌────────────────────────┐
               │  Hydro Operations SPA  │  (React + Leaflet, hosted by Rayfin in Fabric)
               └──────┬─────────┬───────┬┘
-         GraphQL     │   KQL   │       │  Rayfin data client
+           GQL     │   KQL   │       │  Rayfin data client
                      ▼         ▼       ▼
       ┌────────────────┐ ┌──────────┐ ┌───────────────────────────┐
-      │ Lakehouse STID │ │Eventhouse│ │  Rayfin SQL (operational) │
-      │ silver_*       │ │OPCUAEvents│ │  WorkOrders, Inspections, │
+      │Ontology Graph  │ │Eventhouse│ │  Rayfin SQL (operational) │
+      │nodes + edges   │ │OPCUAEvents│ │  WorkOrders, Inspections, │
       └────────────────┘ └──────────┘ │  SpareParts, Asset3DModels│
         built by RTI_001…010          │  MaintenanceNotifications │
         (see root README)             └───────────────────────────┘

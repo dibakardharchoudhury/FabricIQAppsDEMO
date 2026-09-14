@@ -10,6 +10,8 @@ const typeColor: Record<KnowledgeNode['type'], string> = {
   system: '#2563eb',
   equipment: '#b11f4b',
   instrument: '#16a34a',
+  signal: '#0891b2',
+  ontology: '#475569',
   model: '#7c3aed',
   'work-order': '#d97706',
   inspection: '#64748b',
@@ -21,6 +23,8 @@ const typeSize: Record<KnowledgeNode['type'], number> = {
   system: 48,
   equipment: 44,
   instrument: 34,
+  signal: 28,
+  ontology: 36,
   model: 30,
   'work-order': 32,
   inspection: 28,
@@ -37,6 +41,7 @@ const statusColor: Record<KnowledgeNode['status'], string> = {
 const edgeColor: Record<KnowledgeEdge['type'], string> = {
   contains: '#64748b',
   'has-instrument': '#16a34a',
+  'has-signal': '#0891b2',
   'has-model': '#7c3aed',
   affects: '#d97706',
   documents: '#64748b',
@@ -59,19 +64,19 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   controllerRef: React.MutableRefObject<Core | null>
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const positionCacheRef = useRef(new Map<string, { x: number; y: number }>())
+  const initializedRef = useRef(false)
+  const previousLayoutRef = useRef(layout)
   const handleNodeSelect = useEffectEvent(onSelect)
 
   useEffect(() => {
     if (!containerRef.current) return
+    const positionCache = positionCacheRef.current
     const css = getComputedStyle(document.documentElement)
     const color = (token: string) => css.getPropertyValue(token).trim()
-    const elements: ElementDefinition[] = [
-      ...nodes.map(node => ({ data: { ...node, color: typeColor[node.type], size: typeSize[node.type], ring: statusColor[node.status] } })),
-      ...edges.map(item => ({ data: { ...item, color: edgeColor[item.type] } })),
-    ]
     const graph = cytoscape({
       container: containerRef.current,
-      elements,
+      elements: [],
       minZoom: 0.25,
       maxZoom: 2.5,
       style: [
@@ -100,10 +105,52 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
       ],
     })
     graph.on('tap', 'node', event => handleNodeSelect(event.target.id()))
-    graph.layout(layoutOptions(layout)).run()
     controllerRef.current = graph
-    return () => { controllerRef.current = null; graph.destroy() }
-  }, [controllerRef, edges, layout, nodes, theme])
+    return () => {
+      graph.nodes().forEach(node => { positionCache.set(node.id(), node.position()) })
+      controllerRef.current = null
+      initializedRef.current = false
+      graph.destroy()
+    }
+  }, [controllerRef, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph) return
+    const elements: ElementDefinition[] = [
+      ...nodes.map(node => ({ data: { ...node, color: typeColor[node.type], size: typeSize[node.type], ring: statusColor[node.status] } })),
+      ...edges.map(item => ({ data: { ...item, color: edgeColor[item.type] } })),
+    ]
+    const nextIds = new Set(elements.map(element => String(element.data.id)))
+    const wasInitialized = initializedRef.current
+    graph.batch(() => {
+      graph.nodes().forEach(node => { positionCacheRef.current.set(node.id(), node.position()) })
+      graph.elements().filter(element => !nextIds.has(element.id())).remove()
+      for (const element of elements) {
+        const id = String(element.data.id)
+        const current = graph.getElementById(id)
+        if (current.nonempty()) {
+          current.data(element.data)
+          continue
+        }
+        const added = graph.add(element)
+        const position = positionCacheRef.current.get(id)
+        if (position && added.isNode()) added.position(position)
+      }
+    })
+    if (!wasInitialized && graph.nodes().nonempty()) {
+      initializedRef.current = true
+      previousLayoutRef.current = layout
+      graph.layout(layoutOptions(layout)).run()
+    }
+  }, [controllerRef, edges, layout, nodes])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !initializedRef.current || previousLayoutRef.current === layout) return
+    previousLayoutRef.current = layout
+    graph.layout(layoutOptions(layout)).run()
+  }, [controllerRef, layout])
 
   useEffect(() => {
     const graph = controllerRef.current
