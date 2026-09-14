@@ -170,7 +170,7 @@ function TimelineSection({ title, rows, empty, expandedRows, onToggle }: { title
       const primary = row.values.filter(value => PRIMARY_VARIABLES.has(value.variableId))
       const secondary = row.values.filter(value => !PRIMARY_VARIABLES.has(value.variableId))
       return <article key={rowKey}>
-        <time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}</time>
+        <time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>
         <div className="weather-primary-values">{primary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>
         {expanded && <div className="weather-secondary-values">{secondary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>}
         {!!secondary.length && <button className="weather-more" type="button" aria-expanded={expanded} onClick={() => onToggle(rowKey)}>{expanded ? 'Less…' : 'More…'}</button>}
