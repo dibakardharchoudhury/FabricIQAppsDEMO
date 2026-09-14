@@ -347,6 +347,26 @@
 .weather-map-empty button:hover { background: var(--cp-accent-hover); }
 .weather-map-empty button:focus-visible { outline: 2px solid var(--cp-text); outline-offset: 2px; }
 
+.weather-precipitation-summary {
+  position: absolute;
+  z-index: 500;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  padding: 9px 11px;
+  border: 1px solid rgba(15, 23, 42, .12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, .12);
+  color: #334155;
+}
+
+.weather-precipitation-summary span { font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.weather-precipitation-summary strong { color: #0f172a; font-size: 15px; }
+.weather-precipitation-summary small { color: #0369a1; font-size: 9px; }
+
 .weather-legend {
   position: absolute;
   z-index: 500;

@@ -17,6 +17,7 @@ const variableRank = (variableId: string) => {
 
 type TimelineValue = { variableId: string; value?: number; unit: string; volume?: number }
 type TimelineRow = { timestamp: string; source: string; values: TimelineValue[] }
+type PrecipitationSummary = { amount?: number; unit: string; volume?: number }
 
 function formatValue(item: TimelineValue) {
   if (item.value == null || !Number.isFinite(Number(item.value))) return '—'
@@ -126,6 +127,25 @@ export function WeatherPage() {
     }
   }, [rangeHours, selectedVendor, selection, timeAnchor, weather])
 
+  const precipitationSummary = useMemo<PrecipitationSummary | undefined>(() => {
+    if (!weather || !selection || !selectedVendor) return undefined
+    const end = timeAnchor + 24 * 3_600_000
+    if (selection.kind === 'location') {
+      const precipitation = weather.forecasts.filter(item => item.location_id === selection.id && item.source_id === selectedVendor && item.variable_id === 'precipitation')
+      const latestIssue = Math.max(0, ...precipitation.map(item => Date.parse(item.reference_time_utc)))
+      const values = precipitation.filter(item => Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) > timeAnchor && Date.parse(item.valid_time_utc) <= end)
+      return { amount: values.length ? values.reduce((sum, item) => sum + Number(item.value || 0), 0) : undefined, unit: values[0]?.unit ?? 'mm' }
+    }
+    const precipitation = weather.areaMetrics.filter(item => item.area_id === selection.id && item.source_id === selectedVendor && item.data_kind === 'forecast' && item.variable_id === 'precipitation')
+    const latestIssue = Math.max(0, ...precipitation.map(item => Date.parse(item.reference_time_utc ?? '')))
+    const values = precipitation.filter(item => Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) > timeAnchor && Date.parse(item.valid_time_utc) <= end)
+    return {
+      amount: values.length ? values.reduce((sum, item) => sum + Number(item.area_weighted_value || 0), 0) : undefined,
+      unit: values[0]?.unit ?? 'mm',
+      volume: values.some(item => item.rainfall_volume_m3 != null) ? values.reduce((sum, item) => sum + Number(item.rainfall_volume_m3 || 0), 0) : undefined,
+    }
+  }, [selectedVendor, selection, timeAnchor, weather])
+
   const toggleRow = (key: string) => setExpandedRows(current => {
     const next = new Set(current)
     if (next.has(key)) next.delete(key)
@@ -151,6 +171,7 @@ export function WeatherPage() {
     <section className="weather-workspace">
       <article className="weather-map-panel">
         {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>Weather data needs Fabric GraphQL access.</span><button type="button" onClick={() => void load()}>Connect weather data</button></>}</div>}
+        {selection && <div className="weather-precipitation-summary" aria-live="polite"><span>Next 24h precipitation</span><strong>{precipitationSummary?.amount == null ? 'No forecast' : `${precipitationSummary.amount.toFixed(1)} ${precipitationSummary.unit}`}</strong>{precipitationSummary?.volume != null && <small>{Math.round(precipitationSummary.volume).toLocaleString()} m³ over area</small>}</div>}
         <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
       </article>
       <aside className="weather-detail" aria-live="polite">
