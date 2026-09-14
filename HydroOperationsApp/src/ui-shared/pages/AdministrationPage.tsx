@@ -50,6 +50,15 @@ export function AdministrationPage() {
       action: 'Connect telemetry',
       run: () => void data.actions.connectTelemetry(),
     },
+    {
+      n: 6,
+      title: 'Connect Weather',
+      why: 'Creates the weather tables and loads UKMet Global Spot forecasts + Land Observations (runs Weather_001 and Weather_003). Needs the UKMet API keys in Key Vault.',
+      done: data.weatherState === 'complete',
+      busy: data.weatherState === 'running' || Boolean(data.jobs.weather),
+      action: 'Connect weather',
+      run: () => void data.actions.connectWeather(),
+    },
   ]
 
   return <>

@@ -2,6 +2,7 @@ import { createContext, createElement, useCallback, useContext, useEffect, useMe
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, runPostSeedNotebook,
+  runWeatherNotebooks,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
@@ -25,6 +26,7 @@ const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
+const WEATHER_ETA_MS = 8 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
@@ -34,7 +36,7 @@ const TELEMETRY_POLL_MS = 30_000
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
-export type ProgressJob = { kind: 'seed' | 'stream'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
+export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
@@ -76,7 +78,7 @@ function readPersistedJobs(): Record<string, ProgressJob> {
     const saved = JSON.parse(localStorage.getItem(JOBS_STORAGE_KEY) || '{}') as Record<string, ProgressJob>
     const fresh: Record<string, ProgressJob> = {}
     for (const [key, job] of Object.entries(saved)) {
-      if (job && (job.kind === 'seed' || job.kind === 'stream') && typeof job.startedAt === 'number'
+      if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather') && typeof job.startedAt === 'number'
         && Date.now() - job.startedAt < JOB_RESUME_MAX_AGE_MS) fresh[key] = job
     }
     return fresh
@@ -107,6 +109,7 @@ function useHydroOperationsDataController() {
   const [modelState, setModelState] = useState<LoadState>('idle')
   const [provisionState, setProvisionState] = useState<ActionState>(persisted.provisioned ? 'complete' : 'idle')
   const [streamState, setStreamState] = useState<ActionState>('idle')
+  const [weatherState, setWeatherState] = useState<ActionState>('idle')
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
@@ -252,7 +255,7 @@ function useHydroOperationsDataController() {
     catch (error) { setTelemetryState('error'); setNotice(error instanceof Error ? error.message : 'Telemetry is unavailable.') }
   }, [loadTelemetry])
 
-  function beginProgress(key: 'seed' | 'stream', label: string, etaMs: number) {
+  function beginProgress(key: ProgressJob['kind'], label: string, etaMs: number) {
     setJobs(prev => ({ ...prev, [key]: { kind: key, label, status: 'Starting', pct: 3, startedAt: Date.now(), etaMs } }))
   }
 
@@ -309,6 +312,27 @@ function useHydroOperationsDataController() {
       setNotice(error instanceof Error ? error.message : 'Seed and provision failed.')
     }
   }, [authenticate, awaitProvision, jobs.seed, loadOperationalData, provisionState, user])
+
+  const connectWeather = useCallback(async () => {
+    if (weatherState === 'running' || jobs.weather) return
+    setWeatherState('running'); setNotice(undefined)
+    try {
+      const activeUser = user ?? await authenticate()
+      if (!activeUser) { setWeatherState('idle'); setNotice('Sign in with Fabric to load weather data.'); return }
+      beginProgress('weather', 'Creating the weather tables and loading UKMet forecasts and observations (Weather_001, Weather_003)...', WEATHER_ETA_MS)
+      const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
+      if (status === 'Completed') {
+        setWeatherState('complete')
+        setNotice('Weather tables created and UKMet data loaded. Run Seed & provision if the Weather tab still reports no GraphQL access.')
+      } else {
+        setWeatherState('error')
+        setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)
+      }
+    } catch (error) {
+      setWeatherState('error')
+      setNotice(error instanceof Error ? error.message : 'Weather load failed.')
+    } finally { endJob('weather') }
+  }, [authenticate, jobs.weather, user, weatherState])
 
   const refreshOperationalData = useCallback(async () => {
     setOperationsState('loading'); setNotice(undefined)
@@ -711,6 +735,7 @@ function useHydroOperationsDataController() {
     modelState,
     provisionState,
     streamState,
+    weatherState,
     stid,
     stidSyncedAt,
     telemetry,
@@ -755,6 +780,7 @@ function useHydroOperationsDataController() {
       refreshOperationalData,
       seedAndProvision,
       startStream,
+      connectWeather,
       connectStid,
       refreshStid,
       connectTelemetry,

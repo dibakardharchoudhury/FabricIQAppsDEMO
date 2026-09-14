@@ -12,6 +12,8 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 // Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
+const weatherSetupNotebookName = 'Weather_001_create_lakehouse'
+const weatherUkmetNotebookName = 'Weather_003_fetch_ukmet'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
@@ -585,14 +587,28 @@ export async function resumeStreamingPipeline(onStatus: JobProgress | undefined,
 
 export function isPostSeedConfigured() { return Boolean(msal) }
 
-async function resolvePostseedNotebookId(): Promise<string> {
+async function resolveNotebookId(displayName: string): Promise<string> {
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
   const items = await listItems(token)
-  const notebook = items.find(item => item.type === 'Notebook' && item.displayName === postseedNotebookName)
-  if (!notebook) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
+  const notebook = items.find(item => item.type === 'Notebook' && item.displayName === displayName)
+  if (!notebook) throw new Error(`The ${displayName} notebook was not found in the workspace.`)
   return notebook.id
 }
+
+async function resolvePostseedNotebookId(): Promise<string> {
+  return resolveNotebookId(postseedNotebookName)
+}
+
+/** Create the weather tables (Weather_001), then load UKMet forecasts and observations (Weather_003). */
+export const runWeatherNotebooks = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
+  for (const name of [weatherSetupNotebookName, weatherUkmetNotebookName]) {
+    const notebookId = await resolveNotebookId(name)
+    const status = await runJob(notebookId, 'RunNotebook', onStatus, { timeoutMs: 20 * 60_000, reuseActive: true })
+    if (status !== 'Completed') return status
+  }
+  return 'Completed'
+})
 
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
