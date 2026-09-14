@@ -452,6 +452,7 @@ export async function queryStid(): Promise<StidData | null> {
   }`
   const response = await fetch(config.graphqlUrl, {
     method: 'POST',
+    cache: 'no-store',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
   })

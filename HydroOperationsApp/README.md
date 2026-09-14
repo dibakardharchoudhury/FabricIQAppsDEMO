@@ -30,6 +30,14 @@ browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows 
 data is synthetic but each record lives where it would in production (no reference or telemetry rows
 are copied into Rayfin SQL).
 
+The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
+to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
+Twin, and Maintenance. The current implementation is Ontology-aligned: it reads the Ontology's bound
+Lakehouse and Eventhouse sources through GraphQL/KQL, then constructs relationships from governed
+keys. It does not claim that GraphQL is an Ontology instance API. See the canonical
+[`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
+scenarios, screenshots, limitations, and the Ontology-authoritative migration path.
+
 ## Architecture
 
 ```
@@ -110,3 +118,8 @@ HydroOperationsApp/
         ├── rayfin.ts               # Rayfin data client + list/create/update/delete + self‑seeder
         └── seedData.ts             # Typed operational seed arrays
 ```
+
+  Shared V1/V2 pages, including Knowledge Graph, Telemetry, Digital Twin, and Maintenance, live under
+  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` builds the current application graph and
+  `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
+  entity inspector.
