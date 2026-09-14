@@ -604,9 +604,13 @@ async function resolvePostseedNotebookId(): Promise<string> {
 /** Create the weather tables (Weather_001), then load Aurora area forecasts (Weather_002)
  *  and UKMet forecasts and observations (Weather_003). */
 export const runWeatherNotebooks = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
-  for (const name of [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName]) {
+  const names = [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName]
+  for (const [index, name] of names.entries()) {
     const notebookId = await resolveNotebookId(name)
-    const status = await runJob(notebookId, 'RunNotebook', onStatus, { timeoutMs: 20 * 60_000, reuseActive: true })
+    const isLast = index === names.length - 1
+    // A mid-sequence 'Completed' would pin the caller's progress bar at 100%, so only the last one reports it.
+    const report = onStatus && ((status: JobStatus) => onStatus(status === 'Completed' && !isLast ? 'InProgress' : status))
+    const status = await runJob(notebookId, 'RunNotebook', report, { timeoutMs: 20 * 60_000, reuseActive: true })
     if (status !== 'Completed') return status
   }
   return 'Completed'

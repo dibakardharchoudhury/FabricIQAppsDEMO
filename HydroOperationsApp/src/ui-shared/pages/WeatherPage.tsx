@@ -171,7 +171,7 @@ export function WeatherPage() {
     <section className="weather-workspace">
       <article className="weather-map-panel">
         <div className="weather-map-stage">
-          {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>Weather data needs Fabric GraphQL access.</span><button type="button" onClick={() => void load()}>Connect weather data</button></>}</div>}
+          {weather ? <WeatherMap locations={weather.locations} areas={weather.areas} selection={selection} onSelect={setSelection} /> : <div className="weather-map-empty" role="status" aria-live="polite">{state === 'loading' ? 'Loading weather map…' : <><span>No weather data yet. In Administration, run Connect weather, then Seed &amp; provision to publish the GraphQL API.</span><button type="button" onClick={() => void load()}>Retry</button></>}</div>}
           {selection && <div className="weather-precipitation-summary" aria-live="polite"><span>Next 24h precipitation</span><strong>{precipitationSummary?.amount == null ? 'No forecast' : `${precipitationSummary.amount.toFixed(1)} ${precipitationSummary.unit}`}</strong>{precipitationSummary?.volume != null && <small>{Math.round(precipitationSummary.volume).toLocaleString()} m³ over area</small>}</div>}
           <div className="weather-legend"><span><i className="station" />Station</span><span><i className="area" />Area</span></div>
         </div>
