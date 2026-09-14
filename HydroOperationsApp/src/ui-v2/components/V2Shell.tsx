@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react'
 import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V2_TABS, resolveV2Tab, type V2Tab } from '../navigation'
 import { TabViewActions } from '../../ui-shared/components/TabViewActions'
+import { HeaderMeta } from '../../ui-shared/components/HeaderMeta'
 import { ExplorerModeProvider } from '../../ui-shared/hooks/ExplorerModeProvider'
 import { HydroOperationsDataProvider, useHydroOperationsData } from '../../ui-shared/hooks/useHydroOperationsData'
-
-const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-const UI_CREDIT_LINE_1 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string | undefined)?.trim()
-const UI_CREDIT_LINE_2 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_2 as string | undefined)?.trim()
 
 function tabFromLocation(): V2Tab {
   return resolveV2Tab(new URLSearchParams(window.location.search).get('tab'))
@@ -59,11 +56,7 @@ function V2ShellContent() {
         </div>
       </div>
       <div className="v2-top-actions">
-        {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2) && <div className="v2-credits" aria-label="Application credits">
-          {UI_CREDIT_LINE_1 && <span>{UI_CREDIT_LINE_1}</span>}
-          {UI_CREDIT_LINE_2 && <span>{UI_CREDIT_LINE_2}</span>}
-        </div>}
-        <span className="v2-app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small></span>
+        <HeaderMeta />
       </div>
     </header>
 

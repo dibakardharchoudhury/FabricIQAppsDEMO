@@ -117,11 +117,11 @@ export const KUSTO_SOURCES = [
   },
   {
     name: 'AssetMaster',
-    description: 'Function AssetMaster(). Instruments joined to equipment and facilities: station, turbine, sensor_group, unit, opcua_node_id.',
+    description: 'Function AssetMaster(). Instruments joined to equipment and facilities. Case-sensitive columns: opcua_node_id, Station, Turbine, Signal, SignalGroup, Unit.',
   },
   {
     name: 'TelemetryEnriched',
-    description: 'Function TelemetryEnriched(start:datetime, end:datetime, stations:dynamic, turbines:dynamic). Telemetry pre-joined to asset master. Pass dynamic(null) for stations/turbines to include all.',
+    description: 'Function TelemetryEnriched(start:datetime, end:datetime, stations:dynamic, turbines:dynamic). Telemetry pre-joined to asset master. Case-sensitive columns: event_time, Station, Turbine, Signal, SignalGroup, Unit, value, quality. Pass dynamic(null) for stations/turbines to include all.',
   },
 ] as const
 

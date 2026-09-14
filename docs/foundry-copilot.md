@@ -17,10 +17,11 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 | `src/services/copilot/query.ts` | Pure KQL builder, `run_kql` validator, structured row filter |
 | `src/services/copilot/tools.ts` | Tool schemas + executors, per-turn caches |
 | `src/services/copilot/chatStream.ts` | SSE reader + tool-call delta accumulator |
+| `src/services/copilot/responsesProtocol.ts` | Responses API request conversion and bounded completed-turn history |
 | `src/services/copilot/suggestions.ts` | Parses the follow-up options a reply offers |
 | `src/services/copilot/foundry.ts` | The agent loop, system prompt, conversation history |
 | `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid` |
-| `scripts/copilot-tools.test.mjs` | Unit tests for the validator, filter and accumulator |
+| `scripts/copilot-tools.test.mjs` | Unit tests for validation, tools, Responses streaming/context and suggestions |
 
 ---
 
@@ -130,8 +131,8 @@ sequenceDiagram
   U->>A: question
   A->>A: build [system + history + question]
   loop max 6 iterations
-    A->>M: POST chat/completions (stream, tools)
-    M-->>A: SSE deltas: content and/or tool_calls
+    A->>M: POST configured model endpoint (Responses API + tools)
+    M-->>A: SSE text deltas and/or function_call items
     A-->>U: stream partial text
     alt model requested tools
       A->>T: runTool(name, args)
@@ -148,13 +149,17 @@ sequenceDiagram
 
 Notes on the implementation:
 
-- **Streaming.** Tool-call fragments arrive split across chunks and keyed by `index`, so they are
-  merged positionally, not appended. Azure's first SSE event carries `"choices": []`
-  (content-filter results only) and the next sends `delta.content: ""` — both are tolerated.
+- **Dynamic endpoint.** Administration stores the complete Responses API URL. The client posts to
+  that exact value and sends the configured deployment as `model`; it does not construct a route.
+- **Streaming.** Responses API SSE text deltas are rendered progressively. Function-call argument
+  fragments are accumulated by output index, and final items replace fragments before execution.
 - **Tool failures are not fatal.** The error message is returned to the model as the tool result so
   it can correct itself; the step is still recorded in the trace with its error.
-- **History** keeps only completed user/assistant text turns (last 8 messages). Tool traffic is
-  dropped so a long session cannot grow the context unbounded.
+- **History** keeps only completed user/assistant text turns (last 8 message objects, normally four
+  user/assistant exchanges). Tool traffic is
+  dropped between completed turns so a long session cannot grow the context unbounded. During an
+  active turn, every function call and function output remains in the Responses input until the
+  model produces the final answer. History is cleared only by the explicit conversation reset.
 - **No `temperature`** is sent — the gpt-5 family rejects any value but the default.
 
 Each answer carries a trace the UI renders as one collapsible row per tool call: the tool name, a
@@ -177,7 +182,7 @@ it in the composer and one to send it immediately (max 5, capped to two rows).
 
 The model is asked to declare them on a trailing line:
 
-```
+```html
 <!--options: ["Show open work orders", "Chart power output for T009"]-->
 ```
 
@@ -199,7 +204,7 @@ transcript.
 
 | Setting | Effect |
 | --- | --- |
-| Endpoint / deployment / API version | Which Foundry model is called. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
+| Endpoint / deployment | Which Foundry model is called. The endpoint is the complete `/openai/v1/responses` URL, so there is no separate API-version setting. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
 | System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
 | Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |
@@ -217,8 +222,10 @@ transcript.
 
 ### Readable data
 
-Defined once in `catalog.ts`, narrowed by Administration, and rendered into the system prompt — so
-the model's schema and the enforced allow-list cannot drift apart.
+Defined once in `catalog.ts`, narrowed by Administration, and rendered into the system prompt.
+Structured tools derive their entity choices from this catalog, while `run_kql` separately enforces
+the enabled Kusto source allow-list. Kusto itself remains the authority for function columns and
+query semantics.
 
 | Entity | Source | Reached via |
 | --- | --- | --- |
@@ -229,6 +236,11 @@ the model's schema and the enforced allow-list cannot drift apart.
 | `asset_models` | App SQL database | `RayfinClient` — 3D model files per equipment |
 | `OPCUAEvents` | Eventhouse | Kusto REST |
 | `AssetMaster()`, `TelemetryEnriched(...)` | Eventhouse | Kusto REST — telemetry pre-joined to asset master via OneLake shortcuts |
+
+Kusto identifiers are case-sensitive. `AssetMaster()` returns `opcua_node_id`, `Station`, `Turbine`,
+`Signal`, `SignalGroup`, and `Unit`. `TelemetryEnriched(...)` returns `event_time`, those five
+capitalized asset columns, `value`, and `quality`. These names mirror the functions provisioned by
+`RTI_008_build_realtime_dashboard`; lowercase `station`, `turbine`, or `unit` will not resolve.
 
 ### The tools
 
@@ -257,6 +269,11 @@ The single place model-written query text is accepted. It must start with a cata
 A surviving query gets `| take 500` appended unless it already ends with a `take`, and the Kusto
 request additionally sets `truncationmaxrecords` and a 60-second `servertimeout`.
 
+The validator is a read-only and source-boundary guard, not a full KQL compiler. Unknown columns,
+incorrect identifier casing, invalid function signatures, and other semantic errors are rejected
+by Eventhouse. That error is returned to the model as a failed tool result so it can correct the
+query or fall back to a structured tool.
+
 ### Result shaping
 
 Every row set is projected to the columns declared in the catalog *before* the model sees it, then
@@ -278,6 +295,7 @@ model call it autonomously.
 
 | Symptom | Cause |
 | --- | --- |
+| Project URL ending in `/api/projects/...` | Project SDK/management endpoint, not model inference. Use the same origin with `/openai/v1/responses`. |
 | `400 unsupported_value` on `temperature` | gpt-5 family allows only the default; don't send the parameter |
 | `401`/`403` from Foundry | Missing `Cognitive Services OpenAI User`, or the resource is in another tenant |
 | "Need admin approval" | A `.default` scope was requested instead of a named one |

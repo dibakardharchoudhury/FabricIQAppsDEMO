@@ -65,6 +65,63 @@ class WorkspaceActionTests(unittest.TestCase):
         finally:
             response.close()
 
+    def test_deploy_app_forwards_optional_spa_client_id(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post(
+                "/api/deploy-app",
+                json={
+                    "tenant": "tenant.example",
+                    "workspace": "Demo Workspace",
+                    "clientId": client_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[-2:], ["--client-id", client_id])
+
+    def test_deploy_app_omits_client_id_for_automatic_resolution(self):
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post(
+                "/api/deploy-app",
+                json={"tenant": "tenant.example", "workspace": "Demo Workspace"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertNotIn("--client-id", start.call_args.args[0])
+
+    def test_cancel_all_jobs_terminates_only_running_jobs(self):
+        running = SERVER.Job(["Queued", "Done"])
+        finished = SERVER.Job(["Queued", "Done"])
+        running.process = object()
+        finished.status = "succeeded"
+        SERVER.JOBS.update({running.id: running, finished.id: finished})
+        try:
+            with patch.object(SERVER, "_terminate_owned_process") as terminate:
+                response = self.client.post("/api/jobs/cancel-all", json={})
+
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertEqual(response.get_json()["cancelled"], 1)
+            self.assertTrue(running.cancel_requested)
+            self.assertFalse(finished.cancel_requested)
+            terminate.assert_called_once_with(running.process)
+        finally:
+            SERVER.JOBS.clear()
+
+    def test_cancel_all_jobs_handles_job_before_process_start(self):
+        running = SERVER.Job(["Queued", "Done"])
+        SERVER.JOBS[running.id] = running
+        try:
+            with patch.object(SERVER, "_terminate_owned_process") as terminate:
+                response = self.client.post("/api/jobs/cancel-all", json={})
+
+            self.assertEqual(response.get_json()["cancelled"], 1)
+            self.assertTrue(running.cancel_requested)
+            terminate.assert_not_called()
+        finally:
+            SERVER.JOBS.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

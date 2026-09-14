@@ -61,12 +61,11 @@ export function CopilotSettingsPanel() {
       Set the endpoint and deployment below to enable the Foundry engine. The signed-in user also needs the
       <code>Cognitive Services OpenAI User</code> role on that resource.
     </p> : null}
-
     <div className="copilot-settings-group">
       <h4>Model endpoint
-        <button type="button" className="copilot-settings-inline" disabled={draft.endpoint === defaults.endpoint && draft.deployment === defaults.deployment && draft.apiVersion === defaults.apiVersion} onClick={() => setDraft(current => ({ ...current, ...FOUNDRY_ENV_DEFAULTS }))}>Restore from rayfin/.env</button>
+        <button type="button" className="copilot-settings-inline" disabled={draft.endpoint === defaults.endpoint && draft.deployment === defaults.deployment} onClick={() => setDraft(current => ({ ...current, ...FOUNDRY_ENV_DEFAULTS }))}>Restore from rayfin/.env</button>
       </h4>
-      <p>Applied to the next question — repointing at another deployment needs no rebuild.</p>
+      <p>Use the model inference URL ending in <code>/openai/v1/responses</code>, not the Foundry project URL.</p>
       <div className="copilot-settings-fields">
         <label>
           <span>Endpoint</span>
@@ -74,7 +73,7 @@ export function CopilotSettingsPanel() {
             type="url"
             value={draft.endpoint}
             spellCheck={false}
-            placeholder="https://<resource>.cognitiveservices.azure.com"
+            placeholder="https://<resource>.services.ai.azure.com/openai/v1/responses"
             onChange={event => setDraft(current => ({ ...current, endpoint: event.target.value }))}
           />
         </label>
@@ -85,15 +84,6 @@ export function CopilotSettingsPanel() {
             spellCheck={false}
             placeholder="gpt-5-mini"
             onChange={event => setDraft(current => ({ ...current, deployment: event.target.value }))}
-          />
-        </label>
-        <label>
-          <span>API version</span>
-          <input
-            value={draft.apiVersion}
-            spellCheck={false}
-            placeholder="2024-10-21"
-            onChange={event => setDraft(current => ({ ...current, apiVersion: event.target.value }))}
           />
         </label>
       </div>

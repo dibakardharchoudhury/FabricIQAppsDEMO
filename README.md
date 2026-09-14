@@ -51,6 +51,10 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 > Changing, adding or embedding a Real‑Time Dashboard? See [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
 > `RTI_008` and its `.ipynb` mirror are **generated** — edit `Raw/RTI_Notebooks/tools/build_rti_008.py`
 > or the definition JSON, then re‑run the generator.
+>
+> Building or extending the application Knowledge Graph? See
+> [`docs/knowledge-graph.md`](docs/knowledge-graph.md) for its Ontology relationship, source
+> federation, operational scenarios, health semantics, and RDF/OWL path.
 
 ## Prerequisites (one‑time)
 
@@ -90,9 +94,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > single-tenant SPA app registration **`Hydro Operations Fabric Client`** (no secret), distinct
 > from this notebook SPN. The local deployer attempts to create and configure it, but ordinary
 > users in locked-down tenants commonly cannot create app registrations, add SPA redirect URIs
-> or delegated permissions, or grant tenant-wide admin consent. This does **not** fail AppBackend
-> or static-host deployment; it produces degraded-auth warnings, and browser sign-in/live Fabric
-> data remain unavailable until configured. An **Application Administrator /
+> or delegated permissions, or grant tenant-wide admin consent. The name is a configurable
+> discovery convention (`HYDRO_SPA_DISPLAY_NAME`); the tenant-specific client ID is dynamic.
+> If no usable SPA can be resolved, deployment stops before changing Rayfin state. An **Application Administrator /
 > Cloud Application Administrator** must create/configure the app and grant admin consent
 > (Global Administrator is not required). Consent itself is optional where the tenant allows user
 > consent, because every scope the app requests is user-consentable. Use the copy-pasteable handoff
@@ -151,4 +155,8 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 ## Companion app
 
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
-GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Deploy steps: [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).
+GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
+Knowledge Graph provides selected-asset, facility, and all-entity views over that federated context;
+the current graph is Ontology-aligned, with the live Ontology definition planned as the authoritative
+runtime semantic contract. See [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
+[`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).

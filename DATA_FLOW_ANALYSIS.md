@@ -4,7 +4,7 @@
 
 This document describes the implemented data flows in the Fabric IQ hydropower demo, from synthetic source data through Microsoft Fabric artifacts to the React application. It covers setup, runtime reads, user-triggered writes, agent interactions, identity boundaries, and failure behavior.
 
-The central design choice is that the application composes three independent stores in the browser. Lakehouse master data, Eventhouse telemetry, and Rayfin SQL operational records are not merged into a single server-side model.
+The central design choice is that the application composes three independent stores in the browser. Lakehouse master data, Eventhouse telemetry, and Rayfin SQL operational records are not merged into a single server-side model. The Knowledge Graph is a scoped visualization of that composition. It is currently Ontology-aligned rather than a direct Fabric Ontology instance query; the detailed contract and migration path are documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
 
 ## Architecture Summary
 
@@ -51,6 +51,11 @@ flowchart LR
     SQL <-->|Rayfin CRUD| APP
     AGENT -->|MCP streaming| APP
 ```
+
+The Fabric IQ Ontology remains the governed semantic asset. The SPA currently reaches Lakehouse
+instances through the RTI_011 GraphQL item and Eventhouse observations through KQL, then
+`buildKnowledgeGraph()` materializes an application property graph from stable identifiers. Fabric
+Ontology `getDefinition` is a definition and binding surface, not a bulk instance-graph response.
 
 ## Source Data
 
@@ -199,6 +204,29 @@ The browser joins records through maps and filters rather than a server-side fed
 
 This design keeps ownership clear and avoids duplicating master or telemetry records in SQL. Its tradeoff is that partial connectivity produces a partial UI: operational records may load without STID labels, or cached STID may remain visible while current telemetry is unavailable.
 
+### Knowledge Graph composition
+
+The Knowledge Graph adds a presentation projection over the same browser state:
+
+| Graph element | Current source |
+|---|---|
+| Facility, equipment, instrument nodes | Lakehouse records returned by GraphQL |
+| System nodes | Inferred from governed `facility_id` and `system_id` keys |
+| Latest reading and instrument health | Eventhouse latest reading joined by `opcua_node_id` |
+| Work order, inspection, notification, and model nodes | Rayfin SQL records joined by operational identifiers |
+| Relationship edges | Client-side materialization matching the Ontology relationship path and operational overlay rules |
+
+Selected-asset scope is the default to prevent an unreadable all-entity canvas. Facility and All
+scopes support broader impact analysis and semantic-model inspection. The asset tree and canvas
+write through the shared facility/turbine selection, so navigation remains consistent across
+Overview, Telemetry, Digital Twin, Knowledge Graph, and Maintenance.
+
+The next architecture iteration will read the live Ontology definition and use its entity types,
+relationship types, bindings, and contextualizations as the runtime contract. Bound instances will
+continue to use supported GraphQL/KQL transports, while Rayfin SQL remains an explicit operational
+overlay. See [docs/knowledge-graph.md](docs/knowledge-graph.md) for scenarios, health semantics,
+provenance, RDF/OWL export, and validation.
+
 ## Data Agent and Alert Flows
 
 ### Data Agent request flow
@@ -300,6 +328,9 @@ Use these checks to validate each boundary independently:
 10. Ask the Data Agent one ontology question and one work-order question to verify both sources survived republishing.
 11. Trigger a test alert and verify the Outlook connection and destination independently of agent creation.
 12. Build and statically validate the app from `HydroOperationsApp` with `npm run typecheck`, `npm run lint`, and `npm run build` using the repository's Node 24 wrapper guidance.
+13. Validate Knowledge Graph Selected, Facility, and All scopes; shared turbine selection; search;
+    provenance; critical/warning/no-data rendering; and cross-navigation to Telemetry, Digital Twin,
+    and Maintenance.
 
 ## Key Implementation Files
 
@@ -309,6 +340,8 @@ Use these checks to validate each boundary independently:
 - [HydroOperationsApp/src/services/rayfin.ts](HydroOperationsApp/src/services/rayfin.ts): operational SQL reads, writes, authentication, and fallback seed.
 - [HydroOperationsApp/src/ui-shared/hooks/useHydroOperationsData.ts](HydroOperationsApp/src/ui-shared/hooks/useHydroOperationsData.ts): refresh policy, browser joins, readiness state, and UI mutations.
 - [HydroOperationsApp/src/twin.ts](HydroOperationsApp/src/twin.ts): signal health and freshness classification.
+- [docs/knowledge-graph.md](docs/knowledge-graph.md): Knowledge Graph implementation, use cases,
+  Ontology contract, health semantics, screenshots, and RDF/OWL path.
 - [Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json](Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json): setup pipeline dependencies and parameters.
 - [Orchestrator_Pipelines/02_Pipe_Stream.DataPipeline/pipeline-content.json](Orchestrator_Pipelines/02_Pipe_Stream.DataPipeline/pipeline-content.json): on-demand telemetry generator.
 - [Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py](Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py): stage-two notebook execution order.

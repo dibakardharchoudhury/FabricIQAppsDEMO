@@ -7,13 +7,13 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
 > Moving to a different tenant, workspace, or capacity region? See
 > [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
-> (reset `.deployments.json`, re-register the SPA, `rayfin up --workspace-id <guid> --yes`, and the
-> Fabric App Items preview feature/region gating).
+> (the repository orchestrator backs up target-specific state, resolves the tenant SPA, provisions
+> the selected workspace, and checks Fabric App Items preview feature/region gating).
 >
-> **Entra prerequisite:** runtime sign-in uses the single-tenant SPA
-> **`Hydro Operations Fabric Client`**. When the operator cannot create/configure app registrations
-> or grant admin consent, AppBackend/static-host deployment still succeeds with degraded-auth
-> warnings; browser sign-in and live Fabric data remain unavailable. Use the role split and portal fallback in
+> **Entra prerequisite:** runtime sign-in uses a single-tenant SPA. **`Hydro Operations Fabric
+> Client`** is the deployer's configurable default discovery name, not an Entra requirement; the
+> tenant-specific client ID is resolved dynamically. When the operator cannot create or identify
+> the SPA, deployment stops before changing Rayfin state. Use the role split and portal fallback in
 > [DEPLOY.md → No admin rights?](DEPLOY.md#no-admin-rights-hand-this-to-your-entra-admin): an
 > Application Administrator / Cloud Application Administrator configures the SPA and grants
 > tenant-wide consent. That consent is optional where the tenant allows user consent, since every
@@ -29,6 +29,14 @@ The stores are **never merged server‑side** — the app queries each independe
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo
 data is synthetic but each record lives where it would in production (no reference or telemetry rows
 are copied into Rayfin SQL).
+
+The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
+to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
+Twin, and Maintenance. The current implementation is Ontology-aligned: it reads the Ontology's bound
+Lakehouse and Eventhouse sources through GraphQL/KQL, then constructs relationships from governed
+keys. It does not claim that GraphQL is an Ontology instance API. See the canonical
+[`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
+scenarios, screenshots, limitations, and the Ontology-authoritative migration path.
 
 ## Architecture
 
@@ -110,3 +118,8 @@ HydroOperationsApp/
         ├── rayfin.ts               # Rayfin data client + list/create/update/delete + self‑seeder
         └── seedData.ts             # Typed operational seed arrays
 ```
+
+  Shared V1/V2 pages, including Knowledge Graph, Telemetry, Digital Twin, and Maintenance, live under
+  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` builds the current application graph and
+  `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
+  entity inspector.

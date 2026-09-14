@@ -31,7 +31,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 FABRIC_BASE = "https://api.fabric.microsoft.com/v1"
-APP_DISPLAY_NAME = "Hydro Operations Fabric Client"
+DEFAULT_APP_DISPLAY_NAME = "Hydro Operations Fabric Client"
+APP_DISPLAY_NAME = os.environ.get("HYDRO_SPA_DISPLAY_NAME", "").strip() or DEFAULT_APP_DISPLAY_NAME
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -45,24 +46,28 @@ REQUIRED_DELEGATED = {
         "Workspace.Read.All",
         "Item.Read.All",
         "Item.Execute.All",
+        "Fabric.Embed",
     },
+    "7d312290-28c8-473c-a0ed-8e53749b6d6d": {"user_impersonation"},
 }
 RESOURCE_NAMES = {
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
+    "7d312290-28c8-473c-a0ed-8e53749b6d6d": "Microsoft Cognitive Services",
 }
 STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"
-    r"AADSTS50076|AADSTS50079|AADSTS50173",
+    r"AADSTS50076|AADSTS50079|AADSTS50173|does not exist in MSAL token cache|"
+    r"Please run ['\"]?az login|Run ['\"]?az login",
     re.IGNORECASE,
 )
-AZURE_CLI_TOKEN_CACHE_FILES = ("msal_token_cache.bin", "msal_http_cache.bin")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
+AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
 
 
 class DeployError(RuntimeError):
@@ -319,7 +324,16 @@ def ensure_deploy_dependencies() -> None:
     stop_hydro_node_tooling()
     print("Restoring locked Hydro Operations npm dependencies (including Rayfin)...", flush=True)
     try:
-        run_stream(npm24("ci", "--no-audit", "--no-fund"), cwd=APP_DIR)
+        command = npm24("ci", "--no-audit", "--no-fund")
+        try:
+            run_stream(command, cwd=APP_DIR)
+        except DeployError:
+            print(
+                "The first npm restore failed; stopping app tooling again and retrying once...",
+                flush=True,
+            )
+            stop_hydro_node_tooling()
+            run_stream(command, cwd=APP_DIR)
         version = installed_rayfin_version()
         DEPENDENCY_STAMP.write_text(
             hashlib.sha256((APP_DIR / "package-lock.json").read_bytes()).hexdigest(),
@@ -346,19 +360,63 @@ def ensure_azure_tenant(tenant: str) -> None:
     print(f"Azure identity: {user} (tenant {active})", flush=True)
 
 
-def fabric_headers() -> dict[str, str]:
-    token = run_capture(
+def isolated_azure_cli_config(tenant: str) -> Path:
+    """Return the stable per-tenant cache used after a CAE reauthentication."""
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
+    return AZURE_CLI_SESSION_ROOT / safe_tenant
+
+
+def activate_cached_azure_cli_session(tenant: str) -> bool:
+    """Reuse a previous isolated login without changing the user's default CLI cache."""
+    config_dir = isolated_azure_cli_config(tenant)
+    if not (config_dir / "azureProfile.json").is_file():
+        return False
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    print(f"Reusing isolated Azure CLI session for tenant {tenant}.", flush=True)
+    return True
+
+
+def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
+    print(
+        f"Azure CLI authentication needs to be refreshed before {operation}. "
+        f"Opening Microsoft sign-in for tenant {tenant}...",
+        flush=True,
+    )
+    config_dir = isolated_azure_cli_config(tenant)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    run_stream(
         az(
-            "account",
-            "get-access-token",
-            "--resource",
-            "https://api.fabric.microsoft.com",
-            "--query",
-            "accessToken",
-            "-o",
-            "tsv",
+            "login",
+            "--tenant",
+            tenant,
+            "--allow-no-subscriptions",
+            "--only-show-errors",
+            "--output",
+            "none",
         )
     )
+    ensure_azure_tenant(tenant)
+
+
+def fabric_headers(tenant: str) -> dict[str, str]:
+    command = az(
+        "account",
+        "get-access-token",
+        "--resource",
+        "https://api.fabric.microsoft.com",
+        "--query",
+        "accessToken",
+        "-o",
+        "tsv",
+    )
+    try:
+        token = run_capture(command)
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+        reauthenticate_azure_cli(tenant, "accessing the Fabric workspace")
+        token = run_capture(command)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -369,8 +427,8 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
-def resolve_workspace(workspace: str) -> tuple[str, str]:
-    headers = fabric_headers()
+def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
+    headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
         item = fabric_get(f"workspaces/{workspace}", headers)
         return workspace, str(item.get("displayName") or workspace)
@@ -448,23 +506,35 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         return client_id
 
     fallback = existing_spa_candidate(tenant)
+    discovery_command = az(
+        "ad",
+        "app",
+        "list",
+        "--display-name",
+        APP_DISPLAY_NAME,
+        "--query",
+        "[].appId",
+        "-o",
+        "json",
+    )
     try:
-        apps = json.loads(
-            run_capture(
-                az(
-                    "ad",
-                    "app",
-                    "list",
-                    "--display-name",
-                    APP_DISPLAY_NAME,
-                    "--query",
-                    "[].appId",
-                    "-o",
-                    "json",
-                )
+        discovery_output = run_capture(discovery_command)
+    except DeployError as exc:
+        if STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            reauthenticate_azure_cli(tenant, "discovering the tenant SPA app registration")
+            discovery_output = run_capture(discovery_command)
+        elif fallback:
+            warn_live_auth(
+                f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
+                f"from the existing Rayfin environment: {fallback}."
             )
-        )
-    except (DeployError, json.JSONDecodeError) as exc:
+            return fallback
+        else:
+            warn_live_auth(f"Tenant SPA discovery failed and no existing client ID is available ({exc}).")
+            return None
+    try:
+        apps = json.loads(discovery_output)
+    except json.JSONDecodeError as exc:
         if fallback:
             warn_live_auth(
                 f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
@@ -548,13 +618,13 @@ def current_rayfin_target() -> tuple[dict[str, str], dict[str, Any] | None]:
         return values, None
 
 
-def fabric_item_exists(workspace_id: str, item_id: str) -> bool:
+def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     """Return false for deleted saved items; fail for other Fabric API errors."""
     if not GUID_RE.fullmatch(item_id):
         return False
     response = requests.get(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{item_id}",
-        headers=fabric_headers(),
+        headers=fabric_headers(tenant),
         timeout=60,
     )
     if response.status_code == 200:
@@ -584,19 +654,19 @@ def prepare_rayfin_env(
     )
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
-        if fabric_item_exists(workspace_id, item_id):
+        if fabric_item_exists(workspace_id, item_id, tenant):
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup_dir = Path(tempfile.gettempdir()) / "fabric-demo-rayfin-backups" / timestamp
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_root = Path(tempfile.gettempdir()) / "fabric-demo-rayfin-backups"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ-")
+    backup_dir = Path(tempfile.mkdtemp(prefix=timestamp, dir=backup_root))
     for name in (".env", ".env.local", ".deployments.json"):
         source = RAYFIN_DIR / name
         if source.exists():
-            shutil.copy2(source, backup_dir / name)
-            source.unlink()
+            shutil.move(source, backup_dir / name)
     print(f"Previous Rayfin state backed up to {backup_dir}", flush=True)
 
     template = (RAYFIN_DIR / ".env.example").read_text(encoding="utf-8")
@@ -615,13 +685,13 @@ def prepare_rayfin_env(
     return False
 
 
-def validate_fabric_app(workspace_id: str) -> str:
+def validate_fabric_app(workspace_id: str, tenant: str) -> str:
     """Fail unless the expected Fabric AppBackend exists in the target workspace."""
     _, deployment = current_rayfin_target()
     item_id = str((deployment or {}).get("fabricItemId") or "")
     if not GUID_RE.fullmatch(item_id):
         raise DeployError("Rayfin deployment state does not contain a valid Fabric AppBackend item id.")
-    item = fabric_get(f"workspaces/{workspace_id}/items/{item_id}", fabric_headers())
+    item = fabric_get(f"workspaces/{workspace_id}/items/{item_id}", fabric_headers(tenant))
     if item.get("type") != "AppBackend" or str(item.get("workspaceId")) != workspace_id:
         raise DeployError(
             f"Fabric item validation failed for {item_id}: expected AppBackend in workspace {workspace_id}."
@@ -671,7 +741,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
         raise DeployError(
             "Delegated API permission configuration is incomplete:\n"
             + "\n".join(permission_issues)
-            + "\nFix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            + f"\nFix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Add a permission."
         )
     print("Entra API permission check passed: all required delegated scopes are configured.", flush=True)
@@ -747,7 +817,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             + "\n".join(consent_issues)
             + "\nThe API permissions list declares requested scopes; it is not proof of consent. "
             "In its Status column, each API must show 'Granted for <tenant>'.\n"
-            "Fix: Entra admin center > App registrations > Hydro Operations Fabric Client > "
+            f"Fix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Grant admin consent for <tenant>. A disabled button means the "
             "signed-in administrator lacks a consent-granting directory role. Alternatively, if "
             "tenant policy allows user consent, sign in to the deployed app as the intended user "
@@ -781,30 +851,50 @@ def ensure_rayfin_login(tenant: str) -> None:
         raise DeployError("Rayfin sign-in completed, but its tenant does not match the requested tenant.")
 
 
-def validate_git_push_ready() -> None:
-    """Ensure automatic config persistence cannot absorb unrelated local work."""
+def current_git_push_target() -> tuple[str, str]:
+    """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
-    if branch != "main":
-        raise DeployError("Automatic config persistence requires the repository to be on main.")
-    if run_capture(command_argv("git", "status", "--porcelain"), cwd=REPO_ROOT):
+    if not branch or branch == "main":
+        raise DeployError("Automatic config persistence refuses to commit or push the main branch.")
+    upstream = run_capture(
+        command_argv(
+            "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}",
+        ),
+        cwd=REPO_ROOT,
+    )
+    if upstream != f"origin/{branch}":
         raise DeployError(
-            "Automatic config persistence requires a clean Git working tree. "
-            "Commit/stash local changes or clear 'Commit generated hosting origin'."
+            f"Current branch '{branch}' must track 'origin/{branch}' before deployment; "
+            f"found '{upstream or '(none)'}'."
+        )
+    return branch, upstream
+
+
+def validate_git_push_ready() -> None:
+    """Ensure automatic config persistence cannot absorb unrelated tracked work."""
+    branch, upstream = current_git_push_target()
+    if run_capture(
+        command_argv("git", "status", "--porcelain", "--untracked-files=no"), cwd=REPO_ROOT,
+    ):
+        raise DeployError(
+            "Automatic config persistence requires a clean tracked working tree. "
+            "Commit tracked changes or clear 'Commit generated hosting origin'."
         )
     run_stream(command_argv("git", "fetch", "origin"), cwd=REPO_ROOT)
     counts = run_capture(
-        command_argv("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"),
+        command_argv("git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"),
         cwd=REPO_ROOT,
     ).split()
     if len(counts) != 2:
-        raise DeployError("Could not determine main/origin-main divergence.")
+        raise DeployError(f"Could not determine divergence from {upstream}.")
     if counts[0] != "0":
-        raise DeployError("Local main has unpushed commits. Push or reconcile them before deploying.")
+        raise DeployError(f"Local {branch} has unpushed commits. Push or reconcile them before deploying.")
     if counts[1] != "0":
-        run_stream(command_argv("git", "merge", "--ff-only", "origin/main"), cwd=REPO_ROOT)
+        run_stream(command_argv("git", "merge", "--ff-only", upstream), cwd=REPO_ROOT)
 
 
 def persist_generated_origin(workspace_name: str) -> None:
+    branch, upstream = current_git_push_target()
     config = APP_DIR / "rayfin" / "rayfin.yml"
     relative = config.relative_to(REPO_ROOT).as_posix()
     if not run_capture(command_argv("git", "diff", "--", relative), cwd=REPO_ROOT):
@@ -812,17 +902,17 @@ def persist_generated_origin(workspace_name: str) -> None:
         return
     run_stream(command_argv("git", "fetch", "origin"), cwd=REPO_ROOT)
     counts = run_capture(
-        command_argv("git", "rev-list", "--left-right", "--count", "HEAD...origin/main"),
+        command_argv("git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"),
         cwd=REPO_ROOT,
     ).split()
     if len(counts) != 2 or counts[1] != "0":
-        raise DeployError("origin/main changed during deployment. Merge the Fabric commit-back, then rerun deploy.")
+        raise DeployError(f"{upstream} changed during deployment. Merge it, then rerun deploy.")
     run_stream(command_argv("git", "add", relative), cwd=REPO_ROOT)
     run_stream(
         command_argv("git", "commit", "-m", f"deploy: register {workspace_name} app origin"),
         cwd=REPO_ROOT,
     )
-    run_stream(command_argv("git", "push", "origin", "main"), cwd=REPO_ROOT)
+    run_stream(command_argv("git", "push", "origin", branch), cwd=REPO_ROOT)
 
 
 def _unique_redirect_uris(*groups: list[str]) -> list[str]:
@@ -857,16 +947,7 @@ def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[st
         if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             raise
 
-    print(
-        "Azure CLI token was rejected by Conditional Access because it predates a tenant "
-        "policy change. Re-authenticating before reading the existing SPA redirects...",
-        flush=True,
-    )
-    azure_dir = Path.home() / ".azure"
-    for filename in AZURE_CLI_TOKEN_CACHE_FILES:
-        (azure_dir / filename).unlink(missing_ok=True)
-    run_stream(az("login", "--tenant", tenant, "--only-show-errors"))
-    ensure_azure_tenant(tenant)
+    reauthenticate_azure_cli(tenant, "reading the existing SPA redirects")
     return read_entra_spa_redirects(client_id)
 
 
@@ -927,34 +1008,40 @@ def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> N
 
 
 def deploy(args: argparse.Namespace) -> None:
+    activate_cached_azure_cli_session(args.tenant)
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name = resolve_workspace(args.workspace)
+    workspace_id, workspace_name = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
     client_id = resolve_spa(args.client_id, args.tenant)
+    if not client_id:
+        raise DeployError(
+            "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
+            "changing Rayfin state so the app cannot be published with broken browser sign-in. "
+            f"Ask an Entra administrator to create or identify '{APP_DISPLAY_NAME}', "
+            "then retry with --client-id <guid>."
+        )
 
     # Capture both configuration sources BEFORE any Rayfin command can modify Entra.
     # A shared SPA may already serve several Fabric webapps, so losing even one existing
     # redirect URI is a deployment failure.
-    original_entra_redirects: list[str] = []
-    if client_id:
-        try:
-            original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
-        except (DeployError, json.JSONDecodeError) as exc:
-            raise DeployError(
-                f"Could not snapshot existing SPA redirect URIs for {client_id}. "
-                "Refusing to deploy because redirect preservation cannot be guaranteed. "
-                f"Underlying error: {exc}"
-            ) from exc
-        print(
-            f"Captured {len(original_entra_redirects)} existing Entra SPA redirect URI(s) "
-            "for preservation.",
-            flush=True,
-        )
+    try:
+        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
+    except (DeployError, json.JSONDecodeError) as exc:
+        raise DeployError(
+            f"Could not snapshot existing SPA redirect URIs for {client_id}. "
+            "Refusing to deploy because redirect preservation cannot be guaranteed. "
+            f"Underlying error: {exc}"
+        ) from exc
+    print(
+        f"Captured {len(original_entra_redirects)} existing Entra SPA redirect URI(s) "
+        "for preservation.",
+        flush=True,
+    )
 
     # Entra is authoritative for existing redirects. Do not resurrect historical hosts
     # that remain only in rayfin.yml; seed Rayfin with the live snapshot plus localhost.
@@ -1025,7 +1112,7 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    validate_fabric_app(workspace_id)
+    validate_fabric_app(workspace_id, args.tenant)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed before deployment (or was configured in rayfin.yml) disappeared.
@@ -1044,7 +1131,8 @@ def deploy(args: argparse.Namespace) -> None:
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:
-        print("Persisting Rayfin redirect configuration to origin/main...", flush=True)
+        branch, _ = current_git_push_target()
+        print(f"Persisting Rayfin redirect configuration to origin/{branch}...", flush=True)
         persist_generated_origin(workspace_name)
     print(f"SUCCESS: Hydro Operations is live at {hosting_url}", flush=True)
 
@@ -1057,7 +1145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--push-config",
         action="store_true",
-        help="Commit and push Rayfin's generated hosting origin to origin/main.",
+        help="Commit and push Rayfin's generated hosting origin to the current tracked feature branch.",
     )
     args = parser.parse_args()
     args.tenant = args.tenant.strip()

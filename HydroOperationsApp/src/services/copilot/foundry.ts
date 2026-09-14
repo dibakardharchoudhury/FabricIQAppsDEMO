@@ -2,7 +2,8 @@ import type { AgentAnswer, AgentVisualization } from '../assistantStream.ts'
 import { foundryToken } from '../fabric.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
-import { readChatStream } from './chatStream.ts'
+import { readResponsesStream } from './chatStream.ts'
+import { appendCompletedTurn, buildResponsesRequest, type ChatMessage } from './responsesProtocol.ts'
 import { loadCopilotSettings, renderSystemPrompt, type CopilotSettings } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 
@@ -31,11 +32,6 @@ export function isFoundryConfigured() {
   return Boolean(settings.endpoint && settings.deployment)
 }
 
-type ChatMessage =
-  | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
-  | { role: 'tool'; tool_call_id: string; content: string }
-
 // Only completed user/assistant text turns are replayed; tool traffic is dropped so a long
 // session cannot push the context window over the limit.
 let history: ChatMessage[] = []
@@ -53,38 +49,51 @@ function summarize(outcome: { rowCount?: number }): string {
 // deployment-side flag the client cannot set. Detected so the caller can retry without tools.
 class FoundryToolsUnsupportedError extends Error {}
 
-// The Foundry portal's "endpoint" copy box sometimes shows a full API URL (e.g. ending in
-// `/openai/v1/responses` or `/openai/v1/chat/completions`) rather than the bare resource origin
-// this app expects; take just the origin so pasting either form still works.
-function resourceOrigin(endpoint: string): string {
-  try { return new URL(endpoint).origin }
-  catch { return endpoint.replace(/\/$/, '') }
+async function responsesCompletion(
+  settings: CopilotSettings,
+  token: string,
+  messages: ChatMessage[],
+  tools: ReturnType<typeof buildToolDefinitions>,
+  onText?: (text: string) => void,
+) {
+  const response = await fetchWithRetry(settings.endpoint, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildResponsesRequest(settings.deployment, messages, tools)),
+  })
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    handleFoundryError(response.status, payload?.error?.message ?? '', tools.length)
+  }
+  return readResponsesStream(response.body, onText)
+}
+
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  try { return await fetch(url, init) }
+  catch {
+    try { return await fetch(url, init) }
+    catch (error) {
+      throw new Error(
+        `Azure AI Foundry could not be reached from this browser (${url}). Refresh after completing ` +
+        'Cognitive Services consent, and verify that the resource allows public network access.',
+        { cause: error },
+      )
+    }
+  }
+}
+
+function handleFoundryError(status: number, detail: string, toolCount: number): never {
+  if (status === 401 || status === 403) {
+    throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
+  }
+  if (status === 400 && toolCount && /tool[_-]choice|tool-call-parser/i.test(detail)) {
+    throw new FoundryToolsUnsupportedError(detail)
+  }
+  throw new Error(`Azure AI Foundry request failed (${status}). ${detail.slice(0, 300)}`)
 }
 
 async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
-  const base = resourceOrigin(settings.endpoint)
-  const response = await fetch(`${base}/openai/deployments/${settings.deployment}/chat/completions?api-version=${settings.apiVersion}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages,
-      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
-      // No `temperature`: the gpt-5 family rejects any value but the default.
-      stream: true,
-      stream_options: { include_usage: true },
-    }),
-  })
-  if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => '')
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
-    }
-    if (response.status === 400 && tools.length && /tool[_-]choice|tool-call-parser/i.test(detail)) {
-      throw new FoundryToolsUnsupportedError(detail)
-    }
-    throw new Error(`Azure AI Foundry request failed (${response.status}). ${detail.slice(0, 300)}`)
-  }
-  return readChatStream(response.body, onText)
+  return responsesCompletion(settings, token, messages, tools, onText)
 }
 
 export async function askFoundryCopilot(
@@ -136,11 +145,10 @@ export async function askFoundryCopilot(
     const calls = state.toolCalls.filter(call => call.id && call.name)
     if (!calls.length) {
       const note = toolsUnsupported
-        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only \u2014 no live data was queried. Switch to a tool-calling model under Administration \u2192 Foundry Copilot for data-backed answers.\n\n'
+        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only — no live data was queried. Switch to a tool-calling model under Administration → Foundry Copilot for data-backed answers.\n\n'
         : ''
       const text = note + (state.content.trim() || 'The copilot returned no answer.')
-      const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
-      history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
+      history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
       return {
         text,
         usage,
@@ -198,8 +206,7 @@ export async function askFoundryCopilot(
       : finalState.usage
   }
   const text = finalState.content.trim() || 'The copilot returned no answer after completing its data queries.'
-  const turn: ChatMessage[] = [{ role: 'user', content: question }, { role: 'assistant', content: text }]
-  history = [...history, ...turn].slice(-MAX_HISTORY_MESSAGES)
+  history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
   return {
     text,
     usage,

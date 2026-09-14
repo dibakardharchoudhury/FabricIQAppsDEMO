@@ -10,7 +10,6 @@ export type ToolName = (typeof TOOL_NAMES)[number]
 export type CopilotSettings = {
   endpoint: string
   deployment: string
-  apiVersion: string
   systemPrompt: string
   promptExtra: string
   tools: Record<string, boolean>
@@ -25,7 +24,6 @@ const env = (import.meta as { env?: Record<string, string | undefined> }).env ??
 export const FOUNDRY_ENV_DEFAULTS = {
   endpoint: env.VITE_RAYFIN_FOUNDRY_ENDPOINT ?? '',
   deployment: env.VITE_RAYFIN_FOUNDRY_DEPLOYMENT ?? '',
-  apiVersion: env.VITE_RAYFIN_FOUNDRY_API_VERSION ?? '2024-10-21',
 }
 
 export const CATALOG_PLACEHOLDER = '{{catalog}}'
@@ -66,7 +64,6 @@ export function defaultCopilotSettings(): CopilotSettings {
   return {
     endpoint: FOUNDRY_ENV_DEFAULTS.endpoint,
     deployment: FOUNDRY_ENV_DEFAULTS.deployment,
-    apiVersion: FOUNDRY_ENV_DEFAULTS.apiVersion,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     promptExtra: '',
     tools: allEnabled(TOOL_NAMES),
@@ -82,9 +79,8 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
   const defaults = defaultCopilotSettings()
   if (!stored) return defaults
   return {
-    endpoint: text(stored.endpoint, defaults.endpoint).replace(/\/$/, ''),
+    endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
-    apiVersion: text(stored.apiVersion, defaults.apiVersion),
     systemPrompt: text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
