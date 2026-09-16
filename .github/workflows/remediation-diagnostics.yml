@@ -18,36 +18,34 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: HydroOperationsApp/package-lock.json
-      - name: Capture transformed validation
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact remediation script
         run: |
           python - <<'PY'
           from pathlib import Path
-          import subprocess
           workflow = Path('.github/workflows/remediate-final-review.yml').read_text(encoding='utf-8')
           marker = "          python - <<'PY'\n"
           script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines()) + '\n'
-          sections = []
-          apply = subprocess.run(['python', '-c', script], text=True, capture_output=True)
-          sections.append(f'apply exit={apply.returncode}\n{apply.stdout}\n{apply.stderr}')
-          commands = [
-              ['python', '-m', 'unittest', 'Raw/workspace-reset/test_weather_source_contracts.py'],
-              ['python', '-m', 'unittest', 'test_sync_workspace_from_git.py'],
-              ['npm', 'ci'],
-              ['npx', 'tsc', '--noEmit', '-p', 'tsconfig.app.json'],
-              ['node', '--test', 'scripts/agent-response.test.mjs', 'scripts/artifact-discovery.test.mjs', 'scripts/assistant-stream.test.mjs', 'scripts/copilot-tools.test.mjs', 'scripts/setup-live-auth.test.mjs', 'scripts/single-flight.test.mjs', 'scripts/validate-env.test.mjs'],
-          ]
-          cwds = [None, 'Raw/workspace-reset', 'HydroOperationsApp', 'HydroOperationsApp', 'HydroOperationsApp']
-          if apply.returncode == 0:
-              for command, cwd in zip(commands, cwds):
-                  result = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
-                  sections.append(f'{command} exit={result.returncode}\n{result.stdout}\n{result.stderr}')
-                  if result.returncode != 0:
-                      break
-          Path('.github/remediation-counts.txt').write_text('\n---\n'.join(sections), encoding='utf-8')
+          exec(compile(script, 'exact-head-remediation', 'exec'))
           PY
+      - name: Install Python dependencies
+        run: python -m pip install -r Raw/workspace-reset/requirements.txt
+      - name: Validate remediation
+        run: |
+          python -m unittest Raw/workspace-reset/test_weather_source_contracts.py
+          cd Raw/workspace-reset
+          python -m unittest test_sync_workspace_from_git.py
+          cd ../../HydroOperationsApp
+          npm ci
+          npx tsc --noEmit -p tsconfig.app.json
+          node --test scripts/*.test.mjs
+      - name: Commit validated product fixes
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/remediation-counts.txt
-          git commit -m "Record transformed validation output"
+          git add HydroOperationsApp Raw Notebooks
+          git commit -m "Resolve final weather review findings"
           git push origin HEAD:feat/weather-operations
