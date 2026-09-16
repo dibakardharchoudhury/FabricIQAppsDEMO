@@ -1,0 +1,205 @@
+name: PR 10 final review remediation
+
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-final-review-remediation.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+      - name: Apply review fixes
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise RuntimeError(f"Expected one {label}, found {text.count(old)}")
+              return text.replace(old, new)
+
+          ukmet_path = Path("Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py")
+          ukmet = ukmet_path.read_text(encoding="utf-8")
+          ukmet = replace_once(
+              ukmet,
+              "    if not isinstance(nearest_payload, list) or not nearest_payload:\n        raise RuntimeError(f\"No UKMet Land Observation station found for {point['location_id']}\")",
+              "    if not isinstance(nearest_payload, list) or not nearest_payload:\n        print(f\"No UKMet Land Observation station near {point['location_id']}; keeping its forecasts only\")\n        continue",
+              "empty nearest-station failure",
+          )
+          ukmet_path.write_text(ukmet, encoding="utf-8")
+
+          weather_page_path = Path("HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx")
+          weather_page = weather_page_path.read_text(encoding="utf-8")
+          weather_page = replace_once(
+              weather_page,
+              "Observed conditions and 72-hour Aurora forecasts at each asset and within its 20 km operating area.",
+              "Observed conditions and forecasts at each asset and within its 20 km operating area.",
+              "vendor-specific weather description",
+          )
+          weather_page_path.write_text(weather_page, encoding="utf-8")
+
+          sync_path = Path("Raw/workspace-reset/sync_workspace_from_git.py")
+          sync = sync_path.read_text(encoding="utf-8")
+          sync = replace_once(sync, ") -> None:\n    \"\"\"Re-apply the lakehouse/Environment binding that a Git import clears from notebook metadata.\"\"\"", ") -> bool:\n    \"\"\"Re-apply notebook bindings and report whether their dependencies are ready.\"\"\"", "rebind return annotation")
+          missing_message = """        print(
+              f"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; "
+              "RTI_001 will bind the weather notebooks when the setup pipeline runs."
+          )
+          return"""
+          missing_replacement = """        print(
+              f"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; "
+              "RTI_001 will bind the weather notebooks when the setup pipeline runs."
+          )
+          return False"""
+          sync = replace_once(sync, missing_message, missing_replacement, "missing-lakehouse return")
+          loop_tail = """        print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
+
+
+          def weather_schedule_matches"""
+          loop_replacement = """        print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
+
+              return True
+
+
+          def weather_schedule_matches"""
+          sync = replace_once(sync, loop_tail, loop_replacement, "successful rebind return")
+          schedule_doc = "    \"\"\"Return whether a schedule matches the required six-hour UTC offset.\"\"\"\n    configuration = schedule.get(\"configuration\") or {}\n    start_text = configuration.get(\"startDateTime\")"
+          schedule_doc_replacement = "    \"\"\"Return whether an unexpired schedule matches the required six-hour UTC offset.\"\"\"\n    configuration = schedule.get(\"configuration\") or {}\n    start_text = configuration.get(\"startDateTime\")\n    end_text = configuration.get(\"endDateTime\")"
+          sync = replace_once(sync, schedule_doc, schedule_doc_replacement, "schedule end-date input")
+          parse_end_anchor = """        start = datetime.fromisoformat(normalized)
+              except ValueError:
+                  return False
+              if start.tzinfo is None:
+                  return False
+              start_utc = start.astimezone(timezone.utc)"""
+          parse_end_replacement = """        start = datetime.fromisoformat(normalized)
+                  normalized_end = end_text.strip() if isinstance(end_text, str) else ""
+                  if normalized_end.endswith("Z"):
+                      normalized_end = f"{normalized_end[:-1]}+00:00"
+                  end = datetime.fromisoformat(normalized_end)
+              except ValueError:
+                  return False
+              if start.tzinfo is None or end.tzinfo is None:
+                  return False
+              start_utc = start.astimezone(timezone.utc)
+              end_utc = end.astimezone(timezone.utc)"""
+          sync = replace_once(sync, parse_end_anchor, parse_end_replacement, "schedule end-date parsing")
+          return_anchor = """        schedule.get("enabled") is True
+                  and configuration.get("type") == "Cron"""
+          return_replacement = """        schedule.get("enabled") is True
+                  and end_utc > datetime.now(timezone.utc)
+                  and configuration.get("type") == "Cron"""
+          sync = replace_once(sync, return_anchor, return_replacement, "schedule expiry predicate")
+          activation = """    print("Binding weather notebooks to the lakehouse and Environment...")
+              rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
+
+              # Activate the recurring job only after its runtime and dependencies are ready.
+              configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])"""
+          activation_replacement = """    print("Binding weather notebooks to the lakehouse and Environment...")
+              bindings_ready = rebind_weather_notebooks(
+                  fab, workspace_id, weather_notebooks, items, environment_id
+              )
+
+              # Activate the recurring job only after its runtime and dependencies are ready.
+              if bindings_ready:
+                  configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
+              else:
+                  print(f"{WEATHER_PIPELINE_NAME} schedule deferred until notebook dependencies are ready.")"""
+          sync = replace_once(sync, activation, activation_replacement, "binding-gated schedule activation")
+          sync_path.write_text(sync, encoding="utf-8")
+
+          canonical_path = Path("Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py")
+          canonical = canonical_path.read_text(encoding="utf-8")
+          block_start = "GRAPHQL_OBJECTS = ["
+          block_end = "\n\nOPERATIONAL_INSTRUCTIONS_MARKER"
+          canonical_block = canonical[canonical.index(block_start):canonical.index(block_end)]
+          raw_path = Path("Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb")
+          raw_notebook = json.loads(raw_path.read_text(encoding="utf-8"))
+          matching_cells = [cell for cell in raw_notebook["cells"] if block_start in "".join(cell.get("source", []))]
+          if len(matching_cells) != 1:
+              raise RuntimeError(f"Expected one Raw RTI_011 GraphQL cell, found {len(matching_cells)}")
+          raw_source = "".join(matching_cells[0]["source"])
+          raw_block = raw_source[raw_source.index(block_start):raw_source.index(block_end)]
+          raw_source = raw_source.replace(raw_block, canonical_block)
+          raw_source = raw_source.replace("must expose these four silver tables with these fields", "must expose the configured silver, canonical weather, and serving weather tables")
+          raw_source = raw_source.replace("endpoint, exposing the four silver tables the web app queries.", "endpoint, exposing the configured silver, canonical weather, and serving weather tables.")
+          raw_source = raw_source.replace("Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo silver tables", "Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo Lakehouse tables")
+          matching_cells[0]["source"] = raw_source.splitlines(keepends=True)
+          raw_path.write_text(json.dumps(raw_notebook, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+          contracts_path = Path("Raw/workspace-reset/test_weather_source_contracts.py")
+          contracts = contracts_path.read_text(encoding="utf-8")
+          contract_anchor = "        self.assertNotIn(\"if isinstance(payload, list) and payload:\", ukmet)"
+          contract_replacement = contract_anchor + "\n        self.assertNotIn(\"No UKMet Land Observation station found\", ukmet)\n        weather_page = (ROOT / \"HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx\").read_text(encoding=\"utf-8\")\n        self.assertNotIn(\"72-hour Aurora forecasts\", weather_page)"
+          contracts = replace_once(contracts, contract_anchor, contract_replacement, "UKMet and weather-copy contracts")
+          method_anchor = "    def test_pipeline_and_redirect_contracts_remain_intact(self):"
+          parity_test = '''    def test_raw_rti_011_matches_canonical_graphql_objects(self):
+              canonical = (ROOT / "Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text(encoding="utf-8")
+              raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb").read_text(encoding="utf-8"))
+              raw_source = "".join("".join(cell.get("source", [])) for cell in raw["cells"])
+              start = "GRAPHQL_OBJECTS = ["
+              end = "\n\nOPERATIONAL_INSTRUCTIONS_MARKER"
+              self.assertEqual(canonical[canonical.index(start):canonical.index(end)], raw_source[raw_source.index(start):raw_source.index(end)])
+
+          '''
+          parity_test = "\n".join(line[10:] if line.startswith("          ") else line for line in parity_test.splitlines()) + "\n"
+          contracts = replace_once(contracts, method_anchor, parity_test + method_anchor, "Raw RTI_011 parity test anchor")
+          contracts_path.write_text(contracts, encoding="utf-8")
+
+          provisioning_path = Path("Raw/workspace-reset/test_sync_workspace_from_git.py")
+          provisioning = provisioning_path.read_text(encoding="utf-8")
+          provisioning = provisioning.replace('"startDateTime": "2026-09-16T03:20:00Z",', '"startDateTime": "2026-09-16T03:20:00Z",\n                            "endDateTime": "2036-09-16T03:20:00Z",')
+          missing_assertion = """        self.assertEqual(fabric.updates, [])
+                  self.assertIn("RTI_001 will bind the weather notebooks", output.getvalue())"""
+          missing_assertion_replacement = missing_assertion + """
+                  self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))
+                  self.assertIn("schedule deferred", output.getvalue())"""
+          provisioning = replace_once(provisioning, missing_assertion, missing_assertion_replacement, "missing-lakehouse schedule assertions")
+          expiry_anchor = "    def test_wrong_offset_weather_schedule_is_updated(self):"
+          expiry_test = '''    def test_expired_weather_schedule_is_updated(self):
+              fabric = FakeFabric()
+              existing = FakeResponse(200, {"value": [{"id": "schedule-id", "enabled": True, "configuration": {
+                  "type": "Cron", "interval": 360, "localTimeZoneId": "UTC",
+                  "startDateTime": "2026-09-16T03:20:00Z", "endDateTime": "2026-09-17T03:20:00Z",
+              }}]})
+              original_request = fabric.request
+              fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+                  if method == "GET" and "/jobs/Pipeline/schedules" in url
+                  else original_request(method, url, **kwargs))
+              with contextlib.redirect_stdout(io.StringIO()):
+                  configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+              patch_calls = [call for call in fabric.request.call_args_list
+                  if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]]
+              self.assertEqual(len(patch_calls), 1)
+
+          '''
+          expiry_test = "\n".join(line[10:] if line.startswith("          ") else line for line in expiry_test.splitlines()) + "\n"
+          provisioning = replace_once(provisioning, expiry_anchor, expiry_test + expiry_anchor, "expired-schedule test anchor")
+          provisioning_path.write_text(provisioning, encoding="utf-8")
+      - name: Validate remediation
+        run: |
+          python Raw/workspace-reset/test_weather_source_contracts.py
+          cd Raw/workspace-reset && python test_sync_workspace_from_git.py
+          python -m py_compile sync_workspace_from_git.py ../../Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py
+      - name: Validate frontend
+        working-directory: HydroOperationsApp
+        run: |
+          npm ci
+          npx tsc --noEmit -p tsconfig.app.json
+      - name: Commit fixes and remove executor
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm .github/workflows/pr10-final-review-remediation.yml
+          git add -A
+          git commit -m "Resolve final weather review findings"
+          git push origin HEAD:feat/weather-operations
