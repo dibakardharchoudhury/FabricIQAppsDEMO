@@ -77,6 +77,12 @@ class FakeFabric:
                 "folderId": "notebooks-folder",
             },
             {
+                "id": "weather-020",
+                "type": "Notebook",
+                "displayName": "Weather_020_area_calculations",
+                "folderId": "notebooks-folder",
+            },
+            {
                 "id": "weather-pipeline",
                 "type": "DataPipeline",
                 "displayName": "03_Pipe_Weather",
@@ -170,7 +176,7 @@ class WeatherProvisioningTests(unittest.TestCase):
     def test_weather_notebooks_must_be_in_notebooks_folder(self):
         fabric = FakeFabric()
         items = fabric.list_workspace_items("workspace-id")
-        items[3]["folderId"] = None
+        items[4]["folderId"] = None
         fabric.list_workspace_items = Mock(return_value=items)
 
         with self.assertRaisesRegex(SystemExit, "not in workspace folder 'Notebooks'"):
@@ -181,7 +187,7 @@ class WeatherProvisioningTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure_weather_assets(fabric, "workspace-id", git_updated=False)
 
-        self.assertEqual(len(fabric.updates), 3)
+        self.assertEqual(len(fabric.updates), 4)
         for _, body in fabric.updates:
             part = body["definition"]["parts"][0]
             content = json.loads(base64.b64decode(part["payload"]))

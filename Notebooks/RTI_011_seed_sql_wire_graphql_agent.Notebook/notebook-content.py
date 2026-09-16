@@ -245,7 +245,7 @@ GRAPHQL_OBJECTS = [
             "reference_time_utc", "valid_time_utc", "valid_date", "lead_hours", "value", "unit",
             "ensemble_member", "source_item_id", "run_id", "ingested_at_utc"]),
         ("weather_area_metrics",
-         ["source_id", "variable_id", "area_id", "data_kind", "reference_time_utc",
+            ["source_id", "variable_id", "area_id", "data_kind", "forecast_type", "reference_time_utc",
             "valid_time_utc", "lead_hours", "area_coverage_fraction", "area_weighted_value", "unit",
             "rainfall_volume_m3", "contributing_cell_count", "aggregation_method", "source_item_id",
             "run_id", "calculated_at_utc"]),

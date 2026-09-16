@@ -87,6 +87,7 @@ ddl_statements = [
     ) USING DELTA PARTITIONED BY (valid_date)""",
     f"""CREATE TABLE IF NOT EXISTS {TABLES['area_metrics']} (
       source_id STRING, variable_id STRING, area_id STRING, data_kind STRING,
+      forecast_type STRING,
       reference_time_utc TIMESTAMP, valid_time_utc TIMESTAMP, lead_hours INT,
       area_coverage_fraction DOUBLE, area_weighted_value DOUBLE, unit STRING,
       rainfall_volume_m3 DOUBLE, contributing_cell_count INT,
@@ -97,6 +98,9 @@ ddl_statements = [
 
 for ddl in ddl_statements:
     spark.sql(ddl)
+
+if "forecast_type" not in spark.table(TABLES["area_metrics"]).columns:
+    spark.sql(f"ALTER TABLE {TABLES['area_metrics']} ADD COLUMNS (forecast_type STRING)")
 
 print(f"Created or verified {len(ddl_statements)} weather tables")
 
@@ -189,7 +193,7 @@ WHEN NOT MATCHED THEN INSERT *
 #
 # - Observations: source, variable, location, observed time.
 # - Forecasts: source, variable, location, issue time, valid time, ensemble member.
-# - Area metrics: source, variable, area, data kind, issue time, valid time.
+# - Area metrics: source, variable, area, data kind, forecast type, issue time, valid time.
 
 # CELL ********************
 

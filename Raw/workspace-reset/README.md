@@ -137,15 +137,17 @@ can call Fabric public APIs* enabled.
 Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
 NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
 `numcodecs`. The Git sync verifies that
-`Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`, and
-`Weather_003_fetch_ukmet` are in the workspace `Notebooks` folder. The fetch notebooks read
+`Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
+`Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
+folder and binds all four to the project Lakehouse. The fetch notebooks read
 `mai-weather-api-key`, `ukmet-global-spot-api-key`, and `ukmet-land-observations-api-key` from the
 same Key Vault passed to `Pipe_Setup`. The provisioner prints these names but intentionally never
 requests, reads, or stores their values.
 
 Provisioning also creates `03_Pipe_Weather` and ensures it has an enabled UTC schedule every four
-hours. Each run executes the Aurora notebook first and the UKMet notebook second. Rerunning the
-provisioner reuses a matching schedule or repairs the existing schedule instead of adding duplicates.
+hours. Each run executes Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage
+rebuilds area metrics separately for every vendor and forecast type. Rerunning the provisioner
+reuses a matching schedule or repairs the existing schedule instead of adding duplicates.
 
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,

@@ -20,7 +20,7 @@
 # # Fetch point and enclosed-area weather
 #
 # Aurora implementation of the source-adapter contract. It reads the latest signed
-# STAC Zarr asset, extracts 72-hour point forecasts, calculates polygon-overlap weather,
+# STAC Zarr asset, extracts 72-hour point forecasts, creates operating-area geometry,
 # and merges canonical records into the tables created by Weather_001.
 #
 # Configure a Fabric Environment with `xarray`, `zarr<3`, `adlfs`, `shapely`, and
@@ -71,12 +71,12 @@ from adlfs import AzureBlobFileSystem
 import notebookutils
 from pyproj import Geod
 from requests.adapters import HTTPAdapter
-from shapely.geometry import Polygon, box, mapping
+from shapely.geometry import Polygon, mapping
 from urllib3.util.retry import Retry
 
 TABLES = {
     name: f"{table_prefix}_{name}"
-    for name in ["locations", "areas", "ingestion_runs", "forecasts", "area_metrics"]
+    for name in ["locations", "areas", "ingestion_runs", "forecasts"]
 }
 SOURCE_ID = "aurora"
 PRECIPITATION_EPSILON_M = 1e-3
@@ -509,23 +509,14 @@ display(forecasts_df.orderBy("location_id", "valid_time_utc").limit(20))
 
 # MARKDOWN ********************
 
-# ## Area-weighted weather
+# ## Operating areas
 #
-# Each grid cell is intersected with the requested polygon in WGS84 and measured
-# geodesically. Scalar variables use overlap-weighted means, wind direction uses
-# a circular mean, and precipitation also includes physical rainfall volume:
-#
-# $$V = (R / 1000) A$$
-#
-# where rainfall depth $R$ is in millimetres and overlap area $A$ is in square metres.
+# Persist the reusable area geometry and its representative location. Vendor-neutral
+# metrics are calculated from canonical forecasts by Weather_020.
 
 # CELL ********************
 
-latitude_step = float(np.median(np.abs(np.diff(latitudes))))
-longitude_step = float(np.median(np.abs(np.diff(longitudes))))
 area_rows = []
-area_metric_rows = []
-area_contexts = []
 
 for area in areas:
     area_size_m2 = geodesic_area_m2(area["geometry"])
@@ -542,127 +533,18 @@ for area in areas:
         }),
         "updated_at_utc": started_at,
     })
-    min_lon, min_lat, max_lon, max_lat = area["geometry"].bounds
-    candidate_latitudes = np.flatnonzero(
-        (latitudes >= min_lat - latitude_step / 2) &
-        (latitudes <= max_lat + latitude_step / 2)
-    )
-    normalized_longitudes = longitude_180(longitudes)
-    candidate_longitudes = np.flatnonzero(
-        (normalized_longitudes >= min_lon - longitude_step / 2) &
-        (normalized_longitudes <= max_lon + longitude_step / 2)
-    )
-
-    overlaps = []
-    for lat_index in candidate_latitudes:
-        for lon_index in candidate_longitudes:
-            center_lat = float(latitudes[lat_index])
-            center_lon = float(normalized_longitudes[lon_index])
-            cell = box(
-                center_lon - longitude_step / 2,
-                center_lat - latitude_step / 2,
-                center_lon + longitude_step / 2,
-                center_lat + latitude_step / 2,
-            )
-            intersection = area["geometry"].intersection(cell)
-            if not intersection.is_empty:
-                overlap_m2 = geodesic_area_m2(intersection)
-                if overlap_m2 > 0:
-                    overlaps.append((int(lat_index), int(lon_index), overlap_m2))
-
-    covered_area_m2 = sum(overlap[2] for overlap in overlaps)
-    if not overlaps or covered_area_m2 <= 0:
-        raise RuntimeError(f"No grid coverage found for area {area['area_id']}")
-    area_contexts.append((area, area_size_m2, overlaps))
-
-for step_index in step_indices:
-    lead = int(available_hours[step_index])
-    valid_time = reference_time + timedelta(hours=lead)
-    grids = weather_grids(dataset, step_index)
-    for area, area_size_m2, overlaps in area_contexts:
-        for variable_id, variable_grid in grids.items():
-            valid_overlaps = [
-                (lat, lon, overlap)
-                for lat, lon, overlap in overlaps
-                if np.isfinite(variable_grid[lat, lon])
-            ]
-            variable_coverage_m2 = sum(overlap for _, _, overlap in valid_overlaps)
-            if not valid_overlaps:
-                continue
-
-            if variable_id == "wind_direction":
-                sine = sum(
-                    np.sin(np.radians(float(variable_grid[lat, lon]))) * overlap
-                    for lat, lon, overlap in valid_overlaps
-                )
-                cosine = sum(
-                    np.cos(np.radians(float(variable_grid[lat, lon]))) * overlap
-                    for lat, lon, overlap in valid_overlaps
-                )
-                area_value = float(np.degrees(np.arctan2(sine, cosine)) % 360.0)
-                method = "grid_cell_polygon_overlap_circular_mean"
-            else:
-                weighted_sum = sum(
-                    float(variable_grid[lat, lon]) * overlap
-                    for lat, lon, overlap in valid_overlaps
-                )
-                area_value = weighted_sum / variable_coverage_m2
-                method = "grid_cell_polygon_overlap_geodesic"
-
-            rainfall_volume_m3 = None
-            if variable_id == "precipitation":
-                rainfall_volume_m3 = sum(
-                    float(variable_grid[lat, lon]) / 1000.0 * overlap
-                    for lat, lon, overlap in valid_overlaps
-                )
-
-            area_metric_rows.append({
-                "source_id": SOURCE_ID,
-                "variable_id": variable_id,
-                "area_id": area["area_id"],
-                "data_kind": "forecast",
-                "reference_time_utc": reference_time,
-                "valid_time_utc": valid_time,
-                "lead_hours": lead,
-                "area_coverage_fraction": min(variable_coverage_m2 / area_size_m2, 1.0),
-                "area_weighted_value": area_value,
-                "unit": VARIABLES[variable_id]["unit"],
-                "rainfall_volume_m3": rainfall_volume_m3,
-                "contributing_cell_count": len(valid_overlaps),
-                "aggregation_method": method,
-                "source_item_id": source_item_id,
-                "run_id": run_id,
-                "calculated_at_utc": started_at,
-            })
-
 areas_df = spark.createDataFrame(area_rows)
-area_metrics_df = spark.createDataFrame(
-    area_metric_rows,
-    "source_id string, variable_id string, area_id string, data_kind string, reference_time_utc timestamp, valid_time_utc timestamp, lead_hours int, area_coverage_fraction double, area_weighted_value double, unit string, rainfall_volume_m3 double, contributing_cell_count int, aggregation_method string, source_item_id string, run_id string, calculated_at_utc timestamp",
-)
 areas_df.createOrReplaceTempView("incoming_weather_areas")
-area_metrics_df.createOrReplaceTempView("incoming_weather_area_metrics")
 active_area_ids = [area["area_id"] for area in areas]
 active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
-spark.sql(f"DELETE FROM {TABLES['area_metrics']} WHERE area_id NOT IN ({active_area_ids_sql})")
 spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")
 spark.sql(f"""
 MERGE INTO {TABLES['areas']} target USING incoming_weather_areas source
 ON target.area_id = source.area_id
 WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
 """)
-spark.sql(f"""
-MERGE INTO {TABLES['area_metrics']} target USING incoming_weather_area_metrics source
-ON target.source_id = source.source_id
-AND target.variable_id = source.variable_id
-AND target.area_id = source.area_id
-AND target.data_kind = source.data_kind
-AND target.reference_time_utc <=> source.reference_time_utc
-AND target.valid_time_utc = source.valid_time_utc
-WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
-""")
 
-display(area_metrics_df.orderBy("area_id", "valid_time_utc"))
+display(areas_df.orderBy("area_id"))
 
 # METADATA ********************
 
@@ -674,7 +556,7 @@ display(area_metrics_df.orderBy("area_id", "valid_time_utc"))
 # CELL ********************
 
 completed_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
-row_count = len(forecast_rows) + len(area_metric_rows)
+row_count = len(forecast_rows)
 run_rows = [{
     "run_id": run_id,
     "source_id": SOURCE_ID,
@@ -692,7 +574,7 @@ spark.createDataFrame(
     "run_id string, source_id string, source_item_id string, data_kind string, reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, status string, row_count long, error_message string",
 ).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
 
-print(f"Run {run_id} succeeded: {len(forecast_rows)} point rows, {len(area_metric_rows)} area rows")
+print(f"Run {run_id} succeeded: {len(forecast_rows)} point forecast rows")
 
 # METADATA ********************
 

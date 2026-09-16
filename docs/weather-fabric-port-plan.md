@@ -23,8 +23,9 @@ Important findings:
 Fabric calls this storage item a Lakehouse. The three notebooks are deployable Fabric Git items:
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
-- `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction.
+- `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction, and maintains facility operating-area geometry.
 - `Weather_003_fetch_ukmet` implements UKMet Global Spot forecasts and Land Observations for the same facility locations and canonical tables.
+- `Weather_020_area_calculations` reads canonical forecasts after all adapters finish and rebuilds area metrics independently by vendor, variable, issue, valid time, and forecast type.
 
 Logical layers:
 
@@ -36,21 +37,15 @@ The model separates source, variable, location, area, ingestion run, observation
 
 ## Area calculation
 
-For gridded data, intersect each weather grid cell with the requested GeoJSON polygon. Weight rainfall depth by geodesic overlap area:
+The shared aggregation stage uses each area's representative facility location so every point-based vendor follows one contract. Scalar values use the representative-location mean, gusts use maximum, and wind direction uses a circular mean. Rows remain separate by `source_id` and `forecast_type`; vendors and deterministic/ensemble products are never combined.
+
+Convert representative rainfall depth to area rainfall volume:
 
 $$
-R_{area} = \frac{\sum_i R_i A_i}{\sum_i A_i}
+V = \frac{R}{1000} A
 $$
 
-Convert each cell contribution to rainfall volume and sum it:
-
-$$
-V = \sum_i \frac{R_i}{1000} A_i
-$$
-
-where $R_i$ is millimetres and $A_i$ is square metres. Store polygon coverage because incomplete source coverage makes totals misleading. Do not sum grid-cell rainfall depths.
-
-For station-only observation sources, add a second weighting strategy such as Thiessen polygons or inverse-distance weighting and record the method and uncertainty in the gold table.
+where $R$ is millimetres and $A$ is the geodesic area in square metres. The stored aggregation method makes this representative-point approximation explicit. A future gridded aggregate can use cell overlap weighting as another method without changing the canonical metric key.
 
 ## Multi-source adapter contract
 
@@ -75,7 +70,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Orchestration and tests
 
 1. Attach the same Lakehouse and Fabric Environment to all three notebooks.
-2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs both ingestion notebooks every four hours, in Aurora-then-UKMet order.
+2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` every four hours in that order.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.
@@ -88,5 +83,5 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 3. Run `Weather_001_create_lakehouse` and verify all eight tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
 5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
-6. Run `Weather_003_fetch_ukmet` and verify Global Spot and Land Observation rows. Provisioning creates and enables the four-hour `03_Pipe_Weather` schedule.
+6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the four-hour `03_Pipe_Weather` schedule.
 7. Add a GridHD adapter after confirming its product semantics.
