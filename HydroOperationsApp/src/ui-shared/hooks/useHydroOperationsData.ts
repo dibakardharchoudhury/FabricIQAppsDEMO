@@ -337,11 +337,11 @@ function useHydroOperationsDataController() {
     try {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setWeatherState('idle'); setNotice('Sign in with Fabric to load weather data.'); return }
-      beginProgress('weather', 'Creating the weather tables and loading Aurora and UKMet forecasts (Weather_001, Weather_002, Weather_003)...', WEATHER_ETA_MS)
+      beginProgress('weather', 'Loading Aurora and UKMet forecasts, then rebuilding weather metrics (Weather_002, Weather_003, Weather_020)...', WEATHER_ETA_MS)
       const status = await runWeatherNotebooks(update => updateJob('weather', humanStatus(update)))
       if (status === 'Completed') {
         setWeatherState('complete')
-        setNotice('Weather tables created and Aurora + UKMet data loaded. Run Seed & provision if the Weather tab still reports no GraphQL access.')
+        setNotice('Aurora and UKMet weather data loaded and serving metrics refreshed.')
       } else {
         setWeatherState('error')
         setNotice(`Weather load ${humanStatus(status).toLowerCase()}.`)

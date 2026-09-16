@@ -53,7 +53,7 @@ export function AdministrationPage() {
     {
       n: 6,
       title: 'Connect Weather',
-      why: 'Creates the weather tables, loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations, then builds area metrics and serving projections (runs Weather_001, Weather_002, Weather_003 and Weather_020). Needs the Aurora and UKMet API keys in Key Vault.',
+      why: 'Loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations, then builds area metrics and serving projections (runs Weather_002, Weather_003 and Weather_020). Weather tables are initialized during setup. Needs the Aurora and UKMet API keys in Key Vault.',
       done: data.weatherState === 'complete',
       busy: data.weatherState === 'running' || Boolean(data.jobs.weather),
       action: 'Connect weather',
@@ -63,7 +63,7 @@ export function AdministrationPage() {
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
-    {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="progress"><div className="progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="progress-track"><div className="progress-bar" style={{ width: `${job.pct}%`, marginLeft: 0, animation: 'none' }} /></div></div>)}
+    {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
     <AdministrationExperience steps={steps} />
     <CopilotSettingsPanel />
   </>
