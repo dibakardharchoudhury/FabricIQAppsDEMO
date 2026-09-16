@@ -44,6 +44,7 @@ jobs:
       - name: Validate Python notebooks and JSON
         shell: bash
         run: |
+          python -m pip install -r Raw/workspace-reset/requirements.txt
           python -m py_compile Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py
           python - <<'PY'
           import json
