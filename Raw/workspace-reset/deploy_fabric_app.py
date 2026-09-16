@@ -977,15 +977,10 @@ def _rayfin_redirect_block() -> tuple[Path, list[str], int, int, int, str]:
 
 
 def write_rayfin_redirects(redirects: list[str]) -> list[str]:
-    """Merge into rayfin.yml's redirect list, never dropping origins already listed there."""
+    """Rebuild rayfin.yml from the caller's current Entra snapshot plus localhost."""
     config, lines, key_index, end_index, key_indent, newline = _rayfin_redirect_block()
-    # Teammates' app origins live only in this file, so it is merged rather than rebuilt.
-    existing = [
-        line.strip()[1:].strip()
-        for line in lines[key_index + 1 : end_index]
-        if line.strip().startswith("- ")
-    ]
-    merged = _unique_redirect_uris(existing, redirects, ["http://localhost:5173"])
+    # Local rayfin.yml origins may belong to stale deployments; Entra is authoritative.
+    merged = _unique_redirect_uris(redirects, ["http://localhost:5173"])
     replacement = [lines[key_index]]
     replacement.extend(
         f"{' ' * (key_indent + 2)}- {uri}{newline}"

@@ -118,14 +118,41 @@ area_locations = (
 if area_locations.filter(F.col("location_id").isNull() | F.col("area_m2").isNull()).limit(1).count():
     raise RuntimeError("Every weather area must include location_id and geodesic_area_m2 metadata")
 
-forecasts = (
+typed_forecasts = (
     spark.table(TABLES["forecasts"])
-    .join(area_locations, "location_id", "inner")
     .withColumn("forecast_type", F.coalesce("ensemble_member", F.lit("deterministic")))
     .withColumn("interval_hours", F.coalesce("interval_hours", F.lit(0)))
 )
+forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
+forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
+    F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
+    F.col("forecast_type").asc(),
+)
+selected_forecast_types = (
+    typed_forecasts.select(*forecast_type_keys, "forecast_type")
+    .distinct()
+    .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
+    .filter(F.col("forecast_type_rank") == F.lit(1))
+    .drop("forecast_type_rank")
+)
+forecasts = typed_forecasts.join(
+    selected_forecast_types,
+    [*forecast_type_keys, "forecast_type"],
+    "inner",
+)
 if forecasts.limit(1).count() == 0:
     raise RuntimeError("No weather forecasts are available for area calculation")
+if (
+    forecasts.groupBy(*forecast_type_keys)
+    .agg(F.countDistinct("forecast_type").alias("forecast_type_count"))
+    .filter(F.col("forecast_type_count") != F.lit(1))
+    .limit(1)
+    .count()
+):
+    raise RuntimeError("Weather forecast selection produced more than one forecast type")
+
+# Select one product before the area join so location and area serving rows use the same type.
+area_forecasts = forecasts.join(area_locations, "location_id", "inner")
 
 # METADATA ********************
 
@@ -150,7 +177,7 @@ group_columns = [
 ]
 
 scalar_metrics = (
-    forecasts.filter(F.col("variable_id") != "wind_direction")
+    area_forecasts.filter(F.col("variable_id") != "wind_direction")
     .groupBy(*group_columns)
     .agg(
         F.when(
@@ -168,7 +195,7 @@ scalar_metrics = (
 )
 
 direction_metrics = (
-    forecasts.filter(F.col("variable_id") == "wind_direction")
+    area_forecasts.filter(F.col("variable_id") == "wind_direction")
     .withColumn("direction_radians", F.radians("value"))
     .groupBy(*group_columns)
     .agg(
@@ -316,7 +343,7 @@ location_window = (
     .rowsBetween(Window.unboundedPreceding, Window.currentRow)
 )
 location_latest = (
-    latest_issue_only(spark.table(TABLES["forecasts"]))
+    latest_issue_only(forecasts)
     .withColumn("precipitation_interval_hours", F.coalesce("interval_hours", F.lit(0)))
     .withColumn(
         "cumulative_precipitation",

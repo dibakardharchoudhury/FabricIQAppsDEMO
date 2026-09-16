@@ -511,8 +511,37 @@ def rebind_weather_notebooks(
         print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
 
 
+def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
+    """Return whether a schedule matches the required six-hour UTC offset."""
+    configuration = schedule.get("configuration") or {}
+    start_text = configuration.get("startDateTime")
+    if not isinstance(start_text, str) or not start_text.strip():
+        return False
+    try:
+        normalized = start_text.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        start = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    if start.tzinfo is None:
+        return False
+    start_utc = start.astimezone(timezone.utc)
+    minutes_past_midnight = start_utc.hour * 60 + start_utc.minute
+    return (
+        schedule.get("enabled") is True
+        and configuration.get("type") == "Cron"
+        and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
+        and configuration.get("localTimeZoneId") == "UTC"
+        and start_utc.second == 0
+        and start_utc.microsecond == 0
+        and minutes_past_midnight % WEATHER_SCHEDULE_INTERVAL_MINUTES
+        == WEATHER_SCHEDULE_OFFSET_MINUTES
+    )
+
+
 def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
-    """Ensure the weather pipeline has an enabled six-hour recurring schedule."""
+    """Ensure the weather pipeline has an enabled six-hour recurring UTC schedule."""
     base = (
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{pipeline_id}"
         f"/jobs/{WEATHER_PIPELINE_JOB_TYPE}/schedules"
@@ -525,13 +554,8 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
         )
     schedules = response.json().get("value", [])
     for schedule in schedules:
-        configuration = schedule.get("configuration", {})
-        if (
-            schedule.get("enabled") is True
-            and configuration.get("type") == "Cron"
-            and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
-        ):
-            print(f"{WEATHER_PIPELINE_NAME} already runs every six hours.")
+        if weather_schedule_matches(schedule):
+            print(f"{WEATHER_PIPELINE_NAME} already runs every six hours at the UTC offset.")
             return
 
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)

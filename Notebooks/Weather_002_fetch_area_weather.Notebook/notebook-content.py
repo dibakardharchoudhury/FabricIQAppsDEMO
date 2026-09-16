@@ -62,6 +62,7 @@ aggregation_circle_vertices = 72
 
 # CELL ********************
 
+from copy import deepcopy
 from datetime import timedelta, timezone
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
@@ -155,6 +156,16 @@ def latest_stac_item(service_endpoint: str, api_key: str) -> dict:
     if not features:
         raise RuntimeError(f"No STAC items found in {collection}")
     return features[0]
+
+
+def sanitize_stac_item(item: dict) -> dict:
+    """Return a deep copy with URL query credentials removed from every asset href."""
+    sanitized = deepcopy(item)
+    for asset in (sanitized.get("assets") or {}).values():
+        href = asset.get("href") if isinstance(asset, dict) else None
+        if isinstance(href, str):
+            asset["href"] = urlsplit(href)._replace(query="").geturl()
+    return sanitized
 
 
 def open_signed_zarr(asset_href: str) -> xr.Dataset:
@@ -398,12 +409,11 @@ areas = [
 ]
 print(f"Created {len(areas)} station aggregation areas at {aggregation_radius_km:g} km radius")
 
-api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
 run_id = str(uuid4())
 started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
 
 # Fabric aborts the remaining cells on error, so the audit row is written before any
-# network call. A run left in 'started' is a failed run.
+# external credential or network call. A run left in 'started' is a failed run.
 spark.createDataFrame(
     [{
         "run_id": run_id,
@@ -420,6 +430,7 @@ spark.createDataFrame(
     RUN_SCHEMA,
 ).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
 
+api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
 item = latest_stac_item(endpoint, api_key)
 source_item_id = str(item.get("id"))
 properties = item.get("properties", {})
@@ -432,7 +443,7 @@ if not asset_href:
     raise RuntimeError(f"STAC item has no {asset_key!r} asset")
 
 raw_path = PurePosixPath("Files/weather/bronze/stac") / collection / f"{source_item_id}.json"
-notebookutils.fs.put(str(raw_path), json.dumps(item, indent=2), True)
+notebookutils.fs.put(str(raw_path), json.dumps(sanitize_stac_item(item), indent=2), True)
 
 dataset = open_signed_zarr(asset_href)
 missing_source_variables = sorted(SOURCE_VARIABLES - set(dataset.data_vars))

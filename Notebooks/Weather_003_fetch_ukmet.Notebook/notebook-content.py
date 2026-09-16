@@ -258,17 +258,11 @@ for table_name in TABLES.values():
         raise RuntimeError(f"Weather table not found; run Weather_001 first: {table_name}")
 
 points = load_station_points(selected_facility_ids, require_active_equipment)
-global_spot_api_key = notebookutils.credentials.getSecret(key_vault_uri, global_spot_api_key_secret_name)
-land_observations_api_key = notebookutils.credentials.getSecret(
-    key_vault_uri,
-    land_observations_api_key_secret_name,
-)
-session = retry_session()
 run_id = str(uuid4())
 started_at = datetime.now(timezone.utc)
 
 # Fabric aborts the remaining cells on error, so the audit row is written before any
-# network call. A run left in 'started' is a failed run.
+# external credential or network call. A run left in 'started' is a failed run.
 spark.createDataFrame(
     [{
         "run_id": run_id,
@@ -285,6 +279,15 @@ spark.createDataFrame(
     RUN_SCHEMA,
 ).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
 
+global_spot_api_key = notebookutils.credentials.getSecret(
+    key_vault_uri,
+    global_spot_api_key_secret_name,
+)
+land_observations_api_key = notebookutils.credentials.getSecret(
+    key_vault_uri,
+    land_observations_api_key_secret_name,
+)
+session = retry_session()
 observation_cutoff = started_at - timedelta(hours=observation_lookback_hours)
 location_rows = []
 forecast_rows = []

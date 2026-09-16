@@ -153,7 +153,12 @@ class WeatherProvisioningTests(unittest.TestCase):
         matching = FakeResponse(
             200,
             {"value": [{"id": "schedule-id", "enabled": True,
-                        "configuration": {"type": "Cron", "interval": 360}}]},
+                        "configuration": {
+                            "type": "Cron",
+                            "interval": 360,
+                            "localTimeZoneId": "UTC",
+                            "startDateTime": "2026-09-16T03:20:00Z",
+                        }}]},
         )
         original_request = fabric.request
         fabric.request = Mock(
@@ -166,6 +171,62 @@ class WeatherProvisioningTests(unittest.TestCase):
             configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
 
         self.assertEqual(fabric.request.call_count, 1)
+
+    def test_wrong_offset_weather_schedule_is_updated(self):
+        fabric = FakeFabric()
+        existing = FakeResponse(
+            200,
+            {"value": [{"id": "schedule-id", "enabled": True,
+                        "configuration": {
+                            "type": "Cron",
+                            "interval": 360,
+                            "localTimeZoneId": "UTC",
+                            "startDateTime": "2026-09-16T03:00:00Z",
+                        }}]},
+        )
+        original_request = fabric.request
+        fabric.request = Mock(
+            side_effect=lambda method, url, **kwargs: existing
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs)
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        patch_calls = [
+            call for call in fabric.request.call_args_list
+            if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]
+        ]
+        self.assertEqual(len(patch_calls), 1)
+
+    def test_wrong_timezone_weather_schedule_is_updated(self):
+        fabric = FakeFabric()
+        existing = FakeResponse(
+            200,
+            {"value": [{"id": "schedule-id", "enabled": True,
+                        "configuration": {
+                            "type": "Cron",
+                            "interval": 360,
+                            "localTimeZoneId": "Europe/Oslo",
+                            "startDateTime": "2026-09-16T03:20:00Z",
+                        }}]},
+        )
+        original_request = fabric.request
+        fabric.request = Mock(
+            side_effect=lambda method, url, **kwargs: existing
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs)
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        patch_calls = [
+            call for call in fabric.request.call_args_list
+            if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]
+        ]
+        self.assertEqual(len(patch_calls), 1)
 
     def test_already_published_environment_is_not_republished_without_git_update(self):
         fabric = FakeFabric()
