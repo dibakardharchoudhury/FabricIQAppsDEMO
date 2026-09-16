@@ -609,7 +609,6 @@ export type WeatherAreaMetric = {
   variable_id: string
   area_id: string
   data_kind: 'observation' | 'forecast'
-  forecast_type?: string
   reference_time_utc?: string
   valid_time_utc: string
   lead_hours?: number
@@ -691,7 +690,7 @@ export async function queryWeatherData(interactive = false): Promise<WeatherData
     areas: weather_areas(first: 100) { items { area_id area_name geometry_geojson crs } }
     observations: weather_observations(first: 1000) { items { source_id variable_id location_id observed_at_utc value unit quality } }
     forecasts: weather_forecasts(first: 1000) { items { source_id variable_id location_id reference_time_utc valid_time_utc lead_hours value unit } }
-    areaMetrics: weather_area_metrics(first: 1000) { items { source_id variable_id area_id data_kind forecast_type reference_time_utc valid_time_utc lead_hours area_coverage_fraction area_weighted_value unit rainfall_volume_m3 } }
+    areaMetrics: weather_area_metrics(first: 1000) { items { source_id variable_id area_id data_kind reference_time_utc valid_time_utc lead_hours area_coverage_fraction area_weighted_value unit rainfall_volume_m3 } }
   }`
   const response = await fetch(config.graphqlUrl, {
     method: 'POST',
