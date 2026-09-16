@@ -46,7 +46,32 @@ V = \frac{R}{1000} A
 $$
 
 where $R$ is millimetres and $A$ is the geodesic area in square metres. The stored aggregation method makes this representative-point approximation explicit. A future gridded aggregate can use cell overlap weighting as another method without changing the canonical metric key.
+## Interval and cumulative contract
 
+Both vendors publish accumulating variables over one hour, while the canonical tables report a six-hour interval. Adapters therefore collapse every native record inside the interval instead of sampling one of them: precipitation is summed, gusts are maximised, solar radiation is averaged, and instantaneous variables are read at the interval end.
+
+`weather_forecasts.interval_hours` and `weather_area_metrics.interval_hours` record how many hours of source data each value actually covers, ending at `valid_time_utc`. Instantaneous variables store 0. A value only tiles a window without gaps when `interval_hours` equals the spacing between consecutive valid times, so consumers must read it before summing. UKMet Global Spot supplies all six hours; Aurora supplies one hour per step, so its rows declare the shortfall rather than implying full coverage.
+
+`weather_area_metrics.cumulative_value` and `cumulative_rainfall_volume_m3` hold the running rainfall total within one vendor issue, partitioned by `source_id`, `area_id`, `forecast_type`, and `reference_time_utc`. Because each scheduled run picks up whichever issue a vendor has published, a cumulative is only meaningful inside a single issue; compare two valid times by differencing cumulatives rather than adding rows across issues.
+
+## Serving projections
+
+Silver stays long and narrow so a new vendor can add variables without a schema change, but that shape is wrong for an application: three facilities produce roughly 612 forecast rows per issue, and retaining every issue makes the table grow without bound.
+
+`Weather_020` therefore rebuilds two wide gold tables holding only the newest issue per vendor, pivoted so a single row carries all nine variables:
+
+- `weather_latest_forecasts`, keyed by `source_id`, `target_kind` (`location` or `area`), `target_id`, and `valid_time_utc`, carrying `cumulative_precipitation`, `precipitation_interval_hours`, and the area rainfall volumes.
+- `weather_latest_observations`, keyed by `source_id`, `location_id`, and `observed_at_utc`.
+
+`unit` is not repeated on these rows; it is fixed per variable and read from `weather_variables`. Applications query the serving tables; analytics and any ad-hoc SQL or KQL continue to use the long tables.
+
+The same notebook enforces retention (`retention_days`, default 7) on forecasts, observations, and ingestion runs before aggregating, which bounds both table growth and the cost of the rebuild.
+
+## Run auditing
+
+Fabric aborts a notebook's remaining cells when one raises, so a `finally` block cannot record a failure. Each adapter instead appends its audit row with `status='started'` before the first network call and promotes it to `succeeded` by merge on completion. A run left in `started` is a failed run.
+
+This matters because `03_Pipe_Weather` chains on `Completed`: one vendor failing no longer fails the pipeline, so freshness is the only remaining failure signal. `Weather_020` reports, per vendor, the last successful completion and the number of incomplete runs, and warns when a vendor has not succeeded within `staleness_hours` (default 13, just over one missed run on the six-hour schedule).
 ## Multi-source adapter contract
 
 Each additional adapter should:
@@ -70,7 +95,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Orchestration and tests
 
 1. Attach the same Lakehouse and Fabric Environment to all three notebooks.
-2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` every four hours in that order.
+2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` in that order, every six hours. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Downstream activities depend on `Completed` rather than `Succeeded`, so one vendor outage never blocks the other vendor or the aggregation stage.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.
@@ -83,5 +108,5 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 3. Run `Weather_001_create_lakehouse` and verify all eight tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
 5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
-6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the four-hour `03_Pipe_Weather` schedule.
+6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the six-hour `03_Pipe_Weather` schedule.
 7. Add a GridHD adapter after confirming its product semantics.

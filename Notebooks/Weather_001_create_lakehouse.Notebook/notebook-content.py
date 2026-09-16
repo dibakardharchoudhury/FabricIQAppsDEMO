@@ -47,8 +47,18 @@ TABLES = {
         "observations",
         "forecasts",
         "area_metrics",
+        "latest_forecasts",
+        "latest_observations",
     ]
 }
+
+# Serving projections are wide: one row per target and valid time instead of one row per
+# variable. Keeps the app's payload ~9x smaller while silver stays source-neutral and long.
+SERVING_VALUE_COLUMNS = (
+    "precipitation DOUBLE, temperature DOUBLE, pressure DOUBLE, "
+    "relative_humidity DOUBLE, dew_point DOUBLE, solar_radiation DOUBLE, "
+    "wind_speed DOUBLE, wind_gust DOUBLE, wind_direction DOUBLE"
+)
 
 ddl_statements = [
     f"""CREATE TABLE IF NOT EXISTS {TABLES['sources']} (
@@ -82,6 +92,7 @@ ddl_statements = [
       source_id STRING, variable_id STRING, location_id STRING,
       latitude DOUBLE, longitude DOUBLE, reference_time_utc TIMESTAMP,
       valid_time_utc TIMESTAMP, valid_date DATE, lead_hours INT,
+      interval_hours INT,
       value DOUBLE, unit STRING, ensemble_member STRING,
       source_item_id STRING, run_id STRING, ingested_at_utc TIMESTAMP
     ) USING DELTA PARTITIONED BY (valid_date)""",
@@ -89,18 +100,47 @@ ddl_statements = [
       source_id STRING, variable_id STRING, area_id STRING, data_kind STRING,
       forecast_type STRING,
       reference_time_utc TIMESTAMP, valid_time_utc TIMESTAMP, lead_hours INT,
+      interval_hours INT,
       area_coverage_fraction DOUBLE, area_weighted_value DOUBLE, unit STRING,
-      rainfall_volume_m3 DOUBLE, contributing_cell_count INT,
+      rainfall_volume_m3 DOUBLE, cumulative_value DOUBLE,
+      cumulative_rainfall_volume_m3 DOUBLE, contributing_cell_count INT,
       aggregation_method STRING, source_item_id STRING, run_id STRING,
+      calculated_at_utc TIMESTAMP
+    ) USING DELTA""",
+    f"""CREATE TABLE IF NOT EXISTS {TABLES['latest_forecasts']} (
+      source_id STRING, target_kind STRING, target_id STRING,
+      reference_time_utc TIMESTAMP, valid_time_utc TIMESTAMP, lead_hours INT,
+      precipitation_interval_hours INT, cumulative_precipitation DOUBLE,
+      rainfall_volume_m3 DOUBLE, cumulative_rainfall_volume_m3 DOUBLE,
+      {SERVING_VALUE_COLUMNS},
+      calculated_at_utc TIMESTAMP
+    ) USING DELTA""",
+    f"""CREATE TABLE IF NOT EXISTS {TABLES['latest_observations']} (
+      source_id STRING, location_id STRING, observed_at_utc TIMESTAMP,
+      {SERVING_VALUE_COLUMNS},
       calculated_at_utc TIMESTAMP
     ) USING DELTA""",
 ]
 
+# Columns added after the first release; existing lakehouses are upgraded in place.
+ADDED_COLUMNS = {
+    TABLES["forecasts"]: {"interval_hours": "INT"},
+    TABLES["area_metrics"]: {
+        "forecast_type": "STRING",
+        "interval_hours": "INT",
+        "cumulative_value": "DOUBLE",
+        "cumulative_rainfall_volume_m3": "DOUBLE",
+    },
+}
+
 for ddl in ddl_statements:
     spark.sql(ddl)
 
-if "forecast_type" not in spark.table(TABLES["area_metrics"]).columns:
-    spark.sql(f"ALTER TABLE {TABLES['area_metrics']} ADD COLUMNS (forecast_type STRING)")
+for table_name, columns in ADDED_COLUMNS.items():
+    existing = set(spark.table(table_name).columns)
+    missing = [f"{name} {sql_type}" for name, sql_type in columns.items() if name not in existing]
+    if missing:
+        spark.sql(f"ALTER TABLE {table_name} ADD COLUMNS ({', '.join(missing)})")
 
 print(f"Created or verified {len(ddl_statements)} weather tables")
 
@@ -194,6 +234,21 @@ WHEN NOT MATCHED THEN INSERT *
 # - Observations: source, variable, location, observed time.
 # - Forecasts: source, variable, location, issue time, valid time, ensemble member.
 # - Area metrics: source, variable, area, data kind, forecast type, issue time, valid time.
+#
+# ## Interval semantics
+#
+# `interval_hours` records how many hours of source data each accumulating value
+# actually covers, ending at `valid_time_utc`. Instantaneous variables store 0.
+# Only values whose `interval_hours` equals the spacing between consecutive
+# `valid_time_utc` rows tile a window without gaps, so consumers must read it
+# before summing. `cumulative_value` is the running total within one vendor issue.
+#
+# ## Serving projections
+#
+# `weather_latest_forecasts` and `weather_latest_observations` are rebuilt by Weather_020 and
+# hold only the newest issue, pivoted so one row carries every variable. Applications read
+# these; analytics reads the long silver tables, which keep the source-neutral shape
+# that lets a new vendor add variables without a schema change.
 
 # CELL ********************
 

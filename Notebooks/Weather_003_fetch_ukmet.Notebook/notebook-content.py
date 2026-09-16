@@ -23,6 +23,10 @@
 # Met Office Weather DataHub. Both products are normalized into the source-neutral
 # Weather Lakehouse tables created by Weather_001.
 #
+# Global Spot is hourly. Every hour inside a reporting interval contributes: rainfall is
+# summed, gusts maximised, and instantaneous variables read at the interval end. Lead 0
+# describes the hour before the model run and is excluded from forecasts.
+#
 # The API key value is read from Azure Key Vault at runtime. Only its secret name
 # is configured here; no credential value is stored in this notebook.
 
@@ -42,6 +46,7 @@ equipment_table = "silver_equipment"
 require_active_equipment = True
 facility_ids_json = "[]"
 max_lead_hours = 72
+# Global Spot is hourly; this is the reporting interval each stored row covers, not a sampling stride.
 forecast_interval_hours = 6
 observation_lookback_hours = 24
 # The closest reporting area often has no observations, so several candidates are tried.
@@ -68,6 +73,15 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 SOURCE_ID = "ukmet"
+# Global Spot hourly rows carry totals and gust maxima for the single hour ending at `time`.
+ACCUMULATION_SOURCE_HOURS = 1
+# Variables whose reported value covers the whole interval instead of one instant.
+BUCKET_AGGREGATIONS = {"precipitation": "sum", "wind_gust": "max"}
+RUN_SCHEMA = (
+    "run_id string, source_id string, source_item_id string, data_kind string, "
+    "reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, "
+    "status string, row_count long, error_message string"
+)
 TABLES = {
     name: f"{table_prefix}_{name}"
     for name in ["locations", "ingestion_runs", "observations", "forecasts"]
@@ -252,11 +266,32 @@ land_observations_api_key = notebookutils.credentials.getSecret(
 session = retry_session()
 run_id = str(uuid4())
 started_at = datetime.now(timezone.utc)
+
+# Fabric aborts the remaining cells on error, so the audit row is written before any
+# network call. A run left in 'started' is a failed run.
+spark.createDataFrame(
+    [{
+        "run_id": run_id,
+        "source_id": SOURCE_ID,
+        "source_item_id": None,
+        "data_kind": "forecast_and_observation",
+        "reference_time_utc": None,
+        "started_at_utc": started_at,
+        "completed_at_utc": None,
+        "status": "started",
+        "row_count": 0,
+        "error_message": None,
+    }],
+    RUN_SCHEMA,
+).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
 observation_cutoff = started_at - timedelta(hours=observation_lookback_hours)
 location_rows = []
 forecast_rows = []
 observation_rows = []
 reference_times = []
+available_leads = []
+observed_field_names = set()
 
 print(f"Run {run_id}: loading UKMet data for {len(points)} facilities")
 
@@ -300,19 +335,48 @@ for point in points:
     forecast_longitude = finite_number(coordinates[0]) if len(coordinates) > 1 else float(point["longitude"])
     forecast_latitude = finite_number(coordinates[1]) if len(coordinates) > 1 else float(point["latitude"])
 
+    hourly_samples = []
     for record in time_series(forecast_payload):
         valid_text = record.get("time")
         if not valid_text:
             continue
         valid_time = utc_datetime(valid_text)
-        lead_hours = int(round((valid_time - reference_time).total_seconds() / 3600.0))
-        if lead_hours < 0 or lead_hours > max_lead_hours or lead_hours % forecast_interval_hours:
+        lead = int(round((valid_time - reference_time).total_seconds() / 3600.0))
+        # Lead 0 reports the hour before the model run, so it is history rather than forecast.
+        if lead <= 0 or lead > max_lead_hours:
             continue
-        values = record.get("data") if isinstance(record.get("data"), dict) else record
+        hourly_samples.append((lead, record.get("data") if isinstance(record.get("data"), dict) else record))
+    if not hourly_samples:
+        raise RuntimeError(f"Global Spot returned no forward lead times for {point['location_id']}")
+    hourly_samples.sort(key=lambda sample: sample[0])
+    available_leads.append(hourly_samples[-1][0])
+
+    for bucket_lead in range(forecast_interval_hours, max_lead_hours + 1, forecast_interval_hours):
+        members = [
+            sample for sample in hourly_samples
+            if bucket_lead - forecast_interval_hours < sample[0] <= bucket_lead
+        ]
+        if not members:
+            continue
+        valid_time = reference_time + timedelta(hours=bucket_lead)
         for variable_id, (aliases, unit) in FORECAST_FIELDS.items():
-            value = field_value(values, aliases)
-            if value is None:
-                continue
+            method = BUCKET_AGGREGATIONS.get(variable_id)
+            if method:
+                # Accumulating variables are summed or maximised across every hour in the interval.
+                member_values = [
+                    member_value
+                    for member_value in (field_value(values, aliases) for _, values in members)
+                    if member_value is not None
+                ]
+                if not member_values:
+                    continue
+                value = sum(member_values) if method == "sum" else max(member_values)
+                interval_hours = min(len(member_values) * ACCUMULATION_SOURCE_HOURS, forecast_interval_hours)
+            else:
+                value = field_value(members[-1][1], aliases)
+                if value is None:
+                    continue
+                interval_hours = 0
             forecast_rows.append({
                 "source_id": SOURCE_ID,
                 "variable_id": variable_id,
@@ -322,7 +386,8 @@ for point in points:
                 "reference_time_utc": reference_time,
                 "valid_time_utc": valid_time,
                 "valid_date": valid_time.date(),
-                "lead_hours": lead_hours,
+                "lead_hours": bucket_lead,
+                "interval_hours": interval_hours,
                 "value": value,
                 "unit": unit,
                 "ensemble_member": "deterministic",
@@ -378,6 +443,7 @@ for point in points:
     )
 
     for record in observations_payload:
+        observed_field_names.update(record.keys())
         observed_text = record.get("datetime")
         if not observed_text:
             continue
@@ -410,6 +476,20 @@ if not forecast_rows:
 if not observation_rows:
     raise RuntimeError("UKMet Land Observations returned no mapped recent values")
 
+shortest_horizon = min(available_leads)
+if shortest_horizon < max_lead_hours:
+    print(
+        f"Global Spot returned only {shortest_horizon}h of the requested {max_lead_hours}h "
+        "for at least one location; later leads are absent rather than zero"
+    )
+
+# Land Observations map no rainfall today; this reports whether the product ever sends one.
+unmapped_fields = sorted(observed_field_names - {field for field, _ in OBSERVATION_FIELDS.values()} - {"datetime"})
+rain_fields = [name for name in unmapped_fields if "rain" in name.lower() or "precip" in name.lower()]
+print(f"Land Observations fields not mapped: {unmapped_fields}")
+if rain_fields:
+    print(f"Observed rainfall IS available as {rain_fields}; map it into OBSERVATION_FIELDS")
+
 # METADATA ********************
 
 # META {
@@ -425,7 +505,7 @@ locations_df = spark.createDataFrame(
 )
 forecasts_df = spark.createDataFrame(
     forecast_rows,
-    "source_id string, variable_id string, location_id string, latitude double, longitude double, reference_time_utc timestamp, valid_time_utc timestamp, valid_date date, lead_hours int, value double, unit string, ensemble_member string, source_item_id string, run_id string, ingested_at_utc timestamp",
+    "source_id string, variable_id string, location_id string, latitude double, longitude double, reference_time_utc timestamp, valid_time_utc timestamp, valid_date date, lead_hours int, interval_hours int, value double, unit string, ensemble_member string, source_item_id string, run_id string, ingested_at_utc timestamp",
 )
 observations_df = spark.createDataFrame(
     observation_rows,
@@ -474,8 +554,13 @@ spark.createDataFrame(
         "row_count": len(forecast_rows) + len(observation_rows),
         "error_message": None,
     }],
-    "run_id string, source_id string, source_item_id string, data_kind string, reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, status string, row_count long, error_message string",
-).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+    RUN_SCHEMA,
+).createOrReplaceTempView("incoming_ukmet_run")
+spark.sql(f"""
+MERGE INTO {TABLES['ingestion_runs']} target USING incoming_ukmet_run source
+ON target.run_id = source.run_id
+WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
+""")
 
 display(forecasts_df.orderBy("location_id", "valid_time_utc").limit(20))
 display(observations_df.orderBy(F.desc("observed_at_utc")).limit(20))

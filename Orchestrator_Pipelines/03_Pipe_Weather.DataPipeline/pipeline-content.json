@@ -35,7 +35,7 @@
           {
             "activity": "Weather_002_fetch_area_weather",
             "dependencyConditions": [
-              "Succeeded"
+              "Completed"
             ]
           }
         ]
@@ -58,7 +58,7 @@
           {
             "activity": "Weather_003_fetch_ukmet",
             "dependencyConditions": [
-              "Succeeded"
+              "Completed"
             ]
           }
         ]

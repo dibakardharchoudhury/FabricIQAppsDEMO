@@ -23,6 +23,10 @@
 # STAC Zarr asset, extracts 72-hour point forecasts, creates operating-area geometry,
 # and merges canonical records into the tables created by Weather_001.
 #
+# Aurora publishes one-hour totals at each model step. Precipitation is summed, solar
+# radiation averaged, and gusts maximised across every step inside the reporting
+# interval; `interval_hours` records how much of that interval the value really covers.
+#
 # Configure a Fabric Environment with `xarray`, `zarr<3`, `adlfs`, `shapely`, and
 # `pyproj`. Attach the Weather Lakehouse before running. Store the API key in Key
 # Vault; never put it in notebook parameters.
@@ -80,6 +84,15 @@ TABLES = {
 }
 SOURCE_ID = "aurora"
 PRECIPITATION_EPSILON_M = 1e-3
+RUN_SCHEMA = (
+    "run_id string, source_id string, source_item_id string, data_kind string, "
+    "reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, "
+    "status string, row_count long, error_message string"
+)
+# Aurora publishes `*_1h_*` totals covering the single hour that ends at each step.
+ACCUMULATION_SOURCE_HOURS = 1
+# Variables whose reported value covers the whole interval instead of one instant.
+BUCKET_AGGREGATIONS = {"precipitation": "sum", "solar_radiation": "mean", "wind_gust": "max"}
 GEOD = Geod(ellps="WGS84")
 VARIABLES = {
     "pressure": {"unit": "hPa", "aggregation": "mean"},
@@ -179,35 +192,59 @@ def relative_humidity_percent(temperature_c, dew_point_c):
     return np.clip(100.0 * np.exp(exponent), 0.0, 100.0)
 
 
-def weather_grids(dataset: xr.Dataset, step_index: int) -> dict[str, np.ndarray]:
-    def grid(name: str) -> np.ndarray:
+def weather_series(
+    dataset: xr.Dataset,
+    step_indices: list[int],
+    lat_indices: list[int],
+    lon_indices: list[int],
+) -> dict[str, np.ndarray]:
+    """Read the selected grid cells only, returning one (step, point) array per variable."""
+    steps = xr.DataArray(np.asarray(step_indices, dtype=int), dims="step")
+    latitudes = xr.DataArray(np.asarray(lat_indices, dtype=int), dims="point")
+    longitudes = xr.DataArray(np.asarray(lon_indices, dtype=int), dims="point")
+
+    def series(name: str) -> np.ndarray:
         return np.asarray(
-            dataset[name].isel(time=0, step=step_index).values,
+            dataset[name]
+            .isel(time=0, step=steps, latitude=latitudes, longitude=longitudes)
+            .transpose("step", "point")
+            .values,
             dtype=float,
         )
 
-    temperature_c = grid("2m_temperature_0") - 273.15
-    dew_point_c = grid("2m_dewpoint_temperature_0") - 273.15
-    wind_u = grid("10m_u_component_of_wind_0")
-    wind_v = grid("10m_v_component_of_wind_0")
+    temperature_c = series("2m_temperature_0") - 273.15
+    dew_point_c = series("2m_dewpoint_temperature_0") - 273.15
+    wind_u = series("10m_u_component_of_wind_0")
+    wind_v = series("10m_v_component_of_wind_0")
     wind_speed = np.hypot(wind_u, wind_v)
     wind_direction = np.degrees(np.arctan2(-wind_u, -wind_v)) % 360.0
     wind_direction = np.where(wind_speed < 0.1, np.nan, wind_direction)
 
     return {
-        "pressure": grid("surface_pressure_0") / 100.0,
+        "pressure": series("surface_pressure_0") / 100.0,
         "temperature": temperature_c,
         "relative_humidity": relative_humidity_percent(temperature_c, dew_point_c),
         "dew_point": dew_point_c,
         "solar_radiation": np.maximum(
-            grid("surface_solar_radiation_downwards_1h_0") / 3600.0,
+            series("surface_solar_radiation_downwards_1h_0") / 3600.0,
             0.0,
         ),
         "wind_speed": wind_speed,
-        "wind_gust": np.maximum(grid("instantaneous_10m_wind_gust_0"), 0.0),
+        "wind_gust": np.maximum(series("instantaneous_10m_wind_gust_0"), 0.0),
         "wind_direction": wind_direction,
-        "precipitation": precipitation_mm(grid("scaled_total_precipitation_1h_0")),
+        "precipitation": precipitation_mm(series("scaled_total_precipitation_1h_0")),
     }
+
+
+def bucket_value(values: np.ndarray, method: str | None, end_position: int, positions: list[int]):
+    """Collapse the native steps inside one reporting interval to a single value per point."""
+    if method == "sum":
+        return np.nansum(values[positions, :], axis=0)
+    if method == "mean":
+        return np.nanmean(values[positions, :], axis=0)
+    if method == "max":
+        return np.nanmax(values[positions, :], axis=0)
+    return values[end_position, :]
 
 
 def longitude_180(value):
@@ -364,6 +401,25 @@ print(f"Created {len(areas)} station aggregation areas at {aggregation_radius_km
 api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
 run_id = str(uuid4())
 started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
+
+# Fabric aborts the remaining cells on error, so the audit row is written before any
+# network call. A run left in 'started' is a failed run.
+spark.createDataFrame(
+    [{
+        "run_id": run_id,
+        "source_id": SOURCE_ID,
+        "source_item_id": None,
+        "data_kind": "forecast",
+        "reference_time_utc": None,
+        "started_at_utc": started_at,
+        "completed_at_utc": None,
+        "status": "started",
+        "row_count": 0,
+        "error_message": None,
+    }],
+    RUN_SCHEMA,
+).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
 item = latest_stac_item(endpoint, api_key)
 source_item_id = str(item.get("id"))
 properties = item.get("properties", {})
@@ -388,15 +444,36 @@ if missing_source_variables:
 
 latitudes = np.asarray(dataset["latitude"].values, dtype=float)
 longitudes = np.asarray(dataset["longitude"].values, dtype=float)
-available_hours = lead_hours(dataset["step"].values)
+native_hours = [int(value) for value in lead_hours(dataset["step"].values)]
 requested_hours = set(range(interval_hours, max_lead_hours + 1, interval_hours))
-step_indices = [index for index, value in enumerate(available_hours) if int(value) in requested_hours]
-if not step_indices:
+bucket_leads = sorted(hour for hour in set(native_hours) if hour in requested_hours)
+if not bucket_leads:
     raise RuntimeError("No requested forecast lead hours are present in the dataset")
 
+# Each reported lead covers the interval that ends at it, so accumulating variables are
+# summed over every native step inside that window instead of sampling one step in six.
+bucket_members = {
+    lead: [index for index, hour in enumerate(native_hours) if lead - interval_hours < hour <= lead]
+    for lead in bucket_leads
+}
+member_indices = sorted({index for members in bucket_members.values() for index in members})
+member_position = {index: position for position, index in enumerate(member_indices)}
+bucket_coverage = {
+    lead: min(len(members) * ACCUMULATION_SOURCE_HOURS, interval_hours)
+    for lead, members in bucket_members.items()
+}
+partial_leads = [lead for lead, covered in bucket_coverage.items() if covered < interval_hours]
+if partial_leads:
+    print(
+        f"Aurora publishes {ACCUMULATION_SOURCE_HOURS}h totals every "
+        f"{min(native_hours[1:] or [interval_hours])}h, so {len(partial_leads)} of "
+        f"{len(bucket_leads)} leads cover {bucket_coverage[partial_leads[0]]}h of the "
+        f"{interval_hours}h interval; interval_hours records the shortfall"
+    )
+
 print(
-    f"Run {run_id}: item {source_item_id}, {len(step_indices)} lead times, "
-    f"{len(VARIABLES)} variables"
+    f"Run {run_id}: item {source_item_id}, {len(bucket_leads)} lead times from "
+    f"{len(member_indices)} native steps, {len(VARIABLES)} variables"
 )
 
 # METADATA ********************
@@ -429,14 +506,23 @@ for point in points:
         "updated_at_utc": started_at,
     })
 
+series = weather_series(
+    dataset,
+    member_indices,
+    [lat_index for _, lat_index, _ in point_cells],
+    [lon_index for _, _, lon_index in point_cells],
+)
+
 forecast_rows = []
-for step_index in step_indices:
-    lead = int(available_hours[step_index])
+for lead in bucket_leads:
     valid_time = reference_time + timedelta(hours=lead)
-    grids = weather_grids(dataset, step_index)
-    for point, lat_index, lon_index in point_cells:
-        for variable_id, variable_grid in grids.items():
-            raw_value = float(variable_grid[lat_index, lon_index])
+    positions = [member_position[index] for index in bucket_members[lead]]
+    end_position = member_position[native_hours.index(lead)]
+    for variable_id, variable_series in series.items():
+        method = BUCKET_AGGREGATIONS.get(variable_id)
+        values = bucket_value(variable_series, method, end_position, positions)
+        for point_index, (point, lat_index, lon_index) in enumerate(point_cells):
+            raw_value = float(values[point_index])
             value = None if variable_id == "wind_direction" and not np.isfinite(raw_value) else raw_value
             forecast_rows.append({
                 "source_id": SOURCE_ID,
@@ -448,6 +534,7 @@ for step_index in step_indices:
                 "valid_time_utc": valid_time,
                 "valid_date": valid_time.date(),
                 "lead_hours": lead,
+                "interval_hours": bucket_coverage[lead] if method else 0,
                 "value": value,
                 "unit": VARIABLES[variable_id]["unit"],
                 "ensemble_member": "deterministic",
@@ -478,7 +565,7 @@ locations_df = spark.createDataFrame(
 )
 forecasts_df = spark.createDataFrame(
     forecast_rows,
-    "source_id string, variable_id string, location_id string, latitude double, longitude double, reference_time_utc timestamp, valid_time_utc timestamp, valid_date date, lead_hours int, value double, unit string, ensemble_member string, source_item_id string, run_id string, ingested_at_utc timestamp",
+    "source_id string, variable_id string, location_id string, latitude double, longitude double, reference_time_utc timestamp, valid_time_utc timestamp, valid_date date, lead_hours int, interval_hours int, value double, unit string, ensemble_member string, source_item_id string, run_id string, ingested_at_utc timestamp",
 )
 locations_df.createOrReplaceTempView("incoming_weather_locations")
 forecasts_df.createOrReplaceTempView("incoming_weather_forecasts")
@@ -569,10 +656,12 @@ run_rows = [{
     "row_count": row_count,
     "error_message": None,
 }]
-spark.createDataFrame(
-    run_rows,
-    "run_id string, source_id string, source_item_id string, data_kind string, reference_time_utc timestamp, started_at_utc timestamp, completed_at_utc timestamp, status string, row_count long, error_message string",
-).write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+spark.createDataFrame(run_rows, RUN_SCHEMA).createOrReplaceTempView("incoming_weather_run")
+spark.sql(f"""
+MERGE INTO {TABLES['ingestion_runs']} target USING incoming_weather_run source
+ON target.run_id = source.run_id
+WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
+""")
 
 print(f"Run {run_id} succeeded: {len(forecast_rows)} point forecast rows")
 
