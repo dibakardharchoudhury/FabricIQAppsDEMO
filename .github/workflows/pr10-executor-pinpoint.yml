@@ -1,4 +1,4 @@
-name: Normalize schedule test indentation
+name: Capture updated schedule test failure
 on:
   push:
     branches: [feat/weather-operations]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 jobs:
-  stage:
+  capture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,20 +15,22 @@ jobs:
       - shell: python
         run: |
           from pathlib import Path
-          import ast, textwrap
-          path = Path('.github/pr10-execute-fixed.txt')
-          text = path.read_text()
-          start = text.index('          corrected_schedule_tests = ')
-          end = text.index('\n', start)
-          assignment = text[start:end]
-          value = ast.literal_eval(assignment.split('=', 1)[1].strip())
-          indented = textwrap.indent(value, '    ')
-          replacement = f'          corrected_schedule_tests = {indented!r}'
-          path.write_text(text[:start] + replacement + text[end:])
+          import subprocess, textwrap
+          workflow = Path('.github/pr10-execute-fixed.txt').read_text()
+          start = workflow.index('      - name: Apply guarded fixes')
+          run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
+          end = workflow.index('\n      - name: Validate first scoped change', run_start)
+          exec(compile(textwrap.dedent(workflow[run_start:end]), 'executor', 'exec'))
+          result = subprocess.run(
+              ['python', '-m', 'unittest', 'test_sync_workspace_from_git', 'test_deploy_fabric_app', 'test_weather_source_contracts'],
+              cwd='Raw/workspace-reset', text=True, capture_output=True,
+          )
+          Path('.github/pr10-python-error.txt').write_text(
+              f'exit={result.returncode}\n{result.stdout}{result.stderr}', encoding='utf-8')
       - shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/pr10-execute-fixed.txt
-          git commit -m "Normalize schedule test class indentation"
+          git add .github/pr10-python-error.txt
+          git commit -m "Record updated schedule test failure"
           git push origin HEAD:feat/weather-operations
