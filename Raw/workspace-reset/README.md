@@ -143,6 +143,10 @@ NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs
 same Key Vault passed to `Pipe_Setup`. The provisioner prints these names but intentionally never
 requests, reads, or stores their values.
 
+Provisioning also creates `03_Pipe_Weather` and ensures it has an enabled UTC schedule every four
+hours. Each run executes the Aurora notebook first and the UKMet notebook second. Rerunning the
+provisioner reuses a matching schedule or repairs the existing schedule instead of adding duplicates.
+
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,
 `key_vault_uri` and `ops_agent_run_as_user`. Leave `env_suffix` at `V6` unless you also change

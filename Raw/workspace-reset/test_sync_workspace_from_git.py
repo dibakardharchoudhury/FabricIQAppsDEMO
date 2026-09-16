@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import Mock
 
-from sync_workspace_from_git import configure_weather_assets
+from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -47,6 +47,7 @@ class FakeFabric:
             else [{"id": LAKEHOUSE_ID, "type": "Lakehouse", "displayName": LAKEHOUSE_NAME}]
         )
         self.requests = []
+        self.request_kwargs = []
         self.updates = []
         self.poll_lro = Mock(side_effect=lambda response: response)
 
@@ -75,6 +76,11 @@ class FakeFabric:
                 "displayName": "Weather_003_fetch_ukmet",
                 "folderId": "notebooks-folder",
             },
+            {
+                "id": "weather-pipeline",
+                "type": "DataPipeline",
+                "displayName": "03_Pipe_Weather",
+            },
             *self.lakehouses,
         ]
 
@@ -83,6 +89,9 @@ class FakeFabric:
 
     def request(self, method, url, **kwargs):
         self.requests.append((method, url))
+        self.request_kwargs.append(kwargs)
+        if "/jobs/Pipeline/schedules" in url and method == "GET":
+            return FakeResponse(200, {"value": []})
         if "/getDefinition" in url:
             return FakeResponse(200, ipynb_definition(self.dependencies))
         if "/updateDefinition" in url:
@@ -97,6 +106,42 @@ class FakeFabric:
 
 
 class WeatherProvisioningTests(unittest.TestCase):
+    def test_weather_schedule_is_created_every_four_hours(self):
+        fabric = FakeFabric()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        post_indexes = [
+            index
+            for index, (method, url) in enumerate(fabric.requests)
+            if method == "POST" and "/jobs/Pipeline/schedules" in url
+        ]
+        self.assertEqual(len(post_indexes), 1)
+        body = fabric.request_kwargs[post_indexes[0]]["json"]
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["configuration"]["type"], "Cron")
+        self.assertEqual(body["configuration"]["interval"], 240)
+
+    def test_matching_weather_schedule_is_reused(self):
+        fabric = FakeFabric()
+        matching = FakeResponse(
+            200,
+            {"value": [{"id": "schedule-id", "enabled": True,
+                        "configuration": {"type": "Cron", "interval": 240}}]},
+        )
+        original_request = fabric.request
+        fabric.request = Mock(
+            side_effect=lambda method, url, **kwargs: matching
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs)
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        self.assertEqual(fabric.request.call_count, 1)
+
     def test_already_published_environment_is_not_republished_without_git_update(self):
         fabric = FakeFabric()
         with contextlib.redirect_stdout(io.StringIO()) as output:

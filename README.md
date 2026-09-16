@@ -124,6 +124,7 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 
 2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.
+4. **`03_Pipe_Weather` runs automatically every four hours.** It refreshes Aurora first, then UKMet; workspace provisioning creates and enables the schedule.
 
 ## How it fits together
 

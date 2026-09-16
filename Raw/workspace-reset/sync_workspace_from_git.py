@@ -73,7 +73,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -93,6 +93,9 @@ GUID_RE = re.compile(
 )
 WEATHER_ENVIRONMENT_NAME = "Weather"
 WEATHER_NOTEBOOK_FOLDER = "Notebooks"
+WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
+WEATHER_PIPELINE_JOB_TYPE = "Pipeline"
+WEATHER_SCHEDULE_INTERVAL_MINUTES = 240
 WEATHER_NOTEBOOK_NAMES = {
     "Weather_001_create_lakehouse",
     "Weather_002_fetch_area_weather",
@@ -503,6 +506,57 @@ def rebind_weather_notebooks(
         print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
 
 
+def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
+    """Ensure the weather pipeline has an enabled four-hour recurring schedule."""
+    base = (
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{pipeline_id}"
+        f"/jobs/{WEATHER_PIPELINE_JOB_TYPE}/schedules"
+    )
+    response = fab.request("GET", base)
+    if response.status_code != 200:
+        raise SystemExit(
+            f"Failed to inspect '{WEATHER_PIPELINE_NAME}' schedules: "
+            f"HTTP {response.status_code} {response.text}"
+        )
+    schedules = response.json().get("value", [])
+    for schedule in schedules:
+        configuration = schedule.get("configuration", {})
+        if (
+            schedule.get("enabled") is True
+            and configuration.get("type") == "Cron"
+            and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
+        ):
+            print(f"{WEATHER_PIPELINE_NAME} already runs every four hours.")
+            return
+
+    start = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    body = {
+        "enabled": True,
+        "configuration": {
+            "startDateTime": start.isoformat().replace("+00:00", "Z"),
+            "endDateTime": (start + timedelta(days=3650)).isoformat().replace("+00:00", "Z"),
+            "localTimeZoneId": "UTC",
+            "type": "Cron",
+            "interval": WEATHER_SCHEDULE_INTERVAL_MINUTES,
+        },
+    }
+    if schedules:
+        schedule_id = schedules[0].get("id")
+        if not schedule_id:
+            raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+        response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
+        action = "updated"
+    else:
+        response = fab.request("POST", base, json=body)
+        action = "created"
+    if response.status_code not in (200, 201):
+        raise SystemExit(
+            f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
+            f"HTTP {response.status_code} {response.text}"
+        )
+    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every four hours (UTC).")
+
+
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
     """Validate weather Git items, publish their Environment, and print secret guidance."""
     items = fab.list_workspace_items(workspace_id)
@@ -539,6 +593,19 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
             + ", ".join(misplaced)
         )
     print("Weather notebooks are present in workspace folder 'Notebooks'.")
+
+    weather_pipelines = [
+        item
+        for item in items
+        if item.get("type") in {"DataPipeline", "Pipeline"}
+        and item.get("displayName") == WEATHER_PIPELINE_NAME
+    ]
+    if len(weather_pipelines) != 1:
+        raise SystemExit(
+            f"Weather provisioning failed: expected one '{WEATHER_PIPELINE_NAME}' pipeline, "
+            f"found {len(weather_pipelines)}."
+        )
+    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
 
     environments = [
         item

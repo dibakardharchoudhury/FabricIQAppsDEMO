@@ -75,7 +75,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Orchestration and tests
 
 1. Attach the same Lakehouse and Fabric Environment to all three notebooks.
-2. Run the setup notebook once per environment, then schedule ingestion through a Fabric Data Pipeline.
+2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs both ingestion notebooks every four hours, in Aurora-then-UKMet order.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.
@@ -88,5 +88,5 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 3. Run `Weather_001_create_lakehouse` and verify all eight tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
 5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
-6. Run `Weather_003_fetch_ukmet`, verify Global Spot and Land Observation rows, then schedule incremental loads.
+6. Run `Weather_003_fetch_ukmet` and verify Global Spot and Land Observation rows. Provisioning creates and enables the four-hour `03_Pipe_Weather` schedule.
 7. Add a GridHD adapter after confirming its product semantics.
