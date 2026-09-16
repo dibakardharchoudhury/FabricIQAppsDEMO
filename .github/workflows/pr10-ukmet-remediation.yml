@@ -52,7 +52,6 @@ jobs:
 
           def time_series(payload: dict) -> list[dict]:
               features = payload.get("features") or []"""
-          helper_replacement = "\n".join(line[10:] if line.startswith("          ") else line for line in helper_replacement.splitlines())
           if source.count(helper_anchor) != 1:
               raise RuntimeError("Expected UKMet time_series helper anchor")
           source = source.replace(helper_anchor, helper_replacement)
