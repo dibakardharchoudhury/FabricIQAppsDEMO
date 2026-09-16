@@ -57,9 +57,15 @@ export function WeatherPage() {
 
   const applyWeather = (data: WeatherData) => {
     setWeather(data)
-    setSelection(current => current ?? (data.locations[0]
-      ? { kind: 'location', id: data.locations[0].location_id }
-      : data.areas[0] ? { kind: 'area', id: data.areas[0].area_id } : undefined))
+    setSelection(current => {
+      const stillAvailable = current?.kind === 'location'
+        ? data.locations.some(item => item.location_id === current.id)
+        : current?.kind === 'area' ? data.areas.some(item => item.area_id === current.id) : false
+      if (stillAvailable) return current
+      return data.locations[0]
+        ? { kind: 'location', id: data.locations[0].location_id }
+        : data.areas[0] ? { kind: 'area', id: data.areas[0].area_id } : undefined
+    })
     setTimeAnchor(Date.now())
     setState('ready')
   }

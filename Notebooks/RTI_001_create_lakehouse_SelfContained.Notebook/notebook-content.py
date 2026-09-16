@@ -1017,6 +1017,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
 # Run concurrently — each notebook's get/update pair is independent I/O, so a
 # small thread pool cuts total wall time to roughly one notebook's round-trip
 # instead of the sum of all of them.
+binding_failures = []
 with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
     futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]
     for future in as_completed(futures):
@@ -1025,6 +1026,13 @@ with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
             print(f"✅ '{nb_name}': {detail}")
         else:
             print(f"⚠️  Could not rebind '{nb_name}': {detail}")
+            binding_failures.append((nb_name, detail))
+weather_binding_failures = [failure for failure in binding_failures if failure[0].startswith("Weather_")]
+if weather_binding_failures:
+    raise RuntimeError(
+        "Required weather notebook binding failed: "
+        + "; ".join(f"{name}: {detail}" for name, detail in weather_binding_failures)
+    )
 
 print(
     f"\nℹ️  All downstream notebooks now reference the lakehouse "

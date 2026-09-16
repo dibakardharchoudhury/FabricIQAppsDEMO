@@ -132,9 +132,12 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
   while (nextUrl) {
     const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
     if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
-    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string }
+    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }
     items.push(...(page.value ?? []))
     nextUrl = page.continuationUri
+    if (!nextUrl && page.continuationToken) {
+      nextUrl = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items?continuationToken=${encodeURIComponent(page.continuationToken)}`
+    }
   }
   return items
 }
@@ -765,7 +768,14 @@ async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: strin
     const status = await runJob(notebookId, 'RunNotebook', report, { timeoutMs: 20 * 60_000, reuseActive: true })
     if (status !== 'Completed') return status
   }
-  return 'Completed'
+  const postseedNotebookId = await resolvePostseedNotebookId()
+  const postseedStatus = await runJob(postseedNotebookId, 'RunNotebook', onStatus, {
+    timeoutMs: 15 * 60_000,
+    reuseActive: true,
+    parameters: [{ name: 'sql_db_item_name', value: 'hydro-operations-ui', type: 'Text' }],
+  })
+  if (postseedStatus === 'Completed') clearWorkspaceConfigCache()
+  return postseedStatus
 }
 
 /** Create tables, ingest Aurora and UKMet, then calculate vendor-specific area metrics. */

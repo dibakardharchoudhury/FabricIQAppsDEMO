@@ -43,7 +43,15 @@ export function summarizePrecipitation(
   const lastIndex = includedIndexes[includedIndexes.length - 1]
   const included = includedIndexes.map(index => ordered[index])
   const predecessor = firstIndex > 0 ? ordered[firstIndex - 1] : undefined
-  const contiguous = includedIndexes.every((index, offset) => {
+  const firstIncludedEnd = Date.parse(ordered[firstIndex].valid_time_utc)
+  const firstIncludedIntervalMs = Number(ordered[firstIndex].precipitation_interval_hours) * 3_600_000
+  const predecessorEnd = predecessor ? Date.parse(predecessor.valid_time_utc) : Number.NaN
+  const predecessorIntervalMs = predecessor ? Number(predecessor.precipitation_interval_hours) * 3_600_000 : Number.NaN
+  const predecessorCoversBoundary = Number.isFinite(predecessorEnd)
+    && Number.isFinite(predecessorIntervalMs)
+    && predecessorIntervalMs > 0
+    && predecessorEnd === firstIncludedEnd - firstIncludedIntervalMs
+  const contiguous = predecessorCoversBoundary && includedIndexes.every((index, offset) => {
     if (index !== firstIndex + offset || index === 0) return false
     const currentEnd = Date.parse(ordered[index].valid_time_utc)
     const previousEnd = Date.parse(ordered[index - 1].valid_time_utc)

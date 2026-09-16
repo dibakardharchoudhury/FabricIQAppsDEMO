@@ -364,6 +364,15 @@ class WeatherProvisioningTests(unittest.TestCase):
         self.assertIn("RTI_001 will bind the weather notebooks", output.getvalue())
         self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))
 
+    def test_duplicate_weather_notebooks_are_rejected(self):
+        fabric = FakeFabric()
+        items = fabric.list_workspace_items("workspace-id")
+        items.append({**items[1], "id": "weather-001-duplicate"})
+        fabric.list_workspace_items = Mock(return_value=items)
+
+        with self.assertRaisesRegex(SystemExit, "duplicate notebook.*Weather_001_create_lakehouse"):
+            configure_weather_assets(fabric, "workspace-id", git_updated=False)
+
 
 if __name__ == "__main__":
     unittest.main()

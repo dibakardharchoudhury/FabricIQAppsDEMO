@@ -32,3 +32,13 @@ test('falls back to bucket sums when cumulative rows span a timestamp gap', () =
   ], anchor, 24)
   assert.deepEqual(summary, { amount: 9, volume: undefined, coveredHours: 12 })
 })
+
+
+test('falls back to interval sums when the cumulative predecessor has invalid coverage', () => {
+  const summary = summarizePrecipitation([
+    { valid_time_utc: at(2), precipitation_interval_hours: 0, precipitation: 50, cumulative_precipitation: 50 },
+    { valid_time_utc: at(8), precipitation_interval_hours: 6, precipitation: 6, cumulative_precipitation: 56 },
+    { valid_time_utc: at(14), precipitation_interval_hours: 6, precipitation: 4, cumulative_precipitation: 60 },
+  ], anchor, 24)
+  assert.deepEqual(summary, { amount: 10, volume: undefined, coveredHours: 12 })
+})

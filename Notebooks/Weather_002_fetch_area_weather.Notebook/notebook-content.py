@@ -255,7 +255,8 @@ def weather_series(
 def bucket_value(values: np.ndarray, method: str | None, end_position: int, positions: list[int]):
     """Collapse the native steps inside one reporting interval to a single value per point."""
     if method == "sum":
-        return np.nansum(values[positions, :], axis=0)
+        selected = values[positions, :]
+        return np.where(np.all(np.isnan(selected), axis=0), np.nan, np.nansum(selected, axis=0))
     if method == "mean":
         return np.nanmean(values[positions, :], axis=0)
     if method == "max":
@@ -539,7 +540,7 @@ for lead in bucket_leads:
         values = bucket_value(variable_series, method, end_position, positions)
         for point_index, (point, lat_index, lon_index) in enumerate(point_cells):
             raw_value = float(values[point_index])
-            value = None if variable_id == "wind_direction" and not np.isfinite(raw_value) else raw_value
+            value = raw_value if np.isfinite(raw_value) else None
             forecast_rows.append({
                 "source_id": SOURCE_ID,
                 "variable_id": variable_id,
@@ -585,6 +586,13 @@ forecasts_df = spark.createDataFrame(
 )
 locations_df.createOrReplaceTempView("incoming_weather_locations")
 forecasts_df.createOrReplaceTempView("incoming_weather_forecasts")
+for point in points:
+    location_id = str(point["location_id"]).replace(chr(39), chr(39) * 2)
+    spark.sql(
+        f"DELETE FROM {TABLES['forecasts']} WHERE source_id = '{SOURCE_ID}' "
+        f"AND source_item_id = '{source_item_id.replace(chr(39), chr(39) * 2)}' "
+        f"AND location_id = '{location_id}'"
+    )
 spark.sql(f"""
 MERGE INTO {TABLES['locations']} target USING incoming_weather_locations source
 ON target.location_id = source.location_id

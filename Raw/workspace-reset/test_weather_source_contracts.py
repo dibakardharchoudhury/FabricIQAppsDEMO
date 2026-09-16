@@ -58,5 +58,26 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertNotIn("right-forge-2c0b55c94f", rayfin)
 
 
+    def test_remaining_review_remediation_contracts(self):
+        fabric = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
+        self.assertIn("continuationToken?: string", fabric)
+        self.assertIn("encodeURIComponent(page.continuationToken)", fabric)
+        weather_sequence = fabric.split("async function runWeatherSequence", 1)[1].split("export const runWeatherNotebooks", 1)[0]
+        self.assertGreater(weather_sequence.index("weatherNotebookNames.entries()"), -1)
+        self.assertGreater(weather_sequence.index("resolvePostseedNotebookId()"), weather_sequence.index("weatherNotebookNames.entries()"))
+        page = (ROOT / "HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx").read_text(encoding="utf-8")
+        self.assertIn("stillAvailable", page)
+        aurora = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertIn("np.all(np.isnan(selected)", aurora)
+        self.assertIn("DELETE FROM {TABLES['forecasts']}", aurora)
+        ukmet = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertIn("for source_id, issue_time, location_id", ukmet)
+        canonical = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
+        raw_source = "".join("".join(cell.get("source", [])) for cell in raw["cells"])
+        marker = "Required weather notebook binding failed"
+        self.assertEqual(canonical.count(marker), 1)
+        self.assertEqual(raw_source.count(marker), 1)
+
 if __name__ == "__main__":
     unittest.main()

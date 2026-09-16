@@ -535,6 +535,18 @@ locations_df.createOrReplaceTempView("incoming_ukmet_locations")
 forecasts_df.createOrReplaceTempView("incoming_ukmet_forecasts")
 observations_df.createOrReplaceTempView("incoming_ukmet_observations")
 
+for source_id, issue_time, location_id in sorted({
+    (row["source_id"], row["reference_time_utc"], row["location_id"])
+    for row in forecast_rows
+}):
+    source_sql = source_id.replace(chr(39), chr(39) * 2)
+    location_sql = location_id.replace(chr(39), chr(39) * 2)
+    issue_sql = pd.Timestamp(issue_time).isoformat().replace("+00:00", "Z")
+    spark.sql(
+        f"DELETE FROM {TABLES['forecasts']} WHERE source_id = '{source_sql}' "
+        f"AND reference_time_utc = TIMESTAMP '{issue_sql}' AND location_id = '{location_sql}'"
+    )
+
 spark.sql(f"""
 MERGE INTO {TABLES['locations']} target USING incoming_ukmet_locations source
 ON target.location_id = source.location_id

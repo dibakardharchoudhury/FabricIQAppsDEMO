@@ -614,12 +614,21 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     if not notebook_folder:
         raise SystemExit("Weather provisioning failed: workspace folder 'Notebooks' was not created.")
 
-    weather_notebooks = {
-        item.get("displayName"): item
-        for item in items
+    weather_notebook_items = [
+        item for item in items
         if item.get("type") == "Notebook"
         and item.get("displayName") in WEATHER_NOTEBOOK_NAMES
-    }
+    ]
+    duplicate_notebooks = sorted(
+        name for name in WEATHER_NOTEBOOK_NAMES
+        if sum(item.get("displayName") == name for item in weather_notebook_items) > 1
+    )
+    if duplicate_notebooks:
+        raise SystemExit(
+            "Weather provisioning failed: duplicate notebook(s): "
+            + ", ".join(duplicate_notebooks)
+        )
+    weather_notebooks = {item.get("displayName"): item for item in weather_notebook_items}
     missing = sorted(WEATHER_NOTEBOOK_NAMES - weather_notebooks.keys())
     if missing:
         raise SystemExit("Weather provisioning failed: missing notebook(s): " + ", ".join(missing))
