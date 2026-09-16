@@ -25,7 +25,7 @@ export const V1_TABS: V1Tab[] = [
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: WeatherPage },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: DigitalTwinPage },
   { id: 'knowledge-graph', label: 'Knowledge Graph', title: 'Knowledge Graph', icon: Network, Page: KnowledgeGraphPage },
-  { id: 'copilot', label: 'Copilot', title: 'Copilot', icon: Bot, Page: CopilotPage },
+  { id: 'copilot', label: 'Hydro Intelligence', title: 'Hydro Intelligence', icon: Bot, Page: CopilotPage },
   { id: 'maintenance', label: 'Work Orders & Maintenance', title: 'Work Orders & Maintenance', icon: Wrench, Page: MaintenancePage },
   { id: 'administration', label: 'Administration', title: 'Administration', icon: Settings, Page: AdministrationPage },
 ]
