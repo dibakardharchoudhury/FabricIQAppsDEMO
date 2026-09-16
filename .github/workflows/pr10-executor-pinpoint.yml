@@ -1,0 +1,34 @@
+name: Pinpoint PR 10 executor
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-executor-pinpoint.yml]
+permissions:
+  contents: write
+jobs:
+  pinpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+      - shell: python
+        run: |
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/pr10-execute.yml').read_text()
+          start = workflow.index('      - name: Apply guarded fixes')
+          run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
+          end = workflow.index('\n      - name: Validate first scoped change', run_start)
+          try:
+              exec(compile(textwrap.dedent(workflow[run_start:end]), 'executor', 'exec'))
+          except BaseException as error:
+              Path('.github/pr10-executor-error.txt').write_text(f'{type(error).__name__}: {error}', encoding='utf-8')
+      - shell: bash
+        run: |
+          test -f .github/pr10-executor-error.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/pr10-executor-error.txt
+          git commit -m "Record PR 10 executor failure"
+          git push origin HEAD:feat/weather-operations
