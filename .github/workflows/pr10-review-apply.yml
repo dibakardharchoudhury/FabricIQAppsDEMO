@@ -46,6 +46,8 @@ jobs:
                   'anchors = []',
                   'for cell in notebook.get("cells", []):',
                   '    source = cell.get("source", [])',
+                  '    if not any("chain_notebooks = [" in line for line in source):',
+                  '        continue',
                   '    for index, line in enumerate(source):',
                   '        if \'"Weather_003_fetch_ukmet"\' in line:',
                   '            anchors.append((source, index))',
