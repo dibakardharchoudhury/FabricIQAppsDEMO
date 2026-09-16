@@ -399,7 +399,7 @@ def list_workspace_folders(workspace_id: str, access_token: str) -> list:
         url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/folders?recursive=true"
 
         if continuation_token:
-            url = f"{url}&continuationToken={continuation_token}"
+            url = f"{url}&continuationToken={quote(continuation_token, safe='')}"
 
         resp = requests.get(url, headers=headers)
 
