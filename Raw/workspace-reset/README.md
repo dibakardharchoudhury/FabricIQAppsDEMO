@@ -144,10 +144,13 @@ folder and binds all four to the project Lakehouse. The fetch notebooks read
 same Key Vault passed to `Pipe_Setup`. The provisioner prints these names but intentionally never
 requests, reads, or stores their values.
 
-Provisioning also creates `03_Pipe_Weather` and ensures it has an enabled UTC schedule every four
-hours. Each run executes Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage
-rebuilds area metrics separately for every vendor and forecast type. Rerunning the provisioner
-reuses a matching schedule or repairs the existing schedule instead of adding duplicates.
+Provisioning also creates `03_Pipe_Weather` and ensures it has an enabled UTC schedule every six
+hours, aligned to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
+Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
+separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
+tables the app reads. Downstream activities depend on `Completed`, so one vendor failing never
+blocks the other. Rerunning the provisioner reuses a matching schedule or repairs the existing
+schedule instead of adding duplicates.
 
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
 **every environment-specific parameter must be overridden** — at minimum `workspace_id`,

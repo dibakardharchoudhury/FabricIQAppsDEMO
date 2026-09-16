@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import unittest
+from datetime import datetime
 from unittest.mock import Mock
 
 from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule
@@ -112,7 +113,7 @@ class FakeFabric:
 
 
 class WeatherProvisioningTests(unittest.TestCase):
-    def test_weather_schedule_is_created_every_four_hours(self):
+    def test_weather_schedule_is_created_every_six_hours(self):
         fabric = FakeFabric()
 
         with contextlib.redirect_stdout(io.StringIO()):
@@ -127,14 +128,32 @@ class WeatherProvisioningTests(unittest.TestCase):
         body = fabric.request_kwargs[post_indexes[0]]["json"]
         self.assertTrue(body["enabled"])
         self.assertEqual(body["configuration"]["type"], "Cron")
-        self.assertEqual(body["configuration"]["interval"], 240)
+        self.assertEqual(body["configuration"]["interval"], 360)
+
+    def test_weather_schedule_starts_offset_from_a_model_run(self):
+        fabric = FakeFabric()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        post_index = next(
+            index
+            for index, (method, url) in enumerate(fabric.requests)
+            if method == "POST" and "/jobs/Pipeline/schedules" in url
+        )
+        start = datetime.fromisoformat(
+            fabric.request_kwargs[post_index]["json"]["configuration"]["startDateTime"]
+            .replace("Z", "+00:00")
+        )
+        minutes_past_midnight = start.hour * 60 + start.minute
+        self.assertEqual(minutes_past_midnight % 360, 200)
 
     def test_matching_weather_schedule_is_reused(self):
         fabric = FakeFabric()
         matching = FakeResponse(
             200,
             {"value": [{"id": "schedule-id", "enabled": True,
-                        "configuration": {"type": "Cron", "interval": 240}}]},
+                        "configuration": {"type": "Cron", "interval": 360}}]},
         )
         original_request = fabric.request
         fabric.request = Mock(

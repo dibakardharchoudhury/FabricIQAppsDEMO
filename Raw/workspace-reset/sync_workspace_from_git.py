@@ -95,7 +95,11 @@ WEATHER_ENVIRONMENT_NAME = "Weather"
 WEATHER_NOTEBOOK_FOLDER = "Notebooks"
 WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
 WEATHER_PIPELINE_JOB_TYPE = "Pipeline"
-WEATHER_SCHEDULE_INTERVAL_MINUTES = 240
+# Aurora and UKMet both derive from 6-hourly model runs (00/06/12/18 UTC) and the canonical
+# reporting interval is 6 hours, so anything shorter re-ingests issues and drifts across them.
+WEATHER_SCHEDULE_INTERVAL_MINUTES = 360
+# Start each run well after a model run so both vendors have published it.
+WEATHER_SCHEDULE_OFFSET_MINUTES = 200
 WEATHER_NOTEBOOK_NAMES = {
     "Weather_001_create_lakehouse",
     "Weather_002_fetch_area_weather",
@@ -508,7 +512,7 @@ def rebind_weather_notebooks(
 
 
 def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
-    """Ensure the weather pipeline has an enabled four-hour recurring schedule."""
+    """Ensure the weather pipeline has an enabled six-hour recurring schedule."""
     base = (
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{pipeline_id}"
         f"/jobs/{WEATHER_PIPELINE_JOB_TYPE}/schedules"
@@ -527,10 +531,20 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
             and configuration.get("type") == "Cron"
             and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
         ):
-            print(f"{WEATHER_PIPELINE_NAME} already runs every four hours.")
+            print(f"{WEATHER_PIPELINE_NAME} already runs every six hours.")
             return
 
-    start = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    midnight = now.replace(hour=0, minute=0)
+    start = next(
+        (
+            candidate
+            for slot in range(0, 24 * 60 + 1, WEATHER_SCHEDULE_INTERVAL_MINUTES)
+            if (candidate := midnight + timedelta(minutes=slot + WEATHER_SCHEDULE_OFFSET_MINUTES))
+            > now + timedelta(minutes=1)
+        ),
+        midnight + timedelta(days=1, minutes=WEATHER_SCHEDULE_OFFSET_MINUTES),
+    )
     body = {
         "enabled": True,
         "configuration": {
@@ -555,7 +569,7 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
             f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
             f"HTTP {response.status_code} {response.text}"
         )
-    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every four hours (UTC).")
+    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")
 
 
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:

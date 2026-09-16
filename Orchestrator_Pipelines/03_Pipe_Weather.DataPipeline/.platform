@@ -3,7 +3,7 @@
   "metadata": {
     "type": "DataPipeline",
     "displayName": "03_Pipe_Weather",
-    "description": "Refreshes Aurora and UKMet weather data every four hours."
+    "description": "Refreshes Aurora and UKMet weather data every six hours."
   },
   "config": {
     "version": "2.0",
