@@ -1,0 +1,549 @@
+name: Apply and validate final PR 10 findings
+
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-final-findings.yml]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 2
+
+      - name: Verify requested base head
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = "a126797f0c297a4bed3dec6fc4f2d961e57a3584"
+
+      - name: Apply scoped area cleanup first
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''active_area_ids = [area["area_id"] for area in areas]
+          active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
+          spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")'''
+          new = '''if not selected_facility_ids:
+              active_area_ids = [area["area_id"] for area in areas]
+              active_area_ids_sql = ", ".join(f"'{area_id.replace(chr(39), chr(39) * 2)}'" for area_id in active_area_ids)
+              spark.sql(f"DELETE FROM {TABLES['areas']} WHERE area_id NOT IN ({active_area_ids_sql})")'''
+          if text.count(old) != 1:
+              raise SystemExit('Scoped area cleanup anchor changed')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+
+      - name: Validate first scoped change
+        shell: bash
+        run: |
+          python -m py_compile Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py').read_text()
+          assert 'if not selected_facility_ids:\n    active_area_ids' in text
+          assert text.index('if not selected_facility_ids:\n    active_area_ids') < text.index("MERGE INTO {TABLES['areas']}")
+          PY
+
+      - name: Apply remaining fixes and regression tests
+        shell: python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          from pathlib import Path
+
+          def replace_once(path_name, old, new):
+              path = Path(path_name)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path_name}: expected one replacement anchor, found {text.count(old)}')
+              path.write_text(text.replace(old, new), encoding='utf-8')
+
+          # Preserve every forecast type in canonical area metrics; select only for serving.
+          path020 = 'Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py'
+          replace_once(path020, '''forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
+          forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
+              F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
+              F.col("forecast_type").asc(),
+          )
+          selected_forecast_types = (
+              typed_forecasts.select(*forecast_type_keys, "forecast_type")
+              .distinct()
+              .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
+              .filter(F.col("forecast_type_rank") == F.lit(1))
+              .drop("forecast_type_rank")
+          )
+          forecasts = typed_forecasts.join(
+              selected_forecast_types,
+              [*forecast_type_keys, "forecast_type"],
+              "inner",
+          )
+          if forecasts.limit(1).count() == 0:
+              raise RuntimeError("No weather forecasts are available for area calculation")
+          if (
+              forecasts.groupBy(*forecast_type_keys)
+              .agg(F.countDistinct("forecast_type").alias("forecast_type_count"))
+              .filter(F.col("forecast_type_count") != F.lit(1))
+              .limit(1)
+              .count()
+          ):
+              raise RuntimeError("Weather forecast selection produced more than one forecast type")
+
+          # Select one product before the area join so location and area serving rows use the same type.
+          area_forecasts = forecasts.join(area_locations, "location_id", "inner")''', '''if typed_forecasts.limit(1).count() == 0:
+              raise RuntimeError("No weather forecasts are available for area calculation")
+
+          # Canonical metrics retain every forecast product; selection happens only for the wide serving schema.
+          area_forecasts = typed_forecasts.join(area_locations, "location_id", "inner")''')
+
+          serving_anchor = '''def widen(frame, target_kind, target_column, value_column, extra_columns):
+              keys = ["source_id", "reference_time_utc", "valid_time_utc", "lead_hours", target_column]
+              wide = (
+                  frame.groupBy(*keys)
+                  .pivot("variable_id", SERVING_VARIABLES)
+                  .agg(F.first(value_column, ignorenulls=True))
+              )
+              precipitation = frame.filter(F.col("variable_id") == "precipitation").select(*keys, *extra_columns)
+              return (
+                  wide.join(precipitation, keys, "left")
+                  .withColumn("target_kind", F.lit(target_kind))
+                  .withColumnRenamed(target_column, "target_id")
+              )
+
+
+          location_window = ('''
+          serving_replacement = '''def widen(frame, target_kind, target_column, value_column, extra_columns):
+              keys = ["source_id", "reference_time_utc", "valid_time_utc", "lead_hours", target_column]
+              wide = (
+                  frame.groupBy(*keys)
+                  .pivot("variable_id", SERVING_VARIABLES)
+                  .agg(F.first(value_column, ignorenulls=True))
+              )
+              precipitation = frame.filter(F.col("variable_id") == "precipitation").select(*keys, *extra_columns)
+              return (
+                  wide.join(precipitation, keys, "left")
+                  .withColumn("target_kind", F.lit(target_kind))
+                  .withColumnRenamed(target_column, "target_id")
+              )
+
+
+          # GraphQL has no forecast_type field, so choose one stable product per issue/location here.
+          forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
+          forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
+              F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
+              F.col("forecast_type").asc(),
+          )
+          selected_forecast_types = (
+              typed_forecasts.select(*forecast_type_keys, "forecast_type")
+              .distinct()
+              .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
+              .filter(F.col("forecast_type_rank") == F.lit(1))
+              .drop("forecast_type_rank")
+          )
+          serving_location_forecasts = typed_forecasts.join(
+              selected_forecast_types,
+              [*forecast_type_keys, "forecast_type"],
+              "inner",
+          )
+          serving_area_metrics = (
+              spark.table(TABLES["area_metrics"])
+              .filter(F.col("data_kind") == "forecast")
+              .join(area_locations.select("area_id", "location_id"), "area_id", "inner")
+              .join(selected_forecast_types, [*forecast_type_keys, "forecast_type"], "inner")
+          )
+
+          location_window = ('''
+          replace_once(path020, serving_anchor, serving_replacement)
+          replace_once(path020, 'Window.partitionBy("source_id", "variable_id", "location_id", "reference_time_utc")', 'Window.partitionBy("source_id", "variable_id", "location_id", "forecast_type", "reference_time_utc")')
+          replace_once(path020, 'latest_issue_only(forecasts)', 'latest_issue_only(serving_location_forecasts)')
+          replace_once(path020, 'latest_issue_only(spark.table(TABLES["area_metrics"]).filter(F.col("data_kind") == "forecast"))', 'latest_issue_only(serving_area_metrics)')
+
+          # Add a pure precipitation summary helper and focused tests.
+          Path('HydroOperationsApp/src/ui-shared/weatherSummary.ts').write_text('''export type PrecipitationBucket = {
+            valid_time_utc: string
+            precipitation_interval_hours?: number | null
+            precipitation?: number | null
+            cumulative_precipitation?: number | null
+            rainfall_volume_m3?: number | null
+            cumulative_rainfall_volume_m3?: number | null
+          }
+
+          export type PrecipitationWindowSummary = {
+            amount?: number
+            volume?: number
+            coveredHours: number
+          }
+
+          const finiteValue = (value?: number | null) => value == null || !Number.isFinite(Number(value)) ? undefined : Number(value)
+
+          const sumValues = (buckets: PrecipitationBucket[], field: 'precipitation' | 'rainfall_volume_m3') => {
+            const values = buckets.flatMap(bucket => {
+              const value = finiteValue(bucket[field])
+              return value == null ? [] : [value]
+            })
+            return values.length ? values.reduce((sum, value) => sum + value, 0) : undefined
+          }
+
+          export function summarizePrecipitation(
+            buckets: PrecipitationBucket[],
+            timeAnchor: number,
+            windowHours: number,
+          ): PrecipitationWindowSummary | undefined {
+            const windowEnd = timeAnchor + windowHours * 3_600_000
+            const ordered = [...buckets].sort((left, right) => Date.parse(left.valid_time_utc) - Date.parse(right.valid_time_utc))
+            const includedIndexes = ordered.flatMap((bucket, index) => {
+              const bucketEnd = Date.parse(bucket.valid_time_utc)
+              const intervalHours = Number(bucket.precipitation_interval_hours)
+              if (!Number.isFinite(bucketEnd) || !Number.isFinite(intervalHours) || intervalHours <= 0) return []
+              const bucketStart = bucketEnd - intervalHours * 3_600_000
+              return bucketStart >= timeAnchor && bucketEnd <= windowEnd ? [index] : []
+            })
+            if (!includedIndexes.length) return undefined
+
+            const firstIndex = includedIndexes[0]
+            const lastIndex = includedIndexes[includedIndexes.length - 1]
+            const included = includedIndexes.map(index => ordered[index])
+            const predecessor = firstIndex > 0 ? ordered[firstIndex - 1] : undefined
+            const contiguous = includedIndexes.every((index, offset) => index === firstIndex + offset)
+            const difference = (to?: number | null, from?: number | null) => {
+              const end = finiteValue(to)
+              const start = finiteValue(from)
+              return end == null || start == null ? undefined : end - start
+            }
+            const amount = contiguous && predecessor
+              ? difference(ordered[lastIndex].cumulative_precipitation, predecessor.cumulative_precipitation)
+              : undefined
+            const volume = contiguous && predecessor
+              ? difference(ordered[lastIndex].cumulative_rainfall_volume_m3, predecessor.cumulative_rainfall_volume_m3)
+              : undefined
+
+            return {
+              amount: amount ?? sumValues(included, 'precipitation'),
+              volume: volume ?? sumValues(included, 'rainfall_volume_m3'),
+              coveredHours: included.reduce((sum, bucket) => sum + Number(bucket.precipitation_interval_hours), 0),
+            }
+          }
+          ''', encoding='utf-8')
+
+          Path('HydroOperationsApp/scripts/weather-summary.test.ts').write_text('''import assert from 'node:assert/strict'
+          import test from 'node:test'
+          import { summarizePrecipitation } from '../src/ui-shared/weatherSummary.ts'
+
+          const anchor = Date.parse('2026-09-16T09:20:00Z')
+          const at = (hours: number) => new Date(anchor + hours * 3_600_000).toISOString()
+
+          test('excludes partial leading buckets and differences from their cumulative predecessor', () => {
+            const summary = summarizePrecipitation([
+              { valid_time_utc: at(2), precipitation_interval_hours: 6, precipitation: 5, cumulative_precipitation: 5, rainfall_volume_m3: 50, cumulative_rainfall_volume_m3: 50 },
+              { valid_time_utc: at(8), precipitation_interval_hours: 6, precipitation: 6, cumulative_precipitation: 11, rainfall_volume_m3: 60, cumulative_rainfall_volume_m3: 110 },
+              { valid_time_utc: at(14), precipitation_interval_hours: 6, precipitation: 4, cumulative_precipitation: 15, rainfall_volume_m3: 40, cumulative_rainfall_volume_m3: 150 },
+              { valid_time_utc: at(20), precipitation_interval_hours: 6, precipitation: 3, cumulative_precipitation: 18, rainfall_volume_m3: 30, cumulative_rainfall_volume_m3: 180 },
+            ], anchor, 24)
+            assert.deepEqual(summary, { amount: 13, volume: 130, coveredHours: 18 })
+          })
+
+          test('ignores missing and zero intervals and never differences the first bucket from zero', () => {
+            const summary = summarizePrecipitation([
+              { valid_time_utc: at(6), precipitation_interval_hours: 6, precipitation: 3, cumulative_precipitation: 10 },
+              { valid_time_utc: at(12), precipitation_interval_hours: 0, precipitation: 7, cumulative_precipitation: 17 },
+              { valid_time_utc: at(18), precipitation_interval_hours: null, precipitation: 9, cumulative_precipitation: 26 },
+            ], anchor, 24)
+            assert.deepEqual(summary, { amount: 3, volume: undefined, coveredHours: 6 })
+          })
+          ''', encoding='utf-8')
+
+          weather_page = 'HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx'
+          replace_once(weather_page, "import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'", "import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'\nimport { summarizePrecipitation } from '../weatherSummary'")
+          replace_once(weather_page, '''    const end = timeAnchor + windowHours * 3_600_000
+              const inWindow = selectedForecasts.filter(item => Date.parse(item.valid_time_utc) > timeAnchor && Date.parse(item.valid_time_utc) <= end)
+              if (!inWindow.length) return undefined
+              const last = inWindow[inWindow.length - 1]
+              const before = selectedForecasts.filter(item => Date.parse(item.valid_time_utc) <= timeAnchor).at(-1)
+              const difference = (to?: number | null, from?: number | null) =>
+                to == null ? undefined : Number(to) - Number(from ?? 0)
+              return {
+                amount: difference(last.cumulative_precipitation, before?.cumulative_precipitation)
+                  ?? inWindow.reduce((sum, item) => sum + Number(item.precipitation || 0), 0),
+                unit: unitOf('precipitation'),
+                volume: difference(last.cumulative_rainfall_volume_m3, before?.cumulative_rainfall_volume_m3),
+                coveredHours: inWindow.reduce((sum, item) => sum + Number(item.precipitation_interval_hours ?? 0), 0),
+                windowHours,
+              }''', '''    const summary = summarizePrecipitation(selectedForecasts, timeAnchor, windowHours)
+              return summary ? { ...summary, unit: unitOf('precipitation'), windowHours } : undefined''')
+
+          # Refresh reruns discovery; all bounded weather connections use the supported limit.
+          fabric_path = 'HydroOperationsApp/src/services/fabric.ts'
+          replace_once(fabric_path, '''async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null> {
+            if (configCache) return configCache
+            if (configPromise) return configPromise''', '''async function ensureConfig(interactive: boolean, forceRefresh = false): Promise<ResolvedConfig | null> {
+            if (forceRefresh) {
+              configCache = null
+              configPromise = undefined
+            }
+            if (configCache) return configCache
+            if (configPromise) return configPromise''')
+          replace_once(fabric_path, 'export async function queryWeatherData(interactive = false): Promise<WeatherData | null> {\n  const config = await ensureConfig(false)', 'export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {\n  const config = await ensureConfig(forceRefresh, forceRefresh)')
+          replace_once(fabric_path, 'const token = await silentToken([GRAPHQL_SCOPE]) ?? (interactive ? await popupToken([GRAPHQL_SCOPE]) : null)', 'const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)')
+          fabric = Path(fabric_path)
+          text = fabric.read_text(encoding='utf-8')
+          weather_query_start = text.index('const query = `query HydroWeather')
+          weather_query_end = text.index('  const response = await fetch', weather_query_start)
+          query = text[weather_query_start:weather_query_end]
+          for old in ('first: 500', 'first: 100', 'first: 50', 'first: 1000'):
+              query = query.replace(old, 'first: 100000')
+          text = text[:weather_query_start] + query + text[weather_query_end:]
+          fabric.write_text(text, encoding='utf-8')
+
+          # The raw setup notebook must bind Weather_020 to the Environment in both checks.
+          ipynb_path = Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb')
+          ipynb_text = ipynb_path.read_text(encoding='utf-8')
+          old_set = '{\\"Weather_002_fetch_area_weather\\", \\"Weather_003_fetch_ukmet\\"}'
+          new_set = '{\\"Weather_002_fetch_area_weather\\", \\"Weather_003_fetch_ukmet\\", \\"Weather_020_area_calculations\\"}'
+          if ipynb_text.count(old_set) != 2:
+              raise SystemExit(f'Expected two Weather Environment checks, found {ipynb_text.count(old_set)}')
+          ipynb_path.write_text(ipynb_text.replace(old_set, new_set), encoding='utf-8')
+
+          # Reconcile one schedule and remove every duplicate.
+          sync_path = 'Raw/workspace-reset/sync_workspace_from_git.py'
+          old_schedule = '''    schedules = response.json().get("value", [])
+              for schedule in schedules:
+                  if weather_schedule_matches(schedule):
+                      print(f"{WEATHER_PIPELINE_NAME} already runs every six hours at the UTC offset.")
+                      return
+
+              now = datetime.now(timezone.utc).replace(second=0, microsecond=0)'''
+          new_schedule = '''    schedules = response.json().get("value", [])
+              retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)
+              if retained is None and schedules:
+                  retained = schedules[0]
+
+              now = datetime.now(timezone.utc).replace(second=0, microsecond=0)'''
+          replace_once(sync_path, old_schedule, new_schedule)
+          replace_once(sync_path, '''    if schedules:
+              schedule_id = schedules[0].get("id")
+              if not schedule_id:
+                  raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+              response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
+              action = "updated"
+          else:
+              response = fab.request("POST", base, json=body)
+              action = "created"
+          if response.status_code not in (200, 201):
+              raise SystemExit(
+                  f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
+                  f"HTTP {response.status_code} {response.text}"
+              )
+          print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")''', '''    if retained is None:
+              response = fab.request("POST", base, json=body)
+              action = "created"
+          elif weather_schedule_matches(retained):
+              response = None
+              action = "reused"
+          else:
+              schedule_id = retained.get("id")
+              if not schedule_id:
+                  raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+              response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
+              action = "updated"
+          if response is not None and response.status_code not in (200, 201):
+              raise SystemExit(
+                  f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
+                  f"HTTP {response.status_code} {response.text}"
+              )
+
+              for schedule in schedules:
+                  if schedule is retained:
+                      continue
+                  schedule_id = schedule.get("id")
+                  if not schedule_id:
+                      raise SystemExit(f"Extra '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+                  deleted = fab.request("DELETE", f"{base}/{schedule_id}")
+                  if deleted.status_code not in (200, 204):
+                      raise SystemExit(
+                          f"Failed to delete extra '{WEATHER_PIPELINE_NAME}' schedule {schedule_id}: "
+                          f"HTTP {deleted.status_code} {deleted.text}"
+                      )
+              print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")''')
+
+          # Add schedule duplicate regression cases without disturbing offset/timezone tests.
+          test_path = 'Raw/workspace-reset/test_sync_workspace_from_git.py'
+          test_anchor = '''    def test_already_published_environment_is_not_republished_without_git_update(self):'''
+          test_cases = '''    def test_matching_schedule_is_retained_and_stale_duplicate_is_deleted(self):
+              fabric = FakeFabric()
+              existing = FakeResponse(200, {"value": [
+                  {"id": "valid", "enabled": True, "configuration": {
+                      "type": "Cron", "interval": 360, "localTimeZoneId": "UTC",
+                      "startDateTime": "2026-09-16T03:20:00Z",
+                  }},
+                  {"id": "stale", "enabled": True, "configuration": {
+                      "type": "Cron", "interval": 240, "localTimeZoneId": "UTC",
+                      "startDateTime": "2026-09-16T03:00:00Z",
+                  }},
+              ]})
+              original_request = fabric.request
+              fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+                  if method == "GET" and "/jobs/Pipeline/schedules" in url
+                  else original_request(method, url, **kwargs))
+
+              with contextlib.redirect_stdout(io.StringIO()):
+                  configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+              writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+              self.assertEqual(writes, [("DELETE", writes[0][1])])
+              self.assertTrue(writes[0][1].endswith("/stale"))
+
+              def test_multiple_stale_schedules_repairs_one_and_deletes_extras(self):
+                  fabric = FakeFabric()
+                  existing = FakeResponse(200, {"value": [
+                      {"id": "keep", "enabled": False, "configuration": {}},
+                      {"id": "extra-one", "enabled": True, "configuration": {"type": "Cron", "interval": 240}},
+                      {"id": "extra-two", "enabled": True, "configuration": {"type": "Cron", "interval": 120}},
+                  ]})
+                  original_request = fabric.request
+                  fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+                      if method == "GET" and "/jobs/Pipeline/schedules" in url
+                      else original_request(method, url, **kwargs))
+
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+                  writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+                  self.assertEqual([method for method, _ in writes], ["PATCH", "DELETE", "DELETE"])
+                  self.assertTrue(writes[0][1].endswith("/keep"))
+                  self.assertEqual({url.rsplit("/", 1)[-1] for _, url in writes[1:]}, {"extra-one", "extra-two"})
+
+          '''
+          replace_once(test_path, test_anchor, test_cases + test_anchor)
+
+          # Remove only the review-confirmed stale local origin.
+          replace_once('HydroOperationsApp/rayfin/rayfin.yml', '      - https://right-forge-2c0b55c94f-swedencentral.webapp.fabricapps.net\n', '')
+
+          # Clarify deterministic selection in serving documentation.
+          docs_path = 'docs/weather-fabric-port-plan.md'
+          replace_once(docs_path, '''`unit` is not repeated on these rows; it is fixed per variable and read from `weather_variables`. Applications query the serving tables; analytics and any ad-hoc SQL or KQL continue to use the long tables.''', '''`unit` is not repeated on these rows; it is fixed per variable and read from `weather_variables`. When an issue contains multiple forecast types, the serving projection prefers `deterministic` and otherwise selects the lexically first type per source, issue, and location; location and area rows share that mapping. Applications query the serving tables; analytics and any ad-hoc SQL or KQL continue to use the forecast-type-specific long tables.''')
+
+          # Permanent source-contract assertions for notebook and integration surfaces.
+          Path('Raw/workspace-reset/test_weather_source_contracts.py').write_text('''import json
+          import unittest
+          from pathlib import Path
+
+          ROOT = Path(__file__).resolve().parents[2]
+
+
+          class WeatherSourceContractTests(unittest.TestCase):
+              def test_scoped_area_run_does_not_execute_global_cleanup(self):
+                  source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+                  compile(source, "Weather_002", "exec")
+                  self.assertIn("if not selected_facility_ids:\\n    active_area_ids", source)
+
+              def test_canonical_metrics_keep_types_until_serving(self):
+                  source = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
+                  compile(source, "Weather_020", "exec")
+                  canonical, serving = source.split("# ## Serving projections", 1)
+                  self.assertIn('area_forecasts = typed_forecasts.join', canonical)
+                  self.assertNotIn("selected_forecast_types", canonical)
+                  self.assertIn("selected_forecast_types", serving)
+                  self.assertIn("serving_area_metrics", serving)
+
+              def test_raw_setup_binds_weather_020_environment_twice(self):
+                  notebook = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
+                  source = "\\n".join("\\n".join(cell.get("source", [])) for cell in notebook["cells"])
+                  expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}'
+                  self.assertEqual(source.count(expected), 2)
+
+              def test_weather_query_contract_uses_supported_bound_and_refreshes_discovery(self):
+                  source = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
+                  weather_query = source.split("query HydroWeather", 1)[1].split("const response", 1)[0]
+                  self.assertEqual(weather_query.count("first: 100000"), 5)
+                  self.assertNotIn("first: 1000)", weather_query)
+                  self.assertIn("ensureConfig(forceRefresh, forceRefresh)", source)
+
+              def test_pipeline_and_redirect_contracts_remain_intact(self):
+                  pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
+                  dependencies = [dependency["dependencyConditions"] for activity in pipeline["properties"]["activities"] for dependency in activity.get("dependsOn", [])]
+                  self.assertTrue(dependencies)
+                  self.assertTrue(all(conditions == ["Completed"] for conditions in dependencies))
+                  rayfin = (ROOT / "HydroOperationsApp/rayfin/rayfin.yml").read_text(encoding="utf-8")
+                  self.assertNotIn("right-forge-2c0b55c94f", rayfin)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          ''', encoding='utf-8')
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+
+      - name: Validate Python, notebooks, and JSON
+        shell: bash
+        run: |
+          python -m py_compile Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          json.loads(Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb').read_text())
+          json.loads(Path('Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json').read_text())
+          PY
+          (cd Raw/workspace-reset && python -m unittest test_sync_workspace_from_git test_deploy_fabric_app test_weather_source_contracts)
+
+      - name: Validate frontend without deployment prehooks
+        working-directory: HydroOperationsApp
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          node --import tsx --test scripts/weather-summary.test.ts
+          node --test scripts/*.test.mjs
+          npx eslint src/ui-shared/pages/WeatherPage.tsx src/ui-shared/weatherSummary.ts src/services/fabric.ts scripts/weather-summary.test.ts
+          npx vite build
+
+      - name: Update PR description contract
+        shell: python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          import json
+          import os
+          import re
+          import urllib.request
+
+          url = 'https://api.github.com/repos/dibakardharchoudhury/FabricIQAppsDEMO/pulls/10'
+          headers = {
+              'Accept': 'application/vnd.github+json',
+              'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}",
+              'X-GitHub-Api-Version': '2022-11-28',
+          }
+          with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
+              pull = json.load(response)
+          replacement = ('Treats the current Entra SPA redirect snapshot as authoritative, then adds only the current '
+                         'hosting origin and localhost to `rayfin.yml`; stale local-only origins are removed rather than restored.')
+          body, count = re.subn(
+              r'Changes Rayfin redirect handling to merge existing `rayfin\.yml` origins with Entra/current deployment origins, preserving teammate app URLs\s+while validating only tenant-relevant Entra redirects\.',
+              replacement,
+              pull['body'],
+          )
+          if count != 1:
+              raise SystemExit(f'Expected one conflicting PR description statement, found {count}')
+          request = urllib.request.Request(url, data=json.dumps({'body': body}).encode(), headers={**headers, 'Content-Type': 'application/json'}, method='PATCH')
+          with urllib.request.urlopen(request) as response:
+              if response.status != 200:
+                  raise SystemExit(f'PR update failed: {response.status}')
+
+      - name: Commit fixes and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/pr10-final-findings.yml
+          git add -A
+          git commit -m "Fix remaining weather review findings"
+          git push origin HEAD:feat/weather-operations
