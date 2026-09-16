@@ -726,13 +726,11 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     print("Binding weather notebooks to the lakehouse and Environment...")
     bindings_ready = rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
 
-    # A fresh workspace gets the cadence now, but it remains disabled until RTI_001
-    # creates the lakehouse and successfully binds every weather notebook.
+    # Stage 2 enables the cadence only after Weather_001 succeeds under its attached Lakehouse.
     configure_weather_schedule(
-        fab, workspace_id, weather_pipelines[0]["id"], enabled=bindings_ready
+        fab, workspace_id, weather_pipelines[0]["id"], enabled=False
     )
-    if not bindings_ready:
-        print(f"{WEATHER_PIPELINE_NAME} schedule created disabled until notebook dependencies are ready.")
+    print(f"{WEATHER_PIPELINE_NAME} schedule retained disabled until Stage 2 succeeds.")
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")

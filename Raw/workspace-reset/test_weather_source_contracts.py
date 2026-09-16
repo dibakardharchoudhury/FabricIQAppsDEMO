@@ -35,14 +35,47 @@ class WeatherSourceContractTests(unittest.TestCase):
 
     def test_setup_pagination_and_observation_fallbacks(self):
         setup = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        orchestrator = (ROOT / "Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py").read_text(encoding="utf-8")
         raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         raw_source = "\n".join("".join(cell.get("source", [])) for cell in raw["cells"])
+        raw_orchestrator = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_Orchestrator_Setup.ipynb").read_text(encoding="utf-8"))
+        raw_orchestrator_source = "\n".join("".join(cell.get("source", [])) for cell in raw_orchestrator["cells"])
         compile(setup, "RTI_001_create_lakehouse_SelfContained", "exec")
+        compile(orchestrator, "RTI_Orchestrator_Setup", "exec")
         for cell_number, cell in enumerate(raw["cells"]):
             if cell.get("cell_type") == "code":
                 compile("\n".join(cell.get("source", [])), f"Raw/RTI_001 cell {cell_number}", "exec")
-        self.assertEqual(setup.count('{"useRootDefaultLakehouse": True}'), 1)
-        self.assertEqual(raw_source.count('{"useRootDefaultLakehouse": True}'), 1)
+        for cell_number, cell in enumerate(raw_orchestrator["cells"]):
+            if cell.get("cell_type") == "code":
+                compile("\n".join(cell.get("source", [])), f"Raw/RTI_Orchestrator cell {cell_number}", "exec")
+        self.assertNotIn("notebookutils.notebook.run(", setup)
+        self.assertNotIn("notebookutils.notebook.run(", raw_source)
+        self.assertNotIn("_activate_weather_schedule", setup)
+        self.assertNotIn("_activate_weather_schedule", raw_source)
+        for source in (orchestrator, raw_orchestrator_source):
+            self.assertEqual(source.count('{"useRootDefaultLakehouse": True}'), 1)
+            self.assertEqual(source.count('"path": "Weather_001_create_lakehouse"'), 1)
+            self.assertIn("quote(body['continuationToken'], safe='')", source)
+            self.assertIn("set(results_by_activity) != expected", source)
+            self.assertIn('outcome.get("exception")', source)
+            self.assertIn('_require_successful_dag(results)\n_activate_weather_schedule()', source)
+            self.assertGreater(
+                source.rindex("_activate_weather_schedule()"),
+                source.index("notebookutils.notebook.runMultiple"),
+            )
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
+        stage_two = next(activity for activity in pipeline["properties"]["activities"] if activity["name"] == "RTI_Orchestrator_Setup")
+        for parameter in (
+            "workspace_id",
+            "key_vault_uri",
+            "key_vault_tenant_id_secret_name",
+            "key_vault_client_id_secret_name",
+            "key_vault_client_secret_name",
+        ):
+            self.assertEqual(
+                stage_two["typeProperties"]["parameters"][parameter]["value"]["value"],
+                f"@pipeline().parameters.{parameter}",
+            )
         fallback = 'if not url and body.get("continuationToken")'
         self.assertEqual(setup.count(fallback), 1)
         self.assertEqual(raw_source.count(fallback), 1)
@@ -94,8 +127,8 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertEqual(raw_source.count("quote(continuation_token, safe='')"), 1)
         self.assertNotIn("continuationToken={continuation_token}", canonical)
         self.assertNotIn("continuationToken={continuation_token}", raw_source)
-        self.assertEqual(canonical.count("_activate_weather_schedule()"), 2)
-        self.assertEqual(raw_source.count("_activate_weather_schedule()"), 2)
+        self.assertNotIn("_activate_weather_schedule", canonical)
+        self.assertNotIn("_activate_weather_schedule", raw_source)
         graphql = (ROOT / "Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text(encoding="utf-8")
         raw_graphql = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb").read_text(encoding="utf-8"))
         raw_graphql_source = "".join("".join(cell.get("source", [])) for cell in raw_graphql["cells"])

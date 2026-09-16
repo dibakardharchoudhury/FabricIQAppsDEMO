@@ -101,6 +101,41 @@
                 "type": "Expression"
               },
               "type": "int"
+            },
+            "workspace_id": {
+              "value": {
+                "value": "@pipeline().parameters.workspace_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "key_vault_uri": {
+              "value": {
+                "value": "@pipeline().parameters.key_vault_uri",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "key_vault_tenant_id_secret_name": {
+              "value": {
+                "value": "@pipeline().parameters.key_vault_tenant_id_secret_name",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "key_vault_client_id_secret_name": {
+              "value": {
+                "value": "@pipeline().parameters.key_vault_client_id_secret_name",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "key_vault_client_secret_name": {
+              "value": {
+                "value": "@pipeline().parameters.key_vault_client_secret_name",
+                "type": "Expression"
+              },
+              "type": "string"
             }
           }
         },

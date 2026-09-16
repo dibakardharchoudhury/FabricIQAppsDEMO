@@ -205,6 +205,19 @@ class WeatherProvisioningTests(unittest.TestCase):
         self.assertEqual(len(patch_calls), 1)
         self.assertFalse(patch_calls[0].kwargs["json"]["enabled"])
 
+    def test_provisioning_keeps_schedule_disabled_when_bindings_are_ready(self):
+        fabric = FakeFabric()
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_assets(fabric, "workspace-id", git_updated=False)
+
+        schedule_posts = [
+            kwargs for (method, url), kwargs in zip(fabric.requests, fabric.request_kwargs)
+            if method == "POST" and "/jobs/Pipeline/schedules" in url
+        ]
+        self.assertEqual(len(schedule_posts), 1)
+        self.assertFalse(schedule_posts[0]["json"]["enabled"])
+
     def test_wrong_offset_weather_schedule_is_updated(self):
         fabric = FakeFabric()
         existing = FakeResponse(

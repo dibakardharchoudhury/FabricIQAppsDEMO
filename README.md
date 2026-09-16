@@ -42,7 +42,7 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 | **RTI_009_build_data_agent** | Data Agent over the ontology. | ✅ |
 | **RTI_010_build_operations_agent** | Operations Agent + `Pipe_SendEmailAlert` for Teams/email alerts. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On‑demand: seeds the app's SQL tables, creates + binds the STID GraphQL API, adds the SQL DB as a Data Agent source. Run by the app's **Seed & provision** button. | — |
-| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, then runs NB02–06, 08–10 in one Spark session. | Stage 2 |
+| **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).

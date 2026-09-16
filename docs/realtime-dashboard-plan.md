@@ -143,7 +143,8 @@ End-to-end chain:
 ```
 launch.py → sync_workspace_from_git.py → run_pipeline.py (01_Pipe_Setup)
   → RTI_001 → RTI_Orchestrator_Setup
-                └─ runMultiple: NB02, NB03, NB04, NB05, NB06, NB08, NB09, NB10
+                └─ runMultiple: NB02, NB03, NB04, NB05, NB06, NB08, NB09, NB10, Weather_001
+                   └─ enable 03_Pipe_Weather schedule after all activities succeed
 ```
 
 **Redesign loop:**

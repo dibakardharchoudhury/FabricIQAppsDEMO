@@ -1035,40 +1035,6 @@ if weather_binding_failures:
         + "; ".join(f"{name}: {detail}" for name, detail in weather_binding_failures)
     )
 
-print("\n=== STEP 5: Create or verify weather tables before schedule activation ===")
-weather_setup_result = notebookutils.notebook.run(
-    "Weather_001_create_lakehouse",
-    3600,
-    {"useRootDefaultLakehouse": True},
-)
-print("Weather schema setup completed:", weather_setup_result)
-
-def _activate_weather_schedule() -> None:
-    pipeline_id = _workspace_item_id("03_Pipe_Weather", "DataPipeline")
-    base = (
-        f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items/{pipeline_id}"
-        "/jobs/Pipeline/schedules"
-    )
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    response = requests.get(base, headers=headers)
-    if response.status_code != 200:
-        raise RuntimeError(f"Failed to inspect weather schedule (HTTP {response.status_code}): {response.text}")
-    schedules = response.json().get("value", [])
-    if len(schedules) != 1 or not schedules[0].get("id"):
-        raise RuntimeError(f"Expected one provisioned weather schedule, found {len(schedules)}")
-    schedule = schedules[0]
-    if schedule.get("enabled") is True:
-        return
-    updated = requests.patch(
-        f"{base}/{schedule['id']}", headers=headers,
-        json={"enabled": True, "configuration": schedule.get("configuration") or {}},
-    )
-    if updated.status_code not in (200, 201):
-        raise RuntimeError(f"Failed to enable weather schedule (HTTP {updated.status_code}): {updated.text}")
-
-
-_activate_weather_schedule()
-
 print(
     f"\nℹ️  All downstream notebooks now reference the lakehouse "
     f"'{lakehouse_name}' ({lakehouse_id}). They pick this up on their next "
