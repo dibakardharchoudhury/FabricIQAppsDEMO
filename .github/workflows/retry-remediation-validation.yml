@@ -1,0 +1,28 @@
+name: Retry remediation validation correction
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/retry-remediation-validation.yml]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+      - name: Correct and retrigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's|^          npm test$|          node --test scripts/*.test.mjs\n          npm run test:knowledge-graph|' .github/workflows/copilot-review-remediation.yml
+          grep -q 'node --test scripts/\*.test.mjs' .github/workflows/copilot-review-remediation.yml
+          rm .github/workflows/correct-remediation-validation.yml
+          rm .github/workflows/retry-remediation-validation.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "chore: use actual Node test suites"
+          git push origin HEAD:feat/weather-operations
