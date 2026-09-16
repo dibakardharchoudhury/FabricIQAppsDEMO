@@ -13,119 +13,85 @@ jobs:
         with:
           ref: feat/weather-operations
           fetch-depth: 0
-      - name: Apply fixes with corrected generated blocks
+      - name: Apply direct review fixes
         shell: python
         run: |
-          import subprocess
+          import json
           from pathlib import Path
 
-          previous = subprocess.check_output(
-              ["git", "show", "dd3be20beb0d2e5d487872557136c7e87611438c:.github/workflows/pr10-final-review-remediation.yml"],
-              text=True,
-          )
-          script = previous.split("      - name: Apply review fixes\n        shell: python\n        run: |\n", 1)[1].split("      - name: Validate remediation\n", 1)[0]
-          script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
-          exec(compile(script, "remediation.py", "exec"))
+          def one(text, old, new):
+              if text.count(old) != 1:
+                  raise RuntimeError(f"Expected one match for {old[:60]!r}, found {text.count(old)}")
+              return text.replace(old, new)
 
-          def replace_block(path, start_marker, end_marker, lines):
-              text = path.read_text(encoding="utf-8")
-              start = text.index(start_marker)
-              end = text.index(end_marker, start)
-              path.write_text(text[:start] + "\n".join(lines) + "\n\n" + text[end:], encoding="utf-8")
+          path = Path("Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py")
+          text = path.read_text(encoding="utf-8")
+          text = one(text, "        raise RuntimeError(f\"No UKMet Land Observation station found for {point['location_id']}\")", "        print(f\"No UKMet Land Observation station near {point['location_id']}; keeping its forecasts only\")\n        continue")
+          path.write_text(text, encoding="utf-8")
 
-          replace_block(
-              Path("Raw/workspace-reset/sync_workspace_from_git.py"),
-              "def weather_schedule_matches(",
-              "def configure_weather_schedule(",
-              [
-                  "def weather_schedule_matches(schedule: dict[str, Any]) -> bool:",
-                  "    \"\"\"Return whether an unexpired schedule matches the required six-hour UTC offset.\"\"\"",
-                  "    configuration = schedule.get(\"configuration\") or {}",
-                  "",
-                  "    def parse_utc(value: Any) -> datetime | None:",
-                  "        if not isinstance(value, str) or not value.strip():",
-                  "            return None",
-                  "        normalized = value.strip()",
-                  "        if normalized.endswith(\"Z\"):",
-                  "            normalized = f\"{normalized[:-1]}+00:00\"",
-                  "        try:",
-                  "            parsed = datetime.fromisoformat(normalized)",
-                  "        except ValueError:",
-                  "            return None",
-                  "        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None",
-                  "",
-                  "    start_utc = parse_utc(configuration.get(\"startDateTime\"))",
-                  "    end_utc = parse_utc(configuration.get(\"endDateTime\"))",
-                  "    if start_utc is None or end_utc is None:",
-                  "        return False",
-                  "    minutes_past_midnight = start_utc.hour * 60 + start_utc.minute",
-                  "    return (",
-                  "        schedule.get(\"enabled\") is True",
-                  "        and end_utc > datetime.now(timezone.utc)",
-                  "        and configuration.get(\"type\") == \"Cron\"",
-                  "        and configuration.get(\"interval\") == WEATHER_SCHEDULE_INTERVAL_MINUTES",
-                  "        and configuration.get(\"localTimeZoneId\") == \"UTC\"",
-                  "        and start_utc.second == 0",
-                  "        and start_utc.microsecond == 0",
-                  "        and minutes_past_midnight % WEATHER_SCHEDULE_INTERVAL_MINUTES",
-                  "        == WEATHER_SCHEDULE_OFFSET_MINUTES",
-                  "    )",
-              ],
-          )
+          path = Path("HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx")
+          text = path.read_text(encoding="utf-8")
+          text = one(text, "Observed conditions and 72-hour Aurora forecasts at each asset and within its 20 km operating area.", "Observed conditions and forecasts at each asset and within its 20 km operating area.")
+          path.write_text(text, encoding="utf-8")
 
-          replace_block(
-              Path("Raw/workspace-reset/test_weather_source_contracts.py"),
-              "    def test_raw_rti_011_matches_canonical_graphql_objects(self):",
-              "    def test_pipeline_and_redirect_contracts_remain_intact(self):",
-              [
-                  "    def test_raw_rti_011_matches_canonical_graphql_objects(self):",
-                  "        canonical = (ROOT / \"Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py\").read_text(encoding=\"utf-8\")",
-                  "        raw = json.loads((ROOT / \"Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb\").read_text(encoding=\"utf-8\"))",
-                  "        raw_source = \"\".join(\"\".join(cell.get(\"source\", [])) for cell in raw[\"cells\"])",
-                  "        start, end = \"GRAPHQL_OBJECTS = [\", \"\\n\\nOPERATIONAL_INSTRUCTIONS_MARKER\"",
-                  "        self.assertEqual(canonical[canonical.index(start):canonical.index(end)], raw_source[raw_source.index(start):raw_source.index(end)])",
-              ],
-          )
+          path = Path("Raw/workspace-reset/sync_workspace_from_git.py")
+          text = path.read_text(encoding="utf-8")
+          begin = text.index("def rebind_weather_notebooks(")
+          end = text.index("def configure_weather_schedule(", begin)
+          replacement = [
+              "def rebind_weather_notebooks(", "    fab: Fabric,", "    workspace_id: str,", "    notebooks: dict[str, dict[str, Any]],", "    items: list[dict[str, Any]],", "    environment_id: str,", ") -> bool:", "    \"\"\"Re-apply notebook bindings and report whether dependencies are ready.\"\"\"", "    lakehouses = [", "        item", "        for item in items", "        if item.get(\"type\") == \"Lakehouse\"", "        and str(item.get(\"displayName\", \"\")).startswith(WEATHER_LAKEHOUSE_PREFIX)", "    ]", "    if not lakehouses:", "        print(", "            f\"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; \"", "            \"RTI_001 will bind the weather notebooks when the setup pipeline runs.\"", "        )", "        return False", "    if len(lakehouses) > 1:", "        names = \", \".join(sorted(str(item.get(\"displayName\")) for item in lakehouses))", "        raise SystemExit(", "            f\"Cannot rebind weather notebooks: several '{WEATHER_LAKEHOUSE_PREFIX}*' \"", "            f\"lakehouses exist ({names}).\"", "        )", "", "    lakehouse = lakehouses[0]", "    wanted_lakehouse = {", "        \"default_lakehouse\": lakehouse[\"id\"],", "        \"default_lakehouse_name\": lakehouse[\"displayName\"],", "        \"default_lakehouse_workspace_id\": workspace_id,", "        \"known_lakehouses\": [{\"id\": lakehouse[\"id\"]}],", "    }", "    wanted_environment = {\"environmentId\": environment_id, \"workspaceId\": workspace_id}", "", "    for name, item in sorted(notebooks.items()):", "        definition = notebook_definition(fab, workspace_id, item[\"id\"])", "        part = next(", "            (part for part in definition.get(\"parts\", []) if str(part.get(\"path\", \"\")).endswith(\".ipynb\")),", "            None,", "        )", "        if part is None:", "            raise SystemExit(f\"Notebook '{name}' has no .ipynb definition part.\")", "        content = json.loads(base64.b64decode(part[\"payload\"]))", "        dependencies = content.setdefault(\"metadata\", {}).setdefault(\"dependencies\", {})", "        if dependencies.get(\"lakehouse\") == wanted_lakehouse and dependencies.get(\"environment\") == wanted_environment:", "            print(f\"  {name}: already bound.\")", "            continue", "        dependencies[\"lakehouse\"] = wanted_lakehouse", "        dependencies[\"environment\"] = wanted_environment", "        part[\"payload\"] = base64.b64encode(json.dumps(content).encode(\"utf-8\")).decode(\"ascii\")", "        part[\"payloadType\"] = \"InlineBase64\"", "        response = fab.poll_lro(fab.request(", "            \"POST\",", "            f\"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true\",", "            json={\"definition\": definition},", "        ))", "        if response.status_code not in (200, 202):", "            raise SystemExit(f\"Failed to bind notebook '{name}': HTTP {response.status_code} {response.text}\")", "        print(f\"  {name}: bound to '{lakehouse['displayName']}' and Environment.\")", "    return True", "", "", "def weather_schedule_matches(schedule: dict[str, Any]) -> bool:", "    \"\"\"Return whether an unexpired schedule matches the required six-hour UTC offset.\"\"\"", "    configuration = schedule.get(\"configuration\") or {}", "    def parse_utc(value: Any) -> datetime | None:", "        if not isinstance(value, str) or not value.strip():", "            return None", "        value = value.strip().replace(\"Z\", \"+00:00\")", "        try:", "            parsed = datetime.fromisoformat(value)", "        except ValueError:", "            return None", "        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None", "    start = parse_utc(configuration.get(\"startDateTime\"))", "    end_time = parse_utc(configuration.get(\"endDateTime\"))", "    if start is None or end_time is None:", "        return False", "    minutes = start.hour * 60 + start.minute", "    return (schedule.get(\"enabled\") is True", "        and end_time > datetime.now(timezone.utc)", "        and configuration.get(\"type\") == \"Cron\"", "        and configuration.get(\"interval\") == WEATHER_SCHEDULE_INTERVAL_MINUTES", "        and configuration.get(\"localTimeZoneId\") == \"UTC\"", "        and start.second == 0 and start.microsecond == 0", "        and minutes % WEATHER_SCHEDULE_INTERVAL_MINUTES == WEATHER_SCHEDULE_OFFSET_MINUTES)", "", "",
+          ]
+          text = text[:begin] + "\n".join(replacement) + text[end:]
+          old = "    rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)\n\n    # Activate the recurring job only after its runtime and dependencies are ready.\n    configure_weather_schedule(fab, workspace_id, weather_pipelines[0][\"id\"])"
+          new = "    bindings_ready = rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)\n\n    # Activate the recurring job only after its runtime and dependencies are ready.\n    if bindings_ready:\n        configure_weather_schedule(fab, workspace_id, weather_pipelines[0][\"id\"])\n    else:\n        print(f\"{WEATHER_PIPELINE_NAME} schedule deferred until notebook dependencies are ready.\")"
+          text = one(text, old, new)
+          path.write_text(text, encoding="utf-8")
 
-          replace_block(
-              Path("Raw/workspace-reset/test_sync_workspace_from_git.py"),
-              "    def test_expired_weather_schedule_is_updated(self):",
-              "    def test_wrong_offset_weather_schedule_is_updated(self):",
-              [
-                  "    def test_expired_weather_schedule_is_updated(self):",
-                  "        fabric = FakeFabric()",
-                  "        existing = FakeResponse(200, {\"value\": [{\"id\": \"schedule-id\", \"enabled\": True, \"configuration\": {",
-                  "            \"type\": \"Cron\", \"interval\": 360, \"localTimeZoneId\": \"UTC\",",
-                  "            \"startDateTime\": \"2026-09-16T03:20:00Z\", \"endDateTime\": \"2026-09-17T03:20:00Z\",",
-                  "        }}]})",
-                  "        original_request = fabric.request",
-                  "        fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing",
-                  "            if method == \"GET\" and \"/jobs/Pipeline/schedules\" in url",
-                  "            else original_request(method, url, **kwargs))",
-                  "        with contextlib.redirect_stdout(io.StringIO()):",
-                  "            configure_weather_schedule(fabric, \"workspace-id\", \"weather-pipeline\")",
-                  "        patches = [call for call in fabric.request.call_args_list if call.args[0] == \"PATCH\"]",
-                  "        self.assertEqual(len(patches), 1)",
-              ],
-          )
+          canonical = Path("Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text(encoding="utf-8")
+          start = "GRAPHQL_OBJECTS = ["; stop = "\n\nOPERATIONAL_INSTRUCTIONS_MARKER"
+          block = canonical[canonical.index(start):canonical.index(stop)]
+          path = Path("Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          cells = [cell for cell in notebook["cells"] if start in "".join(cell.get("source", []))]
+          if len(cells) != 1: raise RuntimeError("Raw RTI_011 GraphQL cell not unique")
+          source = "".join(cells[0]["source"])
+          source = source[:source.index(start)] + block + source[source.index(stop):]
+          source = source.replace("these four silver tables", "the configured silver, canonical weather, and serving weather tables")
+          source = source.replace("the four silver tables the web app queries", "the configured silver, canonical weather, and serving weather tables")
+          source = source.replace("object(s) over dbo silver tables", "object(s) over dbo Lakehouse tables")
+          cells[0]["source"] = source.splitlines(keepends=True)
+          path.write_text(json.dumps(notebook, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+          path = Path("Raw/workspace-reset/test_sync_workspace_from_git.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace('"startDateTime": "2026-09-16T03:20:00Z",', '"startDateTime": "2026-09-16T03:20:00Z",\n                            "endDateTime": "2036-09-16T03:20:00Z",')
+          marker = '        self.assertIn("RTI_001 will bind the weather notebooks", output.getvalue())'
+          text = one(text, marker, marker + '\n        self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))')
+          path.write_text(text, encoding="utf-8")
+
           Path(".github/pr10-validation-diagnostic.txt").unlink(missing_ok=True)
-      - name: Validate remediation
+      - name: Validate Python
         run: |
           python Raw/workspace-reset/test_weather_source_contracts.py
           cd Raw/workspace-reset
           python test_sync_workspace_from_git.py
           python -m py_compile sync_workspace_from_git.py ../../Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py
-      - name: Validate frontend dependencies and types
-        working-directory: HydroOperationsApp
+      - name: Validate Node 24 dependencies and frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+      - working-directory: HydroOperationsApp
         run: |
           npm ci
           npx tsc --noEmit -p tsconfig.app.json
           node --test scripts/agent-response.test.mjs scripts/artifact-discovery.test.mjs scripts/assistant-stream.test.mjs scripts/copilot-tools.test.mjs scripts/setup-live-auth.test.mjs scripts/single-flight.test.mjs
-      - name: Commit fixes and remove executor
+      - name: Commit validated fixes
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          rm .github/workflows/pr10-final-review-remediation.yml
+          rm -f .github/workflows/pr10-final-review-remediation.yml .github/workflows/pr10-validation-diagnose.yml
           git add -A
           git commit -m "Resolve final weather review findings"
           git push origin HEAD:feat/weather-operations
