@@ -49,7 +49,7 @@ jobs:
                   '    if not any("chain_notebooks = [" in line for line in source):',
                   '        continue',
                   '    for index, line in enumerate(source):',
-                  '        if \'"Weather_003_fetch_ukmet"\' in line:',
+                  '        if line.strip() == \'"Weather_003_fetch_ukmet",\':',
                   '            anchors.append((source, index))',
                   'if len(anchors) != 1:',
                   '    raise RuntimeError(f"Expected one Weather_003 chain anchor, found {len(anchors)}")',
