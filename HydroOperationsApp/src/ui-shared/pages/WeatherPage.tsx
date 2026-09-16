@@ -45,6 +45,13 @@ function groupRows(items: Array<WeatherObservation | WeatherForecast | WeatherAr
     .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
 }
 
+function recentLocationObservations(items: WeatherObservation[]): TimelineRow[] {
+  const primary = items.filter(item => item.source_id.toLowerCase() !== 'ukmet')
+  const hasPrimaryRainfall = primary.some(item => item.variable_id === 'precipitation')
+  const fallback = items.filter(item => item.source_id.toLowerCase() === 'ukmet' && (!primary.length || (!hasPrimaryRainfall && item.variable_id === 'precipitation')))
+  return groupRows([...primary, ...fallback], item => (item as WeatherObservation).observed_at_utc).slice(-3)
+}
+
 export function WeatherPage() {
   const [weather, setWeather] = useState<WeatherData>()
   const [selection, setSelection] = useState<WeatherSelection>()
@@ -99,9 +106,9 @@ export function WeatherPage() {
     return [...new Set([
       ...weather.forecasts.map(item => item.source_id),
       ...weather.areaMetrics.filter(item => item.data_kind === 'forecast').map(item => item.source_id),
-    ])].sort()
+    ].filter(source => source.toLowerCase() !== 'ukmet'))].sort()
   }, [weather])
-  const selectedVendor = forecastVendor || forecastVendors[0] || ''
+  const selectedVendor = forecastVendors.includes(forecastVendor) ? forecastVendor : forecastVendors[0] || ''
 
   const timelines = useMemo(() => {
     if (!weather || !selection) return { observations: [], forecasts: [] }
@@ -114,7 +121,7 @@ export function WeatherPage() {
       const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc)))
       const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) >= now && Date.parse(item.valid_time_utc) <= now + duration)
       return {
-        observations: groupRows(observations, item => (item as WeatherObservation).observed_at_utc),
+        observations: recentLocationObservations(observations),
         forecasts: groupRows(forecasts, item => (item as WeatherForecast).valid_time_utc),
       }
     }
@@ -124,7 +131,7 @@ export function WeatherPage() {
     const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc ?? '')))
     const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) >= now && Date.parse(item.valid_time_utc) <= now + duration)
     return {
-      observations: groupRows(observations, item => (item as WeatherAreaMetric).valid_time_utc),
+      observations: groupRows(observations, item => (item as WeatherAreaMetric).valid_time_utc).slice(-3),
       forecasts: groupRows(forecasts, item => (item as WeatherAreaMetric).valid_time_utc),
     }
   }, [rangeHours, selectedVendor, selection, timeAnchor, weather])
