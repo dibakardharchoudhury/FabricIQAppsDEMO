@@ -1,0 +1,22 @@
+$ python Raw/workspace-reset/test_weather_source_contracts.py
+exit=1
+
+  File "/home/runner/work/FabricIQAppsDEMO/FabricIQAppsDEMO/Raw/workspace-reset/test_weather_source_contracts.py", line 59
+    start, end = "GRAPHQL_OBJECTS = [", "
+                                        ^
+SyntaxError: unterminated string literal (detected at line 59)
+
+
+$ python test_sync_workspace_from_git.py
+exit=1
+
+  File "/home/runner/work/FabricIQAppsDEMO/FabricIQAppsDEMO/Raw/workspace-reset/test_sync_workspace_from_git.py", line 177
+    fabric = FakeFabric()
+    ^
+IndentationError: expected an indented block after function definition on line 176
+
+
+$ python -m py_compile sync_workspace_from_git.py ../../Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py
+exit=1
+
+Sorry: IndentationError: unindent does not match any outer indentation level (sync_workspace_from_git.py, line 522)
