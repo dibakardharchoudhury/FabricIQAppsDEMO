@@ -1,1 +1,15 @@
 SyntaxError: unterminated string literal (detected at line 262) (remaining-fixes, line 262)
+255: "sync_path = Path('Raw/workspace-reset/sync_workspace_from_git.py')"
+256: "sync_text = sync_path.read_text(encoding='utf-8')"
+257: 'selection_start = sync_text.index(\'    schedules = response.json().get("value", [])\')'
+258: "selection_end = sync_text.index('    now = datetime.now(timezone.utc)', selection_start)"
+259: 'selection = \'    schedules = response.json().get("value", [])\\n    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)\\n    if retained is None and schedules:\\n        retained = schedules[0]\\n\\n\''
+260: 'sync_text = sync_text[:selection_start] + selection + sync_text[selection_end:]'
+261: "action_start = sync_text.index('    if schedules:', selection_start)"
+262: "action_end = sync_text.index('"
+263: ''
+264: ''
+265: "def configure_weather_assets', action_start)"
+266: 'action = \'    if retained is None:\\n    response = fab.request("POST", base, json=body)\\n    action = "created"\\nelif weather_schedule_matches(retained):\\n    response = None\\n    action = "reused"\\nelse:\\n    schedule_id = retained.get("id")\\n    if not schedule_id:\\n        raise SystemExit(f"Existing \\\'{WEATHER_PIPELINE_NAME}\\\' schedule has no id.")\\n    response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)\\n    action = "updated"\\nif response is not None and response.status_code not in (200, 201):\\n    raise SystemExit(\\n        f"Failed to configure \\\'{WEATHER_PIPELINE_NAME}\\\' schedule: "\\n        f"HTTP {response.status_code} {response.text}"\\n    )\\n\\n    for schedule in schedules:\\n        if schedule is retained:\\n            continue\\n        schedule_id = schedule.get("id")\\n        if not schedule_id:\\n            raise SystemExit(f"Extra \\\'{WEATHER_PIPELINE_NAME}\\\' schedule has no id.")\\n        deleted = fab.request("DELETE", f"{base}/{schedule_id}")\\n        if deleted.status_code not in (200, 204):\\n            raise SystemExit(\\n                f"Failed to delete extra \\\'{WEATHER_PIPELINE_NAME}\\\' schedule {schedule_id}: "\\n                f"HTTP {deleted.status_code} {deleted.text}"\\n            )\\n    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")\''
+267: "sync_path.write_text(sync_text[:action_start] + action + sync_text[action_end:], encoding='utf-8')"
+268: ''
