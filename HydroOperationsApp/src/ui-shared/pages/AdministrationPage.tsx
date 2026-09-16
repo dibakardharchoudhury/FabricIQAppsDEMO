@@ -53,7 +53,7 @@ export function AdministrationPage() {
     {
       n: 6,
       title: 'Connect Weather',
-      why: 'Creates the weather tables, then loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations (runs Weather_001, Weather_002 and Weather_003). Needs the Aurora and UKMet API keys in Key Vault.',
+      why: 'Creates the weather tables, loads Aurora area forecasts and UKMet Global Spot forecasts + Land Observations, then builds area metrics and serving projections (runs Weather_001, Weather_002, Weather_003 and Weather_020). Needs the Aurora and UKMet API keys in Key Vault.',
       done: data.weatherState === 'complete',
       busy: data.weatherState === 'running' || Boolean(data.jobs.weather),
       action: 'Connect weather',
