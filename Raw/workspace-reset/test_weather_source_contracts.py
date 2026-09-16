@@ -63,10 +63,14 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertIn("continuationToken?: string", fabric)
         self.assertIn("encodeURIComponent(page.continuationToken)", fabric)
         weather_sequence = fabric.split("async function runWeatherSequence", 1)[1].split("export const runWeatherNotebooks", 1)[0]
-        self.assertGreater(weather_sequence.index("weatherNotebookNames.entries()"), -1)
-        self.assertGreater(weather_sequence.index("resolvePostseedNotebookId()"), weather_sequence.index("weatherNotebookNames.entries()"))
+        self.assertIn("resolveWeatherPipelineId()", weather_sequence)
+        self.assertIn("runJob(pipelineId, 'Pipeline'", weather_sequence)
+        self.assertNotIn("weatherNotebookNames.entries()", weather_sequence)
+        self.assertGreater(weather_sequence.index("resolvePostseedNotebookId()"), weather_sequence.index("runJob(pipelineId, 'Pipeline'"))
         page = (ROOT / "HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx").read_text(encoding="utf-8")
         self.assertIn("stillAvailable", page)
+        self.assertIn("useState(true)", page)
+        self.assertIn("VARIABLE_ORDER.filter(variableId => !PRIMARY_VARIABLES.has(variableId))", page)
         aurora = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         self.assertIn("np.all(np.isnan(selected)", aurora)
         self.assertIn("DELETE FROM {TABLES['forecasts']}", aurora)
@@ -78,6 +82,19 @@ class WeatherSourceContractTests(unittest.TestCase):
         marker = "Required weather notebook binding failed"
         self.assertEqual(canonical.count(marker), 1)
         self.assertEqual(raw_source.count(marker), 1)
+        self.assertEqual(canonical.count("quote(token, safe='')"), 1)
+        self.assertEqual(raw_source.count("quote(token, safe='')"), 1)
+        self.assertEqual(canonical.count("_activate_weather_schedule()"), 2)
+        self.assertEqual(raw_source.count("_activate_weather_schedule()"), 2)
+        graphql = (ROOT / "Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw_graphql = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb").read_text(encoding="utf-8"))
+        raw_graphql_source = "".join("".join(cell.get("source", [])) for cell in raw_graphql["cells"])
+        for object_name in ("weather_sources", "weather_ingestion_runs"):
+            self.assertEqual(graphql.count(f'("{object_name}"'), 1)
+            self.assertEqual(raw_graphql_source.count(f'("{object_name}"'), 1)
+        metrics = (ROOT / "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertIn("latest_issue_utc", metrics)
+        self.assertIn('F.col("latest_issue_utc") <', metrics)
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,10 +15,6 @@ const FALLBACK_UNITS: Record<string, string> = {
   precipitation: 'mm', temperature: '°C', pressure: 'hPa', relative_humidity: '%',
   dew_point: '°C', solar_radiation: 'W/m2', wind_speed: 'm/s', wind_gust: 'm/s', wind_direction: '°',
 }
-const variableRank = (variableId: string) => {
-  const index = VARIABLE_ORDER.indexOf(variableId)
-  return index < 0 ? VARIABLE_ORDER.length : index
-}
 const byTimestamp = (left: { timestamp: string }, right: { timestamp: string }) => Date.parse(left.timestamp) - Date.parse(right.timestamp)
 
 type TimelineValue = { variableId: string; value?: number; unit: string; volume?: number }
@@ -53,7 +49,7 @@ export function WeatherPage() {
   const [error, setError] = useState<string>()
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now())
   const [forecastVendor, setForecastVendor] = useState('')
-  const [showMoreVariables, setShowMoreVariables] = useState(false)
+  const [showMoreVariables, setShowMoreVariables] = useState(true)
 
   const applyWeather = (data: WeatherData) => {
     setWeather(data)
@@ -191,8 +187,7 @@ function WeatherValuesTable({ observations, forecasts, showMoreVariables }: { ob
     ...observations.map(row => ({ ...row, kind: 'observation' as const })),
     ...forecasts.map(row => ({ ...row, kind: 'forecast' as const })),
   ]
-  const secondaryVariables = [...new Set(rows.flatMap(row => row.values.map(value => value.variableId)).filter(variableId => !PRIMARY_VARIABLES.has(variableId)))]
-    .sort((left, right) => variableRank(left) - variableRank(right) || left.localeCompare(right))
+  const secondaryVariables = VARIABLE_ORDER.filter(variableId => !PRIMARY_VARIABLES.has(variableId))
   const visibleVariables = showMoreVariables ? secondaryVariables : []
 
   return <div className="weather-values-table-wrap">

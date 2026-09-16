@@ -75,6 +75,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 try:
     import requests
@@ -183,7 +184,7 @@ class Fabric:
             data = resp.json()
             out.extend(data.get("value", []))
             token = data.get("continuationToken")
-            url = f"{FABRIC_BASE}/connections?continuationToken={token}" if token else None
+            url = f"{FABRIC_BASE}/connections?continuationToken={quote(token, safe='')}" if token else None
         return out
 
     def find_github_connections(self, repo_url: str) -> list[str]:
@@ -218,7 +219,7 @@ class Fabric:
             url = data.get("continuationUri")
             if not url and data.get("continuationToken"):
                 token = data["continuationToken"]
-                url = f"{FABRIC_BASE}/workspaces/{workspace_id}/items?continuationToken={token}"
+                url = f"{FABRIC_BASE}/workspaces/{workspace_id}/items?continuationToken={quote(token, safe='')}"
         return out
 
     def list_workspace_folders(self, workspace_id: str) -> list[dict[str, Any]]:
@@ -237,7 +238,7 @@ class Fabric:
                 token = data["continuationToken"]
                 url = (
                     f"{FABRIC_BASE}/workspaces/{workspace_id}/folders"
-                    f"?recursive=true&continuationToken={token}"
+                    f"?recursive=true&continuationToken={quote(token, safe='')}"
                 )
         return out
 
@@ -528,8 +529,10 @@ def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
         and start.second == 0 and start.microsecond == 0
         and minutes % WEATHER_SCHEDULE_INTERVAL_MINUTES == WEATHER_SCHEDULE_OFFSET_MINUTES)
 
-def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
-    """Ensure the weather pipeline has an enabled six-hour recurring UTC schedule."""
+def configure_weather_schedule(
+    fab: Fabric, workspace_id: str, pipeline_id: str, enabled: bool = True
+) -> None:
+    """Ensure the weather pipeline has a six-hour recurring UTC schedule."""
     base = (
         f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{pipeline_id}"
         f"/jobs/{WEATHER_PIPELINE_JOB_TYPE}/schedules"
@@ -556,7 +559,7 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
         midnight + timedelta(days=1, minutes=WEATHER_SCHEDULE_OFFSET_MINUTES),
     )
     body = {
-        "enabled": True,
+        "enabled": enabled,
         "configuration": {
             "startDateTime": start.isoformat().replace("+00:00", "Z"),
             "endDateTime": (start + timedelta(days=3650)).isoformat().replace("+00:00", "Z"),
@@ -720,11 +723,13 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     print("Binding weather notebooks to the lakehouse and Environment...")
     bindings_ready = rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
 
-    # Activate the recurring job only after its runtime and dependencies are ready.
-    if bindings_ready:
-        configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
-    else:
-        print(f"{WEATHER_PIPELINE_NAME} schedule deferred until notebook dependencies are ready.")
+    # A fresh workspace gets the cadence now, but it remains disabled until RTI_001
+    # creates the lakehouse and successfully binds every weather notebook.
+    configure_weather_schedule(
+        fab, workspace_id, weather_pipelines[0]["id"], enabled=bindings_ready
+    )
+    if not bindings_ready:
+        print(f"{WEATHER_PIPELINE_NAME} schedule created disabled until notebook dependencies are ready.")
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")

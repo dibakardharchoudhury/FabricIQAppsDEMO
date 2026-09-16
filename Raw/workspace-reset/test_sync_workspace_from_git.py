@@ -362,7 +362,12 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertEqual(fabric.updates, [])
         self.assertIn("RTI_001 will bind the weather notebooks", output.getvalue())
-        self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))
+        schedule_posts = [
+            index for index, (method, url) in enumerate(fabric.requests)
+            if method == "POST" and "/jobs/Pipeline/schedules" in url
+        ]
+        self.assertEqual(len(schedule_posts), 1)
+        self.assertFalse(fabric.request_kwargs[schedule_posts[0]]["json"]["enabled"])
 
     def test_duplicate_weather_notebooks_are_rejected(self):
         fabric = FakeFabric()

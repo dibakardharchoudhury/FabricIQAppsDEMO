@@ -416,7 +416,12 @@ display(serving.orderBy("source_id", "target_kind", "target_id", "valid_time_utc
 
 # CELL ********************
 
-# The pipeline continues past a failed vendor, so freshness is the only signal that one stopped.
+# Track source issue age separately from operational run completion.
+latest_issues = (
+    spark.table(TABLES["forecasts"])
+    .groupBy("source_id")
+    .agg(F.max("reference_time_utc").alias("latest_issue_utc"))
+)
 health = (
     spark.table(TABLES["ingestion_runs"])
     .groupBy("source_id")
@@ -424,17 +429,19 @@ health = (
         F.max(F.when(F.col("status") == "succeeded", F.col("completed_at_utc"))).alias("last_success_utc"),
         F.sum(F.when(F.col("status") == "started", 1).otherwise(0)).cast("int").alias("incomplete_runs"),
     )
+    .join(latest_issues, "source_id", "left")
 )
 display(health)
 
 stale = health.filter(
-    F.col("last_success_utc").isNull()
-    | (F.col("last_success_utc") < F.current_timestamp() - F.expr(f"INTERVAL {staleness_hours} HOURS"))
+    F.col("latest_issue_utc").isNull()
+    | (F.col("latest_issue_utc") < F.current_timestamp() - F.expr(f"INTERVAL {staleness_hours} HOURS"))
 ).collect()
 for row in stale:
     print(
-        f"WARNING: vendor '{row['source_id']}' has no successful run in the last "
-        f"{staleness_hours}h (last success: {row['last_success_utc']})"
+        f"WARNING: vendor '{row['source_id']}' has no forecast issue in the last "
+        f"{staleness_hours}h (latest issue: {row['latest_issue_utc']}; "
+        f"last successful run: {row['last_success_utc']})"
     )
 
 # METADATA ********************

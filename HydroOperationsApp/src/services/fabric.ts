@@ -17,10 +17,7 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 // Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
-const weatherSetupNotebookName = 'Weather_001_create_lakehouse'
-const weatherAreaNotebookName = 'Weather_002_fetch_area_weather'
-const weatherUkmetNotebookName = 'Weather_003_fetch_ukmet'
-const weatherAreaCalculationsNotebookName = 'Weather_020_area_calculations'
+const weatherPipelineName = '03_Pipe_Weather'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
@@ -755,18 +752,21 @@ async function statusSince(itemId: string, sinceIso: string): Promise<JobStatus 
   return (await latestInstance(token, itemId, sinceIso))?.status
 }
 
-const weatherNotebookNames = [weatherSetupNotebookName, weatherAreaNotebookName, weatherUkmetNotebookName, weatherAreaCalculationsNotebookName]
+async function resolveWeatherPipelineId(): Promise<string> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const items = await listItems(token)
+  const pipeline = items.find(item => (item.type === 'DataPipeline' || item.type === 'Pipeline') && item.displayName === weatherPipelineName)
+  if (!pipeline) throw new Error(`The ${weatherPipelineName} pipeline was not found in the workspace.`)
+  return pipeline.id
+}
 
 async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: string): Promise<JobStatus> {
-  for (const [index, name] of weatherNotebookNames.entries()) {
-    const notebookId = await resolveNotebookId(name)
-    // On resume, skip the notebooks that already finished earlier in this same sequence.
-    if (resumeSinceIso && (await statusSince(notebookId, resumeSinceIso)) === 'Completed') continue
-    const isLast = index === weatherNotebookNames.length - 1
-    // A mid-sequence 'Completed' would pin the caller's progress bar at 100%, so only the last one reports it.
-    const report = onStatus && ((status: JobStatus) => onStatus(status === 'Completed' && !isLast ? 'InProgress' : status))
-    const status = await runJob(notebookId, 'RunNotebook', report, { timeoutMs: 20 * 60_000, reuseActive: true })
-    if (status !== 'Completed') return status
+  const pipelineId = await resolveWeatherPipelineId()
+  const alreadyCompleted = resumeSinceIso && (await statusSince(pipelineId, resumeSinceIso)) === 'Completed'
+  if (!alreadyCompleted) {
+    const pipelineStatus = await runJob(pipelineId, 'Pipeline', onStatus, { timeoutMs: 80 * 60_000, reuseActive: true })
+    if (pipelineStatus !== 'Completed') return pipelineStatus
   }
   const postseedNotebookId = await resolvePostseedNotebookId()
   const postseedStatus = await runJob(postseedNotebookId, 'RunNotebook', onStatus, {
@@ -778,12 +778,12 @@ async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: strin
   return postseedStatus
 }
 
-/** Create tables, ingest Aurora and UKMet, then calculate vendor-specific area metrics. */
+/** Run the coordinated weather pipeline, then republish GraphQL over its completed tables. */
 export const runWeatherNotebooks = createSingleFlight(
   async (onStatus?: JobProgress): Promise<JobStatus> => runWeatherSequence(onStatus),
 )
 
-/** Resume a weather sequence started before a page reload, continuing from the first unfinished notebook. */
+/** Resume the coordinated weather pipeline started before a page reload. */
 export async function resumeWeatherNotebooks(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
   return runWeatherSequence(onStatus, sinceIso)
 }
