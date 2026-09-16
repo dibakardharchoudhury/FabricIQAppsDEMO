@@ -24,6 +24,9 @@ jobs:
           output = []
           embedded = False
           for line in lines:
+              if not line:
+                  output.append('')
+                  continue
               if embedded:
                   output.append(line)
                   if line == "'''":
@@ -37,9 +40,9 @@ jobs:
                   embedded = True
           if embedded:
               raise RuntimeError('Unterminated embedded contract block')
-          Path('/tmp/remediate.py').write_text('\n'.join(output) + '\n', encoding='utf-8')
-          compile(Path('/tmp/remediate.py').read_text(encoding='utf-8'), '/tmp/remediate.py', 'exec')
-          exec(compile(Path('/tmp/remediate.py').read_text(encoding='utf-8'), '/tmp/remediate.py', 'exec'))
+          script = '\n'.join(output) + '\n'
+          compile(script, '/tmp/remediate.py', 'exec')
+          exec(compile(script, '/tmp/remediate.py', 'exec'))
       - name: Focused Python validation
         run: |
           python -m pip install -r Raw/workspace-reset/requirements.txt
