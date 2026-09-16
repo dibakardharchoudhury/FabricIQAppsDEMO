@@ -158,6 +158,7 @@ class WeatherProvisioningTests(unittest.TestCase):
                             "interval": 360,
                             "localTimeZoneId": "UTC",
                             "startDateTime": "2026-09-16T03:20:00Z",
+                            "endDateTime": "2036-09-16T03:20:00Z",
                         }}]},
         )
         original_request = fabric.request
@@ -210,6 +211,7 @@ class WeatherProvisioningTests(unittest.TestCase):
                             "interval": 360,
                             "localTimeZoneId": "Europe/Oslo",
                             "startDateTime": "2026-09-16T03:20:00Z",
+                            "endDateTime": "2036-09-16T03:20:00Z",
                         }}]},
         )
         original_request = fabric.request
@@ -234,6 +236,7 @@ class WeatherProvisioningTests(unittest.TestCase):
             {"id": "valid", "enabled": True, "configuration": {
                 "type": "Cron", "interval": 360, "localTimeZoneId": "UTC",
                 "startDateTime": "2026-09-16T03:20:00Z",
+                            "endDateTime": "2036-09-16T03:20:00Z",
             }},
             {"id": "stale", "enabled": True, "configuration": {
                 "type": "Cron", "interval": 240, "localTimeZoneId": "UTC",
@@ -359,6 +362,7 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertEqual(fabric.updates, [])
         self.assertIn("RTI_001 will bind the weather notebooks", output.getvalue())
+        self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))
 
 
 if __name__ == "__main__":

@@ -445,8 +445,8 @@ def rebind_weather_notebooks(
     notebooks: dict[str, dict[str, Any]],
     items: list[dict[str, Any]],
     environment_id: str,
-) -> None:
-    """Re-apply the lakehouse/Environment binding that a Git import clears from notebook metadata."""
+) -> bool:
+    """Re-apply notebook bindings and report whether dependencies are ready."""
     lakehouses = [
         item
         for item in items
@@ -458,7 +458,7 @@ def rebind_weather_notebooks(
             f"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; "
             "RTI_001 will bind the weather notebooks when the setup pipeline runs."
         )
-        return
+        return False
     if len(lakehouses) > 1:
         names = ", ".join(sorted(str(item.get("displayName")) for item in lakehouses))
         raise SystemExit(
@@ -478,67 +478,55 @@ def rebind_weather_notebooks(
     for name, item in sorted(notebooks.items()):
         definition = notebook_definition(fab, workspace_id, item["id"])
         part = next(
-            (p for p in definition.get("parts", []) if str(p.get("path", "")).endswith(".ipynb")),
+            (part for part in definition.get("parts", []) if str(part.get("path", "")).endswith(".ipynb")),
             None,
         )
         if part is None:
             raise SystemExit(f"Notebook '{name}' has no .ipynb definition part.")
         content = json.loads(base64.b64decode(part["payload"]))
         dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
-        if (
-            dependencies.get("lakehouse") == wanted_lakehouse
-            and dependencies.get("environment") == wanted_environment
-        ):
+        if dependencies.get("lakehouse") == wanted_lakehouse and dependencies.get("environment") == wanted_environment:
             print(f"  {name}: already bound.")
             continue
-
         dependencies["lakehouse"] = wanted_lakehouse
         dependencies["environment"] = wanted_environment
         part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
         part["payloadType"] = "InlineBase64"
-        response = fab.poll_lro(
-            fab.request(
-                "POST",
-                f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}"
-                "/updateDefinition?updateMetadata=true",
-                json={"definition": definition},
-            )
-        )
+        response = fab.poll_lro(fab.request(
+            "POST",
+            f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true",
+            json={"definition": definition},
+        ))
         if response.status_code not in (200, 202):
-            raise SystemExit(
-                f"Failed to bind notebook '{name}': HTTP {response.status_code} {response.text}"
-            )
+            raise SystemExit(f"Failed to bind notebook '{name}': HTTP {response.status_code} {response.text}")
         print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
+    return True
 
 
 def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
-    """Return whether a schedule matches the required six-hour UTC offset."""
+    """Return whether an unexpired schedule matches the required six-hour UTC offset."""
     configuration = schedule.get("configuration") or {}
-    start_text = configuration.get("startDateTime")
-    if not isinstance(start_text, str) or not start_text.strip():
+    def parse_utc(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        value = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    start = parse_utc(configuration.get("startDateTime"))
+    end_time = parse_utc(configuration.get("endDateTime"))
+    if start is None or end_time is None:
         return False
-    try:
-        normalized = start_text.strip()
-        if normalized.endswith("Z"):
-            normalized = f"{normalized[:-1]}+00:00"
-        start = datetime.fromisoformat(normalized)
-    except ValueError:
-        return False
-    if start.tzinfo is None:
-        return False
-    start_utc = start.astimezone(timezone.utc)
-    minutes_past_midnight = start_utc.hour * 60 + start_utc.minute
-    return (
-        schedule.get("enabled") is True
+    minutes = start.hour * 60 + start.minute
+    return (schedule.get("enabled") is True
+        and end_time > datetime.now(timezone.utc)
         and configuration.get("type") == "Cron"
         and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
         and configuration.get("localTimeZoneId") == "UTC"
-        and start_utc.second == 0
-        and start_utc.microsecond == 0
-        and minutes_past_midnight % WEATHER_SCHEDULE_INTERVAL_MINUTES
-        == WEATHER_SCHEDULE_OFFSET_MINUTES
-    )
-
+        and start.second == 0 and start.microsecond == 0
+        and minutes % WEATHER_SCHEDULE_INTERVAL_MINUTES == WEATHER_SCHEDULE_OFFSET_MINUTES)
 
 def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
     """Ensure the weather pipeline has an enabled six-hour recurring UTC schedule."""
@@ -721,10 +709,13 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
 
     # Git stores empty notebook dependencies, so every import unbinds these notebooks.
     print("Binding weather notebooks to the lakehouse and Environment...")
-    rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
+    bindings_ready = rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
 
     # Activate the recurring job only after its runtime and dependencies are ready.
-    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
+    if bindings_ready:
+        configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
+    else:
+        print(f"{WEATHER_PIPELINE_NAME} schedule deferred until notebook dependencies are ready.")
 
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")

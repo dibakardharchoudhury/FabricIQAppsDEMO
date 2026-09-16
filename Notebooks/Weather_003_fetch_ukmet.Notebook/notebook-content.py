@@ -426,7 +426,8 @@ for point in points:
         },
     )
     if not isinstance(nearest_payload, list) or not nearest_payload:
-        raise RuntimeError(f"No UKMet Land Observation station found for {point['location_id']}")
+        print(f"No UKMet Land Observation station near {point['location_id']}; keeping its forecasts only")
+        continue
 
     # A listed area can still answer 404 when it holds no observations; take the next candidate.
     station = None
