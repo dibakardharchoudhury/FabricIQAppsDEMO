@@ -1,15 +1,66 @@
-SyntaxError: unterminated string literal (detected at line 262) (remaining-fixes, line 262)
+SyntaxError: invalid syntax. Perhaps you forgot a comma? (remaining-fixes, line 279)
+245: '# The raw setup notebook must bind Weather_020 to the Environment in both checks.'
+246: "ipynb_path = Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb')"
+247: "ipynb_text = ipynb_path.read_text(encoding='utf-8')"
+248: 'old_set = \'{\\\\"Weather_002_fetch_area_weather\\\\", \\\\"Weather_003_fetch_ukmet\\\\"}\''
+249: 'new_set = \'{\\\\"Weather_002_fetch_area_weather\\\\", \\\\"Weather_003_fetch_ukmet\\\\", \\\\"Weather_020_area_calculations\\\\"}\''
+250: 'if ipynb_text.count(old_set) != 2:'
+251: "    raise SystemExit(f'Expected two Weather Environment checks, found {ipynb_text.count(old_set)}')"
+252: "ipynb_path.write_text(ipynb_text.replace(old_set, new_set), encoding='utf-8')"
+253: ''
+254: '# Reconcile one schedule and remove every duplicate.'
 255: "sync_path = Path('Raw/workspace-reset/sync_workspace_from_git.py')"
 256: "sync_text = sync_path.read_text(encoding='utf-8')"
 257: 'selection_start = sync_text.index(\'    schedules = response.json().get("value", [])\')'
 258: "selection_end = sync_text.index('    now = datetime.now(timezone.utc)', selection_start)"
-259: 'selection = \'    schedules = response.json().get("value", [])\\n    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)\\n    if retained is None and schedules:\\n        retained = schedules[0]\\n\\n\''
-260: 'sync_text = sync_text[:selection_start] + selection + sync_text[selection_end:]'
-261: "action_start = sync_text.index('    if schedules:', selection_start)"
-262: "action_end = sync_text.index('"
-263: ''
-264: ''
-265: "def configure_weather_assets', action_start)"
-266: 'action = \'    if retained is None:\\n    response = fab.request("POST", base, json=body)\\n    action = "created"\\nelif weather_schedule_matches(retained):\\n    response = None\\n    action = "reused"\\nelse:\\n    schedule_id = retained.get("id")\\n    if not schedule_id:\\n        raise SystemExit(f"Existing \\\'{WEATHER_PIPELINE_NAME}\\\' schedule has no id.")\\n    response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)\\n    action = "updated"\\nif response is not None and response.status_code not in (200, 201):\\n    raise SystemExit(\\n        f"Failed to configure \\\'{WEATHER_PIPELINE_NAME}\\\' schedule: "\\n        f"HTTP {response.status_code} {response.text}"\\n    )\\n\\n    for schedule in schedules:\\n        if schedule is retained:\\n            continue\\n        schedule_id = schedule.get("id")\\n        if not schedule_id:\\n            raise SystemExit(f"Extra \\\'{WEATHER_PIPELINE_NAME}\\\' schedule has no id.")\\n        deleted = fab.request("DELETE", f"{base}/{schedule_id}")\\n        if deleted.status_code not in (200, 204):\\n            raise SystemExit(\\n                f"Failed to delete extra \\\'{WEATHER_PIPELINE_NAME}\\\' schedule {schedule_id}: "\\n                f"HTTP {deleted.status_code} {deleted.text}"\\n            )\\n    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")\''
-267: "sync_path.write_text(sync_text[:action_start] + action + sync_text[action_end:], encoding='utf-8')"
-268: ''
+259: 'selection = "\\n".join(['
+260: '    \'    schedules = response.json().get("value", [])\','
+261: "    '    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)',"
+262: "    '    if retained is None and schedules:',"
+263: "    '        retained = schedules[0]',"
+264: "    '',"
+265: '])'
+266: 'sync_text = sync_text[:selection_start] + selection + sync_text[selection_end:]'
+267: "action_start = sync_text.index('    if schedules:', selection_start)"
+268: "action_end = sync_text.index('\\n\\n\\ndef configure_weather_assets', action_start)"
+269: 'action = "\\n".join(['
+270: "    '    if retained is None:',"
+271: '    \'        response = fab.request("POST", base, json=body)\','
+272: '    \'        action = "created"\','
+273: "    '    elif weather_schedule_matches(retained):',"
+274: "    '        response = None',"
+275: '    \'        action = "reused"\','
+276: "    '    else:',"
+277: '    \'        schedule_id = retained.get("id")\','
+278: "    '        if not schedule_id:',"
+279: '    \'            raise SystemExit(f"Existing \'{WEATHER_PIPELINE_NAME}\' schedule has no id.")\','
+280: '    \'        response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)\','
+281: '    \'        action = "updated"\','
+282: "    '    if response is not None and response.status_code not in (200, 201):',"
+283: "    '        raise SystemExit(',"
+284: '    \'            f"Failed to configure \'{WEATHER_PIPELINE_NAME}\' schedule: "\','
+285: '    \'            f"HTTP {response.status_code} {response.text}"\','
+286: "    '        )',"
+287: "    '',"
+288: "    '    for schedule in schedules:',"
+289: "    '        if schedule is retained:',"
+290: "    '            continue',"
+291: '    \'        schedule_id = schedule.get("id")\','
+292: "    '        if not schedule_id:',"
+293: '    \'            raise SystemExit(f"Extra \'{WEATHER_PIPELINE_NAME}\' schedule has no id.")\','
+294: '    \'        deleted = fab.request("DELETE", f"{base}/{schedule_id}")\','
+295: "    '        if deleted.status_code not in (200, 204):',"
+296: "    '            raise SystemExit(',"
+297: '    \'                f"Failed to delete extra \'{WEATHER_PIPELINE_NAME}\' schedule {schedule_id}: "\','
+298: '    \'                f"HTTP {deleted.status_code} {deleted.text}"\','
+299: "    '            )',"
+300: '    \'    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")\','
+301: '])'
+302: "sync_path.write_text(sync_text[:action_start] + action + sync_text[action_end:], encoding='utf-8')"
+303: ''
+304: '# Add schedule duplicate regression cases without disturbing offset/timezone tests.'
+305: "test_path = 'Raw/workspace-reset/test_sync_workspace_from_git.py'"
+306: "test_anchor = '''    def test_already_published_environment_is_not_republished_without_git_update(self):'''"
+307: "test_cases = '''    def test_matching_schedule_is_retained_and_stale_duplicate_is_deleted(self):"
+308: '    fabric = FakeFabric()'
+309: '    existing = FakeResponse(200, {"value": ['
