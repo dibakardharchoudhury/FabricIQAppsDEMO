@@ -1,4 +1,4 @@
-name: Stage corrected PR 10 executor
+name: Capture PR 10 Python validation
 on:
   push:
     branches: [feat/weather-operations]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 jobs:
-  stage:
+  capture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,19 +15,25 @@ jobs:
       - shell: python
         run: |
           from pathlib import Path
-          source = Path('.github/workflows/pr10-execute.yml')
-          text = source.read_text()
-          start = text.index("          schedule_patch = '''# Reconcile one schedule")
-          end = text.index("          script = script[:schedule_start]", start)
-          block = text[start:end]
-          fixed = block.replace(r"\'", r"\\'")
-          if fixed == block:
-              raise SystemExit('No nested apostrophe escapes found')
-          Path('.github/pr10-execute-fixed.txt').write_text(text[:start] + fixed + text[end:])
+          import subprocess, textwrap
+          workflow = Path('.github/workflows/pr10-execute.yml').read_text()
+          start = workflow.index('      - name: Apply guarded fixes')
+          run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
+          end = workflow.index('\n      - name: Validate first scoped change', run_start)
+          exec(compile(textwrap.dedent(workflow[run_start:end]), 'executor', 'exec'))
+          commands = [
+              ['python', '-m', 'py_compile', 'Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py', 'Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py'],
+              ['python', '-m', 'unittest', 'test_sync_workspace_from_git', 'test_deploy_fabric_app', 'test_weather_source_contracts'],
+          ]
+          outputs = []
+          for command in commands:
+              result = subprocess.run(command, cwd='Raw/workspace-reset' if 'unittest' in command else None, text=True, capture_output=True)
+              outputs.append(f"$ {' '.join(command)}\nexit={result.returncode}\n{result.stdout}{result.stderr}")
+          Path('.github/pr10-python-error.txt').write_text('\n\n'.join(outputs), encoding='utf-8')
       - shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/pr10-execute-fixed.txt
-          git commit -m "Stage corrected PR 10 executor"
+          git add .github/pr10-python-error.txt
+          git commit -m "Record PR 10 Python validation failure"
           git push origin HEAD:feat/weather-operations
