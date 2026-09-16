@@ -53,7 +53,7 @@ class WeatherSourceContractTests(unittest.TestCase):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
         dependencies = [dependency["dependencyConditions"] for activity in pipeline["properties"]["activities"] for dependency in activity.get("dependsOn", [])]
         self.assertTrue(dependencies)
-        self.assertTrue(all(conditions == ["Completed"] for conditions in dependencies))
+        self.assertTrue(all(conditions == ["Succeeded"] for conditions in dependencies))
         rayfin = (ROOT / "HydroOperationsApp/rayfin/rayfin.yml").read_text(encoding="utf-8")
         self.assertNotIn("right-forge-2c0b55c94f", rayfin)
 
