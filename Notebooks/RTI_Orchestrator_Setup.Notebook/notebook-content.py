@@ -76,6 +76,7 @@ key_vault_client_secret_name = "clientsecret"
 
 import requests
 import notebookutils
+from urllib.parse import quote
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
 # The %%configure cell attached that lakehouse to this session, so NB02–NB10 inherit it and their
@@ -138,6 +139,11 @@ def _activate_weather_schedule() -> None:
         body = items_response.json()
         items.extend(body.get("value", []))
         items_url = body.get("continuationUri")
+        if not items_url and body.get("continuationToken"):
+            items_url = (
+                f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/items"
+                f"?continuationToken={quote(body['continuationToken'], safe='')}"
+            )
     pipelines = [
         item for item in items
         if item.get("displayName") == "03_Pipe_Weather"

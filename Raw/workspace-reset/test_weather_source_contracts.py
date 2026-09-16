@@ -55,6 +55,7 @@ class WeatherSourceContractTests(unittest.TestCase):
         for source in (orchestrator, raw_orchestrator_source):
             self.assertEqual(source.count('{"useRootDefaultLakehouse": True}'), 1)
             self.assertEqual(source.count('"path": "Weather_001_create_lakehouse"'), 1)
+            self.assertIn("quote(body['continuationToken'], safe='')", source)
             self.assertGreater(
                 source.rindex("_activate_weather_schedule()"),
                 source.index("notebookutils.notebook.runMultiple"),
