@@ -31,7 +31,7 @@ Logical layers:
 
 - Bronze: immutable STAC item JSON under `Files/weather/bronze/stac/<collection>/` and, for future JSON APIs, original response pages.
 - Silver: canonical `weather_observations` and `weather_forecasts`, normalized to UTC, WGS84, and canonical units.
-- Gold: `weather_area_metrics` with overlap-weighted depth, volume, coverage, method, and source lineage.
+- Gold: `weather_area_metrics` with representative-point depth and volume, unknown coverage, method, and source lineage.
 
 The model separates source, variable, location, area, ingestion run, observations, forecasts, and area metrics. Forecast and observation facts are date-partitioned. Delta merge keys are documented in the setup notebook and make reruns idempotent.
 
@@ -50,7 +50,7 @@ where $R$ is millimetres and $A$ is the geodesic area in square metres. The stor
 
 Both vendors publish accumulating variables over one hour, while the canonical tables report a six-hour interval. Adapters therefore collapse every native record inside the interval instead of sampling one of them: precipitation is summed, gusts are maximised, solar radiation is averaged, and instantaneous variables are read at the interval end.
 
-`weather_forecasts.interval_hours` and `weather_area_metrics.interval_hours` record how many hours of source data each value actually covers, ending at `valid_time_utc`. Instantaneous variables store 0. A value only tiles a window without gaps when `interval_hours` equals the spacing between consecutive valid times, so consumers must read it before summing. UKMet Global Spot supplies all six hours; Aurora supplies one hour per step, so its rows declare the shortfall rather than implying full coverage.
+`weather_forecasts.interval_hours` and `weather_area_metrics.interval_hours` record how many hours of source data each value actually covers, ending at `valid_time_utc`. Instantaneous variables store 0. A value only tiles a window without gaps when `interval_hours` equals the spacing between consecutive valid times, so consumers must read it before summing. UKMet Global Spot usually supplies all six hours, but partial buckets can be shorter and are represented by `interval_hours`; Aurora supplies one hour per step, so its rows likewise declare any shortfall rather than implying full coverage.
 
 `weather_area_metrics.cumulative_value` and `cumulative_rainfall_volume_m3` hold the running rainfall total within one vendor issue, partitioned by `source_id`, `area_id`, `forecast_type`, and `reference_time_utc`. Because each scheduled run picks up whichever issue a vendor has published, a cumulative is only meaningful inside a single issue; compare two valid times by differencing cumulatives rather than adding rows across issues.
 
@@ -105,7 +105,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 
 1. Create or attach a Weather Lakehouse and configure the Fabric Environment dependencies.
 2. Store the Aurora and UKMet API keys in Key Vault and grant the pipeline run identity secret-read access.
-3. Run `Weather_001_create_lakehouse` and verify all eight tables.
+3. Run `Weather_001_create_lakehouse` and verify all ten tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
 5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
 6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the six-hour `03_Pipe_Weather` schedule.
