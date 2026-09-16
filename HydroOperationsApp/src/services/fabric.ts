@@ -1,9 +1,14 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
 import { selectDataAgent } from './artifactDiscovery'
+import { selectGraphModel, selectOntology } from './ontologyArtifactDiscovery'
+import { parseOntologyContract, type OntologyContract, type OntologyDefinition } from './ontologyContract'
+import { parseOntologyGraph, type OntologyGraph } from './ontologyGraph'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
+export type { OntologyContract } from './ontologyContract'
+export type { OntologyGraph } from './ontologyGraph'
 
 const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
@@ -17,6 +22,7 @@ const weatherAreaNotebookName = 'Weather_002_fetch_area_weather'
 const weatherUkmetNotebookName = 'Weather_003_fetch_ukmet'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
+const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
@@ -97,8 +103,8 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
 }
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
-type WorkspaceItem = { id: string; type: string; displayName: string }
-type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; kqlDashboardId?: string }
+type WorkspaceItem = { id: string; type: string; displayName: string; folderId?: string }
+type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; kqlDashboardId?: string; ontologyId?: string; ontologyName?: string; graphModelId?: string; graphModelName?: string }
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
 
@@ -185,6 +191,30 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
+    const ontology = selectOntology(items, configuredOntologyName)
+    let graphModel = selectGraphModel(items, [], new Map())
+    if (ontology && !graphModel) {
+      const definitionResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${ontology.id}/getDefinition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const definition = await waitForDefinitionResult(definitionResponse, token)
+      const contract = parseOntologyContract(ontology.id, ontology.displayName, definition)
+      const graphModels = items.filter(item => item.type === 'GraphModel')
+      const labelsByGraphModelId = new Map<string, Set<string>>()
+      await Promise.all(graphModels.map(async candidate => {
+        try {
+          const rows = await executeGraphQuery(candidate.id, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 100')
+          const sample = parseOntologyGraph(candidate.id, candidate.displayName, rows, [])
+          labelsByGraphModelId.set(candidate.id, new Set(sample.nodes.flatMap(node => node.labels)))
+        } catch (error) {
+          console.warn(`Graph Model ${candidate.displayName} could not be sampled during discovery.`, error)
+        }
+      }))
+      graphModel = selectGraphModel(items, contract.entityTypes.map(entity => entity.name), labelsByGraphModelId)
+    }
+    if (!ontology && items.some(item => item.type === 'Ontology')) console.warn('Ontology discovery is ambiguous. Configure an exact VITE_RAYFIN_ONTOLOGY_NAME or keep one Ontology in the app workspace.')
+    if (ontology && !graphModel && items.some(item => item.type === 'GraphModel')) console.warn(`No unique Graph Model structurally matches Ontology ${ontology.displayName}.`)
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
@@ -193,6 +223,10 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       graphqlUrl: graphqlUrl ?? env.graphqlUrl,
       dataAgentUrl,
       kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
+      ontologyId: ontology?.id,
+      ontologyName: ontology?.displayName,
+      graphModelId: graphModel?.id,
+      graphModelName: graphModel?.displayName,
     }
     return configCache
   } catch (error) {
@@ -426,18 +460,112 @@ export type Instrument = {
   is_active?: boolean
 }
 
+export type System = {
+  system_id: string
+  facility_id: string
+  system_name?: string
+  oag_rds_system_code?: string
+}
+
+const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
+let ontologyContractCache: { ontologyId: string; expiresAt: number; value: OntologyContract } | null = null
+let ontologyContractPromise: Promise<OntologyContract | null> | undefined
+let ontologyGraphCache: { graphModelId: string; expiresAt: number; value: OntologyGraph } | null = null
+let ontologyGraphPromise: Promise<OntologyGraph | null> | undefined
+
+async function waitForDefinitionResult(response: Response, token: string): Promise<OntologyDefinition> {
+  if (response.status === 200) return await response.json() as OntologyDefinition
+  if (response.status !== 202) throw new Error(`Ontology definition request failed (${response.status}).`)
+  const operationUrl = response.headers.get('Location') ?? response.headers.get('Operation-Location')
+  if (!operationUrl) throw new Error('Ontology definition operation did not return a location.')
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const statusResponse = await fetch(operationUrl, { headers: { Authorization: `Bearer ${token}` } })
+    if (!statusResponse.ok) throw new Error(`Ontology definition operation failed (${statusResponse.status}).`)
+    const status = await statusResponse.json() as { status?: string }
+    if (/failed|cancelled/i.test(status.status ?? '')) throw new Error(`Ontology definition operation ${status.status}.`)
+    if (/succeeded|completed/i.test(status.status ?? '')) {
+      const resultResponse = await fetch(`${operationUrl.replace(/\/$/, '')}/result`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!resultResponse.ok) throw new Error(`Ontology definition result failed (${resultResponse.status}).`)
+      return await resultResponse.json() as OntologyDefinition
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  throw new Error('Ontology definition operation timed out.')
+}
+
+export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
+  const config = await ensureConfig(false)
+  if (!config?.ontologyId) return null
+  if (!force && ontologyContractCache?.ontologyId === config.ontologyId && ontologyContractCache.expiresAt > Date.now()) {
+    return ontologyContractCache.value
+  }
+  if (ontologyContractPromise) return ontologyContractPromise
+  ontologyContractPromise = (async () => {
+    const token = await fabricToken(false)
+    if (!token) return null
+    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const definition = await waitForDefinitionResult(response, token)
+    const contract = parseOntologyContract(config.ontologyId, config.ontologyName ?? 'Fabric Ontology', definition)
+    ontologyContractCache = { ontologyId: config.ontologyId, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: contract }
+    return contract
+  })()
+  try { return await ontologyContractPromise }
+  finally { ontologyContractPromise = undefined }
+}
+
+type GraphQueryResponse = {
+  status?: { code?: string; description?: string }
+  result?: { kind?: string; data?: Array<Record<string, unknown>> }
+}
+
+async function executeGraphQuery(graphModelId: string, token: string, query: string): Promise<Array<Record<string, unknown>>> {
+  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/GraphModels/${graphModelId}/executeQuery?preview=true`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query }),
+  })
+  if (!response.ok) throw new Error(`Ontology graph query failed (${response.status}).`)
+  const payload = await response.json() as GraphQueryResponse
+  if (payload.status?.code && !/^0[0-3]/.test(payload.status.code)) throw new Error(payload.status.description ?? `Ontology graph query failed (${payload.status.code}).`)
+  return payload.result?.kind === 'TABLE' ? payload.result.data ?? [] : []
+}
+
+export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
+  const config = await ensureConfig(false)
+  if (!config?.graphModelId) return null
+  if (!force && ontologyGraphCache?.graphModelId === config.graphModelId && ontologyGraphCache.expiresAt > Date.now()) return ontologyGraphCache.value
+  if (ontologyGraphPromise) return ontologyGraphPromise
+  ontologyGraphPromise = (async () => {
+    const token = await fabricToken(false)
+    if (!token) return null
+    const [nodeRows, edgeRows] = await Promise.all([
+      executeGraphQuery(config.graphModelId!, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 2000'),
+      executeGraphQuery(config.graphModelId!, token, 'MATCH (source)-[`relationship`]->(target) RETURN to_json_string(source) AS `source`, to_json_string(`relationship`) AS `relationship`, to_json_string(target) AS `target` LIMIT 4000'),
+    ])
+    const graph = parseOntologyGraph(config.graphModelId!, config.graphModelName ?? 'Ontology Graph Model', nodeRows, edgeRows)
+    ontologyGraphCache = { graphModelId: config.graphModelId!, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: graph }
+    return graph
+  })()
+  try { return await ontologyGraphPromise }
+  finally { ontologyGraphPromise = undefined }
+}
+
 // Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are
 // pinned via GraphQL aliases so the client stays stable regardless of table naming.
 type StidPayload = {
   data?: {
     facilities?: { items?: Facility[] }
+    systems?: { items?: System[] }
     equipment?: { items?: Equipment[] }
     instruments?: { items?: Instrument[] }
   }
   errors?: Array<{ message?: string }>
 }
 
-export type StidData = { facilities: Facility[]; equipment: Equipment[]; instruments: Instrument[] }
+export type StidData = { facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[] }
 
 export type WeatherLocation = {
   location_id: string
@@ -515,29 +643,38 @@ export async function queryStid(): Promise<StidData | null> {
   if (!config?.graphqlUrl) return null
   const token = await silentToken([GRAPHQL_SCOPE])
   if (!token) return null
-  // Aliases (facilities/equipment/instruments) map to the real Lakehouse tables exposed by the
+  // Aliases map to the real Lakehouse tables exposed by the
   // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
-  const query = `query HydroStid {
-    facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
+  const coreQuery = `facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
     equipment: silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
-    instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }
-  }`
-  const response = await fetch(config.graphqlUrl, {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    console.error('STID GraphQL request failed.', response.status, text.slice(0, 500))
-    throw new Error(`STID query failed (${response.status}).`)
+    instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
+  const execute = async (query: string) => {
+    const response = await fetch(config.graphqlUrl!, {
+      method: 'POST', cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    })
+    const text = await response.text()
+    if (!response.ok) {
+      console.error('STID GraphQL request failed.', response.status, text.slice(0, 500))
+      throw new Error(`STID query failed (${response.status}).`)
+    }
+    return JSON.parse(text) as StidPayload
   }
-  const payload = JSON.parse(text) as StidPayload
+  let payload = await execute(`query HydroStid { systems: silver_systems(first: 50) { items { system_id facility_id system_name oag_rds_system_code } } ${coreQuery} }`)
+  if (payload.errors?.some(error => /silver_systems/i.test(error.message ?? ''))) {
+    console.warn('The GraphQL definition does not expose silver_systems; rerun RTI_011 to publish the Ontology systems binding.')
+    payload = await execute(`query HydroStidLegacy { ${coreQuery} }`)
+  }
   if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
+  const equipment = payload.data?.equipment?.items ?? []
+  const systems = payload.data?.systems?.items ?? Array.from(new Map(equipment.map(asset => [asset.system_id, {
+    system_id: asset.system_id, facility_id: asset.facility_id, system_name: asset.system_id,
+  }])).values())
   return {
     facilities: payload.data?.facilities?.items ?? [],
-    equipment: payload.data?.equipment?.items ?? [],
+    systems,
+    equipment,
     instruments: payload.data?.instruments?.items ?? [],
   }
 }

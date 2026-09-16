@@ -1,9 +1,9 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
-  queryLatestTelemetry, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
+  queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
-  startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type StidData, type TelemetryHistoryRange, type TelemetryReading,
+  startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
@@ -41,7 +41,7 @@ export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; 
 export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
-type CachedData = { stid?: StidData; telemetry?: TelemetryReading[] }
+type CachedData = { stid?: StidData; telemetry?: TelemetryReading[]; ontology?: OntologyContract }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
@@ -62,8 +62,9 @@ function readCachedData(): CachedData {
   try {
     const value = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || '{}') as CachedData
     return {
-      stid: value.stid && Array.isArray(value.stid.facilities) && Array.isArray(value.stid.equipment) && Array.isArray(value.stid.instruments) ? value.stid : undefined,
+      stid: value.stid && Array.isArray(value.stid.facilities) && Array.isArray(value.stid.equipment) && Array.isArray(value.stid.instruments) ? { ...value.stid, systems: Array.isArray(value.stid.systems) ? value.stid.systems : [] } : undefined,
       telemetry: Array.isArray(value.telemetry) ? value.telemetry : undefined,
+      ontology: value.ontology && typeof value.ontology.id === 'string' && Array.isArray(value.ontology.entityTypes) && Array.isArray(value.ontology.relationshipTypes) ? value.ontology : undefined,
     }
   } catch { return {} }
 }
@@ -94,6 +95,7 @@ function useHydroOperationsDataController() {
   const cached = useMemo(() => readCachedData(), [])
   const [user, setUser] = useState<AppUser | null>(null)
   const [stid, setStid] = useState<StidData | null>(cached.stid ?? null)
+  const [ontology, setOntology] = useState<OntologyContract | null>(cached.ontology ?? null)
   const [stidSyncedAt, setStidSyncedAt] = useState<number>()
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>(cached.telemetry ?? [])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
@@ -137,11 +139,22 @@ function useHydroOperationsDataController() {
     })
   }, [])
 
-  const refreshStid = useCallback(async () => {
+  const refreshOntology = useCallback(async (force = false) => {
+    const contract = await queryOntologyContract(force).catch(() => null)
+    if (contract) {
+      setOntology(contract)
+      writeCachedData({ ontology: contract })
+    }
+    return contract
+  }, [])
+
+  const refreshStid = useCallback(async (forceOntology = false) => {
+    const contractRequest = refreshOntology(forceOntology)
     const data = await queryStid()
     if (data) applyStid(data)
+    void contractRequest
     return data
-  }, [applyStid])
+  }, [applyStid, refreshOntology])
 
   const loadOperationalData = useCallback(async () => {
     const [loadedOrders, loadedModels, loadedInspections, loadedParts, loadedNotifications] = await Promise.allSettled([
@@ -233,7 +246,12 @@ function useHydroOperationsDataController() {
         await new Promise(resolve => setTimeout(resolve, STID_READINESS_DELAY_MS))
         clearWorkspaceConfigCache()
       }
-      if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
+      if (data) {
+        applyStid(data)
+        setStidState('connected')
+        writePersistedSetup({ stidConnected: true })
+        void refreshOntology()
+      }
       else {
         setStidState('unavailable')
         const detail = lastError instanceof Error ? ` ${lastError.message}` : ''
@@ -246,7 +264,7 @@ function useHydroOperationsDataController() {
         ? 'STID GraphQL API is not queryable yet. Wait a moment, then run Connect STID again.'
         : message)
     }
-  }, [applyStid, provisionState])
+  }, [applyStid, provisionState, refreshOntology])
 
   const connectTelemetry = useCallback(async () => {
     setTelemetryState('loading'); setNotice(undefined)
@@ -444,6 +462,7 @@ function useHydroOperationsDataController() {
             if (cancelled) return
             if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
             else setStidState(current => current === 'connected' ? current : 'unavailable')
+            void refreshOntology()
           } catch (error) {
             if (cancelled) return
             setStidState('error')
@@ -466,7 +485,7 @@ function useHydroOperationsDataController() {
     }
     void initialize()
     return () => { cancelled = true }
-  }, [applyStid, loadOperationalData, loadTelemetry, resumeJob])
+  }, [applyStid, loadOperationalData, loadTelemetry, refreshOntology, resumeJob])
 
   const telemetryLive = telemetry.length > 0
   useEffect(() => {
@@ -746,6 +765,7 @@ function useHydroOperationsDataController() {
     streamState,
     weatherState,
     stid,
+    ontology,
     stidSyncedAt,
     telemetry,
     facilities,

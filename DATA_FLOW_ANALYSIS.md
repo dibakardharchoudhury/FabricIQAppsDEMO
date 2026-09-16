@@ -4,7 +4,7 @@
 
 This document describes the implemented data flows in the Fabric IQ hydropower demo, from synthetic source data through Microsoft Fabric artifacts to the React application. It covers setup, runtime reads, user-triggered writes, agent interactions, identity boundaries, and failure behavior.
 
-The central design choice is that the application composes three independent stores in the browser. Lakehouse master data, Eventhouse telemetry, and Rayfin SQL operational records are not merged into a single server-side model. The Knowledge Graph is a scoped visualization of that composition. It is currently Ontology-aligned rather than a direct Fabric Ontology instance query; the detailed contract and migration path are documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
+The central design choice is that the application composes governed semantic topology with external operational context in the browser. The Knowledge Graph reads bound instances and relationships directly from the live Ontology child Graph Model through GQL, enriches them with current Eventhouse telemetry through KQL, and joins only Rayfin SQL records that are outside the Ontology. Lakehouse GraphQL remains a compatibility transport for other app pages and graph fallback; the detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
 
 ## Architecture Summary
 
@@ -210,22 +210,24 @@ The Knowledge Graph adds a presentation projection over the same browser state:
 
 | Graph element | Current source |
 |---|---|
-| Facility, equipment, instrument nodes | Lakehouse records returned by GraphQL |
-| System nodes | Inferred from governed `facility_id` and `system_id` keys |
-| Latest reading and instrument health | Eventhouse latest reading joined by `opcua_node_id` |
+| Facilities, systems, equipment, instruments, and signal nodes | Materialized nodes queried from the Ontology child Graph Model with GQL |
+| Governed relationship edges | Materialized, directional Graph Model edges returned by GQL |
+| Latest reading and signal/instrument health | Eventhouse latest reading joined by `opcua_node_id` |
 | Work order, inspection, notification, and model nodes | Rayfin SQL records joined by operational identifiers |
-| Relationship edges | Client-side materialization matching the Ontology relationship path and operational overlay rules |
+| External overlay edges | Client-side links from Rayfin records to governed equipment/signal IDs |
 
 Selected-asset scope is the default to prevent an unreadable all-entity canvas. Facility and All
 scopes support broader impact analysis and semantic-model inspection. The asset tree and canvas
 write through the shared facility/turbine selection, so navigation remains consistent across
 Overview, Telemetry, Digital Twin, Knowledge Graph, and Maintenance.
 
-The next architecture iteration will read the live Ontology definition and use its entity types,
-relationship types, bindings, and contextualizations as the runtime contract. Bound instances will
-continue to use supported GraphQL/KQL transports, while Rayfin SQL remains an explicit operational
-overlay. See [docs/knowledge-graph.md](docs/knowledge-graph.md) for scenarios, health semantics,
-provenance, RDF/OWL export, and validation.
+The graph discovers the live Ontology and its associated Graph Model. It reads the semantic contract
+with `getDefinition`, and reads bound instances and relationships directly with GQL. KQL provides
+fresh time-series enrichment while Rayfin SQL remains an explicit operational overlay. The page
+requeries GQL on entry, every 30 seconds while visible, and on focus/refresh; upstream row changes
+still require Fabric's Graph Model ingestion to complete first. See
+[docs/knowledge-graph.md](docs/knowledge-graph.md) for scenarios, health semantics, provenance,
+RDF/OWL export, and validation.
 
 ## Data Agent and Alert Flows
 

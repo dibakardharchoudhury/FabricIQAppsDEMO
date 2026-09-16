@@ -1,10 +1,11 @@
 import type { Core } from 'cytoscape'
 import { Activity, Box, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
-import { useDeferredValue, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { queryOntologyGraph, type OntologyGraph } from '../../services/fabric'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
-import { buildKnowledgeGraph, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
+import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, matchesKnowledgeNodeQuery, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 import { useTheme } from '../hooks/useTheme'
 import { useTreeExpansion } from '../hooks/useTreeExpansion'
@@ -14,6 +15,8 @@ const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
   { type: 'system', label: 'Systems' },
   { type: 'equipment', label: 'Equipment' },
   { type: 'instrument', label: 'Instruments & signals' },
+  { type: 'signal', label: 'Time-series signals' },
+  { type: 'ontology', label: 'Other Ontology entities' },
   { type: 'model', label: '3D models' },
   { type: 'work-order', label: 'Work orders' },
   { type: 'inspection', label: 'Inspections' },
@@ -21,7 +24,17 @@ const NODE_TYPES: Array<{ type: KnowledgeNodeType; label: string }> = [
 ]
 
 const STATUS_LABEL = { ok: 'Healthy', warn: 'Warning', crit: 'Critical', nodata: 'No live data' }
+const LAYOUT_DESCRIPTION: Record<GraphLayout, string> = {
+  breadthfirst: 'Hierarchy: arrange the governed relationship chain in directional levels.',
+  cose: 'Semantic network: cluster connected entities with a force-directed layout.',
+  concentric: 'Concentric: arrange entities in rings around the most connected hubs.',
+}
 type GraphScope = 'asset' | 'facility' | 'all'
+
+const graphVersion = (graph: OntologyGraph | null) => graph ? JSON.stringify({
+  nodes: graph.nodes.map(item => [item.oid, item.labels, item.properties]),
+  edges: graph.edges.map(item => [item.oid, item.labels, item.sourceOid, item.targetOid, item.properties]),
+}) : ''
 
 function navigateTo(tab: string) {
   const url = new URL(window.location.href)
@@ -41,9 +54,41 @@ export function KnowledgeGraphPage() {
   const [types, setTypes] = useState<Set<KnowledgeNodeType>>(() => new Set(NODE_TYPES.map(item => item.type)))
   const [statuses, setStatuses] = useState(() => new Set<KnowledgeNode['status']>(['ok', 'warn', 'crit', 'nodata']))
   const [layout, setLayout] = useState<GraphLayout>('breadthfirst')
+  const [ontologyGraph, setOntologyGraph] = useState<OntologyGraph | null>(null)
+  const [graphLoading, setGraphLoading] = useState(true)
+  const [graphQueriedAt, setGraphQueriedAt] = useState<number>()
+
+  const loadOntologyGraph = useCallback(async (force = false) => {
+    setGraphLoading(true)
+    try {
+      const next = await queryOntologyGraph(force)
+      setOntologyGraph(current => graphVersion(current) === graphVersion(next) ? current : next)
+      if (next) setGraphQueriedAt(Date.now())
+    }
+    finally { setGraphLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    let inFlight = false
+    const refresh = async () => {
+      if (inFlight || document.hidden) return
+      inFlight = true
+      try { await loadOntologyGraph(true) }
+      finally { inFlight = false }
+    }
+    void refresh()
+    const interval = window.setInterval(refresh, 30_000)
+    const handleVisibility = () => { if (!document.hidden) void refresh() }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [loadOntologyGraph])
 
   const graph = useMemo(() => buildKnowledgeGraph({
     facilities: data.stid?.facilities ?? [],
+    systems: data.stid?.systems ?? [],
     equipment: data.stid?.equipment ?? [],
     instruments: data.stid?.instruments ?? [],
     telemetry: data.telemetry,
@@ -51,7 +96,9 @@ export function KnowledgeGraphPage() {
     inspections: data.inspections,
     notifications: data.notifications,
     models: data.assetModels,
-  }), [data.assetModels, data.inspections, data.notifications, data.orders, data.stid, data.telemetry])
+    ontology: data.ontology,
+    ontologyGraph,
+  }), [data.assetModels, data.inspections, data.notifications, data.ontology, data.orders, data.stid, data.telemetry, ontologyGraph])
 
   const treeStations = useMemo(() => data.stid ? buildDigitalTwinTree(data.stid) : [], [data.stid])
   const revealPath = useMemo(() => pathToAsset(treeStations, data.selectedAssetId), [data.selectedAssetId, treeStations])
@@ -84,8 +131,9 @@ export function KnowledgeGraphPage() {
     return visible
   }, [data.selectedAssetId, data.selectedFacility, data.stid, graph.edges, graph.nodes, scope])
   const visibleNodes = useMemo(() => graph.nodes.filter(node => {
-    const matchesQuery = !deferredQuery || `${node.label} ${node.entityId} ${node.subtitle} ${Object.values(node.properties).join(' ')}`.toLowerCase().includes(deferredQuery)
-    return types.has(node.type) && statuses.has(node.status) && matchesQuery && (!scopeIds || scopeIds.has(node.id))
+    const matchesQuery = matchesKnowledgeNodeQuery(node, deferredQuery)
+    const matchesScope = Boolean(deferredQuery) || !scopeIds || scopeIds.has(node.id)
+    return types.has(node.type) && statuses.has(node.status) && matchesQuery && matchesScope
   }), [deferredQuery, graph.nodes, scopeIds, statuses, types])
   const visibleIds = useMemo(() => new Set(visibleNodes.map(item => item.id)), [visibleNodes])
   const visibleEdges = useMemo(() => graph.edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)), [graph.edges, visibleIds])
@@ -99,6 +147,11 @@ export function KnowledgeGraphPage() {
   const selectAsset = (facilityId: string, assetId: string) => {
     setScope('asset')
     data.actions.selectAsset(facilityId, assetId)
+  }
+  const updateQuery = (value: string) => {
+    setQuery(value)
+    const exactMatches = graph.nodes.filter(node => isExactKnowledgeNodeMatch(node, value))
+    if (exactMatches.length === 1) selectNode(exactMatches[0].id)
   }
   const toggleType = (type: KnowledgeNodeType) => setTypes(current => {
     const next = new Set(current)
@@ -118,7 +171,8 @@ export function KnowledgeGraphPage() {
     navigateTo(tab)
   }
 
-  if (data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology entities are not connected</h1><p className="v2-empty-copy">Use Administration to connect STID. The graph will then combine static ontology entities, bound time-series state, and operational context.</p></section>
+  if (!ontologyGraph && graphLoading && data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
+  if (!ontologyGraph && data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy">Sign in with Fabric item read and execute access, then refresh the graph.</p><button type="button" onClick={() => void loadOntologyGraph(true)}>Retry graph query</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
@@ -126,12 +180,12 @@ export function KnowledgeGraphPage() {
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span>Ontology connected</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{data.stidSyncedAt ? ` · synced ${new Date(data.stidSyncedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void data.actions.refreshStid()} title="Refresh ontology now"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void Promise.all([data.actions.refreshStid(true), loadOntologyGraph(true)])} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className="kg-workspace">
       <aside className="kg-sidebar kg-filters">
-        <label className="kg-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Find entity, ID, tag, OPC UA node…" /></label>
+        <label className="kg-search"><Search size={15} /><input value={query} onChange={event => updateQuery(event.target.value)} placeholder="Find entity, ID, tag, OPC UA node…" /></label>
         <section className="kg-scope-section"><div className="kg-section-title"><span>Graph scope</span><small>{visibleNodes.length} visible</small></div><div className="kg-segmented">{([['asset', 'Selected'], ['facility', 'Facility'], ['all', 'All']] as const).map(([value, label]) => <button key={value} className={scope === value ? 'active' : ''} onClick={() => setScope(value)}>{label}</button>)}</div></section>
         <div className="kg-asset-tree"><DigitalTwinTree stations={treeStations} selectedAssetId={data.selectedAssetId} handlers={{ isExpanded: expansion.isExpanded, onToggle: expansion.toggle, onSelectAsset: selectAsset, statusOf: assetId => assetStatuses.get(assetId) ?? 'nodata' }} /></div>
         <details className="kg-display-filters"><summary>Display filters</summary><section><div className="kg-section-title"><span>Entity classes</span><button onClick={() => setTypes(new Set(NODE_TYPES.map(item => item.type)))}>All</button></div>{counts.map(item => <label className="kg-filter-row" key={item.type}><input type="checkbox" checked={types.has(item.type)} onChange={() => toggleType(item.type)} /><i className={`kg-type-dot type-${item.type}`} /><span>{item.label}</span><small>{item.count}</small></label>)}</section><section><div className="kg-section-title"><span>Operational health</span></div><div className="kg-status-filters">{(['crit', 'warn', 'ok', 'nodata'] as const).map(status => <button key={status} className={statuses.has(status) ? `active status-${status}` : ''} onClick={() => toggleStatus(status)}><i />{STATUS_LABEL[status]}<small>{graph.nodes.filter(item => item.status === status).length}</small></button>)}</div></section></details>
@@ -139,7 +193,7 @@ export function KnowledgeGraphPage() {
 
       <section className="kg-stage">
         <div className="kg-toolbar">
-          <div className="kg-layout-control"><GitBranch size={14} /><select value={layout} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div>
+          <div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div>
           <div className="kg-graph-actions"><button title="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button title="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button title="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Maximize2 size={16} /></button><button title="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button></div>
         </div>
         {visibleNodes.length ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} /> : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}

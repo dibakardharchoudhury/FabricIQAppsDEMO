@@ -21,7 +21,7 @@ provenance.
 ## Useful scenarios
 
 | Scenario | How the graph helps |
-|---|---|
+| --- | --- |
 | Alarm and anomaly triage | Start from a critical signal, identify its instrument and turbine, then open telemetry or maintenance without losing selection. |
 | Maintenance planning | See open work, notifications, inspections, and available model context around one asset instead of reconciling identifiers across screens. |
 | Root-cause exploration | Traverse the governed signal-to-instrument-to-equipment-to-system-to-facility path and compare sibling context. |
@@ -50,41 +50,72 @@ The governed semantic path is:
 signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
-There is no separate Fabric Graph item in this repository. "Graph" refers to the entity and
-relationship network defined by the Fabric IQ Ontology and visualized by the application.
+Fabric creates a child **Graph Model** for the Ontology. That materialized graph contains the bound
+entity instances, asserted/derived relationships, and source lineage. The app discovers workspace
+Ontologies and Graph Models at runtime. If multiple Graph Models exist, it samples their labels and
+selects the unique model matching the live Ontology entity contract; artifact names, version
+suffixes, and item IDs are never embedded in the application. It queries that graph directly with
+GQL and does not recreate the governed topology from Lakehouse rows.
 
-## Current application implementation
+## Application implementation
 
-The current SPA is **Ontology-aligned**, but it does not yet query Ontology instances as a graph:
+The SPA uses the live Fabric IQ Ontology definition and its associated Graph Model as the semantic
+and instance sources of truth:
 
 ```mermaid
 flowchart LR
-    DEF["Fabric IQ Ontology\nentity and relationship contract"]
-    LH["Lakehouse silver tables"]
+   DEF["Fabric IQ Ontology\nlive entity and relationship contract"]
+   GRAPH["Ontology child Graph Model\nmaterialized nodes + edges"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
-    GQL["Fabric GraphQL API"]
+   GQL["Fabric GQL executeQuery API"]
     KQL["KQL latest readings"]
-    BUILD["buildKnowledgeGraph()\nclient-side property graph"]
+   BUILD["buildKnowledgeGraph()\ngoverned graph + external overlays"]
     CY["Cytoscape canvas"]
 
-    DEF -. "declares the intended model" .-> BUILD
-    LH --> GQL --> BUILD
+   DEF -->|"getDefinition"| BUILD
+   DEF --> GRAPH --> GQL --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
     BUILD --> CY
 ```
 
-`queryStid()` reads facilities, equipment, and instruments from Lakehouse GraphQL. Latest
-Eventhouse readings are joined to instruments by `opcua_node_id`. Rayfin SQL records are joined by
-`equipmentId`, `instrumentId`, or `opcuaNodeId`. `buildKnowledgeGraph()` creates Cytoscape nodes and
-edges, including an inferred system node for each `facility_id` and `system_id` pair.
+`queryOntologyContract()` reads `getDefinition` for semantic metadata. `queryOntologyGraph()`
+discovers the child Graph Model and executes bounded GQL queries for its materialized nodes and
+edges. `buildKnowledgeGraph()` preserves those nodes, edge directions, labels, and identifiers.
+Known Hydro entity classes receive tailored labels and health behavior; newly added Ontology labels
+render generically without requiring client join code.
 
-This design was chosen because Fabric Ontology `getDefinition` exposes the model and bindings, not
-a bulk instance-graph response suitable for the browser. The already provisioned GraphQL and KQL
-surfaces provide deterministic instance reads. The tradeoff is important: the current graph
-reconstructs relationships from governed keys instead of consuming the live Ontology definition as
-its runtime contract.
+For page-load performance, Cytoscape is route-lazy, GQL node/edge reads run in parallel, and
+single-flight requests prevent duplicate calls. The page defaults to a selected-asset projection;
+facility and all-graph views are opt-in. Cytoscape reconciles changed element data in place, so live
+polls preserve the current viewport, selection, and dragged node positions instead of rebuilding
+the graph. A layout is rerun only on initial load or when the operator selects a different layout.
+
+Latest Eventhouse readings enrich the measurement point by `opcua_node_id`; this preserves telemetry
+freshness independently of the Graph Model ingestion schedule. When one `signal_master` node has a
+one-to-one `signals_from_instruments` binding, the UI combines it with that instrument into one
+visual node and retains both entities in the inspector provenance. This removes duplicate labels
+without changing the governed Graph Model. Unbound and non-one-to-one signals remain explicit nodes.
+Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
+`instrumentId`, or `opcuaNodeId` as explicit external overlays. Existing GraphQL/STID reads remain a
+compatibility path for other app pages and for graph fallback only when direct GQL is unavailable.
+
+The direct endpoint is `POST /v1/workspaces/{workspaceId}/GraphModels/{graphModelId}/executeQuery?preview=true`.
+Cytoscape is only the renderer; it is not the semantic or instance source of truth.
+
+## Freshness contract
+
+The app forces a new GQL read when Knowledge Graph opens, every 30 seconds while the page is
+visible, when the browser tab regains focus, and when Refresh is selected. Therefore, after Fabric
+finishes ingesting a Graph Model update, the page observes it within **30 seconds** without a reload.
+
+Fabric owns the earlier ingestion interval. Ontology schema changes automatically trigger
+downstream Graph Model re-ingestion. Changes only to upstream Lakehouse rows are not visible in the
+Ontology graph until its child Graph Model refresh runs; configure its schedule or use **Refresh
+now** in Fabric. The app cannot make data visible before Fabric has materialized it. Eventhouse
+values are queried separately on their own 30-second cycle so operational readings do not wait for
+a full graph refresh.
 
 ## Interaction model
 
@@ -92,7 +123,7 @@ The left asset tree and graph share the same selected facility and turbine state
 Real-Time Telemetry, Digital Twin, and Maintenance.
 
 | Scope | Visible context |
-|---|---|
+| --- | --- |
 | Selected | The selected turbine, its instruments and operational records, parent system, and facility. This is the default and minimizes clutter. |
 | Facility | All graph entities associated with the selected facility. |
 | All | Every loaded entity and relationship. Use for discovery and model inspection. |
@@ -107,9 +138,9 @@ Maintenance.
 ## Identity, joins, and provenance
 
 | Source | Graph content | Stable join |
-|---|---|---|
-| Fabric Lakehouse | Facilities, systems, equipment, instruments | `facility_id`, `system_id`, `equipment_id`, `instrument_id` |
-| Fabric Eventhouse | Latest and historical telemetry | `opcua_node_id` |
+| --- | --- | --- |
+| Ontology child Graph Model | Bound facilities, systems, equipment, instruments, signals, and governed relationships | Native graph object/edge IDs plus Ontology properties |
+| Fabric Eventhouse | Latest and historical telemetry enrichment | `opcua_node_id` |
 | Rayfin SQL | Work orders, notifications, inspections, 3D models | `equipmentId`, `instrumentId`, `opcuaNodeId` |
 
 Every node records source provenance. Cross-store referential integrity is conventional rather than
@@ -131,23 +162,18 @@ Health should roll upward from signal to equipment, system, and facility using t
 descendant state. The inspector must explain why an entity is red, including the triggering signal
 or operational record, source timestamp, quality, and provenance.
 
-## Ontology-authoritative target
+## Ontology-authoritative behavior
 
-The next ingestion iteration should preserve the existing source transports while making the live
-Ontology definition authoritative:
-
-1. Discover the configured Ontology item and read its live definition.
+1. Discover the configured/versioned Ontology item and read its live definition.
 2. Parse entity types, properties, relationship types, bindings, and contextualizations into a
    versioned semantic contract.
-3. Query bound instances through supported GraphQL and KQL surfaces.
-4. Materialize only entity classes and relationships declared by that contract; remove hard-coded
-   or inferred topology when a contextualization is available.
+3. Query materialized bound instances and relationships directly from the Ontology child Graph Model with GQL.
+4. Preserve every returned core entity and relationship, including unknown future labels.
 5. Preserve Ontology entity and relationship identifiers on every graph element.
 6. Attach Rayfin records as an explicit `hydro-operations` overlay with source and join provenance.
-7. Detect contract drift and orphaned operational records before rendering.
+7. Use GraphQL/STID only as an explicit compatibility fallback if the direct Graph Model query is unavailable.
 
-This approach reuses the deployed Ontology without incorrectly treating `getDefinition` as an
-instance-query API. Cytoscape remains a presentation layer, not the semantic source of truth.
+This reuses both the deployed Ontology and the graph artifact Fabric materializes from its bindings.
 
 ## RDF and OWL export
 
@@ -155,7 +181,7 @@ Export should be generated from the Ontology contract plus resolved instances, n
 position or transient filter state:
 
 | Fabric concept | RDF/OWL representation |
-|---|---|
+| --- | --- |
 | Entity type | `owl:Class` |
 | Relationship type | `owl:ObjectProperty` |
 | Scalar property | `owl:DatatypeProperty` |
@@ -170,8 +196,7 @@ describes current entities, relationships, and optional observation snapshots.
 
 ## Validation
 
-1. Connect STID and verify graph counts agree with the loaded facilities, inferred/deployed systems,
-   equipment, instruments, and operational records.
+1. Query the Ontology child Graph Model and verify graph counts and representative paths against the Fabric graph experience.
 2. Verify every edge references two existing nodes and every operational overlay record exposes its
    source join key.
 3. Compare representative relationship paths with the `ontology_relationship_audit` output from
@@ -187,7 +212,9 @@ describes current entities, relationships, and optional observation snapshots.
 ## Key implementation files
 
 - [`HydroOperationsApp/src/services/fabric.ts`](../HydroOperationsApp/src/services/fabric.ts):
-  GraphQL, KQL, workspace discovery, and Data Agent access.
+   Graph Model/GQL, GraphQL, KQL, workspace discovery, and Data Agent access.
+- [`HydroOperationsApp/src/services/ontologyGraph.ts`](../HydroOperationsApp/src/services/ontologyGraph.ts):
+   typed decoding of GQL node and edge responses.
 - [`HydroOperationsApp/src/services/rayfin.ts`](../HydroOperationsApp/src/services/rayfin.ts):
   operational SQL access.
 - [`HydroOperationsApp/src/ui-shared/knowledgeGraphModel.ts`](../HydroOperationsApp/src/ui-shared/knowledgeGraphModel.ts):
