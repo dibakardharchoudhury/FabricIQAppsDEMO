@@ -161,6 +161,21 @@ def field_value(record: dict, names: tuple[str, ...]):
     return None
 
 
+def has_recent_mapped_observation(payload, cutoff: datetime) -> bool:
+    if not isinstance(payload, list):
+        return False
+    for record in payload:
+        observed_text = record.get("datetime")
+        if not observed_text or utc_datetime(observed_text) < cutoff:
+            continue
+        for variable_id, (field_name, _) in OBSERVATION_FIELDS.items():
+            raw_value = record.get(field_name)
+            value = COMPASS_DEGREES.get(str(raw_value).upper()) if variable_id == "wind_direction" else finite_number(raw_value)
+            if value is not None:
+                return True
+    return False
+
+
 def time_series(payload: dict) -> list[dict]:
     features = payload.get("features") or []
     if not features:
@@ -361,7 +376,8 @@ for point in points:
         ]
         if not members:
             continue
-        valid_time = reference_time + timedelta(hours=bucket_lead)
+        actual_lead = members[-1][0]
+        valid_time = reference_time + timedelta(hours=actual_lead)
         for variable_id, (aliases, unit) in FORECAST_FIELDS.items():
             method = BUCKET_AGGREGATIONS.get(variable_id)
             if method:
@@ -389,7 +405,7 @@ for point in points:
                 "reference_time_utc": reference_time,
                 "valid_time_utc": valid_time,
                 "valid_date": valid_time.date(),
-                "lead_hours": bucket_lead,
+                "lead_hours": actual_lead,
                 "interval_hours": interval_hours,
                 "value": value,
                 "unit": unit,
@@ -430,7 +446,7 @@ for point in points:
             if error.response is not None and error.response.status_code == 404:
                 continue
             raise
-        if isinstance(payload, list) and payload:
+        if has_recent_mapped_observation(payload, observation_cutoff):
             station, geohash, observations_payload = candidate, candidate_geohash, payload
             break
 

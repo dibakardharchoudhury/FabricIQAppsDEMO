@@ -43,6 +43,11 @@ class WeatherSourceContractTests(unittest.TestCase):
         ukmet = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
         self.assertNotIn('raise RuntimeError("UKMet Land Observations returned no mapped recent values")', ukmet)
         self.assertIn("keeping forecast ingestion", ukmet)
+        self.assertIn("actual_lead = members[-1][0]", ukmet)
+        self.assertIn('"lead_hours": actual_lead', ukmet)
+        self.assertNotIn('"lead_hours": bucket_lead', ukmet)
+        self.assertIn("has_recent_mapped_observation(payload, observation_cutoff)", ukmet)
+        self.assertNotIn("if isinstance(payload, list) and payload:", ukmet)
 
     def test_pipeline_and_redirect_contracts_remain_intact(self):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
