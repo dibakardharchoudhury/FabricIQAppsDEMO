@@ -1,0 +1,530 @@
+name: Apply PR 10 review fixes
+
+on:
+  push:
+    branches:
+      - feat/weather-operations
+    paths:
+      - .github/workflows/pr10-review-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply guarded source updates
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_text: str, old: str, new: str) -> None:
+              path = Path(path_text)
+              content = path.read_text(encoding="utf-8")
+              count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one guarded match in {path}, found {count}")
+              path.write_text(content.replace(old, new, 1), encoding="utf-8")
+
+          weather_002 = "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py"
+          replace_once(
+              weather_002,
+              "from datetime import timedelta, timezone\n",
+              "from copy import deepcopy\nfrom datetime import timedelta, timezone\n",
+          )
+          replace_once(
+              weather_002,
+              "\n\ndef open_signed_zarr(asset_href: str) -> xr.Dataset:\n",
+              '''
+
+          def sanitize_stac_item(item: dict) -> dict:
+              """Return a deep copy with URL query credentials removed from every asset href."""
+              sanitized = deepcopy(item)
+              for asset in (sanitized.get("assets") or {}).values():
+                  href = asset.get("href") if isinstance(asset, dict) else None
+                  if isinstance(href, str):
+                      asset["href"] = urlsplit(href)._replace(query="").geturl()
+              return sanitized
+
+
+          def open_signed_zarr(asset_href: str) -> xr.Dataset:
+          ''',
+          )
+          replace_once(
+              weather_002,
+              '''api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
+          run_id = str(uuid4())
+          started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
+
+          # Fabric aborts the remaining cells on error, so the audit row is written before any
+          # network call. A run left in 'started' is a failed run.
+          ''',
+              '''run_id = str(uuid4())
+          started_at = pd.Timestamp.now(tz="UTC").to_pydatetime()
+
+          # Fabric aborts the remaining cells on error, so the audit row is written before any
+          # external credential or network call. A run left in 'started' is a failed run.
+          ''',
+          )
+          replace_once(
+              weather_002,
+              ''').write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
+          item = latest_stac_item(endpoint, api_key)
+          ''',
+              ''').write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
+          api_key = notebookutils.credentials.getSecret(key_vault_uri, api_key_secret_name)
+          item = latest_stac_item(endpoint, api_key)
+          ''',
+          )
+          replace_once(
+              weather_002,
+              'notebookutils.fs.put(str(raw_path), json.dumps(item, indent=2), True)',
+              'notebookutils.fs.put(str(raw_path), json.dumps(sanitize_stac_item(item), indent=2), True)',
+          )
+
+          weather_003 = "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py"
+          replace_once(
+              weather_003,
+              '''points = load_station_points(selected_facility_ids, require_active_equipment)
+          global_spot_api_key = notebookutils.credentials.getSecret(key_vault_uri, global_spot_api_key_secret_name)
+          land_observations_api_key = notebookutils.credentials.getSecret(
+              key_vault_uri,
+              land_observations_api_key_secret_name,
+          )
+          session = retry_session()
+          run_id = str(uuid4())
+          started_at = datetime.now(timezone.utc)
+
+          # Fabric aborts the remaining cells on error, so the audit row is written before any
+          # network call. A run left in 'started' is a failed run.
+          ''',
+              '''points = load_station_points(selected_facility_ids, require_active_equipment)
+          run_id = str(uuid4())
+          started_at = datetime.now(timezone.utc)
+
+          # Fabric aborts the remaining cells on error, so the audit row is written before any
+          # external credential or network call. A run left in 'started' is a failed run.
+          ''',
+          )
+          replace_once(
+              weather_003,
+              ''').write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
+          observation_cutoff = started_at - timedelta(hours=observation_lookback_hours)
+          ''',
+              ''').write.mode("append").saveAsTable(TABLES["ingestion_runs"])
+
+          global_spot_api_key = notebookutils.credentials.getSecret(
+              key_vault_uri,
+              global_spot_api_key_secret_name,
+          )
+          land_observations_api_key = notebookutils.credentials.getSecret(
+              key_vault_uri,
+              land_observations_api_key_secret_name,
+          )
+          session = retry_session()
+          observation_cutoff = started_at - timedelta(hours=observation_lookback_hours)
+          ''',
+          )
+
+          weather_020 = "Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py"
+          replace_once(
+              weather_020,
+              '''forecasts = (
+              spark.table(TABLES["forecasts"])
+              .join(area_locations, "location_id", "inner")
+              .withColumn("forecast_type", F.coalesce("ensemble_member", F.lit("deterministic")))
+              .withColumn("interval_hours", F.coalesce("interval_hours", F.lit(0)))
+          )
+          if forecasts.limit(1).count() == 0:
+              raise RuntimeError("No weather forecasts are available for area calculation")
+          ''',
+              '''typed_forecasts = (
+              spark.table(TABLES["forecasts"])
+              .withColumn("forecast_type", F.coalesce("ensemble_member", F.lit("deterministic")))
+              .withColumn("interval_hours", F.coalesce("interval_hours", F.lit(0)))
+          )
+          forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
+          forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
+              F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
+              F.col("forecast_type").asc(),
+          )
+          selected_forecast_types = (
+              typed_forecasts.select(*forecast_type_keys, "forecast_type")
+              .distinct()
+              .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
+              .filter(F.col("forecast_type_rank") == F.lit(1))
+              .drop("forecast_type_rank")
+          )
+          forecasts = typed_forecasts.join(
+              selected_forecast_types,
+              [*forecast_type_keys, "forecast_type"],
+              "inner",
+          )
+          if forecasts.limit(1).count() == 0:
+              raise RuntimeError("No weather forecasts are available for area calculation")
+          if (
+              forecasts.groupBy(*forecast_type_keys)
+              .agg(F.countDistinct("forecast_type").alias("forecast_type_count"))
+              .filter(F.col("forecast_type_count") != F.lit(1))
+              .limit(1)
+              .count()
+          ):
+              raise RuntimeError("Weather forecast selection produced more than one forecast type")
+
+          # Select one product before the area join so location and area serving rows use the same type.
+          area_forecasts = forecasts.join(area_locations, "location_id", "inner")
+          ''',
+          )
+          replace_once(
+              weather_020,
+              'forecasts.filter(F.col("variable_id") != "wind_direction")',
+              'area_forecasts.filter(F.col("variable_id") != "wind_direction")',
+          )
+          replace_once(
+              weather_020,
+              'forecasts.filter(F.col("variable_id") == "wind_direction")',
+              'area_forecasts.filter(F.col("variable_id") == "wind_direction")',
+          )
+          replace_once(
+              weather_020,
+              'latest_issue_only(spark.table(TABLES["forecasts"]))',
+              'latest_issue_only(forecasts)',
+          )
+
+          sync_source = "Raw/workspace-reset/sync_workspace_from_git.py"
+          replace_once(
+              sync_source,
+              '''def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
+              """Ensure the weather pipeline has an enabled six-hour recurring schedule."""
+          ''',
+              '''def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
+              """Return whether a schedule matches the required six-hour UTC offset."""
+              configuration = schedule.get("configuration") or {}
+              start_text = configuration.get("startDateTime")
+              if not isinstance(start_text, str) or not start_text.strip():
+                  return False
+              try:
+                  normalized = start_text.strip()
+                  if normalized.endswith("Z"):
+                      normalized = f"{normalized[:-1]}+00:00"
+                  start = datetime.fromisoformat(normalized)
+              except ValueError:
+                  return False
+              if start.tzinfo is None:
+                  return False
+              start_utc = start.astimezone(timezone.utc)
+              minutes_past_midnight = start_utc.hour * 60 + start_utc.minute
+              return (
+                  schedule.get("enabled") is True
+                  and configuration.get("type") == "Cron"
+                  and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
+                  and configuration.get("localTimeZoneId") == "UTC"
+                  and start_utc.second == 0
+                  and start_utc.microsecond == 0
+                  and minutes_past_midnight % WEATHER_SCHEDULE_INTERVAL_MINUTES
+                  == WEATHER_SCHEDULE_OFFSET_MINUTES
+              )
+
+
+          def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:
+              """Ensure the weather pipeline has an enabled six-hour recurring UTC schedule."""
+          ''',
+          )
+          replace_once(
+              sync_source,
+              '''    for schedule in schedules:
+                  configuration = schedule.get("configuration", {})
+                  if (
+                      schedule.get("enabled") is True
+                      and configuration.get("type") == "Cron"
+                      and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
+                  ):
+                      print(f"{WEATHER_PIPELINE_NAME} already runs every six hours.")
+                      return
+          ''',
+              '''    for schedule in schedules:
+                  if weather_schedule_matches(schedule):
+                      print(f"{WEATHER_PIPELINE_NAME} already runs every six hours at the UTC offset.")
+                      return
+          ''',
+          )
+
+          sync_test = "Raw/workspace-reset/test_sync_workspace_from_git.py"
+          matching_fixture = '''            {"value": [{"id": "schedule-id", "enabled": True,
+                                  "configuration": {"type": "Cron", "interval": 360}}]},
+          '''
+          replace_once(
+              sync_test,
+              matching_fixture,
+              '''            {"value": [{"id": "schedule-id", "enabled": True,
+                                  "configuration": {
+                                      "type": "Cron",
+                                      "interval": 360,
+                                      "localTimeZoneId": "UTC",
+                                      "startDateTime": "2026-09-16T03:20:00Z",
+                                  }}]},
+          ''',
+          )
+          schedule_tests_anchor = '''        self.assertEqual(fabric.request.call_count, 1)
+
+              def test_already_published_environment_is_not_republished_without_git_update(self):
+          '''
+          replace_once(
+              sync_test,
+              schedule_tests_anchor,
+              '''        self.assertEqual(fabric.request.call_count, 1)
+
+              def test_wrong_offset_weather_schedule_is_updated(self):
+                  fabric = FakeFabric()
+                  existing = FakeResponse(
+                      200,
+                      {"value": [{"id": "schedule-id", "enabled": True,
+                                  "configuration": {
+                                      "type": "Cron",
+                                      "interval": 360,
+                                      "localTimeZoneId": "UTC",
+                                      "startDateTime": "2026-09-16T03:00:00Z",
+                                  }}]},
+                  )
+                  original_request = fabric.request
+                  fabric.request = Mock(
+                      side_effect=lambda method, url, **kwargs: existing
+                      if method == "GET" and "/jobs/Pipeline/schedules" in url
+                      else original_request(method, url, **kwargs)
+                  )
+
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+                  patch_calls = [
+                      call for call in fabric.request.call_args_list
+                      if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]
+                  ]
+                  self.assertEqual(len(patch_calls), 1)
+
+              def test_wrong_timezone_weather_schedule_is_updated(self):
+                  fabric = FakeFabric()
+                  existing = FakeResponse(
+                      200,
+                      {"value": [{"id": "schedule-id", "enabled": True,
+                                  "configuration": {
+                                      "type": "Cron",
+                                      "interval": 360,
+                                      "localTimeZoneId": "Europe/Oslo",
+                                      "startDateTime": "2026-09-16T03:20:00Z",
+                                  }}]},
+                  )
+                  original_request = fabric.request
+                  fabric.request = Mock(
+                      side_effect=lambda method, url, **kwargs: existing
+                      if method == "GET" and "/jobs/Pipeline/schedules" in url
+                      else original_request(method, url, **kwargs)
+                  )
+
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+                  patch_calls = [
+                      call for call in fabric.request.call_args_list
+                      if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]
+                  ]
+                  self.assertEqual(len(patch_calls), 1)
+
+              def test_already_published_environment_is_not_republished_without_git_update(self):
+          ''',
+          )
+
+          deploy_source = "Raw/workspace-reset/deploy_fabric_app.py"
+          replace_once(
+              deploy_source,
+              '''def write_rayfin_redirects(redirects: list[str]) -> list[str]:
+              """Merge into rayfin.yml's redirect list, never dropping origins already listed there."""
+              config, lines, key_index, end_index, key_indent, newline = _rayfin_redirect_block()
+              # Teammates' app origins live only in this file, so it is merged rather than rebuilt.
+              existing = [
+                  line.strip()[1:].strip()
+                  for line in lines[key_index + 1 : end_index]
+                  if line.strip().startswith("- ")
+              ]
+              merged = _unique_redirect_uris(existing, redirects, ["http://localhost:5173"])
+          ''',
+              '''def write_rayfin_redirects(redirects: list[str]) -> list[str]:
+              """Rebuild rayfin.yml from the caller's current Entra snapshot plus localhost."""
+              config, lines, key_index, end_index, key_indent, newline = _rayfin_redirect_block()
+              # Local rayfin.yml origins may belong to stale deployments; Entra is authoritative.
+              merged = _unique_redirect_uris(redirects, ["http://localhost:5173"])
+          ''',
+          )
+
+          deploy_test = "Raw/workspace-reset/test_deploy_fabric_app.py"
+          replace_once(
+              deploy_test,
+              '''    def test_write_rayfin_redirects_keeps_origins_already_in_the_file(self):
+                  teammate = "https://teammate-app-swedencentral.webapp.fabricapps.net"
+                  mine = "https://my-app-swedencentral.webapp.fabricapps.net"
+                  with tempfile.TemporaryDirectory() as temp_dir:
+                      rayfin_dir = Path(temp_dir)
+                      (rayfin_dir / "rayfin.yml").write_text(
+                          "\\n".join(
+                              (
+                                  "services:",
+                                  "  auth:",
+                                  "    allowedRedirectUris:",
+                                  f"      - {teammate}",
+                                  "      - http://localhost:5173",
+                                  "  staticHosting:",
+                                  "    enabled: true",
+                                  "",
+                              )
+                          ),
+                          encoding="utf-8",
+                      )
+
+                      with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                          merged = DEPLOY.write_rayfin_redirects([mine])
+                          written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+                  self.assertEqual(merged, [teammate, "http://localhost:5173", mine])
+                  self.assertIn(f"      - {teammate}", written)
+                  self.assertIn("  staticHosting:", written)
+          ''',
+              '''    def test_write_rayfin_redirects_retains_current_entra_origin(self):
+                  current = "https://current-app-swedencentral.webapp.fabricapps.net"
+                  with tempfile.TemporaryDirectory() as temp_dir:
+                      rayfin_dir = Path(temp_dir)
+                      (rayfin_dir / "rayfin.yml").write_text(
+                          "services:\\n  auth:\\n    allowedRedirectUris:\\n  staticHosting:\\n    enabled: true\\n",
+                          encoding="utf-8",
+                      )
+
+                      with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                          merged = DEPLOY.write_rayfin_redirects([current])
+                          written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+                  self.assertEqual(merged, [current, "http://localhost:5173"])
+                  self.assertIn(f"      - {current}", written)
+                  self.assertIn("  staticHosting:", written)
+
+              def test_write_rayfin_redirects_removes_stale_local_origin(self):
+                  stale = "https://stale-app-swedencentral.webapp.fabricapps.net"
+                  current = "https://current-app-swedencentral.webapp.fabricapps.net"
+                  with tempfile.TemporaryDirectory() as temp_dir:
+                      rayfin_dir = Path(temp_dir)
+                      (rayfin_dir / "rayfin.yml").write_text(
+                          "\\n".join(
+                              (
+                                  "services:",
+                                  "  auth:",
+                                  "    allowedRedirectUris:",
+                                  f"      - {stale}",
+                                  "      - http://localhost:5173",
+                                  "  staticHosting:",
+                                  "    enabled: true",
+                                  "",
+                              )
+                          ),
+                          encoding="utf-8",
+                      )
+
+                      with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                          merged = DEPLOY.write_rayfin_redirects([current])
+                          written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+                  self.assertEqual(merged, [current, "http://localhost:5173"])
+                  self.assertNotIn(stale, written)
+                  self.assertIn(f"      - {current}", written)
+          ''',
+          )
+
+          setup_notebook = "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb"
+          replace_once(
+              setup_notebook,
+              '''                "    \\"Weather_003_fetch_ukmet\\",",
+                          "]",
+          ''',
+              '''                "    \\"Weather_003_fetch_ukmet\\",",
+                          "    \\"Weather_020_area_calculations\\",",
+                          "]",
+          ''',
+          )
+          PY
+
+      - name: Validate Python behavior and source contracts
+        shell: bash
+        run: |
+          python -m py_compile Notebooks/Weather_*.Notebook/notebook-content.py
+          (
+            cd Raw/workspace-reset
+            python -m unittest -v test_sync_workspace_from_git.py test_deploy_fabric_app.py
+          )
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          pipeline = json.loads(Path("Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
+          conditions = [
+              condition
+              for activity in pipeline["properties"]["activities"]
+              for dependency in activity.get("dependsOn", [])
+              for condition in dependency.get("dependencyConditions", [])
+          ]
+          assert conditions == ["Completed", "Completed"], conditions
+
+          setup = json.loads(Path("Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
+          setup_source = "\n".join(
+              line
+              for cell in setup["cells"]
+              for line in cell.get("source", [])
+          )
+          assert "Weather_020_area_calculations" in setup_source
+
+          source = Path("Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py").read_text(encoding="utf-8")
+          assert source.index("selected_forecast_types =") < source.index("area_forecasts = forecasts.join(area_locations")
+          assert "latest_issue_only(forecasts)" in source
+          assert source.count('latest_issue_only(spark.table(TABLES["forecasts"]))') == 0
+
+          aurora = Path("Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+          assert aurora.index('status": "started"') < aurora.index("getSecret(key_vault_uri, api_key_secret_name)")
+          assert "json.dumps(sanitize_stac_item(item), indent=2)" in aurora
+          assert "_replace(query=\"\")" in aurora
+
+          ukmet = Path("Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+          assert ukmet.index('status": "started"') < ukmet.index("global_spot_api_key = notebookutils.credentials.getSecret")
+          assert ukmet.index('status": "started"') < ukmet.index("land_observations_api_key = notebookutils.credentials.getSecret")
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+
+      - name: Build frontend
+        working-directory: HydroOperationsApp
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Commit validated fixes and remove temporary workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/pr10-review-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Notebooks Raw
+          git commit -m "Resolve remaining Copilot review findings"
+          git push origin HEAD:feat/weather-operations
