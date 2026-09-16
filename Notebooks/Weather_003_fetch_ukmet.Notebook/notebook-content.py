@@ -477,7 +477,7 @@ for point in points:
 if not forecast_rows:
     raise RuntimeError("UKMet Global Spot returned no mapped forecast values")
 if not observation_rows:
-    raise RuntimeError("UKMet Land Observations returned no mapped recent values")
+    print("UKMet Land Observations returned no mapped recent values; keeping forecast ingestion")
 
 shortest_horizon = min(available_leads)
 if shortest_horizon < max_lead_hours:

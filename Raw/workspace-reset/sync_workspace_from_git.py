@@ -658,8 +658,6 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
             f"Weather provisioning failed: expected one '{WEATHER_PIPELINE_NAME}' pipeline, "
             f"found {len(weather_pipelines)}."
         )
-    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
-
     environments = [
         item
         for item in items
@@ -725,13 +723,15 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
     print("Binding weather notebooks to the lakehouse and Environment...")
     rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
 
+    # Activate the recurring job only after its runtime and dependencies are ready.
+    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])
+
     print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
     print("  In the Key Vault passed to Pipe_Setup, create secrets:")
     print("    'mai-weather-api-key' for Aurora")
     print("    'ukmet-global-spot-api-key' for UKMet Global Spot")
     print("    'ukmet-land-observations-api-key' for UKMet Land Observations")
     print("  Portal: Key Vault > Objects > Secrets > Generate/Import")
-    print("  CLI: az keyvault secret set --vault-name <vault> --name <secret-name>")
 
 
 def main() -> int:

@@ -969,6 +969,12 @@ def _workspace_item_id(display_name: str, item_type: str) -> str:
             if item.get("displayName") == display_name and item.get("type") == item_type
         )
         url = body.get("continuationUri")
+        if not url and body.get("continuationToken"):
+            token = body["continuationToken"]
+            url = (
+                f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
+                f"?continuationToken={token}"
+            )
     if len(matches) != 1:
         raise RuntimeError(
             f"Expected one {item_type} named '{display_name}', found {len(matches)}."

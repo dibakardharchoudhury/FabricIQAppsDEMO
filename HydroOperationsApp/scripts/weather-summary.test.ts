@@ -23,3 +23,12 @@ test('ignores missing and zero intervals and never differences the first bucket 
   ], anchor, 24)
   assert.deepEqual(summary, { amount: 3, volume: undefined, coveredHours: 6 })
 })
+
+test('falls back to bucket sums when cumulative rows span a timestamp gap', () => {
+  const summary = summarizePrecipitation([
+    { valid_time_utc: at(2), precipitation_interval_hours: 6, precipitation: 5, cumulative_precipitation: 5 },
+    { valid_time_utc: at(8), precipitation_interval_hours: 6, precipitation: 6, cumulative_precipitation: 11 },
+    { valid_time_utc: at(20), precipitation_interval_hours: 6, precipitation: 3, cumulative_precipitation: 18 },
+  ], anchor, 24)
+  assert.deepEqual(summary, { amount: 9, volume: undefined, coveredHours: 12 })
+})

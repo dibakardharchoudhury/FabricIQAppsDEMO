@@ -213,8 +213,8 @@ SQL_TABLES = [
 
 # --- STID GraphQL API binding over the Lakehouse SQL analytics endpoint ------
 # The web app (HydroOperationsApp) issues exactly this query, so the GraphQL API
-# must expose these four silver tables with these fields (identity-mapped to the
-# lakehouse columns). graphqlType == the generated query field name.
+# must expose the configured silver, canonical weather, and serving weather tables with
+# these fields (identity-mapped to the lakehouse columns). graphqlType is the generated query field name.
 GRAPHQL_DEFINITION_SCHEMA_URL = (
     "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/"
     "definition/1.0.0/schema.json"
@@ -703,8 +703,8 @@ def resolve_sql_analytics_endpoint_id(
 
 
 def build_graphql_definition(source_endpoint_id: str) -> dict:
-    """graphql-definition.json binding the STID GraphQL API to the Lakehouse SQL analytics
-    endpoint, exposing the four silver tables the web app queries."""
+    """Bind the app GraphQL API to the Lakehouse SQL analytics endpoint, exposing
+    the configured silver, canonical weather, and serving weather tables."""
     objects = []
     for table, cols in GRAPHQL_OBJECTS:
         objects.append({
@@ -918,9 +918,8 @@ try:
     graphql_item = create_graphql_api(graphql_api_name)
     stid_graphql_id = (graphql_item or {}).get("id")
 
-    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose the four
-    # silver tables the web app queries (silver_facilities / silver_systems /
-    # silver_equipment / silver_instruments). Without this the GraphQL item is created empty.
+    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose every
+    # silver, canonical weather, and serving weather table in GRAPHQL_OBJECTS.
     lakehouse_endpoint_id = resolve_sql_analytics_endpoint_id(
         lakehouse_name, parent_kind="lakehouse", parent_id=lakehouse_id
     )
@@ -936,7 +935,7 @@ try:
     gql_parts = upsert_part(
         gql_parts, GRAPHQL_DEFINITION_PATH, build_graphql_definition(lakehouse_endpoint_id)
     )
-    print(f"Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo silver tables")
+    print(f"Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo Lakehouse tables")
     update_item_definition(stid_graphql_id, {"parts": gql_parts})
     print(
         f"🌐 GraphQL API '{graphql_api_name}' bound to '{lakehouse_name}' — exposing "
@@ -947,8 +946,7 @@ except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the f
     print("   ", exc)
     print(
         f"   Manual fallback: open '{graphql_api_name}' → Get data → Lakehouse SQL analytics "
-        f"endpoint of '{lakehouse_name}' → expose silver_facilities / silver_systems / "
-        "silver_equipment / silver_instruments."
+        f"endpoint of '{lakehouse_name}' → expose every table listed in GRAPHQL_OBJECTS."
     )
 
 

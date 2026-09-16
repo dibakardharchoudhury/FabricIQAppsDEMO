@@ -20,7 +20,7 @@ Important findings:
 
 ## Target architecture
 
-Fabric calls this storage item a Lakehouse. The three notebooks are deployable Fabric Git items:
+Fabric calls this storage item a Lakehouse. The four notebooks are deployable Fabric Git items:
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
 - `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction, and maintains facility operating-area geometry.
@@ -94,7 +94,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 
 ## Orchestration and tests
 
-1. Attach the same Lakehouse and Fabric Environment to all three notebooks.
+1. Attach the same Lakehouse and Fabric Environment to all four weather notebooks.
 2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` in that order, every six hours. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Downstream activities depend on `Completed` rather than `Succeeded`, so one vendor outage never blocks the other vendor or the aggregation stage.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
@@ -107,6 +107,6 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 2. Store the Aurora and UKMet API keys in Key Vault and grant the pipeline run identity secret-read access.
 3. Run `Weather_001_create_lakehouse` and verify all ten tables.
 4. Run `Weather_002_fetch_area_weather` with one point and one small polygon; compare the point result with the local extractor.
-5. Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.
+5. Validate representative-point rainfall depth and cubic metres against an independently calculated sample.
 6. Run `Weather_003_fetch_ukmet`, then `Weather_020_area_calculations`, and verify separate Aurora/UKMet metrics for every forecast type. Provisioning creates and enables the six-hour `03_Pipe_Weather` schedule.
 7. Add a GridHD adapter after confirming its product semantics.

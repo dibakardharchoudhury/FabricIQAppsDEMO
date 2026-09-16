@@ -336,6 +336,22 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertEqual(fabric.updates, [])
 
+    def test_schedule_is_configured_after_notebook_dependencies(self):
+        fabric = FakeFabric()
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_assets(fabric, "workspace-id", git_updated=True)
+
+        schedule_index = next(
+            index for index, (method, url) in enumerate(fabric.requests)
+            if method == "POST" and "/jobs/Pipeline/schedules" in url
+        )
+        dependency_indexes = [
+            index for index, (method, url) in enumerate(fabric.requests)
+            if method == "POST" and ("/staging/publish" in url or "/updateDefinition" in url)
+        ]
+        self.assertTrue(dependency_indexes)
+        self.assertGreater(schedule_index, max(dependency_indexes))
+
     def test_missing_lakehouse_defers_binding_to_rti_001(self):
         fabric = FakeFabric(lakehouses=[])
         with contextlib.redirect_stdout(io.StringIO()) as output:

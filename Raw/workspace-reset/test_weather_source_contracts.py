@@ -33,6 +33,17 @@ class WeatherSourceContractTests(unittest.TestCase):
         self.assertNotIn("first: 1000)", weather_query)
         self.assertIn("ensureConfig(forceRefresh, forceRefresh)", source)
 
+    def test_setup_pagination_and_observation_fallbacks(self):
+        setup = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
+        raw_source = "\n".join("".join(cell.get("source", [])) for cell in raw["cells"])
+        fallback = 'if not url and body.get("continuationToken")'
+        self.assertEqual(setup.count(fallback), 1)
+        self.assertEqual(raw_source.count(fallback), 1)
+        ukmet = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertNotIn('raise RuntimeError("UKMet Land Observations returned no mapped recent values")', ukmet)
+        self.assertIn("keeping forecast ingestion", ukmet)
+
     def test_pipeline_and_redirect_contracts_remain_intact(self):
         pipeline = json.loads((ROOT / "Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json").read_text(encoding="utf-8"))
         dependencies = [dependency["dependencyConditions"] for activity in pipeline["properties"]["activities"] for dependency in activity.get("dependsOn", [])]

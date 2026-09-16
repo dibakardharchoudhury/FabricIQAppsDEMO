@@ -43,7 +43,16 @@ export function summarizePrecipitation(
   const lastIndex = includedIndexes[includedIndexes.length - 1]
   const included = includedIndexes.map(index => ordered[index])
   const predecessor = firstIndex > 0 ? ordered[firstIndex - 1] : undefined
-  const contiguous = includedIndexes.every((index, offset) => index === firstIndex + offset)
+  const contiguous = includedIndexes.every((index, offset) => {
+    if (index !== firstIndex + offset || index === 0) return false
+    const currentEnd = Date.parse(ordered[index].valid_time_utc)
+    const previousEnd = Date.parse(ordered[index - 1].valid_time_utc)
+    const intervalMs = Number(ordered[index].precipitation_interval_hours) * 3_600_000
+    return Number.isFinite(currentEnd)
+      && Number.isFinite(previousEnd)
+      && Number.isFinite(intervalMs)
+      && currentEnd - previousEnd === intervalMs
+  })
   const difference = (to?: number | null, from?: number | null) => {
     const end = finiteValue(to)
     const start = finiteValue(from)
