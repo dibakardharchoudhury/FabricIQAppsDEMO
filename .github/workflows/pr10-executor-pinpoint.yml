@@ -1,4 +1,4 @@
-name: Capture PR 10 Python validation
+name: Stage schedule regression test repair
 on:
   push:
     branches: [feat/weather-operations]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 jobs:
-  capture:
+  stage:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,25 +15,72 @@ jobs:
       - shell: python
         run: |
           from pathlib import Path
-          import subprocess, textwrap
-          workflow = Path('.github/workflows/pr10-execute.yml').read_text()
-          start = workflow.index('      - name: Apply guarded fixes')
-          run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
-          end = workflow.index('\n      - name: Validate first scoped change', run_start)
-          exec(compile(textwrap.dedent(workflow[run_start:end]), 'executor', 'exec'))
-          commands = [
-              ['python', '-m', 'py_compile', 'Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py', 'Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py'],
-              ['python', '-m', 'unittest', 'test_sync_workspace_from_git', 'test_deploy_fabric_app', 'test_weather_source_contracts'],
-          ]
-          outputs = []
-          for command in commands:
-              result = subprocess.run(command, cwd='Raw/workspace-reset' if 'unittest' in command else None, text=True, capture_output=True)
-              outputs.append(f"$ {' '.join(command)}\nexit={result.returncode}\n{result.stdout}{result.stderr}")
-          Path('.github/pr10-python-error.txt').write_text('\n\n'.join(outputs), encoding='utf-8')
+          import textwrap
+          path = Path('.github/workflows/pr10-execute.yml')
+          text = path.read_text()
+          anchor = "          exec(compile(script, 'remaining-fixes', 'exec'))"
+          corrected_tests = textwrap.dedent('''\
+              def test_matching_schedule_is_retained_and_stale_duplicate_is_deleted(self):
+                  fabric = FakeFabric()
+                  existing = FakeResponse(200, {"value": [
+                      {"id": "valid", "enabled": True, "configuration": {
+                          "type": "Cron", "interval": 360, "localTimeZoneId": "UTC",
+                          "startDateTime": "2026-09-16T03:20:00Z",
+                      }},
+                      {"id": "stale", "enabled": True, "configuration": {
+                          "type": "Cron", "interval": 240, "localTimeZoneId": "UTC",
+                          "startDateTime": "2026-09-16T03:00:00Z",
+                      }},
+                  ]})
+                  original_request = fabric.request
+                  fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+                      if method == "GET" and "/jobs/Pipeline/schedules" in url
+                      else original_request(method, url, **kwargs))
+
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+                  writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+                  self.assertEqual([method for method, _ in writes], ["DELETE"])
+                  self.assertTrue(writes[0][1].endswith("/stale"))
+
+              def test_multiple_stale_schedules_repairs_one_and_deletes_extras(self):
+                  fabric = FakeFabric()
+                  existing = FakeResponse(200, {"value": [
+                      {"id": "keep", "enabled": False, "configuration": {}},
+                      {"id": "extra-one", "enabled": True, "configuration": {"type": "Cron", "interval": 240}},
+                      {"id": "extra-two", "enabled": True, "configuration": {"type": "Cron", "interval": 120}},
+                  ]})
+                  original_request = fabric.request
+                  fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+                      if method == "GET" and "/jobs/Pipeline/schedules" in url
+                      else original_request(method, url, **kwargs))
+
+                  with contextlib.redirect_stdout(io.StringIO()):
+                      configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+                  writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+                  self.assertEqual([method for method, _ in writes], ["PATCH", "DELETE", "DELETE"])
+                  self.assertTrue(writes[0][1].endswith("/keep"))
+                  self.assertEqual({url.rsplit("/", 1)[-1] for _, url in writes[1:]}, {"extra-one", "extra-two"})
+
+          ''')
+          addition = '\n'.join([
+              anchor,
+              "          schedule_test_path = Path('Raw/workspace-reset/test_sync_workspace_from_git.py')",
+              "          schedule_test_text = schedule_test_path.read_text(encoding='utf-8')",
+              "          schedule_test_start = schedule_test_text.index('    def test_matching_schedule_is_retained_and_stale_duplicate_is_deleted')",
+              "          schedule_test_end = schedule_test_text.index('    def test_already_published_environment_is_not_republished_without_git_update', schedule_test_start)",
+              f"          corrected_schedule_tests = {corrected_tests!r}",
+              "          schedule_test_path.write_text(schedule_test_text[:schedule_test_start] + corrected_schedule_tests + schedule_test_text[schedule_test_end:], encoding='utf-8')",
+          ])
+          if text.count(anchor) != 1:
+              raise SystemExit(f'Expected one executor anchor, found {text.count(anchor)}')
+          Path('.github/pr10-execute-fixed.txt').write_text(text.replace(anchor, addition))
       - shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/pr10-python-error.txt
-          git commit -m "Record PR 10 Python validation failure"
+          git add .github/pr10-execute-fixed.txt
+          git commit -m "Stage schedule regression test repair"
           git push origin HEAD:feat/weather-operations
