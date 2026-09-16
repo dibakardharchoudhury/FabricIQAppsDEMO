@@ -1,5 +1,8 @@
 name: Remediate final Copilot review
 on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/remediate-final-review.yml]
   workflow_dispatch:
 permissions:
   contents: write
@@ -97,7 +100,14 @@ jobs:
                   for cell in notebook["cells"]:
                       text = "".join(cell.get("source", []))
                       hits = text.count(old)
-                      if hits:\n                          text = text.replace(old, new)\n                          cell["source"] = text.splitlines(keepends=True)\n                          remaining -= hits\n                  if remaining:\n                      raise RuntimeError(f"{path}: transform crossed cell boundary")\n                  source = source.replace(old, new)\n              file.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+                      if hits:
+                          text = text.replace(old, new)
+                          cell["source"] = text.splitlines(keepends=True)
+                          remaining -= hits
+                  if remaining:
+                      raise RuntimeError(f"{path}: transform crossed cell boundary")
+                  source = source.replace(old, new)
+              file.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
           patch_ipynb("Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb", [
               ("import json\nimport requests\nimport notebookutils", "import json\nimport requests\nimport notebookutils\nfrom urllib.parse import quote", 1),
