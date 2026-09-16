@@ -56,8 +56,14 @@
 # Supplied by the Pipe_Setup pipeline (Stage 2 activity) at runtime:
 #   lakehouseName             -> consumed by the %%configure cell above (session default lakehouse).
 #   per_notebook_timeout_secs -> max seconds any single child notebook may run before timeout.
+#   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
+workspace_id = ""
+key_vault_uri = ""
+key_vault_tenant_id_secret_name = "tenantid"
+key_vault_client_id_secret_name = "clientid"
+key_vault_client_secret_name = "clientsecret"
 
 # METADATA ********************
 
@@ -68,6 +74,7 @@ per_notebook_timeout_secs = 3600
 
 # CELL ********************
 
+import requests
 import notebookutils
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
@@ -93,7 +100,73 @@ setup_dag = {
 }
 
 results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
-print("✅ Setup orchestration complete (NB02–06, 08–10).")
+
+
+def _activate_weather_schedule() -> None:
+    required = {
+        "workspace_id": workspace_id,
+        "key_vault_uri": key_vault_uri,
+        "key_vault_tenant_id_secret_name": key_vault_tenant_id_secret_name,
+        "key_vault_client_id_secret_name": key_vault_client_id_secret_name,
+        "key_vault_client_secret_name": key_vault_client_secret_name,
+    }
+    missing = [name for name, value in required.items() if not str(value).strip()]
+    if missing:
+        raise ValueError("Missing Stage 2 parameter(s): " + ", ".join(missing))
+    tenant_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_tenant_id_secret_name)
+    client_id = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_id_secret_name)
+    client_secret = notebookutils.credentials.getSecret(key_vault_uri, key_vault_client_secret_name)
+    token_response = requests.post(
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+            "scope": "https://api.fabric.microsoft.com/.default",
+        },
+    )
+    token_response.raise_for_status()
+    headers = {
+        "Authorization": f"Bearer {token_response.json()['access_token']}",
+        "Content-Type": "application/json",
+    }
+    items = []
+    items_url = f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/items"
+    while items_url:
+        items_response = requests.get(items_url, headers=headers)
+        items_response.raise_for_status()
+        body = items_response.json()
+        items.extend(body.get("value", []))
+        items_url = body.get("continuationUri")
+    pipelines = [
+        item for item in items
+        if item.get("displayName") == "03_Pipe_Weather"
+        and item.get("type") in {"DataPipeline", "Pipeline"}
+    ]
+    if len(pipelines) != 1:
+        raise RuntimeError(f"Expected one 03_Pipe_Weather pipeline, found {len(pipelines)}")
+    schedules_url = (
+        f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/items/"
+        f"{pipelines[0]['id']}/jobs/Pipeline/schedules"
+    )
+    schedules_response = requests.get(schedules_url, headers=headers)
+    schedules_response.raise_for_status()
+    schedules = schedules_response.json().get("value", [])
+    if len(schedules) != 1 or not schedules[0].get("id"):
+        raise RuntimeError(f"Expected one provisioned Weather schedule, found {len(schedules)}")
+    schedule = schedules[0]
+    if schedule.get("enabled") is True:
+        return
+    update_response = requests.patch(
+        f"{schedules_url}/{schedule['id']}",
+        headers=headers,
+        json={"enabled": True, "configuration": schedule.get("configuration") or {}},
+    )
+    update_response.raise_for_status()
+
+
+_activate_weather_schedule()
+print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001); Weather schedule enabled.")
 results
 
 # METADATA ********************
