@@ -1036,11 +1036,11 @@ if weather_binding_failures:
     )
 
 print("\n=== STEP 5: Create or verify weather tables before schedule activation ===")
-          weather_setup_result = notebookutils.notebook.run(
-              "Weather_001_create_lakehouse",
-              3600,
-          )
-          print("Weather schema setup completed:", weather_setup_result)
+weather_setup_result = notebookutils.notebook.run(
+    "Weather_001_create_lakehouse",
+    3600,
+)
+print("Weather schema setup completed:", weather_setup_result)
 
 def _activate_weather_schedule() -> None:
     pipeline_id = _workspace_item_id("03_Pipe_Weather", "DataPipeline")
