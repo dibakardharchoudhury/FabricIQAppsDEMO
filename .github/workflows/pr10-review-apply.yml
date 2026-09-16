@@ -115,8 +115,11 @@ jobs:
       - name: Typecheck and build frontend
         working-directory: HydroOperationsApp
         run: |
-          npm ci --no-audit --no-fund
-          npm run build
+          set -o pipefail
+          (npm ci --no-audit --no-fund && npm run build) 2>&1 | tee /tmp/frontend-validation.log || {
+            python -c "from pathlib import Path; text = Path('/tmp/frontend-validation.log').read_text(encoding='utf-8')[-6000:]; print('::error title=Frontend validation failure::' + text.replace('%', '%25').replace('\\r', '%0D').replace('\\n', '%0A'))"
+            exit 1
+          }
 
       - name: Commit validated fixes
         run: |
