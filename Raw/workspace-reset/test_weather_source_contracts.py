@@ -56,6 +56,9 @@ class WeatherSourceContractTests(unittest.TestCase):
             self.assertEqual(source.count('{"useRootDefaultLakehouse": True}'), 1)
             self.assertEqual(source.count('"path": "Weather_001_create_lakehouse"'), 1)
             self.assertIn("quote(body['continuationToken'], safe='')", source)
+            self.assertIn("set(results_by_activity) != expected", source)
+            self.assertIn('outcome.get("exception")', source)
+            self.assertIn('_require_successful_dag(results)\n_activate_weather_schedule()', source)
             self.assertGreater(
                 source.rindex("_activate_weather_schedule()"),
                 source.index("notebookutils.notebook.runMultiple"),

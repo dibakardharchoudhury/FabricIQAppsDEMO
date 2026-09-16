@@ -103,6 +103,20 @@ setup_dag = {
 results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
 
 
+def _require_successful_dag(results_by_activity: dict) -> None:
+    expected = {activity["name"] for activity in setup_dag["activities"]}
+    if not isinstance(results_by_activity, dict) or set(results_by_activity) != expected:
+        returned = set(results_by_activity) if isinstance(results_by_activity, dict) else set()
+        raise RuntimeError(f"Stage 2 returned incomplete DAG results: {sorted(expected - returned)}")
+    failed = []
+    for name, outcome in results_by_activity.items():
+        status = str(outcome.get("status", "")).lower() if isinstance(outcome, dict) else "invalid"
+        if not isinstance(outcome, dict) or outcome.get("exception") or status in {"failed", "failure", "cancelled", "canceled"}:
+            failed.append(name)
+    if failed:
+        raise RuntimeError(f"Stage 2 DAG failed; Weather schedule remains disabled: {sorted(failed)}")
+
+
 def _activate_weather_schedule() -> None:
     required = {
         "workspace_id": workspace_id,
@@ -171,6 +185,7 @@ def _activate_weather_schedule() -> None:
     update_response.raise_for_status()
 
 
+_require_successful_dag(results)
 _activate_weather_schedule()
 print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001); Weather schedule enabled.")
 results
