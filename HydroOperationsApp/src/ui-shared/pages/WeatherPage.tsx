@@ -106,7 +106,7 @@ export function WeatherPage() {
     return [...new Set([
       ...weather.forecasts.map(item => item.source_id),
       ...weather.areaMetrics.filter(item => item.data_kind === 'forecast').map(item => item.source_id),
-    ].filter(source => source.toLowerCase() !== 'ukmet'))].sort()
+    ])].sort()
   }, [weather])
   const selectedVendor = forecastVendors.includes(forecastVendor) ? forecastVendor : forecastVendors[0] || ''
 
