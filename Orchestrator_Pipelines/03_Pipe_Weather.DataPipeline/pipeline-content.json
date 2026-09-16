@@ -1,0 +1,68 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "4b38d28b-2901-43ea-964b-4695025be17e",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "name": "Weather_002_fetch_area_weather",
+        "dependsOn": []
+      },
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "d4c2fc77-54f2-4fb0-87ab-e038d5392426",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "name": "Weather_003_fetch_ukmet",
+        "dependsOn": [
+          {
+            "activity": "Weather_002_fetch_area_weather",
+            "dependencyConditions": [
+              "Completed"
+            ]
+          }
+        ]
+      },
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "8db338fe-635b-4e64-9e10-c19cff6a1957",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "name": "Weather_020_area_calculations",
+        "dependsOn": [
+          {
+            "activity": "Weather_003_fetch_ukmet",
+            "dependencyConditions": [
+              "Completed"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

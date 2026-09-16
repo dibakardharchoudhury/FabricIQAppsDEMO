@@ -977,8 +977,9 @@ def _rayfin_redirect_block() -> tuple[Path, list[str], int, int, int, str]:
 
 
 def write_rayfin_redirects(redirects: list[str]) -> list[str]:
-    """Write the complete deduplicated redirect list to rayfin.yml."""
+    """Rebuild rayfin.yml from the caller's current Entra snapshot plus localhost."""
     config, lines, key_index, end_index, key_indent, newline = _rayfin_redirect_block()
+    # Local rayfin.yml origins may belong to stale deployments; Entra is authoritative.
     merged = _unique_redirect_uris(redirects, ["http://localhost:5173"])
     replacement = [lines[key_index]]
     replacement.extend(
@@ -1043,9 +1044,7 @@ def deploy(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    # Entra is authoritative for existing redirects. Do not resurrect historical hosts
-    # that remain only in rayfin.yml; seed Rayfin with the live snapshot plus localhost.
-    preserved_redirects = write_rayfin_redirects(
+    write_rayfin_redirects(
         _unique_redirect_uris(original_entra_redirects, ["http://localhost:5173"])
     )
 
@@ -1069,15 +1068,17 @@ def deploy(args: argparse.Namespace) -> None:
     hosting_url = urls[-1]
 
     print("[6/8] Adding the current app URL to the preserved redirect configuration", flush=True)
-    preserved_redirects = write_rayfin_redirects(
+    rayfin_redirects = write_rayfin_redirects(
         _unique_redirect_uris(
             original_entra_redirects,
             [hosting_url],
             ["http://localhost:5173"],
         )
     )
+    # Only this tenant's own URIs can be asserted against Entra; teammate origins are not registered here.
+    required_entra_redirects = _unique_redirect_uris(original_entra_redirects, [hosting_url])
     print(
-        f"Rayfin redirect configuration now contains {len(preserved_redirects)} URI(s).",
+        f"Rayfin redirect configuration now contains {len(rayfin_redirects)} URI(s).",
         flush=True,
     )
     if hosting_url not in original_entra_redirects:
@@ -1115,8 +1116,8 @@ def deploy(args: argparse.Namespace) -> None:
     validate_fabric_app(workspace_id, args.tenant)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
-        # that existed before deployment (or was configured in rayfin.yml) disappeared.
-        validate_spa_redirect_preservation(client_id, preserved_redirects)
+        # that existed in Entra before deployment disappeared.
+        validate_spa_redirect_preservation(client_id, required_entra_redirects)
         try:
             validate_entra_live_auth(client_id, hosting_url)
         except (DeployError, json.JSONDecodeError) as exc:

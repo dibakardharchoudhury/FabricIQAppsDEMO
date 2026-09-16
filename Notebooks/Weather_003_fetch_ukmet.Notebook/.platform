@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Weather_003_fetch_ukmet",
+    "description": "Fetches UKMet Global Spot forecasts and Land Observations into the shared Weather Lakehouse."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "d4c2fc77-54f2-4fb0-87ab-e038d5392426"
+  }
+}

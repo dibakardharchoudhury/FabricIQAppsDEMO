@@ -66,13 +66,16 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
+import json
 import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 try:
     import requests
@@ -89,6 +92,23 @@ FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+WEATHER_ENVIRONMENT_NAME = "Weather"
+WEATHER_NOTEBOOK_FOLDER = "Notebooks"
+WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
+WEATHER_PIPELINE_JOB_TYPE = "Pipeline"
+# Aurora and UKMet both derive from 6-hourly model runs (00/06/12/18 UTC) and the canonical
+# reporting interval is 6 hours, so anything shorter re-ingests issues and drifts across them.
+WEATHER_SCHEDULE_INTERVAL_MINUTES = 360
+# Start each run well after a model run so both vendors have published it.
+WEATHER_SCHEDULE_OFFSET_MINUTES = 200
+WEATHER_NOTEBOOK_NAMES = {
+    "Weather_001_create_lakehouse",
+    "Weather_002_fetch_area_weather",
+    "Weather_003_fetch_ukmet",
+    "Weather_020_area_calculations",
+}
+# The demo lakehouse is named <prefix><env suffix> by RTI_001; the Ontology item makes its own.
+WEATHER_LAKEHOUSE_PREFIX = "Energy_IQ_LakehouseRTI"
 
 
 class Fabric:
@@ -164,7 +184,7 @@ class Fabric:
             data = resp.json()
             out.extend(data.get("value", []))
             token = data.get("continuationToken")
-            url = f"{FABRIC_BASE}/connections?continuationToken={token}" if token else None
+            url = f"{FABRIC_BASE}/connections?continuationToken={quote(token, safe='')}" if token else None
         return out
 
     def find_github_connections(self, repo_url: str) -> list[str]:
@@ -184,6 +204,43 @@ class Fabric:
                 matches.append(conn)
         matches.sort(key=lambda c: c.get("displayName", ""), reverse=True)
         return [c["id"] for c in matches if c.get("id")]
+
+    def list_workspace_items(self, workspace_id: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        url: str | None = f"{FABRIC_BASE}/workspaces/{workspace_id}/items"
+        while url:
+            resp = self.request("GET", url)
+            if resp.status_code != 200:
+                raise SystemExit(
+                    f"Failed to list workspace items: HTTP {resp.status_code} {resp.text}"
+                )
+            data = resp.json()
+            out.extend(data.get("value", []))
+            url = data.get("continuationUri")
+            if not url and data.get("continuationToken"):
+                token = data["continuationToken"]
+                url = f"{FABRIC_BASE}/workspaces/{workspace_id}/items?continuationToken={quote(token, safe='')}"
+        return out
+
+    def list_workspace_folders(self, workspace_id: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        url: str | None = f"{FABRIC_BASE}/workspaces/{workspace_id}/folders?recursive=true"
+        while url:
+            resp = self.request("GET", url)
+            if resp.status_code != 200:
+                raise SystemExit(
+                    f"Failed to list workspace folders: HTTP {resp.status_code} {resp.text}"
+                )
+            data = resp.json()
+            out.extend(data.get("value", []))
+            url = data.get("continuationUri")
+            if not url and data.get("continuationToken"):
+                token = data["continuationToken"]
+                url = (
+                    f"{FABRIC_BASE}/workspaces/{workspace_id}/folders"
+                    f"?recursive=true&continuationToken={quote(token, safe='')}"
+                )
+        return out
 
     def resolve_workspace_id(self, workspace: str) -> tuple[str, str]:
         if GUID_RE.match(workspace):
@@ -365,6 +422,326 @@ def test_connection_flow(
             fab.delete_connection(created_id)
 
 
+def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dict[str, Any]:
+    """Read a notebook definition in ipynb form, following the long-running operation."""
+    url = (
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}"
+        "/getDefinition?format=ipynb"
+    )
+    response = fab.request("POST", url)
+    if response.status_code == 202:
+        operation = response.headers.get("Location")
+        fab.poll_lro(response)
+        response = fab.request("GET", f"{operation}/result")
+    if response.status_code != 200:
+        raise SystemExit(
+            f"Failed to read notebook definition: HTTP {response.status_code} {response.text}"
+        )
+    return response.json()["definition"]
+
+
+def rebind_weather_notebooks(
+    fab: Fabric,
+    workspace_id: str,
+    notebooks: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+    environment_id: str,
+) -> bool:
+    """Re-apply notebook bindings and report whether dependencies are ready."""
+    lakehouses = [
+        item
+        for item in items
+        if item.get("type") == "Lakehouse"
+        and str(item.get("displayName", "")).startswith(WEATHER_LAKEHOUSE_PREFIX)
+    ]
+    if not lakehouses:
+        print(
+            f"No '{WEATHER_LAKEHOUSE_PREFIX}*' lakehouse yet; "
+            "RTI_001 will bind the weather notebooks when the setup pipeline runs."
+        )
+        return False
+    if len(lakehouses) > 1:
+        names = ", ".join(sorted(str(item.get("displayName")) for item in lakehouses))
+        raise SystemExit(
+            f"Cannot rebind weather notebooks: several '{WEATHER_LAKEHOUSE_PREFIX}*' "
+            f"lakehouses exist ({names})."
+        )
+
+    lakehouse = lakehouses[0]
+    wanted_lakehouse = {
+        "default_lakehouse": lakehouse["id"],
+        "default_lakehouse_name": lakehouse["displayName"],
+        "default_lakehouse_workspace_id": workspace_id,
+        "known_lakehouses": [{"id": lakehouse["id"]}],
+    }
+    wanted_environment = {"environmentId": environment_id, "workspaceId": workspace_id}
+
+    for name, item in sorted(notebooks.items()):
+        definition = notebook_definition(fab, workspace_id, item["id"])
+        part = next(
+            (part for part in definition.get("parts", []) if str(part.get("path", "")).endswith(".ipynb")),
+            None,
+        )
+        if part is None:
+            raise SystemExit(f"Notebook '{name}' has no .ipynb definition part.")
+        content = json.loads(base64.b64decode(part["payload"]))
+        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
+        if dependencies.get("lakehouse") == wanted_lakehouse and dependencies.get("environment") == wanted_environment:
+            print(f"  {name}: already bound.")
+            continue
+        dependencies["lakehouse"] = wanted_lakehouse
+        dependencies["environment"] = wanted_environment
+        part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
+        part["payloadType"] = "InlineBase64"
+        response = fab.poll_lro(fab.request(
+            "POST",
+            f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true",
+            json={"definition": definition},
+        ))
+        if response.status_code not in (200, 202):
+            raise SystemExit(f"Failed to bind notebook '{name}': HTTP {response.status_code} {response.text}")
+        print(f"  {name}: bound to '{lakehouse['displayName']}' and Environment.")
+    return True
+
+
+def weather_schedule_matches(schedule: dict[str, Any], enabled: bool = True) -> bool:
+    """Return whether an unexpired schedule matches the required six-hour UTC offset."""
+    configuration = schedule.get("configuration") or {}
+    def parse_utc(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        value = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    start = parse_utc(configuration.get("startDateTime"))
+    end_time = parse_utc(configuration.get("endDateTime"))
+    if start is None or end_time is None:
+        return False
+    minutes = start.hour * 60 + start.minute
+    return (schedule.get("enabled") is enabled
+        and end_time > datetime.now(timezone.utc)
+        and configuration.get("type") == "Cron"
+        and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
+        and configuration.get("localTimeZoneId") == "UTC"
+        and start.second == 0 and start.microsecond == 0
+        and minutes % WEATHER_SCHEDULE_INTERVAL_MINUTES == WEATHER_SCHEDULE_OFFSET_MINUTES)
+
+def configure_weather_schedule(
+    fab: Fabric, workspace_id: str, pipeline_id: str, enabled: bool = True
+) -> None:
+    """Ensure the weather pipeline has a six-hour recurring UTC schedule."""
+    base = (
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/items/{pipeline_id}"
+        f"/jobs/{WEATHER_PIPELINE_JOB_TYPE}/schedules"
+    )
+    response = fab.request("GET", base)
+    if response.status_code != 200:
+        raise SystemExit(
+            f"Failed to inspect '{WEATHER_PIPELINE_NAME}' schedules: "
+            f"HTTP {response.status_code} {response.text}"
+        )
+    schedules = response.json().get("value", [])
+    retained = next(
+        (schedule for schedule in schedules if weather_schedule_matches(schedule, enabled)),
+        None,
+    )
+    if retained is None and schedules:
+        retained = schedules[0]
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    midnight = now.replace(hour=0, minute=0)
+    start = next(
+        (
+            candidate
+            for slot in range(0, 24 * 60 + 1, WEATHER_SCHEDULE_INTERVAL_MINUTES)
+            if (candidate := midnight + timedelta(minutes=slot + WEATHER_SCHEDULE_OFFSET_MINUTES))
+            > now + timedelta(minutes=1)
+        ),
+        midnight + timedelta(days=1, minutes=WEATHER_SCHEDULE_OFFSET_MINUTES),
+    )
+    body = {
+        "enabled": enabled,
+        "configuration": {
+            "startDateTime": start.isoformat().replace("+00:00", "Z"),
+            "endDateTime": (start + timedelta(days=3650)).isoformat().replace("+00:00", "Z"),
+            "localTimeZoneId": "UTC",
+            "type": "Cron",
+            "interval": WEATHER_SCHEDULE_INTERVAL_MINUTES,
+        },
+    }
+    if retained is None:
+        response = fab.request("POST", base, json=body)
+        action = "created"
+    elif weather_schedule_matches(retained, enabled):
+        response = None
+        action = "reused"
+    else:
+        schedule_id = retained.get("id")
+        if not schedule_id:
+            raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+        response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
+        action = "updated"
+    if response is not None and response.status_code not in (200, 201):
+        raise SystemExit(
+            f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
+            f"HTTP {response.status_code} {response.text}"
+        )
+
+    for schedule in schedules:
+        if schedule is retained:
+            continue
+        schedule_id = schedule.get("id")
+        if not schedule_id:
+            raise SystemExit(f"Extra '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+        deleted = fab.request("DELETE", f"{base}/{schedule_id}")
+        if deleted.status_code not in (200, 204):
+            raise SystemExit(
+                f"Failed to delete extra '{WEATHER_PIPELINE_NAME}' schedule {schedule_id}: "
+                f"HTTP {deleted.status_code} {deleted.text}"
+            )
+    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")
+
+
+def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
+    """Validate weather Git items, publish their Environment, and print secret guidance."""
+    items = fab.list_workspace_items(workspace_id)
+    folders = fab.list_workspace_folders(workspace_id)
+    notebook_folder = next(
+        (
+            folder
+            for folder in folders
+            if folder.get("displayName") == WEATHER_NOTEBOOK_FOLDER
+            and not folder.get("parentFolderId")
+        ),
+        None,
+    )
+    if not notebook_folder:
+        raise SystemExit("Weather provisioning failed: workspace folder 'Notebooks' was not created.")
+
+    weather_notebook_items = [
+        item for item in items
+        if item.get("type") == "Notebook"
+        and item.get("displayName") in WEATHER_NOTEBOOK_NAMES
+    ]
+    duplicate_notebooks = sorted(
+        name for name in WEATHER_NOTEBOOK_NAMES
+        if sum(item.get("displayName") == name for item in weather_notebook_items) > 1
+    )
+    if duplicate_notebooks:
+        raise SystemExit(
+            "Weather provisioning failed: duplicate notebook(s): "
+            + ", ".join(duplicate_notebooks)
+        )
+    weather_notebooks = {item.get("displayName"): item for item in weather_notebook_items}
+    missing = sorted(WEATHER_NOTEBOOK_NAMES - weather_notebooks.keys())
+    if missing:
+        raise SystemExit("Weather provisioning failed: missing notebook(s): " + ", ".join(missing))
+    misplaced = sorted(
+        name
+        for name, item in weather_notebooks.items()
+        if item.get("folderId") != notebook_folder.get("id")
+    )
+    if misplaced:
+        raise SystemExit(
+            "Weather provisioning failed: notebook(s) are not in workspace folder 'Notebooks': "
+            + ", ".join(misplaced)
+        )
+    print("Weather notebooks are present in workspace folder 'Notebooks'.")
+
+    weather_pipelines = [
+        item
+        for item in items
+        if item.get("type") in {"DataPipeline", "Pipeline"}
+        and item.get("displayName") == WEATHER_PIPELINE_NAME
+    ]
+    if len(weather_pipelines) != 1:
+        raise SystemExit(
+            f"Weather provisioning failed: expected one '{WEATHER_PIPELINE_NAME}' pipeline, "
+            f"found {len(weather_pipelines)}."
+        )
+    environments = [
+        item
+        for item in items
+        if item.get("type") == "Environment"
+        and item.get("displayName") == WEATHER_ENVIRONMENT_NAME
+    ]
+    if len(environments) != 1:
+        raise SystemExit(
+            f"Weather provisioning failed: expected one '{WEATHER_ENVIRONMENT_NAME}' "
+            f"Environment, found {len(environments)}."
+        )
+    environment = environments[0]
+    environment_id = environment["id"]
+    metadata = fab.request(
+        "GET", f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}"
+    )
+    if metadata.status_code != 200:
+        raise SystemExit(
+            f"Failed to inspect Weather Environment: HTTP {metadata.status_code} {metadata.text}"
+        )
+    publish_state = (
+        metadata.json().get("properties", {}).get("publishDetails", {}).get("state")
+    )
+    if git_updated or publish_state != "Success":
+        print("Publishing Weather Environment libraries...")
+        response = fab.request(
+            "POST",
+            f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/"
+            f"{environment_id}/staging/publish?beta=false",
+        )
+        response = fab.poll_lro(response)
+        if response.status_code not in (200, 201):
+            raise SystemExit(
+                f"Weather Environment publish failed: HTTP {response.status_code} {response.text}"
+            )
+        deadline = time.time() + 900
+        while time.time() < deadline:
+            status = fab.request(
+                "GET",
+                f"{FABRIC_BASE}/workspaces/{workspace_id}/environments/{environment_id}",
+            )
+            if status.status_code != 200:
+                raise SystemExit(
+                    f"Failed to check Weather Environment publish: "
+                    f"HTTP {status.status_code} {status.text}"
+                )
+            publish_state = (
+                status.json().get("properties", {}).get("publishDetails", {}).get("state")
+            )
+            if publish_state == "Success":
+                break
+            if publish_state in ("Failed", "Cancelled"):
+                raise SystemExit(f"Weather Environment publish ended in state {publish_state}.")
+            print(f"  Weather Environment publish state: {publish_state or 'Waiting'}")
+            time.sleep(15)
+        else:
+            raise SystemExit("Timed out waiting for the Weather Environment to publish.")
+        print("Weather Environment publish completed.")
+    else:
+        print("Weather Environment is already published; no publish required.")
+
+    # Git stores empty notebook dependencies, so every import unbinds these notebooks.
+    print("Binding weather notebooks to the lakehouse and Environment...")
+    bindings_ready = rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)
+
+    # A fresh workspace gets the cadence now, but it remains disabled until RTI_001
+    # creates the lakehouse and successfully binds every weather notebook.
+    configure_weather_schedule(
+        fab, workspace_id, weather_pipelines[0]["id"], enabled=bindings_ready
+    )
+    if not bindings_ready:
+        print(f"{WEATHER_PIPELINE_NAME} schedule created disabled until notebook dependencies are ready.")
+
+    print("\nWeather API prerequisites (the provisioner does not read or create these secrets):")
+    print("  In the Key Vault passed to Pipe_Setup, create secrets:")
+    print("    'mai-weather-api-key' for Aurora")
+    print("    'ukmet-global-spot-api-key' for UKMet Global Spot")
+    print("    'ukmet-land-observations-api-key' for UKMet Land Observations")
+    print("  Portal: Key Vault > Objects > Secrets > Generate/Import")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", help="Tenant id or domain to sign in against.")
@@ -460,6 +837,7 @@ def main() -> int:
     repo_url = f"https://github.com/{args.owner}/{args.repository}"
     created_connection_id: str | None = None
     sync_completed = False
+    git_updated = False
 
     # Ordered list of existing connection ids to try before creating a new one.
     candidate_ids: list[str] = []
@@ -528,6 +906,7 @@ def main() -> int:
                 print(f"updateFromGit failed: HTTP {r.status_code} {r.text}", file=sys.stderr)
                 return 1
             print("  update complete.")
+            git_updated = True
         else:
             print("  nothing to update (workspace already matches Git).")
         sync_completed = True
@@ -550,11 +929,12 @@ def main() -> int:
         elif created_connection_id:
             print(f"Retained connection {created_connection_id} for future reuse.")
 
-    # 6. Report resulting inventory.
-    items = fab.request("GET", f"{FABRIC_BASE}/workspaces/{ws_id}/items")
-    folders = fab.request("GET", f"{FABRIC_BASE}/workspaces/{ws_id}/folders?recursive=true")
-    n_items = len(items.json().get("value", [])) if items.status_code == 200 else "?"
-    n_folders = len(folders.json().get("value", [])) if folders.status_code == 200 else "?"
+    # 6. Publish the Git-imported weather runtime and validate item placement.
+    configure_weather_assets(fab, ws_id, git_updated)
+
+    # 7. Report resulting inventory.
+    n_items = len(fab.list_workspace_items(ws_id))
+    n_folders = len(fab.list_workspace_folders(ws_id))
     print(f"\nDone. Workspace '{ws_name}' now has {n_items} items across {n_folders} folders.")
     return 0
 

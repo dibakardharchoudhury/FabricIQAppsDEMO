@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Weather_002_fetch_area_weather",
+    "description": "Fetches 72-hour Aurora point forecasts and maintains operating-area geometry."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "4b38d28b-2901-43ea-964b-4695025be17e"
+  }
+}

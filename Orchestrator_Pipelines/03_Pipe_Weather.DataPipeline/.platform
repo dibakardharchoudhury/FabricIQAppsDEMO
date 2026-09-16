@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "03_Pipe_Weather",
+    "description": "Refreshes Aurora and UKMet weather data every six hours."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "f0de61bb-271d-4be0-bb1d-60df996d6017"
+  }
+}

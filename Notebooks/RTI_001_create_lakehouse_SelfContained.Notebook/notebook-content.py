@@ -64,6 +64,7 @@
 import json
 import requests
 import notebookutils
+from urllib.parse import quote
 
 print("Notebook environment is ready (using notebookutils).")
 
@@ -398,7 +399,7 @@ def list_workspace_folders(workspace_id: str, access_token: str) -> list:
         url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/folders?recursive=true"
 
         if continuation_token:
-            url = f"{url}&continuationToken={continuation_token}"
+            url = f"{url}&continuationToken={quote(continuation_token, safe='')}"
 
         resp = requests.get(url, headers=headers)
 
@@ -943,7 +944,46 @@ chain_notebooks = [
     "RTI_009_build_data_agent",
     "RTI_010_build_operations_agent",
     "RTI_011_seed_sql_wire_graphql_agent",
+    "Weather_001_create_lakehouse",
+    "Weather_002_fetch_area_weather",
+    "Weather_003_fetch_ukmet",
+    "Weather_020_area_calculations",
 ]
+weather_environment_name = "Weather"
+
+
+def _workspace_item_id(display_name: str, item_type: str) -> str:
+    """Resolve one workspace item by exact display name and type."""
+    matches = []
+    url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    while url:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Failed to list workspace items (HTTP {response.status_code}): {response.text}"
+            )
+        body = response.json()
+        matches.extend(
+            item
+            for item in body.get("value", [])
+            if item.get("displayName") == display_name and item.get("type") == item_type
+        )
+        url = body.get("continuationUri")
+        if not url and body.get("continuationToken"):
+            token = body["continuationToken"]
+            url = (
+                f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
+                f"?continuationToken={quote(token, safe='')}"
+            )
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected one {item_type} named '{display_name}', found {len(matches)}."
+        )
+    return matches[0]["id"]
+
+
+weather_environment_id = _workspace_item_id(weather_environment_name, "Environment")
 
 
 def _rebind_lakehouse(nb_name: str) -> tuple:
@@ -958,11 +998,19 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
             "default_lakehouse_workspace_id": workspace_id,
             "known_lakehouses": [{"id": lakehouse_id}],
         }
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}:
+            deps["environment"] = {
+                "environmentId": weather_environment_id,
+                "workspaceId": workspace_id,
+            }
         ok = notebookutils.notebook.updateDefinition(
             name=nb_name,
             content=json.dumps(nb_json),
         )
-        return (nb_name, bool(ok), "bound to current lakehouse successfully!")
+        detail = "bound to current lakehouse"
+        if nb_name in {"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}:
+            detail += f" and Environment '{weather_environment_name}'"
+        return (nb_name, bool(ok), detail + " successfully!")
     except Exception as exc:
         return (nb_name, False, exc)
 
@@ -970,6 +1018,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
 # Run concurrently — each notebook's get/update pair is independent I/O, so a
 # small thread pool cuts total wall time to roughly one notebook's round-trip
 # instead of the sum of all of them.
+binding_failures = []
 with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
     futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]
     for future in as_completed(futures):
@@ -978,6 +1027,46 @@ with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
             print(f"✅ '{nb_name}': {detail}")
         else:
             print(f"⚠️  Could not rebind '{nb_name}': {detail}")
+            binding_failures.append((nb_name, detail))
+weather_binding_failures = [failure for failure in binding_failures if failure[0].startswith("Weather_")]
+if weather_binding_failures:
+    raise RuntimeError(
+        "Required weather notebook binding failed: "
+        + "; ".join(f"{name}: {detail}" for name, detail in weather_binding_failures)
+    )
+
+print("\n=== STEP 5: Create or verify weather tables before schedule activation ===")
+          weather_setup_result = notebookutils.notebook.run(
+              "Weather_001_create_lakehouse",
+              3600,
+          )
+          print("Weather schema setup completed:", weather_setup_result)
+
+def _activate_weather_schedule() -> None:
+    pipeline_id = _workspace_item_id("03_Pipe_Weather", "DataPipeline")
+    base = (
+        f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items/{pipeline_id}"
+        "/jobs/Pipeline/schedules"
+    )
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    response = requests.get(base, headers=headers)
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to inspect weather schedule (HTTP {response.status_code}): {response.text}")
+    schedules = response.json().get("value", [])
+    if len(schedules) != 1 or not schedules[0].get("id"):
+        raise RuntimeError(f"Expected one provisioned weather schedule, found {len(schedules)}")
+    schedule = schedules[0]
+    if schedule.get("enabled") is True:
+        return
+    updated = requests.patch(
+        f"{base}/{schedule['id']}", headers=headers,
+        json={"enabled": True, "configuration": schedule.get("configuration") or {}},
+    )
+    if updated.status_code not in (200, 201):
+        raise RuntimeError(f"Failed to enable weather schedule (HTTP {updated.status_code}): {updated.text}")
+
+
+_activate_weather_schedule()
 
 print(
     f"\nℹ️  All downstream notebooks now reference the lakehouse "

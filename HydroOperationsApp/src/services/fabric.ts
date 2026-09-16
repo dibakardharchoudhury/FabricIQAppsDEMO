@@ -17,6 +17,8 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 // Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
+const weatherPipelineName = '03_Pipe_Weather'
+const weatherSetupNotebookName = 'Weather_001_create_lakehouse'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
@@ -128,16 +130,23 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
   while (nextUrl) {
     const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
     if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
-    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string }
+    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }
     items.push(...(page.value ?? []))
     nextUrl = page.continuationUri
+    if (!nextUrl && page.continuationToken) {
+      nextUrl = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items?continuationToken=${encodeURIComponent(page.continuationToken)}`
+    }
   }
   return items
 }
 
 /** Discover artifact ids/URIs from the workspace by display name; fall back to build-time env values.
  *  Discovered values are cached for the session so no id can go stale. */
-async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null> {
+async function ensureConfig(interactive: boolean, forceRefresh = false): Promise<ResolvedConfig | null> {
+  if (forceRefresh) {
+    configCache = null
+    configPromise = undefined
+  }
   if (configCache) return configCache
   if (configPromise) return configPromise
   configPromise = discoverConfig(interactive)
@@ -564,6 +573,74 @@ type StidPayload = {
 
 export type StidData = { facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[] }
 
+export type WeatherLocation = {
+  location_id: string
+  location_name: string
+  latitude: number
+  longitude: number
+  elevation_m?: number
+}
+
+export type WeatherArea = {
+  area_id: string
+  area_name: string
+  geometry_geojson: string
+  crs: string
+  metadata_json?: string
+}
+
+export const WEATHER_VARIABLES = [
+  'temperature', 'precipitation', 'pressure', 'relative_humidity', 'dew_point',
+  'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction',
+] as const
+export type WeatherVariableId = typeof WEATHER_VARIABLES[number]
+
+/** The serving tables are pivoted, so one row carries every variable for a single valid time. */
+type WeatherValues = Partial<Record<WeatherVariableId, number | null>>
+
+export type WeatherForecast = WeatherValues & {
+  source_id: string
+  target_kind: 'location' | 'area'
+  target_id: string
+  reference_time_utc: string
+  valid_time_utc: string
+  lead_hours: number
+  precipitation_interval_hours?: number
+  cumulative_precipitation?: number
+  rainfall_volume_m3?: number
+  cumulative_rainfall_volume_m3?: number
+}
+
+export type WeatherObservation = WeatherValues & {
+  source_id: string
+  location_id: string
+  observed_at_utc: string
+}
+
+export type WeatherVariable = {
+  variable_id: string
+  canonical_unit: string
+}
+
+export type WeatherData = {
+  locations: WeatherLocation[]
+  areas: WeatherArea[]
+  variables: WeatherVariable[]
+  observations: WeatherObservation[]
+  forecasts: WeatherForecast[]
+}
+
+type WeatherPayload = {
+  data?: {
+    locations?: { items?: WeatherLocation[] }
+    areas?: { items?: WeatherArea[] }
+    variables?: { items?: WeatherVariable[] }
+    observations?: { items?: WeatherObservation[] }
+    forecasts?: { items?: WeatherForecast[] }
+  }
+  errors?: Array<{ message?: string }>
+}
+
 export function isStidConfigured() { return Boolean(msal) }
 
 export async function queryStid(): Promise<StidData | null> {
@@ -607,6 +684,39 @@ export async function queryStid(): Promise<StidData | null> {
   }
 }
 
+export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
+  const config = await ensureConfig(forceRefresh, forceRefresh)
+  if (!config?.graphqlUrl) return null
+  const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)
+  if (!token) return null
+  // The serving tables hold only the newest issue, pivoted one row per valid time, so the
+  // whole page is a few hundred rows instead of the long tables' unbounded issue history.
+  const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
+  const query = `query HydroWeather {
+    locations: weather_locations(first: 100000) { items { location_id location_name latitude longitude elevation_m } }
+    areas: weather_areas(first: 100000) { items { area_id area_name geometry_geojson crs metadata_json } }
+    variables: weather_variables(first: 100000) { items { variable_id canonical_unit } }
+    observations: weather_latest_observations(first: 100000) { items { source_id location_id observed_at_utc ${values} } }
+    forecasts: weather_latest_forecasts(first: 100000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
+  }`
+  const response = await fetch(config.graphqlUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`Weather query failed (${response.status}).`)
+  const payload = JSON.parse(text) as WeatherPayload
+  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
+  return {
+    locations: payload.data?.locations?.items ?? [],
+    areas: payload.data?.areas?.items ?? [],
+    variables: payload.data?.variables?.items ?? [],
+    observations: payload.data?.observations?.items ?? [],
+    forecasts: payload.data?.forecasts?.items ?? [],
+  }
+}
+
 export async function startStreamingPipeline(onStatus?: JobProgress) {
   const config = await ensureConfig(true)
   if (!config?.pipelineId) throw new Error(`Streaming pipeline (${pipelineName}) was not found in the workspace.`)
@@ -623,13 +733,70 @@ export async function resumeStreamingPipeline(onStatus: JobProgress | undefined,
 
 export function isPostSeedConfigured() { return Boolean(msal) }
 
-async function resolvePostseedNotebookId(): Promise<string> {
+async function resolveNotebookId(displayName: string): Promise<string> {
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
   const items = await listItems(token)
-  const notebook = items.find(item => item.type === 'Notebook' && item.displayName === postseedNotebookName)
-  if (!notebook) throw new Error(`The ${postseedNotebookName} notebook was not found in the workspace.`)
+  const notebook = items.find(item => item.type === 'Notebook' && item.displayName === displayName)
+  if (!notebook) throw new Error(`The ${displayName} notebook was not found in the workspace.`)
   return notebook.id
+}
+
+async function resolvePostseedNotebookId(): Promise<string> {
+  return resolveNotebookId(postseedNotebookName)
+}
+
+/** Status of the newest run of `itemId` started since `sinceIso`, or undefined if it never ran. */
+async function statusSince(itemId: string, sinceIso: string): Promise<JobStatus | undefined> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  return (await latestInstance(token, itemId, sinceIso))?.status
+}
+
+async function resolveWeatherPipelineId(): Promise<string> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const items = await listItems(token)
+  const pipeline = items.find(item => (item.type === 'DataPipeline' || item.type === 'Pipeline') && item.displayName === weatherPipelineName)
+  if (!pipeline) throw new Error(`The ${weatherPipelineName} pipeline was not found in the workspace.`)
+  return pipeline.id
+}
+
+async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: string): Promise<JobStatus> {
+  const setupNotebookId = await resolveNotebookId(weatherSetupNotebookName)
+  const setupCompleted = resumeSinceIso && (await statusSince(setupNotebookId, resumeSinceIso)) === 'Completed'
+  if (!setupCompleted) {
+    const setupStatus = await runJob(setupNotebookId, 'RunNotebook', onStatus, {
+      timeoutMs: 15 * 60_000,
+      reuseActive: true,
+    })
+    if (setupStatus !== 'Completed') return setupStatus
+  }
+
+  const pipelineId = await resolveWeatherPipelineId()
+  const alreadyCompleted = resumeSinceIso && (await statusSince(pipelineId, resumeSinceIso)) === 'Completed'
+  if (!alreadyCompleted) {
+    const pipelineStatus = await runJob(pipelineId, 'Pipeline', onStatus, { timeoutMs: 80 * 60_000, reuseActive: true })
+    if (pipelineStatus !== 'Completed') return pipelineStatus
+  }
+  const postseedNotebookId = await resolvePostseedNotebookId()
+  const postseedStatus = await runJob(postseedNotebookId, 'RunNotebook', onStatus, {
+    timeoutMs: 15 * 60_000,
+    reuseActive: true,
+    parameters: [{ name: 'sql_db_item_name', value: 'hydro-operations-ui', type: 'Text' }],
+  })
+  if (postseedStatus === 'Completed') clearWorkspaceConfigCache()
+  return postseedStatus
+}
+
+/** Run the coordinated weather pipeline, then republish GraphQL over its completed tables. */
+export const runWeatherNotebooks = createSingleFlight(
+  async (onStatus?: JobProgress): Promise<JobStatus> => runWeatherSequence(onStatus),
+)
+
+/** Resume the coordinated weather pipeline started before a page reload. */
+export async function resumeWeatherNotebooks(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
+  return runWeatherSequence(onStatus, sinceIso)
 }
 
 /** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),

@@ -52,7 +52,7 @@ DEPLOY_SCRIPT = SCRIPT_DIR / "deploy_fabric_app.py"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
-SYNC_TIMEOUT_S = 900
+SYNC_TIMEOUT_S = 1800
 DELETE_TIMEOUT_S = 600
 PIPELINE_TIMEOUT_S = 3 * 3600
 DEPLOY_TIMEOUT_S = 45 * 60
@@ -68,7 +68,7 @@ SYNC_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (2, ("Connecting '", "  connected.")),
     (3, ("Initializing connection", "requiredAction=")),
     (4, ("Updating workspace from Git", "update complete", "nothing to update")),
-    (5, ("Disconnecting from Git", "disconnected", "Retained connection", "Cleaning up failed connection")),
+    (5, ("Disconnecting from Git", "Publishing Weather Environment", "Weather Environment publish completed", "disconnected", "Retained connection", "Cleaning up failed connection")),
 ]
 
 DELETE_PHASES = ["Queued", "Working", "Done"]

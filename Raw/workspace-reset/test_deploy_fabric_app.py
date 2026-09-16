@@ -493,6 +493,52 @@ class DeployOrderTests(unittest.TestCase):
                 (rayfin_dir / ".env").read_text(encoding="utf-8"),
             )
 
+    def test_write_rayfin_redirects_retains_current_entra_origin(self):
+        current = "https://current-app-swedencentral.webapp.fabricapps.net"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rayfin_dir = Path(temp_dir)
+            (rayfin_dir / "rayfin.yml").write_text(
+                "services:\n  auth:\n    allowedRedirectUris:\n  staticHosting:\n    enabled: true\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                merged = DEPLOY.write_rayfin_redirects([current])
+                written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(merged, [current, "http://localhost:5173"])
+        self.assertIn(f"      - {current}", written)
+        self.assertIn("  staticHosting:", written)
+
+    def test_write_rayfin_redirects_removes_stale_local_origin(self):
+        stale = "https://stale-app-swedencentral.webapp.fabricapps.net"
+        current = "https://current-app-swedencentral.webapp.fabricapps.net"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rayfin_dir = Path(temp_dir)
+            (rayfin_dir / "rayfin.yml").write_text(
+                "\n".join(
+                    (
+                        "services:",
+                        "  auth:",
+                        "    allowedRedirectUris:",
+                        f"      - {stale}",
+                        "      - http://localhost:5173",
+                        "  staticHosting:",
+                        "    enabled: true",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir):
+                merged = DEPLOY.write_rayfin_redirects([current])
+                written = (rayfin_dir / "rayfin.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(merged, [current, "http://localhost:5173"])
+        self.assertNotIn(stale, written)
+        self.assertIn(f"      - {current}", written)
+
 
 if __name__ == "__main__":
     unittest.main()

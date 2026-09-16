@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Weather_020_area_calculations",
+    "description": "Calculates vendor- and forecast-type-specific weather area metrics."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "8db338fe-635b-4e64-9e10-c19cff6a1957"
+  }
+}
