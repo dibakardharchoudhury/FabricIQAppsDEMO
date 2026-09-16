@@ -20,17 +20,14 @@ jobs:
           start = workflow.index('      - name: Apply remaining fixes and regression tests')
           run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
           end = workflow.index('\n      - name: Set up Node 24', run_start)
-          script = textwrap.dedent(workflow[run_start:end])
-          old = """              if text.count(old) != 1:
-                  raise SystemExit(f'{path_name}: expected one replacement anchor, found {text.count(old)}')"""
-          new = """              if text.count(old) != 1:
-                  Path('.github/pr10-anchor-error.txt').write_text(f'{path_name}: expected one replacement anchor, found {text.count(old)}', encoding='utf-8')
-                  raise SystemExit(Path('.github/pr10-anchor-error.txt').read_text())"""
-          if script.count(old) != 1:
-              raise SystemExit('Could not instrument replace_once')
-          Path('/tmp/apply.py').write_text(script.replace(old, new))
-      - shell: bash
-        run: python /tmp/apply.py || true
+          Path('/tmp/apply.py').write_text(textwrap.dedent(workflow[run_start:end]))
+      - shell: python
+        run: |
+          from pathlib import Path
+          try:
+              exec(compile(Path('/tmp/apply.py').read_text(), '/tmp/apply.py', 'exec'))
+          except BaseException as error:
+              Path('.github/pr10-anchor-error.txt').write_text(f'{type(error).__name__}: {error}', encoding='utf-8')
       - shell: bash
         run: |
           test -f .github/pr10-anchor-error.txt
