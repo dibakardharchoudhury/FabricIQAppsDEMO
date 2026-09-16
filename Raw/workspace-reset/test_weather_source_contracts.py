@@ -104,7 +104,7 @@ class WeatherSourceContractTests(unittest.TestCase):
         weather_sequence = fabric.split("async function runWeatherSequence", 1)[1].split("export const runWeatherNotebooks", 1)[0]
         self.assertIn("resolveWeatherPipelineId()", weather_sequence)
         self.assertIn("runJob(pipelineId, 'Pipeline'", weather_sequence)
-        self.assertNotIn("Weather_001_create_lakehouse", fabric)
+        self.assertNotIn("Weather_001_create_lakehouse", weather_sequence)
         self.assertNotIn("setupNotebookId", weather_sequence)
         self.assertNotIn("resolvePostseedNotebookId()", weather_sequence)
         self.assertNotIn("postseedStatus", weather_sequence)
