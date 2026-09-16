@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CloudSun, Eye, RefreshCw } from 'lucide-react'
 import { queryWeatherData, type WeatherData, type WeatherForecast, type WeatherObservation } from '../../services/fabric'
 import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'
+import { summarizePrecipitation } from '../weatherSummary'
 
 const RANGES = [6, 12, 24, 48, 72]
 const VARIABLE_LABELS: Record<string, string> = {
@@ -143,21 +144,8 @@ export function WeatherPage() {
   const precipitationSummary = useMemo<PrecipitationSummary | undefined>(() => {
     if (!selectedForecasts.length) return undefined
     const windowHours = 24
-    const end = timeAnchor + windowHours * 3_600_000
-    const inWindow = selectedForecasts.filter(item => Date.parse(item.valid_time_utc) > timeAnchor && Date.parse(item.valid_time_utc) <= end)
-    if (!inWindow.length) return undefined
-    const last = inWindow[inWindow.length - 1]
-    const before = selectedForecasts.filter(item => Date.parse(item.valid_time_utc) <= timeAnchor).at(-1)
-    const difference = (to?: number | null, from?: number | null) =>
-      to == null ? undefined : Number(to) - Number(from ?? 0)
-    return {
-      amount: difference(last.cumulative_precipitation, before?.cumulative_precipitation)
-        ?? inWindow.reduce((sum, item) => sum + Number(item.precipitation || 0), 0),
-      unit: unitOf('precipitation'),
-      volume: difference(last.cumulative_rainfall_volume_m3, before?.cumulative_rainfall_volume_m3),
-      coveredHours: inWindow.reduce((sum, item) => sum + Number(item.precipitation_interval_hours ?? 0), 0),
-      windowHours,
-    }
+    const summary = summarizePrecipitation(selectedForecasts, timeAnchor, windowHours)
+    return summary ? { ...summary, unit: unitOf('precipitation'), windowHours } : undefined
   }, [selectedForecasts, timeAnchor, unitOf])
 
   return <div className="weather-page">

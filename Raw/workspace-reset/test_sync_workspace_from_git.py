@@ -228,6 +228,50 @@ class WeatherProvisioningTests(unittest.TestCase):
         ]
         self.assertEqual(len(patch_calls), 1)
 
+    def test_matching_schedule_is_retained_and_stale_duplicate_is_deleted(self):
+        fabric = FakeFabric()
+        existing = FakeResponse(200, {"value": [
+            {"id": "valid", "enabled": True, "configuration": {
+                "type": "Cron", "interval": 360, "localTimeZoneId": "UTC",
+                "startDateTime": "2026-09-16T03:20:00Z",
+            }},
+            {"id": "stale", "enabled": True, "configuration": {
+                "type": "Cron", "interval": 240, "localTimeZoneId": "UTC",
+                "startDateTime": "2026-09-16T03:00:00Z",
+            }},
+        ]})
+        original_request = fabric.request
+        fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+        self.assertEqual([method for method, _ in writes], ["DELETE"])
+        self.assertTrue(writes[0][1].endswith("/stale"))
+
+    def test_multiple_stale_schedules_repairs_one_and_deletes_extras(self):
+        fabric = FakeFabric()
+        existing = FakeResponse(200, {"value": [
+            {"id": "keep", "enabled": False, "configuration": {}},
+            {"id": "extra-one", "enabled": True, "configuration": {"type": "Cron", "interval": 240}},
+            {"id": "extra-two", "enabled": True, "configuration": {"type": "Cron", "interval": 120}},
+        ]})
+        original_request = fabric.request
+        fabric.request = Mock(side_effect=lambda method, url, **kwargs: existing
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(fabric, "workspace-id", "weather-pipeline")
+
+        writes = [(call.args[0], call.args[1]) for call in fabric.request.call_args_list if call.args[0] != "GET"]
+        self.assertEqual([method for method, _ in writes], ["PATCH", "DELETE", "DELETE"])
+        self.assertTrue(writes[0][1].endswith("/keep"))
+        self.assertEqual({url.rsplit("/", 1)[-1] for _, url in writes[1:]}, {"extra-one", "extra-two"})
+
     def test_already_published_environment_is_not_republished_without_git_update(self):
         fabric = FakeFabric()
         with contextlib.redirect_stdout(io.StringIO()) as output:

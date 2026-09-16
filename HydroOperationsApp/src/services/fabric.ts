@@ -141,7 +141,11 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
 
 /** Discover artifact ids/URIs from the workspace by display name; fall back to build-time env values.
  *  Discovered values are cached for the session so no id can go stale. */
-async function ensureConfig(interactive: boolean): Promise<ResolvedConfig | null> {
+async function ensureConfig(interactive: boolean, forceRefresh = false): Promise<ResolvedConfig | null> {
+  if (forceRefresh) {
+    configCache = null
+    configPromise = undefined
+  }
   if (configCache) return configCache
   if (configPromise) return configPromise
   configPromise = discoverConfig(interactive)
@@ -679,20 +683,20 @@ export async function queryStid(): Promise<StidData | null> {
   }
 }
 
-export async function queryWeatherData(interactive = false): Promise<WeatherData | null> {
-  const config = await ensureConfig(false)
+export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
+  const config = await ensureConfig(forceRefresh, forceRefresh)
   if (!config?.graphqlUrl) return null
-  const token = await silentToken([GRAPHQL_SCOPE]) ?? (interactive ? await popupToken([GRAPHQL_SCOPE]) : null)
+  const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)
   if (!token) return null
   // The serving tables hold only the newest issue, pivoted one row per valid time, so the
   // whole page is a few hundred rows instead of the long tables' unbounded issue history.
   const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
   const query = `query HydroWeather {
-    locations: weather_locations(first: 500) { items { location_id location_name latitude longitude elevation_m } }
-    areas: weather_areas(first: 100) { items { area_id area_name geometry_geojson crs metadata_json } }
-    variables: weather_variables(first: 50) { items { variable_id canonical_unit } }
-    observations: weather_latest_observations(first: 500) { items { source_id location_id observed_at_utc ${values} } }
-    forecasts: weather_latest_forecasts(first: 1000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
+    locations: weather_locations(first: 10000000000) { items { location_id location_name latitude longitude elevation_m } }
+    areas: weather_areas(first: 10000000) { items { area_id area_name geometry_geojson crs metadata_json } }
+    variables: weather_variables(first: 10000000) { items { variable_id canonical_unit } }
+    observations: weather_latest_observations(first: 10000000000) { items { source_id location_id observed_at_utc ${values} } }
+    forecasts: weather_latest_forecasts(first: 100000000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
   }`
   const response = await fetch(config.graphqlUrl, {
     method: 'POST',

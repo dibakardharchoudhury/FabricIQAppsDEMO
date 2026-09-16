@@ -63,7 +63,7 @@ Silver stays long and narrow so a new vendor can add variables without a schema 
 - `weather_latest_forecasts`, keyed by `source_id`, `target_kind` (`location` or `area`), `target_id`, and `valid_time_utc`, carrying `cumulative_precipitation`, `precipitation_interval_hours`, and the area rainfall volumes.
 - `weather_latest_observations`, keyed by `source_id`, `location_id`, and `observed_at_utc`.
 
-`unit` is not repeated on these rows; it is fixed per variable and read from `weather_variables`. Applications query the serving tables; analytics and any ad-hoc SQL or KQL continue to use the long tables.
+`unit` is not repeated on these rows; it is fixed per variable and read from `weather_variables`. When an issue contains multiple forecast types, the serving projection prefers `deterministic` and otherwise selects the lexically first type per source, issue, and location; location and area rows share that mapping. Applications query the serving tables; analytics and any ad-hoc SQL or KQL continue to use the forecast-type-specific long tables.
 
 The same notebook enforces retention (`retention_days`, default 7) on forecasts, observations, and ingestion runs before aggregating, which bounds both table growth and the cost of the rebuild.
 

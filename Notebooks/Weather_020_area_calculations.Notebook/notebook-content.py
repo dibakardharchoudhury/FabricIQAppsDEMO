@@ -123,36 +123,11 @@ typed_forecasts = (
     .withColumn("forecast_type", F.coalesce("ensemble_member", F.lit("deterministic")))
     .withColumn("interval_hours", F.coalesce("interval_hours", F.lit(0)))
 )
-forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
-forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
-    F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
-    F.col("forecast_type").asc(),
-)
-selected_forecast_types = (
-    typed_forecasts.select(*forecast_type_keys, "forecast_type")
-    .distinct()
-    .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
-    .filter(F.col("forecast_type_rank") == F.lit(1))
-    .drop("forecast_type_rank")
-)
-forecasts = typed_forecasts.join(
-    selected_forecast_types,
-    [*forecast_type_keys, "forecast_type"],
-    "inner",
-)
-if forecasts.limit(1).count() == 0:
+if typed_forecasts.limit(1).count() == 0:
     raise RuntimeError("No weather forecasts are available for area calculation")
-if (
-    forecasts.groupBy(*forecast_type_keys)
-    .agg(F.countDistinct("forecast_type").alias("forecast_type_count"))
-    .filter(F.col("forecast_type_count") != F.lit(1))
-    .limit(1)
-    .count()
-):
-    raise RuntimeError("Weather forecast selection produced more than one forecast type")
 
-# Select one product before the area join so location and area serving rows use the same type.
-area_forecasts = forecasts.join(area_locations, "location_id", "inner")
+# Canonical metrics retain every forecast product; selection happens only for the wide serving schema.
+area_forecasts = typed_forecasts.join(area_locations, "location_id", "inner")
 
 # METADATA ********************
 
@@ -337,13 +312,38 @@ def widen(frame, target_kind, target_column, value_column, extra_columns):
     )
 
 
+# GraphQL has no forecast_type field, so choose one stable product per issue/location here.
+forecast_type_keys = ["source_id", "reference_time_utc", "location_id"]
+forecast_type_preference = Window.partitionBy(*forecast_type_keys).orderBy(
+    F.when(F.lower("forecast_type") == F.lit("deterministic"), F.lit(0)).otherwise(F.lit(1)),
+    F.col("forecast_type").asc(),
+)
+selected_forecast_types = (
+    typed_forecasts.select(*forecast_type_keys, "forecast_type")
+    .distinct()
+    .withColumn("forecast_type_rank", F.row_number().over(forecast_type_preference))
+    .filter(F.col("forecast_type_rank") == F.lit(1))
+    .drop("forecast_type_rank")
+)
+serving_location_forecasts = typed_forecasts.join(
+    selected_forecast_types,
+    [*forecast_type_keys, "forecast_type"],
+    "inner",
+)
+serving_area_metrics = (
+    spark.table(TABLES["area_metrics"])
+    .filter(F.col("data_kind") == "forecast")
+    .join(area_locations.select("area_id", "location_id"), "area_id", "inner")
+    .join(selected_forecast_types, [*forecast_type_keys, "forecast_type"], "inner")
+)
+
 location_window = (
-    Window.partitionBy("source_id", "variable_id", "location_id", "reference_time_utc")
+    Window.partitionBy("source_id", "variable_id", "location_id", "forecast_type", "reference_time_utc")
     .orderBy("valid_time_utc")
     .rowsBetween(Window.unboundedPreceding, Window.currentRow)
 )
 location_latest = (
-    latest_issue_only(forecasts)
+    latest_issue_only(serving_location_forecasts)
     .withColumn("precipitation_interval_hours", F.coalesce("interval_hours", F.lit(0)))
     .withColumn(
         "cumulative_precipitation",
@@ -362,7 +362,7 @@ location_wide = widen(
 )
 
 area_latest = (
-    latest_issue_only(spark.table(TABLES["area_metrics"]).filter(F.col("data_kind") == "forecast"))
+    latest_issue_only(serving_area_metrics)
     .withColumn("precipitation_interval_hours", F.coalesce("interval_hours", F.lit(0)))
     .withColumnRenamed("cumulative_value", "cumulative_precipitation")
 )

@@ -1,3 +1,0 @@
-exit=1
-Missing dependency: azure. Install requirements first:
-    python -m pip install -r requirements.txt

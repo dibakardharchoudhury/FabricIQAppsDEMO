@@ -553,11 +553,9 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
             f"HTTP {response.status_code} {response.text}"
         )
     schedules = response.json().get("value", [])
-    for schedule in schedules:
-        if weather_schedule_matches(schedule):
-            print(f"{WEATHER_PIPELINE_NAME} already runs every six hours at the UTC offset.")
-            return
-
+    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)
+    if retained is None and schedules:
+        retained = schedules[0]
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     midnight = now.replace(hour=0, minute=0)
     start = next(
@@ -579,20 +577,36 @@ def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str)
             "interval": WEATHER_SCHEDULE_INTERVAL_MINUTES,
         },
     }
-    if schedules:
-        schedule_id = schedules[0].get("id")
+    if retained is None:
+        response = fab.request("POST", base, json=body)
+        action = "created"
+    elif weather_schedule_matches(retained):
+        response = None
+        action = "reused"
+    else:
+        schedule_id = retained.get("id")
         if not schedule_id:
             raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
         response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
         action = "updated"
-    else:
-        response = fab.request("POST", base, json=body)
-        action = "created"
-    if response.status_code not in (200, 201):
+    if response is not None and response.status_code not in (200, 201):
         raise SystemExit(
             f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
             f"HTTP {response.status_code} {response.text}"
         )
+
+    for schedule in schedules:
+        if schedule is retained:
+            continue
+        schedule_id = schedule.get("id")
+        if not schedule_id:
+            raise SystemExit(f"Extra '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+        deleted = fab.request("DELETE", f"{base}/{schedule_id}")
+        if deleted.status_code not in (200, 204):
+            raise SystemExit(
+                f"Failed to delete extra '{WEATHER_PIPELINE_NAME}' schedule {schedule_id}: "
+                f"HTTP {deleted.status_code} {deleted.text}"
+            )
     print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")
 
 
