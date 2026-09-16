@@ -12,7 +12,7 @@ jobs:
   remediate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: feat/weather-operations
           fetch-depth: 0
@@ -23,25 +23,19 @@ jobs:
 
           notebook_path = Path("Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py")
           source = notebook_path.read_text(encoding="utf-8")
-          old_bucket = '''        valid_time = reference_time + timedelta(hours=bucket_lead)
-          for variable_id, (aliases, unit) in FORECAST_FIELDS.items():'''
-          new_bucket = '''        actual_lead = members[-1][0]
-          valid_time = reference_time + timedelta(hours=actual_lead)
-          for variable_id, (aliases, unit) in FORECAST_FIELDS.items():'''
+          old_bucket = "        valid_time = reference_time + timedelta(hours=bucket_lead)\n        for variable_id, (aliases, unit) in FORECAST_FIELDS.items():"
+          new_bucket = "        actual_lead = members[-1][0]\n        valid_time = reference_time + timedelta(hours=actual_lead)\n        for variable_id, (aliases, unit) in FORECAST_FIELDS.items():"
           if source.count(old_bucket) != 1:
               raise RuntimeError("Expected one nominal UKMet bucket timestamp")
           source = source.replace(old_bucket, new_bucket)
-          old_lead = '''                "lead_hours": bucket_lead,
-                          "interval_hours": interval_hours,'''
-          new_lead = '''                "lead_hours": actual_lead,
-                          "interval_hours": interval_hours,'''
+          old_lead = "                \"lead_hours\": bucket_lead,\n                \"interval_hours\": interval_hours,"
+          new_lead = "                \"lead_hours\": actual_lead,\n                \"interval_hours\": interval_hours,"
           if source.count(old_lead) != 1:
               raise RuntimeError("Expected one nominal UKMet persisted lead")
           source = source.replace(old_lead, new_lead)
 
-          helper_anchor = '''def time_series(payload: dict) -> list[dict]:
-              features = payload.get("features") or []'''
-          helper_replacement = '''def has_recent_mapped_observation(payload, cutoff: datetime) -> bool:
+          helper_anchor = "def time_series(payload: dict) -> list[dict]:\n    features = payload.get(\"features\") or []"
+          helper_replacement = """def has_recent_mapped_observation(payload, cutoff: datetime) -> bool:
               if not isinstance(payload, list):
                   return False
               for record in payload:
@@ -57,16 +51,13 @@ jobs:
 
 
           def time_series(payload: dict) -> list[dict]:
-              features = payload.get("features") or []'''
+              features = payload.get("features") or []"""
+          helper_replacement = "\n".join(line[10:] if line.startswith("          ") else line for line in helper_replacement.splitlines())
           if source.count(helper_anchor) != 1:
               raise RuntimeError("Expected UKMet time_series helper anchor")
           source = source.replace(helper_anchor, helper_replacement)
-          old_candidate = '''        if isinstance(payload, list) and payload:
-                      station, geohash, observations_payload = candidate, candidate_geohash, payload
-                      break'''
-          new_candidate = '''        if has_recent_mapped_observation(payload, observation_cutoff):
-                      station, geohash, observations_payload = candidate, candidate_geohash, payload
-                      break'''
+          old_candidate = "        if isinstance(payload, list) and payload:\n            station, geohash, observations_payload = candidate, candidate_geohash, payload\n            break"
+          new_candidate = "        if has_recent_mapped_observation(payload, observation_cutoff):\n            station, geohash, observations_payload = candidate, candidate_geohash, payload\n            break"
           if source.count(old_candidate) != 1:
               raise RuntimeError("Expected one payload-only UKMet candidate selection")
           source = source.replace(old_candidate, new_candidate)
@@ -74,21 +65,14 @@ jobs:
 
           test_path = Path("Raw/workspace-reset/test_weather_source_contracts.py")
           tests = test_path.read_text(encoding="utf-8")
-          old_assertions = '''        self.assertNotIn('raise RuntimeError("UKMet Land Observations returned no mapped recent values")', ukmet)
-                  self.assertIn("keeping forecast ingestion", ukmet)'''
-          new_assertions = '''        self.assertNotIn('raise RuntimeError("UKMet Land Observations returned no mapped recent values")', ukmet)
-                  self.assertIn("keeping forecast ingestion", ukmet)
-                  self.assertIn("actual_lead = members[-1][0]", ukmet)
-                  self.assertIn('"lead_hours": actual_lead', ukmet)
-                  self.assertNotIn('"lead_hours": bucket_lead', ukmet)
-                  self.assertIn("has_recent_mapped_observation(payload, observation_cutoff)", ukmet)
-                  self.assertNotIn("if isinstance(payload, list) and payload:", ukmet)'''
+          old_assertions = "        self.assertNotIn('raise RuntimeError(\"UKMet Land Observations returned no mapped recent values\")', ukmet)\n        self.assertIn(\"keeping forecast ingestion\", ukmet)"
+          new_assertions = old_assertions + "\n        self.assertIn(\"actual_lead = members[-1][0]\", ukmet)\n        self.assertIn('\"lead_hours\": actual_lead', ukmet)\n        self.assertNotIn('\"lead_hours\": bucket_lead', ukmet)\n        self.assertIn(\"has_recent_mapped_observation(payload, observation_cutoff)\", ukmet)\n        self.assertNotIn(\"if isinstance(payload, list) and payload:\", ukmet)"
           if tests.count(old_assertions) != 1:
               raise RuntimeError("Expected UKMet contract assertion anchor")
           test_path.write_text(tests.replace(old_assertions, new_assertions), encoding="utf-8")
       - name: Validate focused contracts
         run: |
-          python -m unittest Raw.workspace-reset.test_weather_source_contracts
+          python Raw/workspace-reset/test_weather_source_contracts.py
           python -m py_compile Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py
       - name: Commit remediation and remove executor
         run: |
