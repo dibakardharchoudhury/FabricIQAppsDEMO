@@ -27,22 +27,12 @@ jobs:
       - name: Install frontend dependencies
         working-directory: HydroOperationsApp
         run: npm ci
-      - name: Build frontend
+      - name: Type-check frontend
         working-directory: HydroOperationsApp
-        run: |
-          set +e
-          npm run build > ../.github/remediation-build-error.txt 2>&1
-          status=$?
-          cat ../.github/remediation-build-error.txt
-          if [ "$status" -ne 0 ]; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add ../.github/remediation-build-error.txt
-            git commit -m "ci: record remediation build failure"
-            git push origin HEAD:feat/weather-operations
-            exit "$status"
-          fi
-          rm ../.github/remediation-build-error.txt
+        run: npx tsc --noEmit -p tsconfig.app.json
+      - name: Bundle frontend
+        working-directory: HydroOperationsApp
+        run: npx vite build
       - name: Run Node tests
         working-directory: HydroOperationsApp
         run: node --test scripts/*.test.mjs
