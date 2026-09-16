@@ -34,6 +34,36 @@ jobs:
           start = workflow.index(marker) + len(marker)
           end = workflow.index("\n          PY", start)
           script = textwrap.dedent(workflow[start:end])
+          broken_notebook_patch = '''setup_notebook = "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb"
+          replace_once(
+              setup_notebook,
+              \'\'\'                "    \\"Weather_003_fetch_ukmet\\",",
+                          "]",
+          \'\'\',
+              \'\'\'                "    \\"Weather_003_fetch_ukmet\\",",
+                          "    \\"Weather_020_area_calculations\\",",
+                          "]",
+          \'\'\',
+          )'''
+          structured_notebook_patch = '''setup_notebook = Path("Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb")
+          notebook = json.loads(setup_notebook.read_text(encoding="utf-8"))
+          anchors = []
+          for cell in notebook.get("cells", []):
+              source = cell.get("source", [])
+              for index, line in enumerate(source):
+                  if '"Weather_003_fetch_ukmet"' in line:
+                      anchors.append((source, index))
+          if len(anchors) != 1:
+              raise SystemExit(f"Expected one Weather_003 chain anchor, found {len(anchors)}")
+          source, index = anchors[0]
+          if any('"Weather_020_area_calculations"' in line for line in source):
+              raise SystemExit("Weather_020 is already present in the setup chain")
+          source.insert(index + 1, '    "Weather_020_area_calculations",\\n')
+          setup_notebook.write_text(json.dumps(notebook, indent=1) + "\\n", encoding="utf-8")'''
+          if script.count(broken_notebook_patch) != 1:
+              raise SystemExit('Expected exactly one legacy notebook patch block')
+          script = script.replace(broken_notebook_patch, structured_notebook_patch)
+          script = 'import json\n' + script
           exec(compile(script, '.github/workflows/pr10-review-fixes.yml', 'exec'))
           PY
 
