@@ -41,36 +41,54 @@ jobs:
           )
 
           sync = 'Raw/workspace-reset/sync_workspace_from_git.py'
-          replace(
-              sync,
-              'def weather_schedule_matches(schedule: dict[str, Any]) -> bool:\n',
-              'def weather_schedule_matches(schedule: dict[str, Any], enabled: bool = True) -> bool:\n',
-          )
-          replace(
-              sync,
-              '    return (schedule.get("enabled") is True\n',
-              '    return (schedule.get("enabled") is enabled\n',
-          )
-          replace(
-              sync,
-              '    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)\n',
-              '    retained = next(\n        (schedule for schedule in schedules if weather_schedule_matches(schedule, enabled)),\n        None,\n    )\n',
-          )
-          replace(
-              sync,
-              '    elif weather_schedule_matches(retained):\n',
-              '    elif weather_schedule_matches(retained, enabled):\n',
-          )
+          replace(sync, 'def weather_schedule_matches(schedule: dict[str, Any]) -> bool:\n', 'def weather_schedule_matches(schedule: dict[str, Any], enabled: bool = True) -> bool:\n')
+          replace(sync, '    return (schedule.get("enabled") is True\n', '    return (schedule.get("enabled") is enabled\n')
+          replace(sync, '    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)\n', '    retained = next(\n        (schedule for schedule in schedules if weather_schedule_matches(schedule, enabled)),\n        None,\n    )\n')
+          replace(sync, '    elif weather_schedule_matches(retained):\n', '    elif weather_schedule_matches(retained, enabled):\n')
 
           test = 'Raw/workspace-reset/test_sync_workspace_from_git.py'
-          insertion = '''\n    def test_enabled_schedule_is_disabled_when_bindings_are_not_ready(self):\n        fabric = FakeFabric()\n        existing = FakeResponse(\n            200,\n            {"value": [{"id": "schedule-id", "enabled": True,\n                        "configuration": {\n                            "type": "Cron",\n                            "interval": 360,\n                            "localTimeZoneId": "UTC",\n                            "startDateTime": "2026-09-16T03:20:00Z",\n                            "endDateTime": "2036-09-16T03:20:00Z",\n                        }}]},\n        )\n        original_request = fabric.request\n        fabric.request = Mock(\n            side_effect=lambda method, url, **kwargs: existing\n            if method == "GET" and "/jobs/Pipeline/schedules" in url\n            else original_request(method, url, **kwargs)\n        )\n\n        with contextlib.redirect_stdout(io.StringIO()):\n            configure_weather_schedule(\n                fabric, "workspace-id", "weather-pipeline", enabled=False\n            )\n\n        patch_calls = [\n            call for call in fabric.request.call_args_list\n            if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]\n        ]\n        self.assertEqual(len(patch_calls), 1)\n        self.assertFalse(patch_calls[0].kwargs["json"]["enabled"])\n'''
-          replace(
-              test,
-              '\n    def test_wrong_offset_weather_schedule_is_updated(self):\n',
-              insertion + '\n    def test_wrong_offset_weather_schedule_is_updated(self):\n',
-          )
+          insertion = '''\n    def test_enabled_schedule_is_disabled_when_bindings_are_not_ready(self):
+        fabric = FakeFabric()
+        existing = FakeResponse(
+            200,
+            {"value": [{"id": "schedule-id", "enabled": True,
+                        "configuration": {
+                            "type": "Cron",
+                            "interval": 360,
+                            "localTimeZoneId": "UTC",
+                            "startDateTime": "2026-09-16T03:20:00Z",
+                            "endDateTime": "2036-09-16T03:20:00Z",
+                        }}]},
+        )
+        original_request = fabric.request
+        fabric.request = Mock(
+            side_effect=lambda method, url, **kwargs: existing
+            if method == "GET" and "/jobs/Pipeline/schedules" in url
+            else original_request(method, url, **kwargs)
+        )
 
-          setup_call = '''print("\\n=== STEP 5: Create or verify weather tables before schedule activation ===")\n          weather_setup_result = notebookutils.notebook.run(\n              "Weather_001_create_lakehouse",\n              3600,\n          )\n          print("Weather schema setup completed:", weather_setup_result)\n\n'''
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_schedule(
+                fabric, "workspace-id", "weather-pipeline", enabled=False
+            )
+
+        patch_calls = [
+            call for call in fabric.request.call_args_list
+            if call.args[0] == "PATCH" and "/jobs/Pipeline/schedules/" in call.args[1]
+        ]
+        self.assertEqual(len(patch_calls), 1)
+        self.assertFalse(patch_calls[0].kwargs["json"]["enabled"])
+'''
+          replace(test, '\n    def test_wrong_offset_weather_schedule_is_updated(self):\n', insertion + '\n    def test_wrong_offset_weather_schedule_is_updated(self):\n')
+
+          setup_call = '''print("\\n=== STEP 5: Create or verify weather tables before schedule activation ===")
+          weather_setup_result = notebookutils.notebook.run(
+              "Weather_001_create_lakehouse",
+              3600,
+          )
+          print("Weather schema setup completed:", weather_setup_result)
+
+'''
           canonical_rti1 = 'Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py'
           replace(canonical_rti1, 'def _activate_weather_schedule() -> None:\n', setup_call + 'def _activate_weather_schedule() -> None:\n')
 
@@ -87,9 +105,7 @@ jobs:
               raise SystemExit(f'raw RTI_001 activation matches: {changed}')
           raw_rti1.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + '\n', encoding='utf-8')
 
-          canonical_orchestrator = 'Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py'
-          raw_orchestrator = 'Raw/RTI_Notebooks/RTI_Orchestrator_Setup.ipynb'
-          for path in (canonical_orchestrator, raw_orchestrator):
+          for path in ('Notebooks/RTI_Orchestrator_Setup.Notebook/notebook-content.py', 'Raw/RTI_Notebooks/RTI_Orchestrator_Setup.ipynb'):
               file = Path(path)
               text = file.read_text(encoding='utf-8')
               text = text.replace('        # Weather tables are source-neutral and only need the lakehouse, so they build alongside the RTI chain.\n', '')
@@ -126,22 +142,9 @@ jobs:
                   elif kind == 'code':
                       source.append(line)
               flush()
-              return {
-                  "cells": cells,
-                  "metadata": {
-                      "kernelspec": {"display_name": "synapse_pyspark", "name": "synapse_pyspark"},
-                      "language_info": {"name": "python"},
-                  },
-                  "nbformat": 4,
-                  "nbformat_minor": 5,
-              }
+              return {"cells": cells, "metadata": {"kernelspec": {"display_name": "synapse_pyspark", "name": "synapse_pyspark"}, "language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}
 
-          for name in (
-              'Weather_001_create_lakehouse',
-              'Weather_002_fetch_area_weather',
-              'Weather_003_fetch_ukmet',
-              'Weather_020_area_calculations',
-          ):
+          for name in ('Weather_001_create_lakehouse', 'Weather_002_fetch_area_weather', 'Weather_003_fetch_ukmet', 'Weather_020_area_calculations'):
               source = f'Notebooks/{name}.Notebook/notebook-content.py'
               target = Path(f'Raw/RTI_Notebooks/{name}.ipynb')
               target.write_text(json.dumps(fabric_source_to_ipynb(source), indent=1, ensure_ascii=False) + '\n', encoding='utf-8')
@@ -161,11 +164,15 @@ jobs:
           cd HydroOperationsApp
           npm ci
           npm run build
-          npm test
-      - name: Commit validated fixes and remove workflow
+          node --test scripts/*.test.mjs
+          npm run test:knowledge-graph
+      - name: Commit validated fixes and remove workflows
         shell: bash
         run: |
           rm .github/workflows/copilot-review-remediation.yml
+          rm -f .github/workflows/correct-remediation-validation.yml
+          rm -f .github/workflows/retry-remediation-validation.yml
+          rm -f .github/workflows/finalize-remediation-validation.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
