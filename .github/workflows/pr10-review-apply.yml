@@ -116,7 +116,7 @@ jobs:
         working-directory: HydroOperationsApp
         run: |
           set -o pipefail
-          (npm ci --no-audit --no-fund && npm run build) 2>&1 | tee /tmp/frontend-validation.log || {
+          (npm ci --no-audit --no-fund && npm exec tsc -- -b && npm exec vite -- build) 2>&1 | tee /tmp/frontend-validation.log || {
             python -c "from pathlib import Path; text = Path('/tmp/frontend-validation.log').read_text(encoding='utf-8')[-6000:]; print('::error title=Frontend validation failure::' + text.replace('%', '%25').replace('\\r', '%0D').replace('\\n', '%0A'))"
             exit 1
           }
