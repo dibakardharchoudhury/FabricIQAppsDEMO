@@ -46,6 +46,7 @@ V = \frac{R}{1000} A
 $$
 
 where $R$ is millimetres and $A$ is the geodesic area in square metres. The stored aggregation method makes this representative-point approximation explicit. A future gridded aggregate can use cell overlap weighting as another method without changing the canonical metric key.
+
 ## Interval and cumulative contract
 
 Both vendors publish accumulating variables over one hour, while the canonical tables report a six-hour interval. Adapters therefore collapse every native record inside the interval instead of sampling one of them: precipitation is summed, gusts are maximised, solar radiation is averaged, and instantaneous variables are read at the interval end.
@@ -71,7 +72,8 @@ The same notebook enforces retention (`retention_days`, default 7) on forecasts,
 
 Fabric aborts a notebook's remaining cells when one raises, so a `finally` block cannot record a failure. Each adapter instead appends its audit row with `status='started'` before the first network call and promotes it to `succeeded` by merge on completion. A run left in `started` is a failed run.
 
-This matters because `03_Pipe_Weather` chains on `Completed`: one vendor failing no longer fails the pipeline, so freshness is the only remaining failure signal. `Weather_020` reports, per vendor, the last successful completion and the number of incomplete runs, and warns when a vendor has not succeeded within `staleness_hours` (default 13, just over one missed run on the six-hour schedule).
+`03_Pipe_Weather` chains on `Succeeded`, so an adapter failure stops downstream ingestion and aggregation rather than allowing incomplete results to be published. `Weather_020` also reports, per vendor, the last successful completion and the number of incomplete runs, and warns when a vendor has not succeeded within `staleness_hours` (default 13, just over one missed run on the six-hour schedule).
+
 ## Multi-source adapter contract
 
 Each additional adapter should:
@@ -95,7 +97,7 @@ Implement GridHD next from collection `mai-gridhd-eu-core-v1.2` after confirming
 ## Orchestration and tests
 
 1. Attach the same Lakehouse and Fabric Environment to all four weather notebooks.
-2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` in that order, every six hours. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Downstream activities depend on `Completed` rather than `Succeeded`, so one vendor outage never blocks the other vendor or the aggregation stage.
+2. Run the setup notebook once per environment. `03_Pipe_Weather` then runs Aurora, UKMet, and `Weather_020_area_calculations` in that order, every six hours. Both vendors derive from 00/06/12/18 UTC model runs and the canonical reporting interval is six hours, so a shorter schedule only drifts across issues and re-ingests them; runs start at 03:20/09:20/15:20/21:20 UTC to allow for publication latency. Downstream activities depend on `Succeeded`, so a failed adapter stops the pipeline before subsequent work runs.
 3. Load points from `silver_facilities`, optionally filter by facility IDs and active equipment, and generate one geodesic 20 km aggregation area per station. Pass horizon, interval, endpoint, Key Vault URI, and secret name as notebook parameters.
 4. Add retry policy and alerts at the pipeline level in addition to HTTP retries.
 5. Unit-test precipitation decoding, longitude wrapping, nearest-cell selection, polygon validation, overlap area, depth-to-volume conversion, and merge-key deduplication.

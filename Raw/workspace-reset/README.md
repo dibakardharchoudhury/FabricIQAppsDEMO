@@ -148,8 +148,8 @@ Provisioning also creates `03_Pipe_Weather` and ensures it has an enabled UTC sc
 hours, aligned to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
 Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
 separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
-tables the app reads. Downstream activities depend on `Completed`, so one vendor failing never
-blocks the other. Rerunning the provisioner reuses a matching schedule or repairs the existing
+tables the app reads. Downstream activities depend on `Succeeded`, so a failed ingestion stops the
+pipeline before later ingestion or aggregation can publish incomplete results. Rerunning the provisioner reuses a matching schedule or repairs the existing
 schedule instead of adding duplicates.
 
 The pipeline's declared parameter defaults point at the tenant it was authored in, so
