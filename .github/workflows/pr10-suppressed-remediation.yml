@@ -52,11 +52,7 @@ jobs:
 
           pagination_old = '        url = body.get("continuationUri")\n'
           pagination_new = '''        url = body.get("continuationUri")\n        if not url and body.get("continuationToken"):\n            token = body["continuationToken"]\n            url = (\n                f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"\n                f"?continuationToken={token}"\n            )\n'''
-          replace_once(
-              'Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py',
-              pagination_old,
-              pagination_new,
-          )
+          replace_once('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py', pagination_old, pagination_new)
 
           raw_path = Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb')
           notebook = json.loads(raw_path.read_text(encoding='utf-8'))
@@ -97,14 +93,10 @@ jobs:
           source = source.replace(schedule_call, '', 1)
           binding = '    rebind_weather_notebooks(fab, workspace_id, weather_notebooks, items, environment_id)\n\n'
           assert source.count(binding) == 1
-          source = source.replace(
-              binding,
-              binding + '    # Activate the recurring job only after its runtime and dependencies are ready.\n    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])\n\n',
-          )
+          source = source.replace(binding, binding + '    # Activate the recurring job only after its runtime and dependencies are ready.\n    configure_weather_schedule(fab, workspace_id, weather_pipelines[0]["id"])\n\n')
           incomplete_cli = '    print("  CLI: az keyvault secret set --vault-name <vault> --name <secret-name>")\n'
           assert source.count(incomplete_cli) == 1
-          source = source.replace(incomplete_cli, '')
-          sync_path.write_text(source, encoding='utf-8')
+          sync_path.write_text(source.replace(incomplete_cli, ''), encoding='utf-8')
 
           contracts = Path('Raw/workspace-reset/test_weather_source_contracts.py')
           source = contracts.read_text(encoding='utf-8')
@@ -122,11 +114,19 @@ jobs:
 
           docs = Path('docs/weather-fabric-port-plan.md')
           source = docs.read_text(encoding='utf-8')
-          assert source.count('The three notebooks are deployable Fabric Git items:') == 1
-          source = source.replace('The three notebooks are deployable Fabric Git items:', 'The four notebooks are deployable Fabric Git items:')
+          replacements = {
+              'The three notebooks are deployable Fabric Git items:': 'The four notebooks are deployable Fabric Git items:',
+              'Attach the same Lakehouse and Fabric Environment to all three notebooks.': 'Attach the same Lakehouse and Fabric Environment to all four weather notebooks.',
+              'Validate area coverage, weighted millimetres, and cubic metres against an independently calculated sample.': 'Validate representative-point rainfall depth and cubic metres against an independently calculated sample.',
+          }
+          for old, new in replacements.items():
+              assert source.count(old) == 1, (source.count(old), old)
+              source = source.replace(old, new)
           docs.write_text(source, encoding='utf-8')
       - name: Validate Python contracts
         run: python -m unittest Raw/workspace-reset/test_weather_source_contracts.py
+      - name: Install provisioning dependencies
+        run: python -m pip install -r Raw/workspace-reset/requirements.txt
       - name: Validate provisioning tests
         working-directory: Raw/workspace-reset
         run: python -m unittest test_sync_workspace_from_git.py
@@ -139,11 +139,11 @@ jobs:
       - name: Validate TypeScript
         working-directory: HydroOperationsApp
         run: npx tsc --noEmit -p tsconfig.app.json
-      - name: Commit fixes and remove executor
+      - name: Commit fixes and remove executors
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm .github/workflows/pr10-suppressed-remediation.yml
+          git rm .github/workflows/pr10-suppressed-remediation.yml .github/workflows/pr10-executor-repair.yml
           git add HydroOperationsApp/scripts/weather-summary.test.ts HydroOperationsApp/src/ui-shared/weatherSummary.ts Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb Raw/workspace-reset/sync_workspace_from_git.py Raw/workspace-reset/test_sync_workspace_from_git.py Raw/workspace-reset/test_weather_source_contracts.py docs/weather-fabric-port-plan.md
           git commit -m "Address suppressed weather review findings"
           git push origin HEAD:feat/weather-operations
