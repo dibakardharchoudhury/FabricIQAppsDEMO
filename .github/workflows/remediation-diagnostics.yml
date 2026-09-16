@@ -13,7 +13,12 @@ jobs:
         with:
           ref: feat/weather-operations
           fetch-depth: 0
-      - name: Capture remediation traceback
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+      - name: Capture transformed validation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -22,12 +27,27 @@ jobs:
           marker = "          python - <<'PY'\n"
           script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines()) + '\n'
-          result = subprocess.run(['python', '-c', script], text=True, capture_output=True)
-          report = f'exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}'
-          Path('.github/remediation-counts.txt').write_text(report, encoding='utf-8')
+          sections = []
+          apply = subprocess.run(['python', '-c', script], text=True, capture_output=True)
+          sections.append(f'apply exit={apply.returncode}\n{apply.stdout}\n{apply.stderr}')
+          commands = [
+              ['python', '-m', 'unittest', 'Raw/workspace-reset/test_weather_source_contracts.py'],
+              ['python', '-m', 'unittest', 'test_sync_workspace_from_git.py'],
+              ['npm', 'ci'],
+              ['npx', 'tsc', '--noEmit', '-p', 'tsconfig.app.json'],
+              ['node', '--test', 'scripts/agent-response.test.mjs', 'scripts/artifact-discovery.test.mjs', 'scripts/assistant-stream.test.mjs', 'scripts/copilot-tools.test.mjs', 'scripts/setup-live-auth.test.mjs', 'scripts/single-flight.test.mjs', 'scripts/validate-env.test.mjs'],
+          ]
+          cwds = [None, 'Raw/workspace-reset', 'HydroOperationsApp', 'HydroOperationsApp', 'HydroOperationsApp']
+          if apply.returncode == 0:
+              for command, cwd in zip(commands, cwds):
+                  result = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
+                  sections.append(f'{command} exit={result.returncode}\n{result.stdout}\n{result.stderr}')
+                  if result.returncode != 0:
+                      break
+          Path('.github/remediation-counts.txt').write_text('\n---\n'.join(sections), encoding='utf-8')
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/remediation-counts.txt
-          git commit -m "Record remediation traceback"
+          git commit -m "Record transformed validation output"
           git push origin HEAD:feat/weather-operations
