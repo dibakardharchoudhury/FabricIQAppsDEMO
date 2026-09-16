@@ -28,37 +28,43 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import textwrap
+          import traceback
 
-          workflow = Path('.github/workflows/pr10-review-fixes.yml').read_text(encoding='utf-8')
-          marker = "          python - <<'PY'\n"
-          start = workflow.index(marker) + len(marker)
-          end = workflow.index("\n          PY", start)
-          script = textwrap.dedent(workflow[start:end])
-          setup_marker = '\nsetup_notebook = "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb"'
-          if script.count(setup_marker) != 1:
-              raise SystemExit(f'Expected one setup notebook patch marker, found {script.count(setup_marker)}')
-          structured_patch = [
-              '',
-              'setup_notebook = Path("Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb")',
-              'notebook = json.loads(setup_notebook.read_text(encoding="utf-8"))',
-              'anchors = []',
-              'for cell in notebook.get("cells", []):',
-              '    source = cell.get("source", [])',
-              '    for index, line in enumerate(source):',
-              '        if \'"Weather_003_fetch_ukmet"\' in line:',
-              '            anchors.append((source, index))',
-              'if len(anchors) != 1:',
-              '    raise SystemExit(f"Expected one Weather_003 chain anchor, found {len(anchors)}")',
-              'source, index = anchors[0]',
-              'if any(\'"Weather_020_area_calculations"\' in line for line in source):',
-              '    raise SystemExit("Weather_020 is already present in the setup chain")',
-              'source.insert(index + 1, \'    "Weather_020_area_calculations",\\n\')',
-              'setup_notebook.write_text(json.dumps(notebook, indent=1) + "\\n", encoding="utf-8")',
-              '',
-          ]
-          script = script[:script.index(setup_marker)] + '\n'.join(structured_patch)
-          script = 'import json\n' + script
-          exec(compile(script, '.github/workflows/pr10-review-fixes.yml', 'exec'))
+          try:
+              workflow = Path('.github/workflows/pr10-review-fixes.yml').read_text(encoding='utf-8')
+              marker = "          python - <<'PY'\n"
+              start = workflow.index(marker) + len(marker)
+              end = workflow.index("\n          PY", start)
+              script = textwrap.dedent(workflow[start:end])
+              setup_marker = '\nsetup_notebook = "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb"'
+              if script.count(setup_marker) != 1:
+                  raise RuntimeError(f'Expected one setup notebook patch marker, found {script.count(setup_marker)}')
+              structured_patch = [
+                  '',
+                  'setup_notebook = Path("Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb")',
+                  'notebook = json.loads(setup_notebook.read_text(encoding="utf-8"))',
+                  'anchors = []',
+                  'for cell in notebook.get("cells", []):',
+                  '    source = cell.get("source", [])',
+                  '    for index, line in enumerate(source):',
+                  '        if \'"Weather_003_fetch_ukmet"\' in line:',
+                  '            anchors.append((source, index))',
+                  'if len(anchors) != 1:',
+                  '    raise RuntimeError(f"Expected one Weather_003 chain anchor, found {len(anchors)}")',
+                  'source, index = anchors[0]',
+                  'if any(\'"Weather_020_area_calculations"\' in line for line in source):',
+                  '    raise RuntimeError("Weather_020 is already present in the setup chain")',
+                  'source.insert(index + 1, \'    "Weather_020_area_calculations",\\n\')',
+                  'setup_notebook.write_text(json.dumps(notebook, indent=1) + "\\n", encoding="utf-8")',
+                  '',
+              ]
+              script = script[:script.index(setup_marker)] + '\n'.join(structured_patch)
+              script = 'import json\n' + script
+              exec(compile(script, '.github/workflows/pr10-review-fixes.yml', 'exec'))
+          except BaseException:
+              details = traceback.format_exc().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error title=Guarded patch failure::{details}')
+              raise
           PY
 
       - name: Install focused Python test dependencies
