@@ -29,7 +29,7 @@ class WeatherSourceContractTests(unittest.TestCase):
     def test_weather_query_contract_uses_supported_bound_and_refreshes_discovery(self):
         source = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
         weather_query = source.split("query HydroWeather", 1)[1].split("const response", 1)[0]
-        self.assertEqual(weather_query.count("first: 100000"), 5)
+        self.assertEqual(weather_query.count("first: 100000)"), 5)
         self.assertNotIn("first: 1000)", weather_query)
         self.assertIn("ensureConfig(forceRefresh, forceRefresh)", source)
 

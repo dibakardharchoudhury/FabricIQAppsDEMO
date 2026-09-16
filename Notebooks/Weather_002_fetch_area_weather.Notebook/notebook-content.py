@@ -151,7 +151,12 @@ def latest_stac_item(service_endpoint: str, api_key: str) -> dict:
         },
         timeout=60,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        raise RuntimeError(
+            f"Aurora STAC search failed with HTTP {response.status_code}"
+        ) from None
     features = response.json().get("features", [])
     if not features:
         raise RuntimeError(f"No STAC items found in {collection}")

@@ -692,11 +692,11 @@ export async function queryWeatherData(forceRefresh = false): Promise<WeatherDat
   // whole page is a few hundred rows instead of the long tables' unbounded issue history.
   const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
   const query = `query HydroWeather {
-    locations: weather_locations(first: 10000000000) { items { location_id location_name latitude longitude elevation_m } }
-    areas: weather_areas(first: 10000000) { items { area_id area_name geometry_geojson crs metadata_json } }
-    variables: weather_variables(first: 10000000) { items { variable_id canonical_unit } }
-    observations: weather_latest_observations(first: 10000000000) { items { source_id location_id observed_at_utc ${values} } }
-    forecasts: weather_latest_forecasts(first: 100000000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
+    locations: weather_locations(first: 100000) { items { location_id location_name latitude longitude elevation_m } }
+    areas: weather_areas(first: 100000) { items { area_id area_name geometry_geojson crs metadata_json } }
+    variables: weather_variables(first: 100000) { items { variable_id canonical_unit } }
+    observations: weather_latest_observations(first: 100000) { items { source_id location_id observed_at_utc ${values} } }
+    forecasts: weather_latest_forecasts(first: 100000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
   }`
   const response = await fetch(config.graphqlUrl, {
     method: 'POST',
