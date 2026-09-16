@@ -1,0 +1,75 @@
+name: Execute final PR 10 remediation
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-final-execute.yml]
+permissions:
+  contents: write
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+      - name: Apply direct fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          raw = Path('.github/workflows/pr10-final-review-remediation.yml').read_text(encoding='utf-8')
+          block = raw.split('      - name: Apply direct review fixes\n        shell: python\n        run: |\n', 1)[1].split('      - name: Validate Python\n', 1)[0]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in block.splitlines())
+          exec(compile(script, 'direct-remediation.py', 'exec'))
+      - name: Install Python dependencies
+        run: python -m pip install -r Raw/workspace-reset/requirements.txt
+      - name: Validate Python and review contracts
+        shell: bash
+        run: |
+          python Raw/workspace-reset/test_weather_source_contracts.py
+          (cd Raw/workspace-reset && python test_sync_workspace_from_git.py)
+          python -m py_compile Raw/workspace-reset/sync_workspace_from_git.py Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py
+          python - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+
+          ukmet = Path('Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py').read_text(encoding='utf-8')
+          assert 'keeping its forecasts only' in ukmet
+          assert 'No UKMet Land Observation station found' not in ukmet
+
+          sync = Path('Raw/workspace-reset/sync_workspace_from_git.py').read_text(encoding='utf-8')
+          assert 'if bindings_ready:' in sync
+          assert 'end_time > datetime.now(timezone.utc)' in sync
+
+          canonical = Path('Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py').read_text(encoding='utf-8')
+          raw = json.loads(Path('Raw/RTI_Notebooks/RTI_011_seed_sql_wire_graphql_agent.ipynb').read_text(encoding='utf-8'))
+          raw_source = ''.join(''.join(cell.get('source', [])) for cell in raw['cells'])
+          def objects(source):
+              tree = ast.parse(source)
+              assignment = next(node for node in tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPHQL_OBJECTS' for target in node.targets))
+              return ast.literal_eval(assignment.value)
+          assert objects(raw_source) == objects(canonical)
+
+          weather_page = Path('HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx').read_text(encoding='utf-8')
+          assert '72-hour Aurora forecasts' not in weather_page
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+      - name: Validate locked frontend dependencies
+        working-directory: HydroOperationsApp
+        run: |
+          npm ci
+          npx tsc --noEmit -p tsconfig.app.json
+          node --test scripts/agent-response.test.mjs scripts/artifact-discovery.test.mjs scripts/assistant-stream.test.mjs scripts/copilot-tools.test.mjs scripts/setup-live-auth.test.mjs scripts/single-flight.test.mjs
+      - name: Commit validated fixes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm -f .github/workflows/pr10-final-review-remediation.yml .github/workflows/pr10-validation-diagnose.yml .github/workflows/pr10-final-execute.yml .github/pr10-validation-diagnostic.txt .github/pr10-direct-diagnostic.txt
+          git add -A
+          git commit -m "Resolve final weather review findings"
+          git push origin HEAD:feat/weather-operations
