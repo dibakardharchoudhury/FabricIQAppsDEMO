@@ -1,0 +1,63 @@
+name: Fix RTI_001 token encoding
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/fix-rti001-token-encoding.yml]
+permissions:
+  contents: write
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Encode folder continuation tokens in both notebook forms
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          canonical = Path('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py')
+          canonical_text = canonical.read_text(encoding='utf-8')
+          old = 'continuationToken={continuation_token}'
+          new = "continuationToken={quote(continuation_token, safe='')}"
+          if canonical_text.count(old) != 1:
+              raise RuntimeError(f'Expected one unencoded canonical folder token, found {canonical_text.count(old)}')
+          canonical.write_text(canonical_text.replace(old, new), encoding='utf-8')
+
+          raw = Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb')
+          raw_text = raw.read_text(encoding='utf-8')
+          if raw_text.count(old) != 1:
+              raise RuntimeError(f'Expected one unencoded raw folder token, found {raw_text.count(old)}')
+          raw.write_text(raw_text.replace(old, new), encoding='utf-8')
+
+          tests = Path('Raw/workspace-reset/test_weather_source_contracts.py')
+          test_text = tests.read_text(encoding='utf-8')
+          anchor = "        self.assertEqual(raw_source.count(\"quote(token, safe='')\"), 1)\n"
+          assertions = (
+              anchor
+              + "        self.assertEqual(canonical.count(\"quote(continuation_token, safe='')\"), 1)\n"
+              + "        self.assertEqual(raw_source.count(\"quote(continuation_token, safe='')\"), 1)\n"
+              + "        self.assertNotIn(\"continuationToken={continuation_token}\", canonical)\n"
+              + "        self.assertNotIn(\"continuationToken={continuation_token}\", raw_source)\n"
+          )
+          if test_text.count(anchor) != 1:
+              raise RuntimeError(f'Expected one test insertion anchor, found {test_text.count(anchor)}')
+          tests.write_text(test_text.replace(anchor, assertions), encoding='utf-8')
+          PY
+      - name: Validate focused contracts
+        run: |
+          python -m unittest Raw/workspace-reset/test_weather_source_contracts.py
+          git diff --check
+      - name: Remove workflow and push validated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-rti001-token-encoding.yml
+          git add Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb Raw/workspace-reset/test_weather_source_contracts.py
+          git commit -m "Encode RTI_001 continuation tokens"
+          git push origin HEAD:feat/weather-operations
