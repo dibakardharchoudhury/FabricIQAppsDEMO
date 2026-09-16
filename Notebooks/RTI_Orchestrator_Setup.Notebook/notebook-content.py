@@ -86,7 +86,6 @@ setup_dag = {
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        # Weather tables are source-neutral and only need the lakehouse, so they build alongside the RTI chain.
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
@@ -94,7 +93,7 @@ setup_dag = {
 }
 
 results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
-print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001).")
+print("✅ Setup orchestration complete (NB02–06, 08–10).")
 results
 
 # METADATA ********************

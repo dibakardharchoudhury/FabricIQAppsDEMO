@@ -18,6 +18,7 @@ const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
 const weatherPipelineName = '03_Pipe_Weather'
+const weatherSetupNotebookName = 'Weather_001_create_lakehouse'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
@@ -762,6 +763,16 @@ async function resolveWeatherPipelineId(): Promise<string> {
 }
 
 async function runWeatherSequence(onStatus?: JobProgress, resumeSinceIso?: string): Promise<JobStatus> {
+  const setupNotebookId = await resolveNotebookId(weatherSetupNotebookName)
+  const setupCompleted = resumeSinceIso && (await statusSince(setupNotebookId, resumeSinceIso)) === 'Completed'
+  if (!setupCompleted) {
+    const setupStatus = await runJob(setupNotebookId, 'RunNotebook', onStatus, {
+      timeoutMs: 15 * 60_000,
+      reuseActive: true,
+    })
+    if (setupStatus !== 'Completed') return setupStatus
+  }
+
   const pipelineId = await resolveWeatherPipelineId()
   const alreadyCompleted = resumeSinceIso && (await statusSince(pipelineId, resumeSinceIso)) === 'Completed'
   if (!alreadyCompleted) {

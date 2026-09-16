@@ -504,7 +504,7 @@ def rebind_weather_notebooks(
     return True
 
 
-def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
+def weather_schedule_matches(schedule: dict[str, Any], enabled: bool = True) -> bool:
     """Return whether an unexpired schedule matches the required six-hour UTC offset."""
     configuration = schedule.get("configuration") or {}
     def parse_utc(value: Any) -> datetime | None:
@@ -521,7 +521,7 @@ def weather_schedule_matches(schedule: dict[str, Any]) -> bool:
     if start is None or end_time is None:
         return False
     minutes = start.hour * 60 + start.minute
-    return (schedule.get("enabled") is True
+    return (schedule.get("enabled") is enabled
         and end_time > datetime.now(timezone.utc)
         and configuration.get("type") == "Cron"
         and configuration.get("interval") == WEATHER_SCHEDULE_INTERVAL_MINUTES
@@ -544,7 +544,10 @@ def configure_weather_schedule(
             f"HTTP {response.status_code} {response.text}"
         )
     schedules = response.json().get("value", [])
-    retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)
+    retained = next(
+        (schedule for schedule in schedules if weather_schedule_matches(schedule, enabled)),
+        None,
+    )
     if retained is None and schedules:
         retained = schedules[0]
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
@@ -571,7 +574,7 @@ def configure_weather_schedule(
     if retained is None:
         response = fab.request("POST", base, json=body)
         action = "created"
-    elif weather_schedule_matches(retained):
+    elif weather_schedule_matches(retained, enabled):
         response = None
         action = "reused"
     else:
