@@ -1039,6 +1039,7 @@ print("\n=== STEP 5: Create or verify weather tables before schedule activation 
 weather_setup_result = notebookutils.notebook.run(
     "Weather_001_create_lakehouse",
     3600,
+    {"useRootDefaultLakehouse": True},
 )
 print("Weather schema setup completed:", weather_setup_result)
 

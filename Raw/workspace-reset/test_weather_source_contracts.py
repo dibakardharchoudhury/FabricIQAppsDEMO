@@ -41,6 +41,8 @@ class WeatherSourceContractTests(unittest.TestCase):
         for cell_number, cell in enumerate(raw["cells"]):
             if cell.get("cell_type") == "code":
                 compile("\n".join(cell.get("source", [])), f"Raw/RTI_001 cell {cell_number}", "exec")
+        self.assertEqual(setup.count('{"useRootDefaultLakehouse": True}'), 1)
+        self.assertEqual(raw_source.count('{"useRootDefaultLakehouse": True}'), 1)
         fallback = 'if not url and body.get("continuationToken")'
         self.assertEqual(setup.count(fallback), 1)
         self.assertEqual(raw_source.count(fallback), 1)
