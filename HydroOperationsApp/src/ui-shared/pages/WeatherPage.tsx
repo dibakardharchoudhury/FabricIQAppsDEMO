@@ -129,7 +129,6 @@ export function WeatherPage() {
         .filter(item => item.location_id === observedLocationId && Date.parse(item.observed_at_utc) >= now - 24 * 3_600_000 && Date.parse(item.observed_at_utc) <= now)
         .map(item => toTimelineRow(item, item.observed_at_utc, unitOf))
         .sort(byTimestamp)
-        .slice(-3)
       : []
     return {
       observations,
