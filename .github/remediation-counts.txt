@@ -1,4 +1,17 @@
-exit=0
---- stdout ---
+apply exit=0
 
---- stderr ---
+
+---
+['python', '-m', 'unittest', 'Raw/workspace-reset/test_weather_source_contracts.py'] exit=0
+
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.011s
+
+OK
+
+---
+['python', '-m', 'unittest', 'test_sync_workspace_from_git.py'] exit=1
+
+Missing dependency: azure. Install requirements first:
+    python -m pip install -r requirements.txt
