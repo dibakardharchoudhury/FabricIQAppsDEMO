@@ -13,38 +13,21 @@ jobs:
         with:
           ref: feat/weather-operations
           fetch-depth: 0
-      - name: Record anchor counts
+      - name: Capture remediation traceback
         run: |
           python - <<'PY'
           from pathlib import Path
-          checks = {
-            'fabric-constants': ('HydroOperationsApp/src/services/fabric.ts', "const weatherSetupNotebookName = 'Weather_001_create_lakehouse'"),
-            'fabric-sequence': ('HydroOperationsApp/src/services/fabric.ts', 'const weatherNotebookNames = [weatherSetupNotebookName'),
-            'page-state': ('HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx', 'const [showMoreVariables, setShowMoreVariables] = useState(false)'),
-            'page-columns': ('HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx', 'const secondaryVariables = [...new Set(rows.flatMap'),
-            'sync-import': ('Raw/workspace-reset/sync_workspace_from_git.py', 'from typing import Any'),
-            'sync-tokens': ('Raw/workspace-reset/sync_workspace_from_git.py', 'continuationToken={token}'),
-            'sync-signature': ('Raw/workspace-reset/sync_workspace_from_git.py', 'def configure_weather_schedule(fab: Fabric, workspace_id: str, pipeline_id: str) -> None:'),
-            'sync-enabled': ('Raw/workspace-reset/sync_workspace_from_git.py', '        "enabled": True,'),
-            'sync-activation': ('Raw/workspace-reset/sync_workspace_from_git.py', '    # Activate the recurring job only after its runtime and dependencies are ready.'),
-            'setup-import': ('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py', 'import json\nimport requests\nimport notebookutils'),
-            'setup-token': ('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py', 'continuationToken={token}'),
-            'setup-binding': ('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py', 'if weather_binding_failures:\n    raise RuntimeError('),
-            'graphql-anchor': ('Notebooks/RTI_011_seed_sql_wire_graphql_agent.Notebook/notebook-content.py', '        ("weather_locations",'),
-            'health-comment': ('Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py', '# The pipeline continues past a failed vendor, so freshness is the only signal that one stopped.'),
-            'health-stale': ('Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py', 'stale = health.filter(\n    F.col("last_success_utc").isNull()'),
-            'test-sequence': ('Raw/workspace-reset/test_weather_source_contracts.py', 'self.assertGreater(weather_sequence.index("weatherNotebookNames.entries()"), -1)'),
-            'test-page': ('Raw/workspace-reset/test_weather_source_contracts.py', 'self.assertIn("stillAvailable", page)'),
-            'test-marker': ('Raw/workspace-reset/test_weather_source_contracts.py', 'self.assertEqual(raw_source.count(marker), 1)'),
-            'provisioning-test': ('Raw/workspace-reset/test_sync_workspace_from_git.py', 'self.assertFalse(any("/jobs/Pipeline/schedules" in url for _, url in fabric.requests))'),
-          }
-          lines = []
-          for label, (path, anchor) in checks.items():
-              lines.append(f'{label}={Path(path).read_text(encoding="utf-8").count(anchor)}')
-          Path('.github/remediation-counts.txt').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          import subprocess
+          workflow = Path('.github/workflows/remediate-final-review.yml').read_text(encoding='utf-8')
+          marker = "          python - <<'PY'\n"
+          script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines()) + '\n'
+          result = subprocess.run(['python', '-c', script], text=True, capture_output=True)
+          report = f'exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}'
+          Path('.github/remediation-counts.txt').write_text(report, encoding='utf-8')
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/remediation-counts.txt
-          git commit -m "Record remediation anchor counts"
+          git commit -m "Record remediation traceback"
           git push origin HEAD:feat/weather-operations
