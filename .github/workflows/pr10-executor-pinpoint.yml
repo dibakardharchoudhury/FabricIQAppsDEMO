@@ -1,4 +1,4 @@
-name: Repair PR 10 executor quoting
+name: Stage corrected PR 10 executor
 on:
   push:
     branches: [feat/weather-operations]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 jobs:
-  repair:
+  stage:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,19 +15,19 @@ jobs:
       - shell: python
         run: |
           from pathlib import Path
-          path = Path('.github/workflows/pr10-execute.yml')
-          text = path.read_text()
+          source = Path('.github/workflows/pr10-execute.yml')
+          text = source.read_text()
           start = text.index("          schedule_patch = '''# Reconcile one schedule")
           end = text.index("          script = script[:schedule_start]", start)
           block = text[start:end]
           fixed = block.replace(r"\'", r"\\'")
           if fixed == block:
               raise SystemExit('No nested apostrophe escapes found')
-          path.write_text(text[:start] + fixed + text[end:])
+          Path('.github/pr10-execute-fixed.txt').write_text(text[:start] + fixed + text[end:])
       - shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/pr10-execute.yml
-          git commit -m "Repair nested schedule quoting"
+          git add .github/pr10-execute-fixed.txt
+          git commit -m "Stage corrected PR 10 executor"
           git push origin HEAD:feat/weather-operations
