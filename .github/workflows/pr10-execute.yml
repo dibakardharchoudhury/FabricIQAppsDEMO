@@ -1,0 +1,147 @@
+name: Execute final PR 10 fixes
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-execute.yml]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 100
+      - name: Verify requested head is an ancestor
+        shell: bash
+        run: git merge-base --is-ancestor a126797f0c297a4bed3dec6fc4f2d961e57a3584 HEAD
+      - name: Apply guarded fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/pr10-final-findings.yml').read_text()
+
+          first_start = workflow.index('      - name: Apply scoped area cleanup first')
+          first_run = workflow.index('        run: |\n', first_start) + len('        run: |\n')
+          first_end = workflow.index('\n      - name: Validate first scoped change', first_run)
+          exec(compile(textwrap.dedent(workflow[first_run:first_end]), 'scoped-cleanup', 'exec'))
+
+          apply_start = workflow.index('      - name: Apply remaining fixes and regression tests')
+          apply_run = workflow.index('        run: |\n', apply_start) + len('        run: |\n')
+          apply_end = workflow.index('\n      - name: Set up Node 24', apply_run)
+          script = textwrap.dedent(workflow[apply_run:apply_end])
+          schedule_start = script.index('# Reconcile one schedule and remove every duplicate.')
+          schedule_end = script.index('# Add schedule duplicate regression cases', schedule_start)
+          schedule_patch = '''# Reconcile one schedule and remove every duplicate.
+          sync_path = Path('Raw/workspace-reset/sync_workspace_from_git.py')
+          sync_text = sync_path.read_text(encoding='utf-8')
+          selection_start = sync_text.index('    schedules = response.json().get("value", [])')
+          selection_end = sync_text.index('    now = datetime.now(timezone.utc)', selection_start)
+          selection = ''' + repr('''    schedules = response.json().get("value", [])
+              retained = next((schedule for schedule in schedules if weather_schedule_matches(schedule)), None)
+              if retained is None and schedules:
+                  retained = schedules[0]
+
+          ''') + '''
+          sync_text = sync_text[:selection_start] + selection + sync_text[selection_end:]
+          action_start = sync_text.index('    if schedules:', selection_start)
+          action_end = sync_text.index('\n\n\ndef configure_weather_assets', action_start)
+          action = ''' + repr('''    if retained is None:
+              response = fab.request("POST", base, json=body)
+              action = "created"
+          elif weather_schedule_matches(retained):
+              response = None
+              action = "reused"
+          else:
+              schedule_id = retained.get("id")
+              if not schedule_id:
+                  raise SystemExit(f"Existing '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+              response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)
+              action = "updated"
+          if response is not None and response.status_code not in (200, 201):
+              raise SystemExit(
+                  f"Failed to configure '{WEATHER_PIPELINE_NAME}' schedule: "
+                  f"HTTP {response.status_code} {response.text}"
+              )
+
+              for schedule in schedules:
+                  if schedule is retained:
+                      continue
+                  schedule_id = schedule.get("id")
+                  if not schedule_id:
+                      raise SystemExit(f"Extra '{WEATHER_PIPELINE_NAME}' schedule has no id.")
+                  deleted = fab.request("DELETE", f"{base}/{schedule_id}")
+                  if deleted.status_code not in (200, 204):
+                      raise SystemExit(
+                          f"Failed to delete extra '{WEATHER_PIPELINE_NAME}' schedule {schedule_id}: "
+                          f"HTTP {deleted.status_code} {deleted.text}"
+                      )
+              print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")''') + '''
+          sync_path.write_text(sync_text[:action_start] + action + sync_text[action_end:], encoding='utf-8')
+
+          '''
+          script = script[:schedule_start] + schedule_patch + script[schedule_end:]
+          exec(compile(script, 'remaining-fixes', 'exec'))
+      - name: Validate first scoped change
+        shell: bash
+        run: |
+          python -m py_compile Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py').read_text()
+          assert 'if not selected_facility_ids:\n    active_area_ids' in text
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+      - name: Validate Python notebooks and JSON
+        shell: bash
+        run: |
+          python -m py_compile Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py Notebooks/Weather_020_area_calculations.Notebook/notebook-content.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          json.loads(Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb').read_text())
+          json.loads(Path('Orchestrator_Pipelines/03_Pipe_Weather.DataPipeline/pipeline-content.json').read_text())
+          PY
+          (cd Raw/workspace-reset && python -m unittest test_sync_workspace_from_git test_deploy_fabric_app test_weather_source_contracts)
+      - name: Validate frontend without deployment prehooks
+        working-directory: HydroOperationsApp
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          node --import tsx --test scripts/weather-summary.test.ts
+          node --test scripts/*.test.mjs
+          npx eslint src/ui-shared/pages/WeatherPage.tsx src/ui-shared/weatherSummary.ts src/services/fabric.ts scripts/weather-summary.test.ts
+          npx vite build
+      - name: Update PR description
+        shell: python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          import json, os, re, urllib.request
+          url = 'https://api.github.com/repos/dibakardharchoudhury/FabricIQAppsDEMO/pulls/10'
+          headers = {'Accept': 'application/vnd.github+json', 'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}", 'X-GitHub-Api-Version': '2022-11-28'}
+          with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
+              pull = json.load(response)
+          replacement = ('Treats the current Entra SPA redirect snapshot as authoritative, then adds only the current hosting origin and localhost to `rayfin.yml`; stale local-only origins are removed rather than restored.')
+          body, count = re.subn(r'Changes Rayfin redirect handling to merge existing `rayfin\.yml` origins with Entra/current deployment origins, preserving teammate app URLs\s+while validating only tenant-relevant Entra redirects\.', replacement, pull['body'])
+          if count != 1:
+              raise SystemExit(f'Expected one conflicting PR statement, found {count}')
+          request = urllib.request.Request(url, data=json.dumps({'body': body}).encode(), headers={**headers, 'Content-Type': 'application/json'}, method='PATCH')
+          urllib.request.urlopen(request).close()
+      - name: Commit fixes and remove temporary artifacts
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/pr10-final-findings.yml .github/workflows/pr10-pinpoint.yml .github/workflows/pr10-execute.yml .github/pr10-anchor-error.txt
+          git add -A
+          git commit -m "Fix remaining weather review findings"
+          git push origin HEAD:feat/weather-operations
