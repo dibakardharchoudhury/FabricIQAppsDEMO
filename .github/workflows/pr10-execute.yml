@@ -60,12 +60,12 @@ jobs:
               '    else:',
               '        schedule_id = retained.get("id")',
               '        if not schedule_id:',
-              '            raise SystemExit(f"Existing \'{WEATHER_PIPELINE_NAME}\' schedule has no id.")',
+              '            raise SystemExit(f"Existing \\'{WEATHER_PIPELINE_NAME}\\' schedule has no id.")',
               '        response = fab.request("PATCH", f"{base}/{schedule_id}", json=body)',
               '        action = "updated"',
               '    if response is not None and response.status_code not in (200, 201):',
               '        raise SystemExit(',
-              '            f"Failed to configure \'{WEATHER_PIPELINE_NAME}\' schedule: "',
+              '            f"Failed to configure \\'{WEATHER_PIPELINE_NAME}\\' schedule: "',
               '            f"HTTP {response.status_code} {response.text}"',
               '        )',
               '',
@@ -74,11 +74,11 @@ jobs:
               '            continue',
               '        schedule_id = schedule.get("id")',
               '        if not schedule_id:',
-              '            raise SystemExit(f"Extra \'{WEATHER_PIPELINE_NAME}\' schedule has no id.")',
+              '            raise SystemExit(f"Extra \\'{WEATHER_PIPELINE_NAME}\\' schedule has no id.")',
               '        deleted = fab.request("DELETE", f"{base}/{schedule_id}")',
               '        if deleted.status_code not in (200, 204):',
               '            raise SystemExit(',
-              '                f"Failed to delete extra \'{WEATHER_PIPELINE_NAME}\' schedule {schedule_id}: "',
+              '                f"Failed to delete extra \\'{WEATHER_PIPELINE_NAME}\\' schedule {schedule_id}: "',
               '                f"HTTP {deleted.status_code} {deleted.text}"',
               '            )',
               '    print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")',
@@ -144,7 +144,7 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm .github/workflows/pr10-final-findings.yml .github/workflows/pr10-pinpoint.yml .github/workflows/pr10-execute.yml .github/workflows/pr10-executor-pinpoint.yml .github/pr10-anchor-error.txt .github/pr10-executor-error.txt
+          git rm .github/workflows/pr10-final-findings.yml .github/workflows/pr10-pinpoint.yml .github/workflows/pr10-execute.yml .github/workflows/pr10-executor-pinpoint.yml .github/pr10-anchor-error.txt .github/pr10-executor-error.txt .github/pr10-execute-fixed.txt
           git add -A
           git commit -m "Fix remaining weather review findings"
           git push origin HEAD:feat/weather-operations
