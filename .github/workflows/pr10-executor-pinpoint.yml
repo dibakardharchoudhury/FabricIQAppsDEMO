@@ -1,4 +1,4 @@
-name: Pinpoint PR 10 executor
+name: Repair PR 10 executor quoting
 on:
   push:
     branches: [feat/weather-operations]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 jobs:
-  pinpoint:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,24 +15,19 @@ jobs:
       - shell: python
         run: |
           from pathlib import Path
-          import textwrap
-          workflow = Path('.github/workflows/pr10-execute.yml').read_text()
-          start = workflow.index('      - name: Apply guarded fixes')
-          run_start = workflow.index('        run: |\n', start) + len('        run: |\n')
-          end = workflow.index('\n      - name: Validate first scoped change', run_start)
-          namespace = {}
-          try:
-              exec(compile(textwrap.dedent(workflow[run_start:end]), 'executor', 'exec'), namespace)
-          except BaseException as error:
-              lines = namespace.get('script', '').splitlines()
-              context = '\n'.join(f'{number}: {lines[number - 1]!r}' for number in range(245, min(310, len(lines) + 1)))
-              Path('.github/pr10-executor-error.txt').write_text(
-                  f'{type(error).__name__}: {error}\n{context}', encoding='utf-8')
+          path = Path('.github/workflows/pr10-execute.yml')
+          text = path.read_text()
+          start = text.index("          schedule_patch = '''# Reconcile one schedule")
+          end = text.index("          script = script[:schedule_start]", start)
+          block = text[start:end]
+          fixed = block.replace(r"\'", r"\\'")
+          if fixed == block:
+              raise SystemExit('No nested apostrophe escapes found')
+          path.write_text(text[:start] + fixed + text[end:])
       - shell: bash
         run: |
-          test -f .github/pr10-executor-error.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/pr10-executor-error.txt
-          git commit -m "Record updated PR 10 executor failure"
+          git add .github/workflows/pr10-execute.yml
+          git commit -m "Repair nested schedule quoting"
           git push origin HEAD:feat/weather-operations
