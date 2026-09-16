@@ -1,0 +1,155 @@
+name: PR 10 second remediation
+on:
+  push:
+    branches: [feat/weather-operations]
+    paths: [.github/workflows/pr10-second-remediation.yml]
+permissions:
+  contents: write
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/weather-operations
+          fetch-depth: 0
+      - name: Apply remaining review fixes
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          def replace(path, old, new, label):
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              print(f'{label}: {count} match(es)')
+              if count != 1:
+                  raise RuntimeError(f'Expected one {label}, found {count}')
+              path.write_text(text.replace(old, new), encoding='utf-8')
+
+          fabric = Path('HydroOperationsApp/src/services/fabric.ts')
+          replace(fabric,
+              "    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string }\n    items.push(...(page.value ?? []))\n    nextUrl = page.continuationUri",
+              "    const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }\n    items.push(...(page.value ?? []))\n    nextUrl = page.continuationUri\n    if (!nextUrl && page.continuationToken) {\n      nextUrl = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items?continuationToken=${encodeURIComponent(page.continuationToken)}`\n    }",
+              'frontend continuation token')
+          replace(fabric,
+              "  for (const [index, name] of weatherNotebookNames.entries()) {",
+              "  for (const [index, name] of weatherNotebookNames.entries()) {",
+              'weather sequence anchor')
+          replace(fabric,
+              "    if (status !== 'Completed') return status\n  }\n  return 'Completed'\n}",
+              "    if (status !== 'Completed') return status\n  }\n  const postseedNotebookId = await resolvePostseedNotebookId()\n  const postseedStatus = await runJob(postseedNotebookId, 'RunNotebook', onStatus, {\n    timeoutMs: 15 * 60_000,\n    reuseActive: true,\n    parameters: [{ name: 'sql_db_item_name', value: 'hydro-operations-ui', type: 'Text' }],\n  })\n  if (postseedStatus === 'Completed') clearWorkspaceConfigCache()\n  return postseedStatus\n}",
+              'post-weather GraphQL publication')
+
+          page = Path('HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx')
+          replace(page,
+              "    setSelection(current => current ?? (data.locations[0]\n      ? { kind: 'location', id: data.locations[0].location_id }\n      : data.areas[0] ? { kind: 'area', id: data.areas[0].area_id } : undefined))",
+              "    setSelection(current => {\n      const stillAvailable = current?.kind === 'location'\n        ? data.locations.some(item => item.location_id === current.id)\n        : current?.kind === 'area' ? data.areas.some(item => item.area_id === current.id) : false\n      if (stillAvailable) return current\n      return data.locations[0]\n        ? { kind: 'location', id: data.locations[0].location_id }\n        : data.areas[0] ? { kind: 'area', id: data.areas[0].area_id } : undefined\n    })",
+              'refresh selection validation')
+
+          summary = Path('HydroOperationsApp/src/ui-shared/weatherSummary.ts')
+          replace(summary,
+              "  const predecessor = firstIndex > 0 ? ordered[firstIndex - 1] : undefined\n  const contiguous = includedIndexes.every((index, offset) => {",
+              "  const predecessor = firstIndex > 0 ? ordered[firstIndex - 1] : undefined\n  const firstIncludedEnd = Date.parse(ordered[firstIndex].valid_time_utc)\n  const firstIncludedIntervalMs = Number(ordered[firstIndex].precipitation_interval_hours) * 3_600_000\n  const predecessorEnd = predecessor ? Date.parse(predecessor.valid_time_utc) : Number.NaN\n  const predecessorIntervalMs = predecessor ? Number(predecessor.precipitation_interval_hours) * 3_600_000 : Number.NaN\n  const predecessorCoversBoundary = Number.isFinite(predecessorEnd)\n    && Number.isFinite(predecessorIntervalMs)\n    && predecessorIntervalMs > 0\n    && predecessorEnd === firstIncludedEnd - firstIncludedIntervalMs\n  const contiguous = predecessorCoversBoundary && includedIndexes.every((index, offset) => {",
+              'precipitation predecessor coverage')
+          tests = Path('HydroOperationsApp/scripts/weather-summary.test.ts')
+          tests.write_text(tests.read_text(encoding='utf-8') + "\n\ntest('falls back to interval sums when the cumulative predecessor has invalid coverage', () => {\n  const summary = summarizePrecipitation([\n    { valid_time_utc: at(2), precipitation_interval_hours: 0, precipitation: 50, cumulative_precipitation: 50 },\n    { valid_time_utc: at(8), precipitation_interval_hours: 6, precipitation: 6, cumulative_precipitation: 56 },\n    { valid_time_utc: at(14), precipitation_interval_hours: 6, precipitation: 4, cumulative_precipitation: 60 },\n  ], anchor, 24)\n  assert.deepEqual(summary, { amount: 10, volume: undefined, coveredHours: 12 })\n})\n", encoding='utf-8')
+
+          setup = Path('Raw/workspace-reset/sync_workspace_from_git.py')
+          replace(setup,
+              "    weather_notebooks = {\n        item.get(\"displayName\"): item\n        for item in items\n        if item.get(\"type\") == \"Notebook\"\n        and item.get(\"displayName\") in WEATHER_NOTEBOOK_NAMES\n    }",
+              "    weather_notebook_items = [\n        item for item in items\n        if item.get(\"type\") == \"Notebook\"\n        and item.get(\"displayName\") in WEATHER_NOTEBOOK_NAMES\n    ]\n    duplicate_notebooks = sorted(\n        name for name in WEATHER_NOTEBOOK_NAMES\n        if sum(item.get(\"displayName\") == name for item in weather_notebook_items) > 1\n    )\n    if duplicate_notebooks:\n        raise SystemExit(\n            \"Weather provisioning failed: duplicate notebook(s): \"\n            + \", \".join(duplicate_notebooks)\n        )\n    weather_notebooks = {item.get(\"displayName\"): item for item in weather_notebook_items}",
+              'duplicate weather notebook detection')
+          provisioning_tests = Path('Raw/workspace-reset/test_sync_workspace_from_git.py')
+          insertion = "\n    def test_duplicate_weather_notebooks_are_rejected(self):\n        fabric = FakeFabric()\n        items = fabric.list_workspace_items(\"workspace-id\")\n        items.append({**items[1], \"id\": \"weather-001-duplicate\"})\n        fabric.list_workspace_items = Mock(return_value=items)\n\n        with self.assertRaisesRegex(SystemExit, \"duplicate notebook.*Weather_001_create_lakehouse\"):\n            configure_weather_assets(fabric, \"workspace-id\", git_updated=False)\n"
+          replace(provisioning_tests, '\n\nif __name__ == "__main__":', insertion + '\n\nif __name__ == "__main__":', 'duplicate notebook test')
+
+          aurora = Path('Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py')
+          replace(aurora,
+              "    if method == \"sum\":\n        return np.nansum(values[positions, :], axis=0)",
+              "    if method == \"sum\":\n        selected = values[positions, :]\n        return np.where(np.all(np.isnan(selected), axis=0), np.nan, np.nansum(selected, axis=0))",
+              'NaN-safe Aurora sum')
+          replace(aurora,
+              "            raw_value = float(values[point_index])\n            value = None if variable_id == \"wind_direction\" and not np.isfinite(raw_value) else raw_value",
+              "            raw_value = float(values[point_index])\n            value = raw_value if np.isfinite(raw_value) else None",
+              'non-finite Aurora values')
+          replace(aurora,
+              "forecasts_df.createOrReplaceTempView(\"incoming_weather_forecasts\")\nspark.sql(f\"\"\"\nMERGE INTO {TABLES['locations']}",
+              "forecasts_df.createOrReplaceTempView(\"incoming_weather_forecasts\")\nfor point in points:\n    location_id = str(point[\"location_id\"]).replace(chr(39), chr(39) * 2)\n    spark.sql(\n        f\"DELETE FROM {TABLES['forecasts']} WHERE source_id = '{SOURCE_ID}' \"\n        f\"AND source_item_id = '{source_item_id.replace(chr(39), chr(39) * 2)}' \"\n        f\"AND location_id = '{location_id}'\"\n    )\nspark.sql(f\"\"\"\nMERGE INTO {TABLES['locations']}",
+              'Aurora complete issue replacement')
+
+          ukmet = Path('Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py')
+          replace(ukmet,
+              "observations_df.createOrReplaceTempView(\"incoming_ukmet_observations\")\n\nspark.sql(f\"\"\"\nMERGE INTO {TABLES['locations']}",
+              "observations_df.createOrReplaceTempView(\"incoming_ukmet_observations\")\n\nfor source_id, issue_time, location_id in sorted({\n    (row[\"source_id\"], row[\"reference_time_utc\"], row[\"location_id\"])\n    for row in forecast_rows\n}):\n    source_sql = source_id.replace(chr(39), chr(39) * 2)\n    location_sql = location_id.replace(chr(39), chr(39) * 2)\n    issue_sql = pd.Timestamp(issue_time).isoformat().replace(\"+00:00\", \"Z\")\n    spark.sql(\n        f\"DELETE FROM {TABLES['forecasts']} WHERE source_id = '{source_sql}' \"\n        f\"AND reference_time_utc = TIMESTAMP '{issue_sql}' AND location_id = '{location_sql}'\"\n    )\n\nspark.sql(f\"\"\"\nMERGE INTO {TABLES['locations']}",
+              'UKMet complete issue replacement')
+
+          canonical = Path('Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py')
+          old_loop = "with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:\n    futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]\n    for future in as_completed(futures):\n        nb_name, ok, detail = future.result()\n        if ok:\n            print(f\"✅ '{nb_name}': {detail}\")\n        else:\n            print(f\"⚠️  Could not rebind '{nb_name}': {detail}\")"
+          new_loop = "binding_failures = []\nwith ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:\n    futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]\n    for future in as_completed(futures):\n        nb_name, ok, detail = future.result()\n        if ok:\n            print(f\"✅ '{nb_name}': {detail}\")\n        else:\n            print(f\"⚠️  Could not rebind '{nb_name}': {detail}\")\n            binding_failures.append((nb_name, detail))\nweather_binding_failures = [failure for failure in binding_failures if failure[0].startswith(\"Weather_\")]\nif weather_binding_failures:\n    raise RuntimeError(\n        \"Required weather notebook binding failed: \"\n        + \"; \".join(f\"{name}: {detail}\" for name, detail in weather_binding_failures)\n    )"
+          replace(canonical, old_loop, new_loop, 'fatal canonical weather binding')
+
+          raw_path = Path('Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb')
+          raw = json.loads(raw_path.read_text(encoding='utf-8'))
+          matching = [cell for cell in raw['cells'] if old_loop in ''.join(cell.get('source', []))]
+          if len(matching) != 1:
+              raise RuntimeError(f'Expected one raw binding cell, found {len(matching)}')
+          raw_source = ''.join(matching[0]['source']).replace(old_loop, new_loop)
+          matching[0]['source'] = raw_source.splitlines(keepends=True)
+          if matching[0]['source'] and not raw_source.endswith('\n'):
+              matching[0]['source'][-1] = matching[0]['source'][-1].rstrip('\n')
+          raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=1) + '\n', encoding='utf-8')
+
+          contracts = Path('Raw/workspace-reset/test_weather_source_contracts.py')
+          extra = '''
+    def test_remaining_review_remediation_contracts(self):
+        fabric = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
+        self.assertIn("continuationToken?: string", fabric)
+        self.assertIn("encodeURIComponent(page.continuationToken)", fabric)
+        weather_sequence = fabric.split("async function runWeatherSequence", 1)[1].split("export const runWeatherNotebooks", 1)[0]
+        self.assertGreater(weather_sequence.index("weatherNotebookNames.entries()"), -1)
+        self.assertGreater(weather_sequence.index("resolvePostseedNotebookId()"), weather_sequence.index("weatherNotebookNames.entries()"))
+        page = (ROOT / "HydroOperationsApp/src/ui-shared/pages/WeatherPage.tsx").read_text(encoding="utf-8")
+        self.assertIn("stillAvailable", page)
+        aurora = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertIn("np.all(np.isnan(selected)", aurora)
+        self.assertIn("DELETE FROM {TABLES['forecasts']}", aurora)
+        ukmet = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        self.assertIn("for source_id, issue_time, location_id", ukmet)
+        canonical = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
+        raw_source = "".join("".join(cell.get("source", [])) for cell in raw["cells"])
+        marker = "Required weather notebook binding failed"
+        self.assertEqual(canonical.count(marker), 1)
+        self.assertEqual(raw_source.count(marker), 1)
+'''
+          replace(contracts, '\n\nif __name__ == "__main__":', '\n' + extra + '\nif __name__ == "__main__":', 'review source contracts')
+      - name: Focused Python validation
+        run: |
+          python -m pip install -r Raw/workspace-reset/requirements.txt
+          python Raw/workspace-reset/test_weather_source_contracts.py
+          cd Raw/workspace-reset
+          python test_sync_workspace_from_git.py
+      - name: Python compile validation
+        run: python -m py_compile Raw/workspace-reset/sync_workspace_from_git.py Notebooks/Weather_001_create_lakehouse.Notebook/notebook-content.py Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: HydroOperationsApp/package-lock.json
+      - name: Frontend validation
+        working-directory: HydroOperationsApp
+        run: |
+          npm ci
+          npm run typecheck
+          node --import tsx --test scripts/weather-summary.test.ts
+          node --test scripts/*.test.mjs
+      - name: Commit validated remediation
+        shell: bash
+        run: |
+          rm .github/workflows/pr10-second-remediation.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Resolve remaining Copilot review findings"
+          git push origin HEAD:feat/weather-operations
