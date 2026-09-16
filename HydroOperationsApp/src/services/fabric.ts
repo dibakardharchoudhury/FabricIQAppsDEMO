@@ -581,58 +581,57 @@ export type WeatherArea = {
   area_name: string
   geometry_geojson: string
   crs: string
+  metadata_json?: string
 }
 
-export type WeatherObservation = {
-  source_id: string
-  variable_id: string
-  location_id: string
-  observed_at_utc: string
-  value?: number
-  unit: string
-  quality?: string
-}
+export const WEATHER_VARIABLES = [
+  'temperature', 'precipitation', 'pressure', 'relative_humidity', 'dew_point',
+  'solar_radiation', 'wind_speed', 'wind_gust', 'wind_direction',
+] as const
+export type WeatherVariableId = typeof WEATHER_VARIABLES[number]
 
-export type WeatherForecast = {
+/** The serving tables are pivoted, so one row carries every variable for a single valid time. */
+type WeatherValues = Partial<Record<WeatherVariableId, number | null>>
+
+export type WeatherForecast = WeatherValues & {
   source_id: string
-  variable_id: string
-  location_id: string
+  target_kind: 'location' | 'area'
+  target_id: string
   reference_time_utc: string
   valid_time_utc: string
   lead_hours: number
-  value?: number
-  unit: string
+  precipitation_interval_hours?: number
+  cumulative_precipitation?: number
+  rainfall_volume_m3?: number
+  cumulative_rainfall_volume_m3?: number
 }
 
-export type WeatherAreaMetric = {
+export type WeatherObservation = WeatherValues & {
   source_id: string
+  location_id: string
+  observed_at_utc: string
+}
+
+export type WeatherVariable = {
   variable_id: string
-  area_id: string
-  data_kind: 'observation' | 'forecast'
-  reference_time_utc?: string
-  valid_time_utc: string
-  lead_hours?: number
-  area_coverage_fraction: number
-  area_weighted_value?: number
-  unit: string
-  rainfall_volume_m3?: number
+  canonical_unit: string
 }
 
 export type WeatherData = {
   locations: WeatherLocation[]
   areas: WeatherArea[]
+  variables: WeatherVariable[]
   observations: WeatherObservation[]
   forecasts: WeatherForecast[]
-  areaMetrics: WeatherAreaMetric[]
 }
 
 type WeatherPayload = {
   data?: {
     locations?: { items?: WeatherLocation[] }
     areas?: { items?: WeatherArea[] }
+    variables?: { items?: WeatherVariable[] }
     observations?: { items?: WeatherObservation[] }
     forecasts?: { items?: WeatherForecast[] }
-    areaMetrics?: { items?: WeatherAreaMetric[] }
   }
   errors?: Array<{ message?: string }>
 }
@@ -685,12 +684,15 @@ export async function queryWeatherData(interactive = false): Promise<WeatherData
   if (!config?.graphqlUrl) return null
   const token = await silentToken([GRAPHQL_SCOPE]) ?? (interactive ? await popupToken([GRAPHQL_SCOPE]) : null)
   if (!token) return null
+  // The serving tables hold only the newest issue, pivoted one row per valid time, so the
+  // whole page is a few hundred rows instead of the long tables' unbounded issue history.
+  const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
   const query = `query HydroWeather {
     locations: weather_locations(first: 500) { items { location_id location_name latitude longitude elevation_m } }
-    areas: weather_areas(first: 100) { items { area_id area_name geometry_geojson crs } }
-    observations: weather_observations(first: 1000) { items { source_id variable_id location_id observed_at_utc value unit quality } }
-    forecasts: weather_forecasts(first: 1000) { items { source_id variable_id location_id reference_time_utc valid_time_utc lead_hours value unit } }
-    areaMetrics: weather_area_metrics(first: 1000) { items { source_id variable_id area_id data_kind reference_time_utc valid_time_utc lead_hours area_coverage_fraction area_weighted_value unit rainfall_volume_m3 } }
+    areas: weather_areas(first: 100) { items { area_id area_name geometry_geojson crs metadata_json } }
+    variables: weather_variables(first: 50) { items { variable_id canonical_unit } }
+    observations: weather_latest_observations(first: 500) { items { source_id location_id observed_at_utc ${values} } }
+    forecasts: weather_latest_forecasts(first: 1000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
   }`
   const response = await fetch(config.graphqlUrl, {
     method: 'POST',
@@ -704,9 +706,9 @@ export async function queryWeatherData(interactive = false): Promise<WeatherData
   return {
     locations: payload.data?.locations?.items ?? [],
     areas: payload.data?.areas?.items ?? [],
+    variables: payload.data?.variables?.items ?? [],
     observations: payload.data?.observations?.items ?? [],
     forecasts: payload.data?.forecasts?.items ?? [],
-    areaMetrics: payload.data?.areaMetrics?.items ?? [],
   }
 }
 
