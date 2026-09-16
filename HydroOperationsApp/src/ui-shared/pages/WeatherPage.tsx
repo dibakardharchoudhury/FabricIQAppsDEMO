@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CloudSun, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CloudSun, Eye, RefreshCw } from 'lucide-react'
 import { queryWeatherData, type WeatherAreaMetric, type WeatherData, type WeatherForecast, type WeatherObservation } from '../../services/fabric'
 import { WeatherMap, type WeatherSelection } from '../components/weather/WeatherMap'
 
@@ -17,6 +17,7 @@ const variableRank = (variableId: string) => {
 
 type TimelineValue = { variableId: string; value?: number; unit: string; volume?: number }
 type TimelineRow = { timestamp: string; source: string; values: TimelineValue[] }
+type WeatherTableRow = TimelineRow & { kind: 'observation' | 'forecast' }
 type PrecipitationSummary = { amount?: number; unit: string; volume?: number }
 
 function formatValue(item: TimelineValue) {
@@ -41,7 +42,7 @@ function groupRows(items: Array<WeatherObservation | WeatherForecast | WeatherAr
   }
   return [...groups.values()]
     .map(row => ({ ...row, values: row.values.sort((left, right) => variableRank(left.variableId) - variableRank(right.variableId)) }))
-    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
 }
 
 export function WeatherPage() {
@@ -52,7 +53,7 @@ export function WeatherPage() {
   const [error, setError] = useState<string>()
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now())
   const [forecastVendor, setForecastVendor] = useState('')
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set())
+  const [showMoreVariables, setShowMoreVariables] = useState(false)
 
   const applyWeather = (data: WeatherData) => {
     setWeather(data)
@@ -106,21 +107,22 @@ export function WeatherPage() {
     if (!weather || !selection) return { observations: [], forecasts: [] }
     const now = timeAnchor
     const duration = rangeHours * 3_600_000
+    const previousDay = 24 * 3_600_000
     if (selection.kind === 'location') {
-      const observations = weather.observations.filter(item => item.location_id === selection.id && Date.parse(item.observed_at_utc) >= now - duration)
+      const observations = weather.observations.filter(item => item.location_id === selection.id && Date.parse(item.observed_at_utc) >= now - previousDay && Date.parse(item.observed_at_utc) <= now)
       const vendorForecasts = weather.forecasts.filter(item => item.location_id === selection.id && item.source_id === selectedVendor)
       const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc)))
-      const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
+      const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc) === latestIssue && Date.parse(item.valid_time_utc) >= now && Date.parse(item.valid_time_utc) <= now + duration)
       return {
         observations: groupRows(observations, item => (item as WeatherObservation).observed_at_utc),
         forecasts: groupRows(forecasts, item => (item as WeatherForecast).valid_time_utc),
       }
     }
     const metrics = weather.areaMetrics.filter(item => item.area_id === selection.id)
-    const observations = metrics.filter(item => item.data_kind === 'observation' && Date.parse(item.valid_time_utc) >= now - duration)
+    const observations = metrics.filter(item => item.data_kind === 'observation' && Date.parse(item.valid_time_utc) >= now - previousDay && Date.parse(item.valid_time_utc) <= now)
     const vendorForecasts = metrics.filter(item => item.data_kind === 'forecast' && item.source_id === selectedVendor)
     const latestIssue = Math.max(0, ...vendorForecasts.map(item => Date.parse(item.reference_time_utc ?? '')))
-    const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) <= now + duration)
+    const forecasts = vendorForecasts.filter(item => Date.parse(item.reference_time_utc ?? '') === latestIssue && Date.parse(item.valid_time_utc) >= now && Date.parse(item.valid_time_utc) <= now + duration)
     return {
       observations: groupRows(observations, item => (item as WeatherAreaMetric).valid_time_utc),
       forecasts: groupRows(forecasts, item => (item as WeatherAreaMetric).valid_time_utc),
@@ -145,13 +147,6 @@ export function WeatherPage() {
       volume: values.some(item => item.rainfall_volume_m3 != null) ? values.reduce((sum, item) => sum + Number(item.rainfall_volume_m3 || 0), 0) : undefined,
     }
   }, [selectedVendor, selection, timeAnchor, weather])
-
-  const toggleRow = (key: string) => setExpandedRows(current => {
-    const next = new Set(current)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    return next
-  })
 
   return <div className="weather-page">
     <section className="weather-head">
@@ -178,33 +173,40 @@ export function WeatherPage() {
         <WeatherChart name={selectedName} rows={timelines.forecasts} rangeHours={rangeHours} />
       </article>
       <aside className="weather-detail" aria-live="polite">
-        <div className="weather-detail-head"><span className="weather-detail-icon"><CloudSun size={18} /></span><div><span>{selection?.kind === 'area' ? 'Weather area' : 'Weather station'}</span><h2>{selectedName ?? 'Select a station or area'}</h2></div></div>
-        <TimelineSection title={`Observations · past ${rangeHours}h`} rows={timelines.observations} empty="No observations in this window." expandedRows={expandedRows} onToggle={toggleRow} />
-        <TimelineSection title={`Forecast · next ${rangeHours}h`} rows={timelines.forecasts} empty="No forecast values in this window." expandedRows={expandedRows} onToggle={toggleRow} />
+        <div className="weather-detail-head"><span className="weather-detail-icon"><CloudSun size={18} /></span><div><span>{selection?.kind === 'area' ? 'Weather area' : 'Weather station'}</span><h2>{selectedName ?? 'Select a station or area'}</h2></div><button className="weather-more" type="button" aria-expanded={showMoreVariables} onClick={() => setShowMoreVariables(current => !current)}>{showMoreVariables ? 'Less…' : 'More…'}</button></div>
+        <WeatherValuesTable observations={timelines.observations} forecasts={timelines.forecasts} showMoreVariables={showMoreVariables} />
       </aside>
     </section>
   </div>
 }
 
-function TimelineSection({ title, rows, empty, expandedRows, onToggle }: { title: string; rows: TimelineRow[]; empty: string; expandedRows: Set<string>; onToggle: (key: string) => void }) {
-  return <section className="weather-timeline-section"><div className="weather-timeline-title"><h3>{title}</h3><span>{rows.length}</span></div>
-    <div className="weather-timeline">{rows.map(row => {
-      const rowKey = `${title}-${row.timestamp}`
-      const expanded = expandedRows.has(rowKey)
-      const primary = row.values.filter(value => PRIMARY_VARIABLES.has(value.variableId))
-      const secondary = row.values.filter(value => !PRIMARY_VARIABLES.has(value.variableId))
-      return <article key={rowKey}>
-        <time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>
-        <div className="weather-primary-values">{primary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>
-        {expanded && <div className="weather-secondary-values">{secondary.map(value => <WeatherValue key={value.variableId} value={value} />)}</div>}
-        {!!secondary.length && <button className="weather-more" type="button" aria-expanded={expanded} onClick={() => onToggle(rowKey)}>{expanded ? 'Less…' : 'More…'}</button>}
-      </article>
-    })}{!rows.length && <p className="weather-timeline-empty">{empty}</p>}</div>
-  </section>
+function WeatherValuesTable({ observations, forecasts, showMoreVariables }: { observations: TimelineRow[]; forecasts: TimelineRow[]; showMoreVariables: boolean }) {
+  const rows: WeatherTableRow[] = [
+    ...observations.map(row => ({ ...row, kind: 'observation' as const })),
+    ...forecasts.map(row => ({ ...row, kind: 'forecast' as const })),
+  ]
+  const secondaryVariables = [...new Set(rows.flatMap(row => row.values.map(value => value.variableId)).filter(variableId => !PRIMARY_VARIABLES.has(variableId)))]
+    .sort((left, right) => variableRank(left) - variableRank(right) || left.localeCompare(right))
+  const visibleVariables = showMoreVariables ? secondaryVariables : []
+
+  return <div className="weather-values-table-wrap">
+    <table className="weather-values-table" aria-label="Observed and forecast weather values">
+      <thead><tr><th><span className="sr-only">Type</span></th><th>Date</th><th>Time</th><th>Rainfall</th><th>Temperature</th>{visibleVariables.map(variableId => <th key={variableId}>{VARIABLE_LABELS[variableId] ?? variableId}</th>)}</tr></thead>
+      <tbody>{rows.map(row => <tr key={`${row.kind}-${row.timestamp}`}>
+        <td><span className={`weather-row-kind ${row.kind}`} title={row.kind === 'observation' ? 'Observation' : 'Forecast'}>{row.kind === 'observation' ? <Eye size={14} aria-hidden="true" /> : <CloudSun size={14} aria-hidden="true" />}<span className="sr-only">{row.kind === 'observation' ? 'Observation' : 'Forecast'}</span></span></td>
+        <td><time dateTime={row.timestamp}>{new Date(row.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}</time></td>
+        <td>{new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+        <td><WeatherValue value={row.values.find(value => value.variableId === 'precipitation')} /></td>
+        <td><WeatherValue value={row.values.find(value => value.variableId === 'temperature')} /></td>
+        {visibleVariables.map(variableId => <td key={variableId}><WeatherValue value={row.values.find(value => value.variableId === variableId)} /></td>)}
+      </tr>)}{!rows.length && <tr><td className="weather-table-empty" colSpan={5 + visibleVariables.length}>No observations or forecast values in this window.</td></tr>}</tbody>
+    </table>
+  </div>
 }
 
-function WeatherValue({ value }: { value: TimelineValue }) {
-  return <span><em>{VARIABLE_LABELS[value.variableId] ?? value.variableId}</em><strong>{formatValue(value)}</strong>{value.volume != null && <small>{Math.round(value.volume).toLocaleString()} m³</small>}</span>
+function WeatherValue({ value }: { value?: TimelineValue }) {
+  if (!value) return <>—</>
+  return <><strong>{formatValue(value)}</strong>{value.volume != null && <small>{Math.round(value.volume).toLocaleString()} m³</small>}</>
 }
 
 function WeatherChart({ name, rows, rangeHours }: { name?: string; rows: TimelineRow[]; rangeHours: number }) {
