@@ -37,6 +37,10 @@ class WeatherSourceContractTests(unittest.TestCase):
         setup = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
         raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         raw_source = "\n".join("".join(cell.get("source", [])) for cell in raw["cells"])
+        compile(setup, "RTI_001_create_lakehouse_SelfContained", "exec")
+        for cell_number, cell in enumerate(raw["cells"]):
+            if cell.get("cell_type") == "code":
+                compile("\n".join(cell.get("source", [])), f"Raw/RTI_001 cell {cell_number}", "exec")
         fallback = 'if not url and body.get("continuationToken")'
         self.assertEqual(setup.count(fallback), 1)
         self.assertEqual(raw_source.count(fallback), 1)
