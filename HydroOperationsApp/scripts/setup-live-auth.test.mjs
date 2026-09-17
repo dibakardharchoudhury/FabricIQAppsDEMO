@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import {
   activateFreshTenantAzureCliCache,
+  recoverStaleToken,
+  securePrivateDirectory,
   selectCurrentHostingOrigin,
   synchronizeRedirectUris,
 } from './setup-live-auth.mjs'
@@ -82,4 +84,58 @@ test('requires an explicit tenant for Azure CLI cache recovery', () => {
     () => activateFreshTenantAzureCliCache(null),
     /RAYFIN_PUBLIC_TENANT_ID is required/,
   )
+})
+
+test('delegates stale-token recovery to the deployment orchestrator', () => {
+  const previousOwner = process.env.FABRIC_DEMO_AUTH_OWNER
+  process.env.FABRIC_DEMO_AUTH_OWNER = 'orchestrator'
+  try {
+    assert.throws(
+      () => recoverStaleToken('tenant-id'),
+      /parent deployment orchestrator must refresh Azure CLI authentication/,
+    )
+  } finally {
+    if (previousOwner === undefined) delete process.env.FABRIC_DEMO_AUTH_OWNER
+    else process.env.FABRIC_DEMO_AUTH_OWNER = previousOwner
+  }
+})
+
+test('applies an owner-only Windows ACL to recovery directories', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-live-auth-acl-test-'))
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }))
+  const calls = []
+
+  const cacheDir = path.join(tempDir, 'tenant-id')
+  fs.mkdirSync(cacheDir)
+  fs.writeFileSync(path.join(cacheDir, 'token.bin'), 'token')
+
+  securePrivateDirectory(cacheDir, {
+    platform: 'win32',
+    recursive: true,
+    execFileSync(command, args) {
+      calls.push([command, args])
+      if (command === 'whoami') return '"host\\user","S-1-5-21-123-456-789-1001"'
+      return ''
+    },
+  })
+
+  assert.deepEqual(calls[1], [
+    'icacls',
+    [
+      cacheDir,
+      '/inheritance:r',
+      '/grant:r', '*S-1-5-21-123-456-789-1001:(OI)(CI)F',
+      '/grant:r', '*S-1-5-18:(OI)(CI)F',
+    ],
+  ])
+  assert.deepEqual(calls[2], [
+    'icacls',
+    [
+      path.join(cacheDir, '*'),
+      '/inheritance:r',
+      '/grant:r', '*S-1-5-21-123-456-789-1001:F',
+      '/grant:r', '*S-1-5-18:F',
+      '/T', '/C',
+    ],
+  ])
 })

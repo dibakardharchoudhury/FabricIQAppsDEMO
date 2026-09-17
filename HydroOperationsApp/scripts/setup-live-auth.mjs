@@ -141,6 +141,35 @@ function az(argv) {
 
 const AZURE_CLI_SESSION_ROOT = path.join(os.tmpdir(), 'fabric-demo-azure-cli')
 
+export function securePrivateDirectory(directory, options = {}) {
+  const platform = options.platform ?? process.platform
+  const execute = options.execFileSync ?? execFileSync
+  const recursive = options.recursive ?? false
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  fs.chmodSync(directory, 0o700)
+  if (platform !== 'win32') return
+
+  const identity = execute('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' })
+  const sid = identity.match(/S-\d+(?:-\d+)+/)?.[0]
+  if (!sid) throw new Error('Could not determine the current Windows user SID.')
+  const args = [
+    directory,
+    '/inheritance:r',
+    '/grant:r', `*${sid}:(OI)(CI)F`,
+    '/grant:r', '*S-1-5-18:(OI)(CI)F',
+  ]
+  execute('icacls', args, { encoding: 'utf8' })
+  if (recursive && fs.readdirSync(directory).length > 0) {
+    execute('icacls', [
+      path.join(directory, '*'),
+      '/inheritance:r',
+      '/grant:r', `*${sid}:F`,
+      '/grant:r', '*S-1-5-18:F',
+      '/T', '/C',
+    ], { encoding: 'utf8' })
+  }
+}
+
 function azErrorText(err) {
   return [err?.message, err?.stderr?.toString?.(), err?.stdout?.toString?.()].filter(Boolean).join('\n')
 }
@@ -164,17 +193,24 @@ export function activateFreshTenantAzureCliCache(tenantId, options = {}) {
   const configDir = path.join(sessionRoot, safeTenant)
   let backupDir = null
 
+  securePrivateDirectory(sessionRoot, options)
   if (fs.existsSync(configDir)) {
     const timestamp = now.toISOString().replace(/\D/g, '')
     backupDir = `${configDir}.stale-${timestamp}-${processId}`
     fs.renameSync(configDir, backupDir)
+    securePrivateDirectory(backupDir, { ...options, recursive: true })
   }
-  fs.mkdirSync(configDir, { recursive: true })
+  securePrivateDirectory(configDir, options)
   environment.AZURE_CONFIG_DIR = configDir
   return { configDir, backupDir }
 }
 
-function recoverStaleToken(tenantId) {
+export function recoverStaleToken(tenantId) {
+  if (process.env.FABRIC_DEMO_AUTH_OWNER === 'orchestrator') {
+    throw new Error(
+      'TokenCreatedWithOutdatedPolicies: the parent deployment orchestrator must refresh Azure CLI authentication.',
+    )
+  }
   console.warn(
     '\n\u26a0 Azure CLI token rejected by Continuous Access Evaluation ' +
       '(TokenCreatedWithOutdatedPolicies) \u2014 the cached token predates a tenant ' +

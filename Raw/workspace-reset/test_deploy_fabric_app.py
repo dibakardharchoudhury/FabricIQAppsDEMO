@@ -378,6 +378,20 @@ class DeployOrderTests(unittest.TestCase):
         else:
             os.environ["AZURE_CONFIG_DIR"] = shared_config
 
+    def test_cache_security_failure_is_reported_as_reauthentication_failure(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+
+        with (
+            patch.object(DEPLOY, "secure_private_directory", side_effect=DEPLOY.DeployError("ACL failed")),
+            patch.object(DEPLOY, "run_capture", side_effect=stale),
+        ):
+            with self.assertRaisesRegex(DEPLOY.AzureCliReauthenticationError, "ACL failed"):
+                DEPLOY.run_with_azure_cli_reauthentication(
+                    "tenant-id",
+                    "testing authentication",
+                    lambda: DEPLOY.run_capture(["az"]),
+                )
+
     def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
         with tempfile.TemporaryDirectory() as temp_dir:

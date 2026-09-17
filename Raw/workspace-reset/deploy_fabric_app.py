@@ -107,11 +107,17 @@ def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     return proc.stdout.strip()
 
 
-def run_stream(argv: list[str], *, cwd: Path | None = None) -> str:
+def run_stream(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     """Run a command while forwarding output and retaining it for URL parsing."""
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -373,6 +379,46 @@ def isolated_azure_cli_config(tenant: str) -> Path:
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
+def secure_private_directory(directory: Path, *, recursive: bool = False) -> None:
+    """Create an owner-only directory, including an explicit Windows ACL."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        if os.name == "nt":
+            identity = run_capture(command_argv("whoami", "/user", "/fo", "csv", "/nh"))
+            sid_match = re.search(r"S-\d+(?:-\d+)+", identity)
+            if not sid_match:
+                raise DeployError("Could not determine the current Windows user SID.")
+            acl_command = command_argv(
+                "icacls",
+                str(directory),
+                "/inheritance:r",
+                "/grant:r",
+                f"*{sid_match.group(0)}:(OI)(CI)F",
+                "/grant:r",
+                "*S-1-5-18:(OI)(CI)F",
+            )
+            run_capture(acl_command)
+            if recursive and any(directory.iterdir()):
+                run_capture(
+                    command_argv(
+                        "icacls",
+                        str(directory / "*"),
+                        "/inheritance:r",
+                        "/grant:r",
+                        f"*{sid_match.group(0)}:F",
+                        "/grant:r",
+                        "*S-1-5-18:F",
+                        "/T",
+                        "/C",
+                    )
+                )
+    except (OSError, DeployError) as exc:
+        raise DeployError(
+            f"Could not secure the tenant-scoped Azure CLI cache at {directory}."
+        ) from exc
+
+
 def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
     print(
         f"Azure CLI authentication needs to be refreshed before {operation}. "
@@ -380,6 +426,7 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
         flush=True,
     )
     config_dir = isolated_azure_cli_config(tenant)
+    secure_private_directory(config_dir.parent)
     if config_dir.exists():
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         backup_dir = config_dir.with_name(f"{config_dir.name}.stale-{timestamp}")
@@ -390,8 +437,9 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
                 f"Could not preserve the stale tenant-scoped Azure CLI cache at {config_dir}. "
                 "No Azure CLI login state was changed. Close processes using that directory and retry."
             ) from exc
+        secure_private_directory(backup_dir, recursive=True)
         print(f"Preserved stale Azure CLI session at {backup_dir}.", flush=True)
-    config_dir.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(config_dir)
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
     run_stream(
         az(
@@ -1149,9 +1197,14 @@ def deploy(args: argparse.Namespace) -> None:
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
         try:
-            run_stream(
-                node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
-                cwd=APP_DIR,
+            run_with_azure_cli_reauthentication(
+                args.tenant,
+                "configuring browser sign-in",
+                lambda: run_stream(
+                    node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                    cwd=APP_DIR,
+                    env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
+                ),
             )
         except DeployError as exc:
             warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
