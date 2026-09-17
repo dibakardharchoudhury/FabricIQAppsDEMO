@@ -240,6 +240,16 @@ export function recoverStaleToken(tenantId) {
   }
 }
 
+export function runWithStaleTokenRecovery(operation, tenantId, recover = recoverStaleToken) {
+  try {
+    return operation()
+  } catch (err) {
+    if (!isStaleTokenChallenge(err)) throw err
+    recover(tenantId)
+    return operation()
+  }
+}
+
 function ensureAzLogin(expectedTenant) {
   let account
   try {
@@ -258,10 +268,12 @@ function ensureAzLogin(expectedTenant) {
     )
   }
   try {
-    az(['rest', '--method', 'GET', '--uri', 'https://graph.microsoft.com/v1.0/me', '--query', 'id', '-o', 'tsv'])
+    runWithStaleTokenRecovery(
+      () => az(['rest', '--method', 'GET', '--uri', 'https://graph.microsoft.com/v1.0/me', '--query', 'id', '-o', 'tsv']),
+      expectedTenant,
+    )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) recoverStaleToken(expectedTenant)
-    else fail('Microsoft Graph readiness probe failed.\nUnderlying error: ' + azErrorText(err))
+    fail('Microsoft Graph readiness probe failed.\nUnderlying error: ' + azErrorText(err))
   }
   return account
 }
@@ -335,14 +347,13 @@ function registerRedirectUris(clientId) {
 
   let app
   try {
-    app = JSON.parse(
-      az(['ad', 'app', 'show', '--id', clientId, '--query', '{objectId:id,spa:spa.redirectUris}', '-o', 'json']),
+    app = runWithStaleTokenRecovery(
+      () => JSON.parse(
+        az(['ad', 'app', 'show', '--id', clientId, '--query', '{objectId:id,spa:spa.redirectUris}', '-o', 'json']),
+      ),
+      tenantIdFromEnv,
     )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) {
-      recoverStaleToken(tenantIdFromEnv)
-      fail('Re-authenticated \u2014 please re-run the script to apply changes.')
-    }
     fail(
       `Could not read app registration '${clientId}'. Either it does not exist in ` +
         'the signed-in tenant, or your account lacks directory read permission. ' +
@@ -433,12 +444,11 @@ function grantDelegatedPermissions(clientId) {
 
   let current
   try {
-    current = JSON.parse(az(['ad', 'app', 'show', '--id', clientId, '--query', 'requiredResourceAccess', '-o', 'json']))
+    current = runWithStaleTokenRecovery(
+      () => JSON.parse(az(['ad', 'app', 'show', '--id', clientId, '--query', 'requiredResourceAccess', '-o', 'json'])),
+      tenantIdFromEnv,
+    )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) {
-      recoverStaleToken(tenantIdFromEnv)
-      fail('Re-authenticated \u2014 please re-run the script to apply changes.')
-    }
     fail(`Could not read app registration '${clientId}'.\nUnderlying error: ${azErrorText(err)}`)
   }
   if (!Array.isArray(current)) current = []

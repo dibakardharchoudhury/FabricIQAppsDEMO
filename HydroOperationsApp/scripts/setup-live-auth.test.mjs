@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   activateFreshTenantAzureCliCache,
   recoverStaleToken,
+  runWithStaleTokenRecovery,
   securePrivateDirectory,
   selectCurrentHostingOrigin,
   synchronizeRedirectUris,
@@ -98,6 +99,28 @@ test('delegates stale-token recovery to the deployment orchestrator', () => {
     if (previousOwner === undefined) delete process.env.FABRIC_DEMO_AUTH_OWNER
     else process.env.FABRIC_DEMO_AUTH_OWNER = previousOwner
   }
+})
+
+test('retries the failed operation in-process after stale-token recovery', () => {
+  let attempts = 0
+  const recoveredTenants = []
+  const result = runWithStaleTokenRecovery(
+    () => {
+      attempts += 1
+      if (attempts === 1) {
+        const error = new Error('Graph request failed')
+        error.stderr = 'TokenCreatedWithOutdatedPolicies'
+        throw error
+      }
+      return 'success'
+    },
+    'tenant-id',
+    (tenantId) => recoveredTenants.push(tenantId),
+  )
+
+  assert.equal(result, 'success')
+  assert.equal(attempts, 2)
+  assert.deepEqual(recoveredTenants, ['tenant-id'])
 })
 
 test('applies an owner-only Windows ACL to recovery directories', (t) => {
