@@ -139,7 +139,36 @@ function az(argv) {
   return execFileSync('az', argv, { encoding: 'utf8', shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
-const MSAL_CACHE_FILES = ['msal_token_cache.bin', 'msal_http_cache.bin']
+const AZURE_CLI_SESSION_ROOT = path.join(os.tmpdir(), 'fabric-demo-azure-cli')
+
+export function securePrivateDirectory(directory, options = {}) {
+  const platform = options.platform ?? process.platform
+  const execute = options.execFileSync ?? execFileSync
+  const recursive = options.recursive ?? false
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  fs.chmodSync(directory, 0o700)
+  if (platform !== 'win32') return
+
+  const identity = execute('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' })
+  const sid = identity.match(/S-\d+(?:-\d+)+/)?.[0]
+  if (!sid) throw new Error('Could not determine the current Windows user SID.')
+  const args = [
+    directory,
+    '/inheritance:r',
+    '/grant:r', `*${sid}:(OI)(CI)F`,
+    '/grant:r', '*S-1-5-18:(OI)(CI)F',
+  ]
+  execute('icacls', args, { encoding: 'utf8' })
+  if (recursive && fs.readdirSync(directory).length > 0) {
+    execute('icacls', [
+      path.join(directory, '*'),
+      '/inheritance:r',
+      '/grant:r', `*${sid}:F`,
+      '/grant:r', '*S-1-5-18:F',
+      '/T', '/C',
+    ], { encoding: 'utf8' })
+  }
+}
 
 function azErrorText(err) {
   return [err?.message, err?.stderr?.toString?.(), err?.stdout?.toString?.()].filter(Boolean).join('\n')
@@ -153,32 +182,71 @@ function isStaleTokenChallenge(err) {
   )
 }
 
-function clearTokenCache() {
-  const dir = path.join(os.homedir(), '.azure')
-  for (const f of MSAL_CACHE_FILES) fs.rmSync(path.join(dir, f), { force: true })
+export function activateFreshTenantAzureCliCache(tenantId, options = {}) {
+  if (!tenantId) throw new Error('RAYFIN_PUBLIC_TENANT_ID is required for isolated Azure CLI recovery.')
+
+  const sessionRoot = options.sessionRoot ?? AZURE_CLI_SESSION_ROOT
+  const environment = options.environment ?? process.env
+  const now = options.now ?? new Date()
+  const processId = options.processId ?? process.pid
+  const safeTenant = tenantId.replace(/[^A-Za-z0-9._-]/g, '_').toLowerCase()
+  const configDir = path.join(sessionRoot, safeTenant)
+  let backupDir = null
+
+  securePrivateDirectory(sessionRoot, options)
+  if (fs.existsSync(configDir)) {
+    const timestamp = now.toISOString().replace(/\D/g, '')
+    backupDir = `${configDir}.stale-${timestamp}-${processId}`
+    fs.renameSync(configDir, backupDir)
+    securePrivateDirectory(backupDir, { ...options, recursive: true })
+  }
+  securePrivateDirectory(configDir, options)
+  environment.AZURE_CONFIG_DIR = configDir
+  return { configDir, backupDir }
 }
 
-function recoverStaleToken(tenantId) {
+export function recoverStaleToken(tenantId) {
+  if (process.env.FABRIC_DEMO_AUTH_OWNER === 'orchestrator') {
+    throw new Error(
+      'TokenCreatedWithOutdatedPolicies: the parent deployment orchestrator must refresh Azure CLI authentication.',
+    )
+  }
   console.warn(
     '\n\u26a0 Azure CLI token rejected by Continuous Access Evaluation ' +
       '(TokenCreatedWithOutdatedPolicies) \u2014 the cached token predates a tenant ' +
-      'policy change. Clearing the token cache and re-authenticating\u2026',
+      'policy change. Rotating the tenant-scoped cache and re-authenticating...',
   )
   if (dryRun) {
-    console.warn('(dry run \u2014 not clearing cache or logging in; re-run without --dry-run)')
+    console.warn('(dry run \u2014 not rotating the cache or logging in; re-run without --dry-run)')
     return
   }
-  clearTokenCache()
-  const loginArgs = ['login', '--only-show-errors']
-  if (tenantId) loginArgs.push('--tenant', tenantId)
+  try {
+    const { backupDir } = activateFreshTenantAzureCliCache(tenantId)
+    if (backupDir) console.warn(`Preserved stale Azure CLI session at ${backupDir}.`)
+  } catch (err) {
+    fail(`Could not prepare the tenant-scoped Azure CLI recovery cache. ${err.message ?? err}`)
+  }
+  const loginArgs = [
+    'login', '--tenant', tenantId, '--allow-no-subscriptions',
+    '--only-show-errors', '--output', 'none',
+  ]
   try {
     execFileSync('az', loginArgs, { stdio: 'inherit', shell: true })
   } catch {
     fail(
-      'Re-authentication via `az login` failed. Recover manually:\n' +
-        `   az account clear && az login${tenantId ? ` --tenant ${tenantId}` : ''}\n` +
-        'then re-run this script.',
+      `Re-authentication via \`az login --tenant ${tenantId}\` failed. ` +
+        'Retry the script after the tenant sign-in succeeds.',
     )
+  }
+}
+
+export function runWithStaleTokenRecovery(operation, tenantId, recover = recoverStaleToken) {
+  try {
+    return operation()
+  } catch (err) {
+    if (!isStaleTokenChallenge(err)) throw err
+    recover(tenantId)
+    return operation()
   }
 }
 
@@ -200,10 +268,12 @@ function ensureAzLogin(expectedTenant) {
     )
   }
   try {
-    az(['rest', '--method', 'GET', '--uri', 'https://graph.microsoft.com/v1.0/me', '--query', 'id', '-o', 'tsv'])
+    runWithStaleTokenRecovery(
+      () => az(['rest', '--method', 'GET', '--uri', 'https://graph.microsoft.com/v1.0/me', '--query', 'id', '-o', 'tsv']),
+      expectedTenant,
+    )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) recoverStaleToken(expectedTenant)
-    else fail('Microsoft Graph readiness probe failed.\nUnderlying error: ' + azErrorText(err))
+    fail('Microsoft Graph readiness probe failed.\nUnderlying error: ' + azErrorText(err))
   }
   return account
 }
@@ -277,14 +347,13 @@ function registerRedirectUris(clientId) {
 
   let app
   try {
-    app = JSON.parse(
-      az(['ad', 'app', 'show', '--id', clientId, '--query', '{objectId:id,spa:spa.redirectUris}', '-o', 'json']),
+    app = runWithStaleTokenRecovery(
+      () => JSON.parse(
+        az(['ad', 'app', 'show', '--id', clientId, '--query', '{objectId:id,spa:spa.redirectUris}', '-o', 'json']),
+      ),
+      tenantIdFromEnv,
     )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) {
-      recoverStaleToken(tenantIdFromEnv)
-      fail('Re-authenticated \u2014 please re-run the script to apply changes.')
-    }
     fail(
       `Could not read app registration '${clientId}'. Either it does not exist in ` +
         'the signed-in tenant, or your account lacks directory read permission. ' +
@@ -375,12 +444,11 @@ function grantDelegatedPermissions(clientId) {
 
   let current
   try {
-    current = JSON.parse(az(['ad', 'app', 'show', '--id', clientId, '--query', 'requiredResourceAccess', '-o', 'json']))
+    current = runWithStaleTokenRecovery(
+      () => JSON.parse(az(['ad', 'app', 'show', '--id', clientId, '--query', 'requiredResourceAccess', '-o', 'json'])),
+      tenantIdFromEnv,
+    )
   } catch (err) {
-    if (isStaleTokenChallenge(err)) {
-      recoverStaleToken(tenantIdFromEnv)
-      fail('Re-authenticated \u2014 please re-run the script to apply changes.')
-    }
     fail(`Could not read app registration '${clientId}'.\nUnderlying error: ${azErrorText(err)}`)
   }
   if (!Array.isArray(current)) current = []

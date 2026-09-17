@@ -19,7 +19,7 @@ import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import requests
 
@@ -74,6 +74,13 @@ class DeployError(RuntimeError):
     """Expected deployment failure with an operator-readable message."""
 
 
+class AzureCliReauthenticationError(DeployError):
+    """Azure CLI operation failed after a clean tenant-scoped login."""
+
+
+T = TypeVar("T")
+
+
 def command_argv(executable: str, *args: str) -> list[str]:
     """Build an argv that can invoke .cmd shims on Windows without shell=True."""
     resolved = shutil.which(executable)
@@ -100,11 +107,17 @@ def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     return proc.stdout.strip()
 
 
-def run_stream(argv: list[str], *, cwd: Path | None = None) -> str:
+def run_stream(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     """Run a command while forwarding output and retaining it for URL parsing."""
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -361,19 +374,49 @@ def ensure_azure_tenant(tenant: str) -> None:
 
 
 def isolated_azure_cli_config(tenant: str) -> Path:
-    """Return the stable per-tenant cache used after a CAE reauthentication."""
+    """Return the tenant-scoped cache used only for CAE reauthentication."""
     safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant).casefold()
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
-def activate_cached_azure_cli_session(tenant: str) -> bool:
-    """Reuse a previous isolated login without changing the user's default CLI cache."""
-    config_dir = isolated_azure_cli_config(tenant)
-    if not (config_dir / "azureProfile.json").is_file():
-        return False
-    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
-    print(f"Reusing isolated Azure CLI session for tenant {tenant}.", flush=True)
-    return True
+def secure_private_directory(directory: Path, *, recursive: bool = False) -> None:
+    """Create an owner-only directory, including an explicit Windows ACL."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        if os.name == "nt":
+            identity = run_capture(command_argv("whoami", "/user", "/fo", "csv", "/nh"))
+            sid_match = re.search(r"S-\d+(?:-\d+)+", identity)
+            if not sid_match:
+                raise DeployError("Could not determine the current Windows user SID.")
+            acl_command = command_argv(
+                "icacls",
+                str(directory),
+                "/inheritance:r",
+                "/grant:r",
+                f"*{sid_match.group(0)}:(OI)(CI)F",
+                "/grant:r",
+                "*S-1-5-18:(OI)(CI)F",
+            )
+            run_capture(acl_command)
+            if recursive and any(directory.iterdir()):
+                run_capture(
+                    command_argv(
+                        "icacls",
+                        str(directory / "*"),
+                        "/inheritance:r",
+                        "/grant:r",
+                        f"*{sid_match.group(0)}:F",
+                        "/grant:r",
+                        "*S-1-5-18:F",
+                        "/T",
+                        "/C",
+                    )
+                )
+    except (OSError, DeployError) as exc:
+        raise DeployError(
+            f"Could not secure the tenant-scoped Azure CLI cache at {directory}."
+        ) from exc
 
 
 def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
@@ -383,7 +426,20 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
         flush=True,
     )
     config_dir = isolated_azure_cli_config(tenant)
-    config_dir.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(config_dir.parent)
+    if config_dir.exists():
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_dir = config_dir.with_name(f"{config_dir.name}.stale-{timestamp}")
+        try:
+            config_dir.rename(backup_dir)
+        except OSError as exc:
+            raise DeployError(
+                f"Could not preserve the stale tenant-scoped Azure CLI cache at {config_dir}. "
+                "No Azure CLI login state was changed. Close processes using that directory and retry."
+            ) from exc
+        secure_private_directory(backup_dir, recursive=True)
+        print(f"Preserved stale Azure CLI session at {backup_dir}.", flush=True)
+    secure_private_directory(config_dir)
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
     run_stream(
         az(
@@ -399,10 +455,41 @@ def reauthenticate_azure_cli(tenant: str, operation: str) -> None:
     ensure_azure_tenant(tenant)
 
 
+def run_with_azure_cli_reauthentication(
+    tenant: str,
+    operation: str,
+    action: Callable[[], T],
+) -> T:
+    """Retry one stale-token failure with a new tenant-isolated Azure CLI cache."""
+    try:
+        return action()
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise
+
+    try:
+        reauthenticate_azure_cli(tenant, operation)
+    except DeployError as exc:
+        raise AzureCliReauthenticationError(str(exc)) from exc
+    try:
+        return action()
+    except DeployError as exc:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
+            raise AzureCliReauthenticationError(str(exc)) from exc
+        raise AzureCliReauthenticationError(
+            f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
+            f"{operation}, even after a clean tenant-scoped login. Upgrade Azure CLI to the current "
+            "version and retry; if the challenge continues, ask the tenant administrator to verify "
+            "the applicable Conditional Access policy."
+        ) from exc
+
+
 def fabric_headers(tenant: str) -> dict[str, str]:
     command = az(
         "account",
         "get-access-token",
+        "--tenant",
+        tenant,
         "--resource",
         "https://api.fabric.microsoft.com",
         "--query",
@@ -410,13 +497,11 @@ def fabric_headers(tenant: str) -> dict[str, str]:
         "-o",
         "tsv",
     )
-    try:
-        token = run_capture(command)
-    except DeployError as exc:
-        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            raise
-        reauthenticate_azure_cli(tenant, "accessing the Fabric workspace")
-        token = run_capture(command)
+    token = run_with_azure_cli_reauthentication(
+        tenant,
+        "accessing the Fabric workspace",
+        lambda: run_capture(command),
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -518,20 +603,24 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
         "json",
     )
     try:
-        discovery_output = run_capture(discovery_command)
+        discovery_output = run_with_azure_cli_reauthentication(
+            tenant,
+            "discovering the tenant SPA app registration",
+            lambda: run_capture(discovery_command),
+        )
+    except AzureCliReauthenticationError:
+        raise
     except DeployError as exc:
-        if STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            reauthenticate_azure_cli(tenant, "discovering the tenant SPA app registration")
-            discovery_output = run_capture(discovery_command)
-        elif fallback:
+        if fallback and not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             warn_live_auth(
                 f"Tenant SPA discovery failed ({exc}); reusing the unverified client ID "
                 f"from the existing Rayfin environment: {fallback}."
             )
             return fallback
-        else:
+        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             warn_live_auth(f"Tenant SPA discovery failed and no existing client ID is available ({exc}).")
             return None
+        raise
     try:
         apps = json.loads(discovery_output)
     except json.JSONDecodeError as exc:
@@ -834,6 +923,19 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
     print(f"Validated all Entra live-auth contracts for SPA {client_id}.", flush=True)
 
 
+def validate_entra_live_auth_with_reauth(
+    client_id: str,
+    hosting_url: str,
+    tenant: str,
+) -> None:
+    """Retry final Entra contract validation after a stale-token challenge."""
+    run_with_azure_cli_reauthentication(
+        tenant,
+        "validating browser sign-in readiness",
+        lambda: validate_entra_live_auth(client_id, hosting_url),
+    )
+
+
 def ensure_rayfin_login(tenant: str) -> None:
     try:
         status = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
@@ -941,14 +1043,11 @@ def read_entra_spa_redirects(client_id: str) -> list[str]:
 
 def read_entra_spa_redirects_with_reauth(client_id: str, tenant: str) -> list[str]:
     """Retry an Entra redirect snapshot after a stale-token CAE challenge."""
-    try:
-        return read_entra_spa_redirects(client_id)
-    except DeployError as exc:
-        if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            raise
-
-    reauthenticate_azure_cli(tenant, "reading the existing SPA redirects")
-    return read_entra_spa_redirects(client_id)
+    return run_with_azure_cli_reauthentication(
+        tenant,
+        "reading the existing SPA redirects",
+        lambda: read_entra_spa_redirects(client_id),
+    )
 
 
 def _rayfin_redirect_block() -> tuple[Path, list[str], int, int, int, str]:
@@ -993,9 +1092,13 @@ def write_rayfin_redirects(redirects: list[str]) -> list[str]:
     return merged
 
 
-def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> None:
+def validate_spa_redirect_preservation(
+    client_id: str,
+    expected: list[str],
+    tenant: str,
+) -> None:
     """Fail if any redirect URI captured/configured before deployment disappeared."""
-    current = set(read_entra_spa_redirects(client_id))
+    current = set(read_entra_spa_redirects_with_reauth(client_id, tenant))
     missing = [uri for uri in expected if uri not in current]
     if missing:
         raise DeployError(
@@ -1009,7 +1112,6 @@ def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> N
 
 
 def deploy(args: argparse.Namespace) -> None:
-    activate_cached_azure_cli_session(args.tenant)
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
@@ -1095,9 +1197,14 @@ def deploy(args: argparse.Namespace) -> None:
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
         try:
-            run_stream(
-                node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
-                cwd=APP_DIR,
+            run_with_azure_cli_reauthentication(
+                args.tenant,
+                "configuring browser sign-in",
+                lambda: run_stream(
+                    node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
+                    cwd=APP_DIR,
+                    env={**os.environ, "FABRIC_DEMO_AUTH_OWNER": "orchestrator"},
+                ),
             )
         except DeployError as exc:
             warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
@@ -1117,9 +1224,9 @@ def deploy(args: argparse.Namespace) -> None:
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects)
+        validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
         try:
-            validate_entra_live_auth(client_id, hosting_url)
+            validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
         except (DeployError, json.JSONDecodeError) as exc:
             warn_live_auth(
                 f"Browser sign-in readiness check did not pass for SPA {client_id}:\n{exc}"
