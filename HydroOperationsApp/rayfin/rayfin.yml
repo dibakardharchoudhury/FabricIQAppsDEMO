@@ -15,6 +15,7 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://game-wave-2a152256d6-swedencentral.webapp.fabricapps.net
       - https://civic-plum-201644270b-swedencentral.webapp.fabricapps.net
       - https://ivory-hill-dc879f84f3-swedencentral.webapp.fabricapps.net
       - https://rigid-gem-ea8f7e6d3a-swedencentral.webapp.fabricapps.net
@@ -38,7 +39,7 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://game-wave-2a152256d6-swedencentral.webapp.fabricapps.net
+      - https://still-palm-e314fcc2f4-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
