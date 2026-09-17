@@ -231,6 +231,25 @@ class DeployOrderTests(unittest.TestCase):
         reauthenticate.assert_not_called()
         warn_live_auth.assert_called_once()
 
+    def test_spa_discovery_post_reauthentication_failure_does_not_use_fallback(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+        denied = DEPLOY.DeployError("Authorization_RequestDenied")
+        with (
+            patch.object(
+                DEPLOY,
+                "existing_spa_candidate",
+                return_value="11111111-1111-1111-1111-111111111111",
+            ),
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=[stale, denied]),
+            patch.object(DEPLOY, "reauthenticate_azure_cli"),
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.AzureCliReauthenticationError,
+                "Authorization_RequestDenied",
+            ):
+                DEPLOY.resolve_spa(None, "tenant-id")
+
     def test_git_push_target_uses_matching_feature_upstream(self):
         with (
             patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
@@ -419,7 +438,10 @@ class DeployOrderTests(unittest.TestCase):
         )
 
         with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
-            with self.assertRaisesRegex(DEPLOY.DeployError, "Authorization_RequestDenied"):
+            with self.assertRaisesRegex(
+                DEPLOY.AzureCliReauthenticationError,
+                "Authorization_RequestDenied",
+            ):
                 DEPLOY.run_with_azure_cli_reauthentication(
                     "tenant-id",
                     "testing authentication",
@@ -428,6 +450,20 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(action.call_count, 2)
         reauthenticate.assert_called_once_with("tenant-id", "testing authentication")
+
+    def test_final_redirect_validation_uses_stale_token_recovery(self):
+        with patch.object(
+            DEPLOY,
+            "read_entra_spa_redirects_with_reauth",
+            return_value=["https://app.example"],
+        ) as read_redirects:
+            DEPLOY.validate_spa_redirect_preservation(
+                "client-id",
+                ["https://app.example"],
+                "tenant-id",
+            )
+
+        read_redirects.assert_called_once_with("client-id", "tenant-id")
 
     def test_wrong_active_tenant_is_rejected_without_login(self):
         account = {"tenantId": "other-tenant", "user": {"name": "user@example.test"}}

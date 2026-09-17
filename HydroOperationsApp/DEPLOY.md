@@ -73,8 +73,10 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
   challenge does it sign in under `%TEMP%\fabric-demo-azure-cli\<tenant>`, preserving any previous
   recovery directory under a timestamped `.stale-*` name. It never logs out, clears, or changes the
   user's normal `%USERPROFILE%\.azure` cache or another tenant's directory.
-  If the clean login is also rejected, deployment stops before Rayfin state changes and asks for a CLI
-  upgrade or Conditional Access review. See Microsoft's [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+  If a clean login is rejected during pre-deployment checks, deployment stops before Rayfin state
+  changes. Final Entra checks use the same bounded recovery after deployment; persistent rejection
+  then fails validation with guidance to upgrade the CLI or review Conditional Access. See Microsoft's
+  [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
 - **Email‑alert connection (OAuth2, one‑time, portal)** — the `Pipe_SendEmailAlert` pipeline (Operations Agent alerts, `RTI_010`) uses the **Office 365 Outlook “Send an email”** activity, which sends **from a mailbox** and therefore needs an **OAuth2** connection. It **can’t** be created from a notebook or from a Service Principal (an SP connection tests as *Online* but the activity fails with “Failed to load the connection”). Create it **once** in the portal — see [root README → Prerequisites](../README.md) item 5. `RTI_010` then auto‑detects and reuses it.

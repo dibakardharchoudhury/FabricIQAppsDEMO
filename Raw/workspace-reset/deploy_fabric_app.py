@@ -74,6 +74,10 @@ class DeployError(RuntimeError):
     """Expected deployment failure with an operator-readable message."""
 
 
+class AzureCliReauthenticationError(DeployError):
+    """Azure CLI operation failed after a clean tenant-scoped login."""
+
+
 T = TypeVar("T")
 
 
@@ -420,8 +424,8 @@ def run_with_azure_cli_reauthentication(
         return action()
     except DeployError as exc:
         if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
-            raise
-        raise DeployError(
+            raise AzureCliReauthenticationError(str(exc)) from exc
+        raise AzureCliReauthenticationError(
             f"Azure CLI authentication was still rejected by Continuous Access Evaluation while "
             f"{operation}, even after a clean tenant-scoped login. Upgrade Azure CLI to the current "
             "version and retry; if the challenge continues, ask the tenant administrator to verify "
@@ -553,6 +557,8 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
             "discovering the tenant SPA app registration",
             lambda: run_capture(discovery_command),
         )
+    except AzureCliReauthenticationError:
+        raise
     except DeployError as exc:
         if fallback and not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             warn_live_auth(
@@ -866,6 +872,19 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
     print(f"Validated all Entra live-auth contracts for SPA {client_id}.", flush=True)
 
 
+def validate_entra_live_auth_with_reauth(
+    client_id: str,
+    hosting_url: str,
+    tenant: str,
+) -> None:
+    """Retry final Entra contract validation after a stale-token challenge."""
+    run_with_azure_cli_reauthentication(
+        tenant,
+        "validating browser sign-in readiness",
+        lambda: validate_entra_live_auth(client_id, hosting_url),
+    )
+
+
 def ensure_rayfin_login(tenant: str) -> None:
     try:
         status = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
@@ -1022,9 +1041,13 @@ def write_rayfin_redirects(redirects: list[str]) -> list[str]:
     return merged
 
 
-def validate_spa_redirect_preservation(client_id: str, expected: list[str]) -> None:
+def validate_spa_redirect_preservation(
+    client_id: str,
+    expected: list[str],
+    tenant: str,
+) -> None:
     """Fail if any redirect URI captured/configured before deployment disappeared."""
-    current = set(read_entra_spa_redirects(client_id))
+    current = set(read_entra_spa_redirects_with_reauth(client_id, tenant))
     missing = [uri for uri in expected if uri not in current]
     if missing:
         raise DeployError(
@@ -1145,9 +1168,9 @@ def deploy(args: argparse.Namespace) -> None:
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects)
+        validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
         try:
-            validate_entra_live_auth(client_id, hosting_url)
+            validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
         except (DeployError, json.JSONDecodeError) as exc:
             warn_live_auth(
                 f"Browser sign-in readiness check did not pass for SPA {client_id}:\n{exc}"
