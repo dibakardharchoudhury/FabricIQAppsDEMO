@@ -212,6 +212,25 @@ class DeployOrderTests(unittest.TestCase):
         )
         ensure_service_principal.assert_called_once_with(client_id)
 
+    def test_spa_discovery_non_cae_failure_uses_existing_fallback_without_login(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
+        with (
+            patch.object(DEPLOY, "existing_spa_candidate", return_value=client_id),
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=DEPLOY.DeployError("Authorization_RequestDenied"),
+            ),
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+            patch.object(DEPLOY, "warn_live_auth") as warn_live_auth,
+        ):
+            resolved = DEPLOY.resolve_spa(None, "tenant-id")
+
+        self.assertEqual(resolved, client_id)
+        reauthenticate.assert_not_called()
+        warn_live_auth.assert_called_once()
+
     def test_git_push_target_uses_matching_feature_upstream(self):
         with (
             patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),
