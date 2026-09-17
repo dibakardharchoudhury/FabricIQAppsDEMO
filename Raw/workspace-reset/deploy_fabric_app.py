@@ -419,7 +419,10 @@ def run_with_azure_cli_reauthentication(
         if not STALE_TOKEN_CHALLENGE_RE.search(str(exc)):
             raise
 
-    reauthenticate_azure_cli(tenant, operation)
+    try:
+        reauthenticate_azure_cli(tenant, operation)
+    except DeployError as exc:
+        raise AzureCliReauthenticationError(str(exc)) from exc
     try:
         return action()
     except DeployError as exc:

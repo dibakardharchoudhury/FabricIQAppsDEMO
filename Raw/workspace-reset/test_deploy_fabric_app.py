@@ -250,6 +250,28 @@ class DeployOrderTests(unittest.TestCase):
             ):
                 DEPLOY.resolve_spa(None, "tenant-id")
 
+    def test_spa_discovery_failed_login_does_not_use_fallback(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+        with (
+            patch.object(
+                DEPLOY,
+                "existing_spa_candidate",
+                return_value="11111111-1111-1111-1111-111111111111",
+            ),
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", side_effect=stale),
+            patch.object(
+                DEPLOY,
+                "reauthenticate_azure_cli",
+                side_effect=DEPLOY.DeployError("Clean tenant login failed"),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.AzureCliReauthenticationError,
+                "Clean tenant login failed",
+            ):
+                DEPLOY.resolve_spa(None, "tenant-id")
+
     def test_git_push_target_uses_matching_feature_upstream(self):
         with (
             patch.object(DEPLOY, "command_argv", side_effect=lambda executable, *args: [executable, *args]),

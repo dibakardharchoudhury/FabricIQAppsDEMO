@@ -139,7 +139,7 @@ function az(argv) {
   return execFileSync('az', argv, { encoding: 'utf8', shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
-const MSAL_CACHE_FILES = ['msal_token_cache.bin', 'msal_http_cache.bin']
+const AZURE_CLI_SESSION_ROOT = path.join(os.tmpdir(), 'fabric-demo-azure-cli')
 
 function azErrorText(err) {
   return [err?.message, err?.stderr?.toString?.(), err?.stdout?.toString?.()].filter(Boolean).join('\n')
@@ -153,31 +153,53 @@ function isStaleTokenChallenge(err) {
   )
 }
 
-function clearTokenCache() {
-  const dir = path.join(os.homedir(), '.azure')
-  for (const f of MSAL_CACHE_FILES) fs.rmSync(path.join(dir, f), { force: true })
+export function activateFreshTenantAzureCliCache(tenantId, options = {}) {
+  if (!tenantId) throw new Error('RAYFIN_PUBLIC_TENANT_ID is required for isolated Azure CLI recovery.')
+
+  const sessionRoot = options.sessionRoot ?? AZURE_CLI_SESSION_ROOT
+  const environment = options.environment ?? process.env
+  const now = options.now ?? new Date()
+  const processId = options.processId ?? process.pid
+  const safeTenant = tenantId.replace(/[^A-Za-z0-9._-]/g, '_').toLowerCase()
+  const configDir = path.join(sessionRoot, safeTenant)
+  let backupDir = null
+
+  if (fs.existsSync(configDir)) {
+    const timestamp = now.toISOString().replace(/\D/g, '')
+    backupDir = `${configDir}.stale-${timestamp}-${processId}`
+    fs.renameSync(configDir, backupDir)
+  }
+  fs.mkdirSync(configDir, { recursive: true })
+  environment.AZURE_CONFIG_DIR = configDir
+  return { configDir, backupDir }
 }
 
 function recoverStaleToken(tenantId) {
   console.warn(
     '\n\u26a0 Azure CLI token rejected by Continuous Access Evaluation ' +
       '(TokenCreatedWithOutdatedPolicies) \u2014 the cached token predates a tenant ' +
-      'policy change. Clearing the token cache and re-authenticating\u2026',
+      'policy change. Rotating the tenant-scoped cache and re-authenticating...',
   )
   if (dryRun) {
-    console.warn('(dry run \u2014 not clearing cache or logging in; re-run without --dry-run)')
+    console.warn('(dry run \u2014 not rotating the cache or logging in; re-run without --dry-run)')
     return
   }
-  clearTokenCache()
-  const loginArgs = ['login', '--only-show-errors']
-  if (tenantId) loginArgs.push('--tenant', tenantId)
+  try {
+    const { backupDir } = activateFreshTenantAzureCliCache(tenantId)
+    if (backupDir) console.warn(`Preserved stale Azure CLI session at ${backupDir}.`)
+  } catch (err) {
+    fail(`Could not prepare the tenant-scoped Azure CLI recovery cache. ${err.message ?? err}`)
+  }
+  const loginArgs = [
+    'login', '--tenant', tenantId, '--allow-no-subscriptions',
+    '--only-show-errors', '--output', 'none',
+  ]
   try {
     execFileSync('az', loginArgs, { stdio: 'inherit', shell: true })
   } catch {
     fail(
-      'Re-authentication via `az login` failed. Recover manually:\n' +
-        `   az account clear && az login${tenantId ? ` --tenant ${tenantId}` : ''}\n` +
-        'then re-run this script.',
+      `Re-authentication via \`az login --tenant ${tenantId}\` failed. ` +
+        'Retry the script after the tenant sign-in succeeds.',
     )
   }
 }
