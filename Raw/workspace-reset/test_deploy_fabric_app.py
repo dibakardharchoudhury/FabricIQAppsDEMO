@@ -267,6 +267,25 @@ class DeployOrderTests(unittest.TestCase):
             "accessing the Fabric workspace",
         )
 
+    def test_fabric_token_uses_the_requested_tenant_without_reauthentication(self):
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", return_value="fabric-token") as run_capture,
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+        ):
+            headers = DEPLOY.fabric_headers("target-tenant")
+
+        self.assertEqual(headers, {"Authorization": "Bearer fabric-token"})
+        self.assertEqual(
+            run_capture.call_args.args[0],
+            [
+                "account", "get-access-token", "--tenant", "target-tenant",
+                "--resource", "https://api.fabric.microsoft.com",
+                "--query", "accessToken", "-o", "tsv",
+            ],
+        )
+        reauthenticate.assert_not_called()
+
     def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -326,6 +345,20 @@ class DeployOrderTests(unittest.TestCase):
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 
+    def test_reauthentication_does_not_login_when_cache_rotation_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir) / "tenant-id"
+            config_dir.mkdir()
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
+                patch.object(DEPLOY.Path, "rename", side_effect=OSError("locked")),
+                patch.object(DEPLOY, "run_stream") as run_stream,
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "No Azure CLI login state was changed"):
+                    DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+
+        run_stream.assert_not_called()
+
     def test_reauthentication_stops_after_second_stale_token_challenge(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
         action = Mock(side_effect=[stale, stale])
@@ -356,6 +389,37 @@ class DeployOrderTests(unittest.TestCase):
                 )
 
         action.assert_called_once_with()
+        reauthenticate.assert_not_called()
+
+    def test_non_stale_failure_after_reauthentication_is_preserved(self):
+        action = Mock(
+            side_effect=[
+                DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies"),
+                DEPLOY.DeployError("Authorization_RequestDenied"),
+            ]
+        )
+
+        with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Authorization_RequestDenied"):
+                DEPLOY.run_with_azure_cli_reauthentication(
+                    "tenant-id",
+                    "testing authentication",
+                    action,
+                )
+
+        self.assertEqual(action.call_count, 2)
+        reauthenticate.assert_called_once_with("tenant-id", "testing authentication")
+
+    def test_wrong_active_tenant_is_rejected_without_login(self):
+        account = {"tenantId": "other-tenant", "user": {"name": "user@example.test"}}
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_capture", return_value=json.dumps(account)),
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "not target-tenant"):
+                DEPLOY.ensure_azure_tenant("target-tenant")
+
         reauthenticate.assert_not_called()
 
     def test_deploy_starts_with_the_users_current_azure_cli_session(self):

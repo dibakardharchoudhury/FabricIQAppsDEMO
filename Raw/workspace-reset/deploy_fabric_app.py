@@ -433,6 +433,8 @@ def fabric_headers(tenant: str) -> dict[str, str]:
     command = az(
         "account",
         "get-access-token",
+        "--tenant",
+        tenant,
         "--resource",
         "https://api.fabric.microsoft.com",
         "--query",
