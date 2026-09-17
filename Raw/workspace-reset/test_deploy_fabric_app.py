@@ -164,17 +164,19 @@ class DeployOrderTests(unittest.TestCase):
             "InteractionRequired and code: TokenCreatedWithOutdatedPolicies"
         )
 
-        with (
-            patch.object(
-                DEPLOY,
-                "read_entra_spa_redirects",
-                side_effect=[stale, ["https://existing.webapp.fabricapps.net"]],
-            ) as read_redirects,
-            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
-            patch.object(DEPLOY, "run_stream") as run_stream,
-            patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
-        ):
-            redirects = DEPLOY.read_entra_spa_redirects_with_reauth("client-id", "tenant-id")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
+                patch.object(
+                    DEPLOY,
+                    "read_entra_spa_redirects",
+                    side_effect=[stale, ["https://existing.webapp.fabricapps.net"]],
+                ) as read_redirects,
+                patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+                patch.object(DEPLOY, "run_stream") as run_stream,
+                patch.object(DEPLOY, "ensure_azure_tenant") as ensure_tenant,
+            ):
+                redirects = DEPLOY.read_entra_spa_redirects_with_reauth("client-id", "tenant-id")
 
         self.assertEqual(redirects, ["https://existing.webapp.fabricapps.net"])
         self.assertEqual(read_redirects.call_count, 2)
@@ -204,7 +206,10 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(resolved, client_id)
         self.assertEqual(run_capture.call_count, 2)
-        reauthenticate.assert_called_once_with("tenant-id", "discovering the tenant SPA app registration")
+        reauthenticate.assert_called_once_with(
+            "tenant-id",
+            "discovering the tenant SPA app registration",
+        )
         ensure_service_principal.assert_called_once_with(client_id)
 
     def test_git_push_target_uses_matching_feature_upstream(self):
@@ -257,7 +262,42 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(headers, {"Authorization": "Bearer fabric-token"})
         self.assertEqual(run_capture.call_count, 2)
-        reauthenticate.assert_called_once_with("tenant-id", "accessing the Fabric workspace")
+        reauthenticate.assert_called_once_with(
+            "tenant-id",
+            "accessing the Fabric workspace",
+        )
+
+    def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir) / "tenant-id"
+            config_dir.mkdir()
+            (config_dir / "azureProfile.json").write_text("stale-profile", encoding="utf-8")
+            (config_dir / "msal_token_cache.bin").write_text("stale-token", encoding="utf-8")
+
+            def assert_clean_cache(_command):
+                self.assertTrue(config_dir.is_dir())
+                self.assertFalse((config_dir / "msal_token_cache.bin").exists())
+
+            with (
+                patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
+                patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+                patch.object(DEPLOY, "run_stream", side_effect=assert_clean_cache),
+                patch.object(DEPLOY, "ensure_azure_tenant"),
+            ):
+                DEPLOY.reauthenticate_azure_cli("tenant-id", "testing")
+
+            backups = list(Path(temp_dir).glob("tenant-id.stale-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(
+                (backups[0] / "msal_token_cache.bin").read_text(encoding="utf-8"),
+                "stale-token",
+            )
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
 
     def test_reauthentication_is_tenant_scoped_and_non_deleting(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
@@ -286,20 +326,54 @@ class DeployOrderTests(unittest.TestCase):
         ])
         ensure_tenant.assert_called_once_with("tenant-id")
 
-    def test_cached_isolated_session_is_reused_for_the_same_tenant(self):
-        shared_config = os.environ.get("AZURE_CONFIG_DIR")
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / "tenant-id"
-            config_dir.mkdir()
-            (config_dir / "azureProfile.json").write_text("{}", encoding="utf-8")
-            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
-                self.assertTrue(DEPLOY.activate_cached_azure_cli_session("TENANT-ID"))
-                self.assertEqual(os.environ.get("AZURE_CONFIG_DIR"), str(config_dir))
+    def test_reauthentication_stops_after_second_stale_token_challenge(self):
+        stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
+        action = Mock(side_effect=[stale, stale])
 
-        if shared_config is None:
-            os.environ.pop("AZURE_CONFIG_DIR", None)
-        else:
-            os.environ["AZURE_CONFIG_DIR"] = shared_config
+        with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError,
+                "even after a clean tenant-scoped login",
+            ):
+                DEPLOY.run_with_azure_cli_reauthentication(
+                    "tenant-id",
+                    "testing authentication",
+                    action,
+                )
+
+        self.assertEqual(action.call_count, 2)
+        reauthenticate.assert_called_once_with("tenant-id", "testing authentication")
+
+    def test_non_stale_authentication_failure_is_not_retried(self):
+        action = Mock(side_effect=DEPLOY.DeployError("Forbidden"))
+
+        with patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Forbidden"):
+                DEPLOY.run_with_azure_cli_reauthentication(
+                    "tenant-id",
+                    "testing authentication",
+                    action,
+                )
+
+        action.assert_called_once_with()
+        reauthenticate.assert_not_called()
+
+    def test_deploy_starts_with_the_users_current_azure_cli_session(self):
+        args = argparse.Namespace(
+            tenant="tenant-id",
+            workspace="workspace-id",
+            client_id=None,
+            push_config=False,
+        )
+
+        with (
+            patch.object(DEPLOY, "ensure_azure_tenant", side_effect=DEPLOY.DeployError("stop")),
+            patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "stop"):
+                DEPLOY.deploy(args)
+
+        reauthenticate.assert_not_called()
 
     def test_fabric_token_authorization_error_does_not_trigger_login(self):
         denied = DEPLOY.DeployError("Authorization_RequestDenied")
