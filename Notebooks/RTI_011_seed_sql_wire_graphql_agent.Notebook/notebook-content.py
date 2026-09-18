@@ -52,6 +52,7 @@
 # Required per-run target.
 # The calling webapp must supply its own Rayfin SQL Database name.
 sql_db_item_name = ""
+strict_setup = False
 
 # METADATA ********************
 
@@ -870,6 +871,8 @@ def seed_sql_database(server: str, database: str) -> None:
         )
         for name, n in counts.fetchall():
             print(f"   • {name}: {n}")
+            if strict_setup and n == 0:
+                raise RuntimeError(f"Operational seed validation failed: {name} is empty.")
         counts.close()
     finally:
         connection.close()
@@ -885,6 +888,8 @@ try:
     seed_sql_database(sql_server, sql_database)
     print("✅ Operational seed applied (idempotent).")
 except Exception as exc:  # noqa: BLE001 - best-effort seed with manual fallback
+    if strict_setup:
+        raise
     print("⚠️ SQL seeding did not complete:")
     print("   ", exc)
     print("   Manual fallback: run HydroOperationsApp/sql/seed-operational-data.sql against")
@@ -948,6 +953,8 @@ try:
         + ", ".join(t for t, _ in GRAPHQL_OBJECTS)
     )
 except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the fallback
+    if strict_setup:
+        raise
     print("⚠️ GraphQL API creation/binding did not complete:")
     print("   ", exc)
     print(
@@ -1095,6 +1102,8 @@ try:
     publish_data_agent(agent_id, "Operational SQL source added.")
     print("🌐 Data Agent republished with ontology + operational SQL sources.")
 except Exception as exc:  # noqa: BLE001 - best-effort; portal 'Add data' is the fallback
+    if strict_setup:
+        raise
     print("⚠️ Adding the SQL source to the Data Agent did not complete:")
     print("   ", exc)
     print("   Manual fallback: open the Data Agent → Add data → SQL database →")

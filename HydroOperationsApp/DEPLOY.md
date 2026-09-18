@@ -25,6 +25,47 @@ validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA set
 preservation, permission/consent checks, hosted-page verification, and generated-origin persistence.
 The remaining numbered sections document those phases for operators and troubleshooting.
 
+### Optional: isolated feature workspace without Fabric Git
+
+Set `FABRIC_FEATURE_CONFIG` to an absolute path to a **local, nonsecret JSON file**
+outside the repository, then run the same one-shot command above. No additional
+deployment command or Fabric Git connection is used. Without this variable, app-only
+deployment is unchanged.
+
+```json
+{
+  "tenant_id": "<target-tenant-guid>",
+  "workspace_id": "<existing-feature-workspace-guid>",
+  "subscription_id": "<target-subscription-guid>",
+  "resource_group": "rg-hydro-feature",
+  "vault_name": "<globally-unique-vault-name>",
+  "location": "norwayeast",
+  "env_suffix": "V6",
+  "allow_public_api_group": true
+}
+```
+
+Use this option only after approving creation of the dedicated Azure prerequisites
+and the narrowly scoped Fabric API allow-list group. The config must match the CLI
+tenant/workspace exactly; this is not a source-workspace cloning operation.
+
+The orchestrator provisions the dedicated notebook identity and Key Vault, imports
+the checkout's Environment/notebook/pipeline definitions through Fabric REST,
+rebinds pipeline references to target notebook IDs, runs `01_Pipe_Setup`, deploys
+the app, then runs `RTI_011` in strict mode and a demo stream. Strict mode fails the
+job if SQL seeding, GraphQL binding or Data Agent wiring fails; normal interactive
+seeding retains its existing best-effort behavior. The bootstrap checks queryable
+STID and telemetry before reporting completion. It keeps a nonsecret
+`*.state.json` checkpoint beside the config to resume interrupted work. Preserve
+that checkpoint. It refuses to overwrite unowned items or use a Git-connected target.
+
+This produces **fresh demo data**, not copies of another workspace's operational
+records or history. Teams delivery remains unconfigured, the Operations Agent stays
+stopped, and the Weather schedule stays disabled. Weather API credentials and an
+Outlook OAuth connection are not fabricated: provision those separately before
+enabling their respective jobs. Missing sign-in readiness is a hard failure in this
+bootstrap mode, even where app-only deployment would report a warning.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform

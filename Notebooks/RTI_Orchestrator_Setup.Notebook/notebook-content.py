@@ -59,6 +59,7 @@
 #   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
+enable_weather_schedule = True
 workspace_id = ""
 key_vault_uri = ""
 key_vault_tenant_id_secret_name = "tenantid"
@@ -118,6 +119,9 @@ def _require_successful_dag(results_by_activity: dict) -> None:
 
 
 def _activate_weather_schedule() -> None:
+    if not enable_weather_schedule:
+        print("Weather schedule activation is disabled for this environment.")
+        return
     required = {
         "workspace_id": workspace_id,
         "key_vault_uri": key_vault_uri,
@@ -187,7 +191,7 @@ def _activate_weather_schedule() -> None:
 
 _require_successful_dag(results)
 _activate_weather_schedule()
-print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001); Weather schedule enabled.")
+print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001).")
 results
 
 # METADATA ********************
