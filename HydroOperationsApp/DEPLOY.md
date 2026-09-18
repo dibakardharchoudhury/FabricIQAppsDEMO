@@ -66,6 +66,12 @@ Outlook OAuth connection are not fabricated: provision those separately before
 enabling their respective jobs. Missing sign-in readiness is a hard failure in this
 bootstrap mode, even where app-only deployment would report a warning.
 
+The prerequisite bootstrap currently requires an Entra/RBAC-protected public TLS
+endpoint on its dedicated Key Vault. If an organizational policy forces
+`publicNetworkAccess: Disabled`, it stops before creating notebook credentials.
+Do not bypass that policy: use a governance-approved exception or arrange an
+approved private-network provisioning path before continuing.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform
