@@ -163,9 +163,19 @@ class FeatureFabric(Fabric):
 
 def check_response(response: requests.Response, action: str, expected: set[int]) -> None:
     if response.status_code not in expected:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        error = payload.get("error", payload) if isinstance(payload, dict) else {}
+        if not isinstance(error, dict):
+            error = {}
+        detail = ": ".join(value for value in (
+            error.get("errorCode") or error.get("code"), error.get("message"),
+        ) if isinstance(value, str))[:600]
         raise FeatureWorkspaceError(
             f"{action} failed: HTTP {response.status_code}; "
-            f"request {response.headers.get('x-ms-request-id', '(not supplied)')}."
+            f"request {response.headers.get('x-ms-request-id', '(not supplied)')}. {detail}"
         )
 
 
@@ -459,7 +469,6 @@ class FeatureWorkspace:
         if not matches:
             response = self.fabric.request("POST", f"{self.base}/lakehouses", json={
                 "displayName": name, "description": marker,
-                "creationPayload": {"enableSchemas": False},
             })
             check_response(response, "Create energy context Lakehouse", {200, 201, 202})
             self.fabric.poll_lro(response)

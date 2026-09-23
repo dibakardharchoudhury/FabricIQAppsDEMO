@@ -148,12 +148,19 @@ class FeatureWorkspaceTests(unittest.TestCase):
             ):
                 workspace._prepare_energy_map()
             payload = workspace.fabric.request.call_args.kwargs["json"]
-            self.assertEqual(payload["creationPayload"], {"enableSchemas": False})
+            self.assertNotIn("creationPayload", payload)
             self.assertEqual(payload["displayName"], "Hydro_GeoContext_V6")
             self.assertEqual(bind.call_args.args[1]["default_lakehouse"], SUBSCRIPTION)
             self.assertEqual(run.call_args.args[0], feature.ENERGY_PIPELINE)
             self.assertEqual(run.call_args.args[2]["executionData"]["parameters"]["workspace_id"], WORKSPACE)
             publish.assert_called_once_with(SUBSCRIPTION)
+
+    def test_fabric_errors_report_the_service_code_and_message(self):
+        response = Mock(status_code=400, headers={}, json=lambda: {
+            "errorCode": "InvalidLakehouseCreationPayload", "message": "Only true is allowed.",
+        })
+        with self.assertRaisesRegex(feature.FeatureWorkspaceError, "InvalidLakehouseCreationPayload: Only true is allowed"):
+            feature.check_response(response, "Create energy context Lakehouse", {201, 202})
 
     def test_energy_lakehouse_does_not_take_over_an_unowned_item(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):

@@ -149,7 +149,7 @@ export function OperationsMapPage() {
               {status?.state === 'error' ? ' - import error' : stale ? ' - stale snapshot' : ''}
             </small>
             {!!status?.unmappedCount && <small>{status.unmappedCount.toLocaleString()} without map coordinates</small>}
-            {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected; inspect ingestion report</small>}
+            {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected geometries; records retained</small>}
             {status?.message && <details><summary>Source details</summary><p>{status.message}</p></details>}
           </div>
         })}

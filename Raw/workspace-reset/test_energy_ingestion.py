@@ -774,7 +774,7 @@ class RepositoryContractTests(HelpersTest):
             table: self.call("delta_location", table, f"{base}/{table}")
             for table in ("geo_map_features", "geo_source_status")
         }
-        with self.assertRaisesRegex(self.error, "enableSchemas: false") as raised:
+        with self.assertRaisesRegex(self.error, "schema-disabled") as raised:
             self.call("validate_table_locations", locations)
         for table in locations:
             self.assertIn(f"{base}/{table}", str(raised.exception))

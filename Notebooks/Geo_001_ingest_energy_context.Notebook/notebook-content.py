@@ -23,7 +23,8 @@
 # lakehouse. Deployment supplies the binding; no service principal, secret, or Fabric
 # control-plane call is needed here. `workspace_id` defaults to runtime context.
 # Use separate workspace/bindings and an explicit suffix for dev/test/prod promotion.
-# Create GeoContext with **`enableSchemas: false`**: the serving aliases
+# Create a **schema-disabled** GeoContext Lakehouse by omitting `creationPayload`
+# from the REST create request (`enableSchemas` only accepts `true`). The aliases
 # `HydroGeoFeatures` / `HydroGeoStatus` expect `Tables/geo_map_features` /
 # `Tables/geo_source_status`. Actual Delta locations are reported at startup and
 # in the successful run summary. A schema-enabled/different layout fails before
@@ -1158,7 +1159,7 @@ def validate_table_locations(locations):
     ]
     if mismatches:
         raise SourceError(
-            "GeoContext requires enableSchemas: false and flat Tables/<table> paths for "
+            "GeoContext requires a schema-disabled Lakehouse and flat Tables/<table> paths for "
             "HydroGeoFeatures/HydroGeoStatus. Refusing source imports into an incompatible layout. "
             "Actual Delta locations: " + json_text(locations)
         )

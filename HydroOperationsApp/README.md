@@ -74,8 +74,9 @@ continuous collection or wider redistribution. OpenStreetMap supplies only the
 basemap; energy overlays come from Fabric. Review its tile usage policy before
 production traffic and replace the basemap with an approved provider when needed.
 
-Create GeoContext with `creationPayload.enableSchemas: false` (the orchestrator
-does this), and keep the pipeline's concurrency at one. Its Delta feature table
+Create a schema-disabled GeoContext by omitting `creationPayload` from the REST
+create request (the orchestrator does this; `enableSchemas` accepts only `true`).
+Keep the pipeline's concurrency at one. Its Delta feature table
 is partitioned by layer; a complete validated snapshot atomically replaces only
 that layer. Raw responses and attempt logs remain in OneLake. Healthy grid/plant
 snapshots are reused for 24 hours unless `force_refresh=true`; `refresh_mode=operational`
