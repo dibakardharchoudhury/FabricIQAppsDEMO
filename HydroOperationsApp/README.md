@@ -62,8 +62,9 @@ impact, and capacities are not extracted from prose.
 
 The browser queries only selected layers in the current viewport, with
 zoom thresholds for dense distribution/mast data and a visible 4,000-feature
-limit. It never downloads the full national network at startup. The layer panel
-shows import age, errors and unmapped counts; unplotted UMMs remain accessible in
+limit. It never downloads the full national network at startup. Layer filters sit
+in a responsive panel above the map, with import age, errors and unmapped counts;
+unplotted UMMs remain accessible in
 the event list. Unknown or failed data is not replaced with invented features.
 
 **Reload map** rereads Fabric snapshots; **Import latest data** starts the cloud

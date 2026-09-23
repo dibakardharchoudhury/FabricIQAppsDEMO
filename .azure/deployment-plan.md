@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,19 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Filter placement iteration (2026-09-23T15:04Z)
+
+- Node 24 `npm run validate-env && npm run build -- --logLevel error` passed.
+- Browser checks passed in both V1 and V2 at desktop (1600px), tablet (1024px)
+  and mobile (390px) widths. Actual element bounds confirm the filter panel is
+  above the map and spans the layout, all twelve controls remain available, and
+  toggling/unmounting still works. The canvas fills its wrapper at each size.
+- The mobile canvas minimum-height selector was aligned with its MapLibre
+  specificity so it no longer overflows the smaller mobile wrapper.
+- Azure CLI confirms the same approved tenant/subscription and active F2.
+- Static role/infrastructure review: CSS and documentation only; no role,
+  source, schema or permission changes. Existing infrastructure validation applies.
 
 ### Map extension (2026-09-23)
 
@@ -334,3 +347,16 @@ Live role verification confirmed the notebook principal's Key Vault Secrets User
 grant is scoped only to the dedicated vault and its Fabric role is FEATURE
 Contributor. The deploying user is FEATURE Admin. Existing SPA redirects,
 delegated permissions and consent passed the canonical post-deployment checks.
+
+## 11. Map filter layout update
+
+User-approved on 2026-09-23: move layer filters above the map in both app layouts.
+This is a shared CSS layout change with no data, pipeline, authentication, role,
+capacity or infrastructure changes. Keep source freshness/details, all twelve
+checkboxes and the feature inspector. On small screens, the filter panel remains
+scrollable above the map.
+
+The production build and all six desktop/tablet/mobile browser cases passed.
+Use the same target and canonical orchestrator in its documented **app-only**
+mode (`FABRIC_FEATURE_CONFIG` unset). Existing imports, pipeline definitions and
+baseline jobs remain untouched; only the app's static layout is redeployed.
