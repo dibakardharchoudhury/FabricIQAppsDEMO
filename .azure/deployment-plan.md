@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -160,8 +160,8 @@ ARM proof remains below. Public source requests are anonymous. The app uses the
 existing delegated Fabric/KQL permissions and requires the signed-in user's
 read access to the GeoContext Lakehouse as well as the Eventhouse.
 
-Initial live source import, external-table readback and the hosted Map tab remain
-post-deployment gates. UMM explicitly covers the last 30 publication days, not
+Initial live source import, external-table readback and hosted Map-tab checks
+completed successfully; see Section 10. UMM explicitly covers the last 30 publication days, not
 every older active notice; cancelled/undatable/unlocated records remain in its
 unplotted list. No new recurring source schedule is enabled.
 
@@ -272,5 +272,65 @@ as part of the fresh-demo baseline.
 
 This completed the existing-solution feature workspace. That baseline deployment
 did not include the energy-map tab or external energy-source ingestion. The map
-extension is now implemented and validated as described in Section 7, but is not
-yet deployed.
+extension was subsequently deployed as described below.
+
+## 10. Completed energy-map deployment
+
+The canonical orchestrator completed with exit code 0, `DEPLOYED_APP_URL` and
+`SUCCESS` on 2026-09-23. Static deployment ID:
+`deploy-20260923125034-76c26914`. App build: `v1.0.616`.
+
+- App: https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net/?ui=v2&tab=map
+- GeoContext Lakehouse: `7fca0386-d447-4dd2-8d9f-460396fbea7a`.
+- Ingestion notebook: `ba7f5882-5a91-45c3-a6cc-472987d479e7`.
+- Pipeline: `5ea94da5-9267-4d7f-8344-9b7b42915743`.
+- Completed initial import: `abaad838-9981-4ee9-8ac5-8e10a345c613`.
+- Eventhouse aliases: `HydroGeoFeatures` and `HydroGeoStatus`.
+- Deployed code: `0867796`, following map implementation `f393c21`.
+
+Live KQL validation at 2026-09-23T12:56:34Z reconciled every source-status count
+with the actual feature table. All twelve layers are `ready`.
+
+| Layer | Imported records | Without verified coordinates |
+| --- | ---: | ---: |
+| Transmission lines | 390 | 0 |
+| Regional lines | 3,706 | 0 |
+| Distribution lines | 141,401 | 0 |
+| Subsea cables | 8,747 | 0 |
+| Masts and poles | 672,899 | 0 |
+| Transformer substations | 1,549 | 0 |
+| Hydropower plants | 2,010 | 171 |
+| Reservoir area statistics | 9 | 3 |
+| Country power balance | 1 | 0 |
+| Power exchange | 15 | 1 |
+| Grid frequency | 1 | 0 |
+| Nord Pool UMM | 517 | 74 |
+| **Total** | **831,245** | **249** |
+
+Unlocated records are retained rather than given invented coordinates. UMM has
+300 map-eligible notices and 217 unplotted notices in the imported publication
+window; all use `rules-v1`, including explicit `unranked` cases.
+
+The exact frontend query builder returned 2,549 features for its default
+viewport and 269 masts for a dense Bergen viewport. The frontend runtime parsers
+and GeoJSON conversion accepted those real results. The unplotted-message query
+retained cancellations/unknown locations and did not turn them into active map
+events. The 4,001-row sentinel / 4,000-feature browser cap remained enforced.
+
+Hosted browser checks passed in both V1 and V2: the separate Map tab, WebGL
+canvas, layer toggles, full-height map and tab unmount all worked with no uncaught
+page errors. These isolated browser checks were unsigned; authenticated source
+access was independently verified using the live KQL queries above. Users must
+connect their own Fabric data session to display protected overlays.
+
+Pipeline definition readback confirmed concurrency `1`, FEATURE-only notebook
+and workspace bindings, `refresh_mode=all` and `force_refresh=false`. Its schedule
+list is empty. FEATURE remains Git `NotConnected`; STABLE was not changed.
+The baseline setup/seed/stream and successful map import were reused, not rerun:
+STID still has 3 facilities, 15 equipment rows and 90 instruments; telemetry
+still has 9,000 events.
+
+Live role verification confirmed the notebook principal's Key Vault Secrets User
+grant is scoped only to the dedicated vault and its Fabric role is FEATURE
+Contributor. The deploying user is FEATURE Admin. Existing SPA redirects,
+delegated permissions and consent passed the canonical post-deployment checks.
