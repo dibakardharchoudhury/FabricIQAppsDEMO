@@ -179,6 +179,7 @@ def application_body(target: FeatureTarget) -> Json:
 
 
 def group_body(target: FeatureTarget, principal_id: str, caller_id: str) -> Json:
+    _uuid(caller_id, "caller_id")
     return {
         "displayName": target.names.group,
         "description": target.names.marker,
@@ -187,7 +188,6 @@ def group_body(target: FeatureTarget, principal_id: str, caller_id: str) -> Json
         "securityEnabled": True,
         "groupTypes": [],
         "isAssignableToRole": False,
-        "owners@odata.bind": [f"{GRAPH_BASE}/users/{_uuid(caller_id, 'caller_id')}"],
         "members@odata.bind": [f"{GRAPH_BASE}/directoryObjects/{_uuid(principal_id, 'principal_id')}"],
     }
 
@@ -581,6 +581,22 @@ def _member_ids(client: _Client, group_id: str) -> set[str]:
     if len(ids) != len(set(ids)) or len(ids) > 1:
         raise FeaturePrerequisiteError("Dedicated API group contains additional members; refusing to change membership.")
     return set(ids)
+
+
+def _ensure_group_owner(client: _Client, group_id: str, caller_id: str) -> None:
+    # Graph can automatically add a delegated creator; binding self during create
+    # then fails with duplicate values. Add only if the relationship is absent.
+    url = f"{GRAPH_BASE}/groups/{group_id}/owners"
+    owners = client.pages(GRAPH_SCOPE, f"{url}?$select=id", action="Checking dedicated group ownership")
+    if any(owner.get("id") == caller_id for owner in owners):
+        return
+    client.request(
+        GRAPH_SCOPE, "POST", f"{url}/$ref", action="Assigning dedicated group ownership",
+        body={"@odata.id": f"{GRAPH_BASE}/users/{caller_id}"}, ok=(204,),
+    )
+    owners = client.pages(GRAPH_SCOPE, f"{url}?$select=id", action="Verifying dedicated group ownership")
+    if not any(owner.get("id") == caller_id for owner in owners):
+        raise FeaturePrerequisiteError("Dedicated group owner did not become visible; retry after propagation.")
 
 
 def _check_isolation(client: _Client, group_id: str | None, principal_id: str | None, *,
@@ -1154,6 +1170,7 @@ def _ensure(client: _Client, target: FeatureTarget, allow_public_api_group: bool
             group = _graph_read(client, "groups", created.get("id"), GROUP_SELECT)
     _validate_group(group, target)
     group_id = _uuid(group["id"], "dedicated group id")
+    _ensure_group_owner(client, group_id, caller_id)
     _check_isolation(client, group_id, principal_id, propagation=True)
     # The create body already bound the SP. Poll delayed visibility rather than
     # accidentally attempting the same member add twice during propagation.

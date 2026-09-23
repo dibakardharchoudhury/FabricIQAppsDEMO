@@ -73,6 +73,8 @@ class FakeCloud:
         self.principal: fp.Json | None = None
         self.group: fp.Json | None = None
         self.members: list[str] = []
+        self.owners: list[str] = []
+        self.auto_owner = True
         self.parent_groups: list[fp.Json] = []
         self.extra_memberships: list[fp.Json] = []
         self.app_grants: list[fp.Json] = []
@@ -145,6 +147,7 @@ class FakeCloud:
                 return response(data={"value": self.oauth_grants})
             if method == "POST" and path == "/v1.0/groups":
                 self.group = {**copy.deepcopy(body), "id": GROUP}
+                self.owners = [CALLER] if self.auto_owner else []
                 self.members = [urlsplit(member).path.rsplit("/", 1)[-1] for member in body["members@odata.bind"]]
                 return response(201, self.group)
             if method == "GET" and path == f"/v1.0/groups/{GROUP}":
@@ -154,6 +157,13 @@ class FakeCloud:
                         return response(data={"id": GROUP, "members": []})
                     return response(data={"id": GROUP, "members": [{"id": member} for member in self.members]})
                 return response(data=self.group)
+            if method == "GET" and path == f"/v1.0/groups/{GROUP}/owners":
+                return response(data={"value": [{"id": owner} for owner in self.owners]})
+            if method == "POST" and path == f"/v1.0/groups/{GROUP}/owners/$ref":
+                owner = body["@odata.id"].rsplit("/", 1)[-1]
+                assert owner not in self.owners
+                self.owners.append(owner)
+                return response(204)
             if method == "GET" and path == f"/v1.0/groups/{GROUP}/transitiveMemberOf":
                 return response(data={"value": self.parent_groups})
             if method == "POST" and path == f"/v1.0/groups/{GROUP}/members/$ref":
@@ -305,7 +315,7 @@ class TargetAndOwnershipTests(OfflineTestCase):
         self.assertFalse({"spa", "web", "publicClient", "passwordCredentials"} & set(app))
         group = fp.group_body(self.target, PRINCIPAL, CALLER)
         self.assertEqual(group["members@odata.bind"], [f"{fp.GRAPH_BASE}/directoryObjects/{PRINCIPAL}"])
-        self.assertEqual(group["owners@odata.bind"], [f"{fp.GRAPH_BASE}/users/{CALLER}"])
+        self.assertNotIn("owners@odata.bind", group)
         self.assertFalse(group["isAssignableToRole"])
         self.assertFalse(group["mailEnabled"])
         vault = fp.vault_body(self.target)
@@ -842,6 +852,19 @@ class EndToEndTests(OfflineTestCase):
         self.ensure()
         self.assertIn("clientsecret", self.cloud.secrets)
         self.assertEqual(len(self.cloud.app["passwordCredentials"]), 1)
+
+    def test_automatically_assigned_group_owner_is_not_added_twice(self):
+        self.ensure()
+        self.assertEqual(self.cloud.owners, [CALLER])
+        self.assertFalse(any("/owners/$ref" in url for _, url, _ in self.cloud.writes))
+
+    def test_group_owner_is_added_when_graph_does_not_assign_creator(self):
+        self.cloud.auto_owner = False
+        self.ensure()
+        first_writes = copy.deepcopy(self.cloud.writes)
+        self.ensure()
+        self.assertEqual(self.cloud.owners, [CALLER])
+        self.assertEqual(self.cloud.writes, first_writes)
 
 
 if __name__ == "__main__":
