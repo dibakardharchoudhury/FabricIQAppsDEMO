@@ -321,9 +321,13 @@ def _request_id(response: requests.Response) -> str:
 
 def _http_failure(response: requests.Response, action: str, resource: str) -> FeaturePrerequisiteError:
     detail = ""
-    if action in {"Creating dedicated Fabric API group", "Adding notebook only to dedicated group"}:
+    if action in {
+        "Creating dedicated Fabric API group", "Adding notebook only to dedicated group",
+        "Appending dedicated Fabric public-API group",
+    }:
         try:
-            error = response.json().get("error", {})
+            payload = response.json()
+            error = payload.get("error", payload)
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 detail = f" {error['message'][:1000]}"
         except (ValueError, AttributeError):
