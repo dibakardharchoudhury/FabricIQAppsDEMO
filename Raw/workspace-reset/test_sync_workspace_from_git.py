@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock
 
-from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule, notebook_definition
+from sync_workspace_from_git import bind_notebook_definition, configure_weather_assets, configure_weather_schedule, notebook_definition
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -113,6 +113,19 @@ class FakeFabric:
 
 
 class WeatherProvisioningTests(unittest.TestCase):
+    def test_native_source_binding_avoids_python_to_ipynb_conversion(self):
+        code = '# Fabric notebook source\n\n# METADATA ********************\n\n# META {\n# META   "dependencies": {}\n# META }\n\n# CELL ********************\nprint("unchanged")\n'
+        part = {"path": "notebook-content.py", "payload": base64.b64encode(code.encode()).decode(), "payloadType": "InlineBase64"}
+        definition = {"parts": [part]}
+        lakehouse = {"default_lakehouse": "target-id"}
+        environment = {"environmentId": "target-env"}
+        self.assertTrue(bind_notebook_definition(definition, lakehouse, environment))
+        self.assertEqual(definition["format"], "fabricGitSource")
+        source = base64.b64decode(part["payload"]).decode()
+        self.assertIn('"default_lakehouse": "target-id"', source)
+        self.assertIn('print("unchanged")', source)
+        self.assertFalse(bind_notebook_definition(definition, lakehouse, environment))
+
     def test_notebook_result_uses_the_same_canonical_operation_as_polling(self):
         operation_id = "11111111-1111-4111-8111-111111111111"
         pending = FakeResponse(202)
