@@ -41,6 +41,7 @@ deployment is unchanged.
   "vault_name": "<globally-unique-vault-name>",
   "location": "norwayeast",
   "env_suffix": "V6",
+  "enable_energy_map": false,
   "allow_public_api_group": true
 }
 ```
@@ -89,6 +90,15 @@ provisioning rights and private-endpoint approval rights; the notebook principal
 receives only vault secret-read access and FEATURE workspace Contributor. A paused
 capacity must be resumed explicitly before deployment; the bootstrap does not
 resize or resume capacity automatically.
+
+Set `enable_energy_map` to `true` to provision the optional **Map** tab's energy
+data. The same command imports the map notebook/pipeline, creates a separate
+`Hydro_GeoContext_<suffix>` Lakehouse, runs initial ingestion and exposes its Delta
+tables through Eventhouse read models. Large NVE reference datasets are loaded
+into Fabric, not proxied as WMS images. This opt-in does not invalidate the
+completed base setup/seed/telemetry checkpoints. Subsequent source refreshes can
+be triggered from the Map tab or its dedicated pipeline; no recurring map
+schedule is enabled by deployment.
 
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the

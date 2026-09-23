@@ -1,6 +1,7 @@
 import ast
 import argparse
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -44,6 +45,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
             for key, value in (
                 ("client_secret", "must-not-be-accepted"),
                 ("allow_public_api_group", "true"),
+                ("enable_energy_map", "true"),
                 ("workspace_id", "not-a-guid"),
             ):
                 path.write_text(json.dumps({**raw, key: value}))
@@ -87,6 +89,137 @@ class FeatureWorkspaceTests(unittest.TestCase):
             workspace = feature.FeatureWorkspace(config, ROOT)
             self.assertGreater(len(workspace.specs), 20)
             self.assertTrue(all(s["type"] in {"Notebook", "DataPipeline", "Environment"} for s in workspace.specs))
+
+    def test_energy_opt_in_preserves_the_baseline_digest_and_completed_jobs(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            path = Path(directory) / "state.json"
+            baseline = feature.FeatureWorkspace(feature.FeatureConfig(**config_dict(), state_path=path), ROOT)
+            enabled = feature.FeatureWorkspace(
+                feature.FeatureConfig(**config_dict(), state_path=path, enable_energy_map=True), ROOT,
+            )
+            self.assertEqual(baseline.source_digest, enabled.source_digest)
+            self.assertEqual(len(enabled.specs), len(baseline.specs) + 2)
+            self.assertFalse(feature.ENERGY_ITEMS & {spec["name"] for spec in baseline.specs})
+            self.assertTrue(feature.ENERGY_ITEMS <= {spec["name"] for spec in enabled.specs})
+            body = {"executionData": {"parameters": {"workspace_id": WORKSPACE}}}
+            request_digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+            enabled.state["jobs"][f"setup-id:{baseline.source_digest}:{request_digest}"] = "completed-job-url"
+            enabled.fabric.request.return_value = Mock(status_code=200, json=lambda: {"status": "Completed"})
+            with patch.object(enabled, "_item", return_value={"id": "setup-id"}):
+                enabled._run("01_Pipe_Setup", "DataPipeline", body)
+            enabled.fabric.request.assert_called_once_with("GET", "completed-job-url")
+
+    def test_energy_pipeline_is_serial_and_forwards_the_notebook_parameters(self):
+        pipeline = json.loads((ROOT / "Orchestrator_Pipelines/04_Pipe_EnergyMap.DataPipeline/pipeline-content.json").read_text())
+        notebook = json.loads((ROOT / "Notebooks/Geo_001_ingest_energy_context.Notebook/.platform").read_text())
+        properties = pipeline["properties"]
+        self.assertEqual(properties["concurrency"], 1)
+        self.assertEqual(len(properties["activities"]), 1)
+        activity = properties["activities"][0]
+        self.assertEqual(activity["typeProperties"]["notebookId"], notebook["config"]["logicalId"])
+        self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "refresh_mode", "force_refresh"})
+        for name in properties["parameters"]:
+            self.assertEqual(activity["typeProperties"]["parameters"][name]["value"]["value"], f"@pipeline().parameters.{name}")
+        self.assertEqual(properties["parameters"]["force_refresh"]["defaultValue"], False)
+        self.assertEqual(properties["parameters"]["refresh_mode"]["defaultValue"], "all")
+        rebound = feature.rebind_pipeline(
+            pipeline, {notebook["config"]["logicalId"]: "target-notebook"}, WORKSPACE,
+            {"workspace_id": WORKSPACE, "env_suffix": "V8"},
+        )
+        self.assertEqual(rebound["properties"]["activities"][0]["typeProperties"]["workspaceId"], WORKSPACE)
+        self.assertEqual(rebound["properties"]["parameters"]["env_suffix"]["defaultValue"], "V8")
+
+    def test_energy_lakehouse_is_separate_owned_and_created_without_schemas(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", enable_energy_map=True)
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            lakehouse = {
+                "id": SUBSCRIPTION, "type": "Lakehouse", "displayName": "Hydro_GeoContext_V6",
+                "description": f"{workspace.marker}: energy context",
+            }
+            workspace.fabric.list_workspace_items.side_effect = [[], [lakehouse]]
+            workspace.fabric.request.return_value = Mock(status_code=201)
+            with (
+                patch.object(workspace, "_item", return_value={"id": "map-notebook"}),
+                patch.object(feature, "notebook_definition", return_value={}),
+                patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
+                patch.object(workspace, "_run") as run,
+                patch.object(workspace, "_publish_energy_read_models") as publish,
+            ):
+                workspace._prepare_energy_map()
+            payload = workspace.fabric.request.call_args.kwargs["json"]
+            self.assertEqual(payload["creationPayload"], {"enableSchemas": False})
+            self.assertEqual(payload["displayName"], "Hydro_GeoContext_V6")
+            self.assertEqual(bind.call_args.args[1]["default_lakehouse"], SUBSCRIPTION)
+            self.assertEqual(run.call_args.args[0], feature.ENERGY_PIPELINE)
+            self.assertEqual(run.call_args.args[2]["executionData"]["parameters"]["workspace_id"], WORKSPACE)
+            publish.assert_called_once_with(SUBSCRIPTION)
+
+    def test_energy_lakehouse_does_not_take_over_an_unowned_item(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", enable_energy_map=True)
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            workspace.fabric.list_workspace_items.return_value = [{
+                "id": SUBSCRIPTION, "type": "Lakehouse", "displayName": "Hydro_GeoContext_V6",
+                "description": "Not owned by the feature deployment",
+            }]
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "unowned"):
+                workspace._prepare_energy_map()
+            workspace.fabric.request.assert_not_called()
+
+    def test_energy_read_models_use_discovered_table_locations_and_require_all_layers(self):
+        names = [
+            "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
+            "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
+        ]
+        for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location"):
+            with (
+                self.subTest(case=case), tempfile.TemporaryDirectory() as directory,
+                patch.object(feature, "FeatureFabric"), patch.object(feature.requests, "post") as post,
+            ):
+                config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", enable_energy_map=True)
+                workspace = feature.FeatureWorkspace(config, ROOT)
+                location = f"abfss://{WORKSPACE}@onelake.dfs.fabric.microsoft.com/{SUBSCRIPTION}/Tables"
+                if case == "foreign-location":
+                    location = location.replace(WORKSPACE, TENANT)
+                tables = [
+                    {"name": table, "format": "delta", "location": f"{location}/{table}"}
+                    for table in ("geo_map_features", "geo_source_status")
+                ]
+                workspace.fabric.request.side_effect = [
+                    Mock(status_code=200, json=lambda: {"properties": {"queryServiceUri": "https://feature.kusto.fabric.microsoft.com"}}),
+                    Mock(status_code=200, json=lambda: {"data": tables[:1], "continuationToken": "next/page"}),
+                    Mock(status_code=200, json=lambda: {"data": tables[1:]}),
+                ]
+                rows = [[name, "ready", 0 if name == "umm" else 2] for name in names]
+                if case == "missing":
+                    rows.pop()
+                elif case == "failed":
+                    rows[0][1] = "error"
+                elif case == "duplicate":
+                    rows[-1] = rows[0]
+                elif case == "empty":
+                    rows[0][2] = 0
+                result = {"Tables": [{"Rows": rows}]}
+                if case == "partial-query":
+                    result["Exceptions"] = ["partial result failure"]
+                post.side_effect = [
+                    Mock(status_code=200, json=lambda: {}),
+                    Mock(status_code=200, json=lambda: {}),
+                    Mock(status_code=200, json=lambda: result),
+                ]
+                with patch.object(workspace, "_item", return_value={"id": "eventhouse"}):
+                    if case == "ready":
+                        workspace._publish_energy_read_models(SUBSCRIPTION)
+                        self.assertEqual(workspace.state["energy_map_verification"]["umm"], 0)
+                        self.assertEqual(len(workspace.state["energy_map_verification"]), 12)
+                        for index, table in enumerate(tables):
+                            self.assertIn(table["location"] + ";impersonate", post.call_args_list[index].kwargs["json"]["csl"])
+                        self.assertIn("continuationToken=next%2Fpage", workspace.fabric.request.call_args.args[1])
+                    else:
+                        with self.assertRaises(feature.FeatureWorkspaceError):
+                            workspace._publish_energy_read_models(SUBSCRIPTION)
+                        self.assertNotIn("energy_map_verification", workspace.state)
 
     def test_import_refuses_unowned_existing_items(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):

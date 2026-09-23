@@ -966,7 +966,7 @@ export type KustoResult = { columns: string[]; rows: unknown[][] }
 
 /** Run an already-validated KQL query against the Eventhouse as the signed-in user.
  *  Callers outside the telemetry views must validate the query text first — see copilot/query.ts. */
-export async function runKustoQuery(csl: string, maxRows: number): Promise<KustoResult> {
+export async function runKustoQuery(csl: string, maxRows: number, signal?: AbortSignal): Promise<KustoResult> {
   const config = await ensureConfig(false)
   if (!config?.eventhouseQueryUri || !config.kqlDatabase) throw new Error('No Eventhouse is connected in this workspace.')
   const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
@@ -974,6 +974,7 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   if (!token) throw new Error('Eventhouse consent is required. Connect telemetry first.')
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
+    signal,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     // Server-side caps back up the client-side `| take`, so a runaway query cannot return a huge payload.
     body: JSON.stringify({
@@ -984,10 +985,27 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   })
   const text = await response.text()
   if (!response.ok) throw new Error(`Eventhouse query failed (${response.status}): ${text.slice(0, 300)}`)
-  const payload = JSON.parse(text) as { Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }> }
+  const payload = JSON.parse(text) as {
+    Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }>
+    Exceptions?: unknown[]
+    error?: unknown
+  }
+  if (payload.error || payload.Exceptions?.length) {
+    throw new Error('Eventhouse returned a partial or failed query result. Narrow the query and retry.')
+  }
   const table = payload.Tables?.[0]
+  if (!table?.Columns || !table.Rows) throw new Error('Eventhouse returned no result table.')
   return {
     columns: (table?.Columns ?? []).map((column, index) => column.ColumnName ?? `column_${index}`),
     rows: table?.Rows ?? [],
   }
+}
+
+export async function refreshEnergyMap(onStatus?: JobProgress): Promise<JobStatus> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required to refresh map data.')
+  const matches = (await listItems(token)).filter(item =>
+    item.type === 'DataPipeline' && item.displayName === '04_Pipe_EnergyMap')
+  if (matches.length !== 1) throw new Error('The energy-map import pipeline is missing or ambiguous. Run map provisioning.')
+  return runJob(matches[0].id, 'Pipeline', onStatus, { reuseActive: true, timeoutMs: 2 * 60 * 60_000 })
 }

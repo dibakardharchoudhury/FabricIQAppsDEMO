@@ -1,15 +1,28 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
 ## 1. Goal and scope
 
-Complete the existing Hydro Operations baseline in the isolated feature workspace
-with fresh demo data. Use the repository deployment quickstart and the canonical
-`Raw/workspace-reset/deploy_fabric_app.py` entry point. Do not add a Fabric Git
-connection, alter STABLE, or implement the future energy-map feature in this step.
+The existing Hydro Operations baseline is deployed. The current approved change
+adds the separate Map tab and five energy-source integrations to FEATURE, using
+MapLibre with Fabric-backed data and clearly labeled rule-based UMM importance.
+Use the canonical `Raw/workspace-reset/deploy_fabric_app.py` entry point. Do not
+add a Fabric Git connection or alter STABLE.
+
+The user selected MapLibre and rule-based UMM ranking on 2026-09-23. The deployment
+adds one GeoContext Lakehouse (plus its managed SQL endpoint), one ingestion
+notebook and one pipeline, with two Delta external-table read models in the
+existing Eventhouse. It reuses the existing F2, tenant SPA, permissions and private
+vault. No capacity/SKU, Azure network, secret or external hosting changes are
+needed. The initial release uses manual imports with static-source caching;
+recurring source schedules remain disabled.
+
+Map validation must include source normalization/completeness tests, typed
+viewport queries, worker build, UI navigation in both shells, and live Fabric
+row/status counts before reporting that the integration is deployed.
 
 ## 2. Previously selected Azure context
 
@@ -116,7 +129,43 @@ Service references:
 - https://learn.microsoft.com/fabric/security/security-managed-private-endpoints-overview
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
-## 7. Execution checklist
+## 7. Validation proof
+
+### Map extension (2026-09-23)
+
+- [x] All pre-deployment validation checks pass.
+  - [x] Azure CLI installation and authentication: CLI 2.84.0; tenant and approved subscription unchanged.
+  - [x] Fabric target: FEATURE on the active Norway East F2; Git `NotConnected`.
+  - [x] App typecheck, targeted ESLint, nine map-contract tests and Node 24 production build.
+  - [x] Python integration regressions: 115 tests passed in the existing provisioning virtual environment.
+  - [x] Browser checks: V1/V2 Map navigation, WebGL canvas, layer toggles and tab unmount; no uncaught page errors.
+  - [x] Static identity review: no new Azure resources, RBAC assignments, secrets, tenant settings or permissions in this extension.
+  - [x] Policy preservation: vault still RBAC-enabled with public network access `Disabled`.
+  - [x] Baseline source digest matches all three existing setup/seed/stream checkpoints.
+
+| Check | Actual command / evidence | Result |
+| --- | --- | --- |
+| Backend integration | Provisioning venv `python -m unittest test_energy_ingestion test_feature_workspace test_deploy_fabric_app test_agent_deployment_contract -q` | 115 passed; includes 51 ingestion tests, source completeness, last-good preservation, pipeline parameters/concurrency, baseline digest reuse and read-model location/status checks |
+| Frontend | Node 24 `npm run typecheck`, `node --import tsx --test scripts/energy-map-model.test.ts`, targeted ESLint, `npm run validate-env && npm run build` | Passed; locally bundled lazy MapLibre worker, nine tests; existing large-chunk warning remains |
+| Browser | Session-only Playwright `check-map.mjs` against the production preview | Both UI shells passed; browser rendering is verified locally, not yet on the deployed map |
+| Azure / Fabric | `az account show`, `az version`, read-only workspace, capacity and Git-connection API calls | Exact approved target; active F2; no Git connection |
+| Private vault | `az keyvault show` projected policy fields | `publicNetworkAccess=Disabled`, `enableRbacAuthorization=true` |
+| Checkpoint compatibility | Instantiate map-enabled config and compare its baseline digest with persisted job keys | Digest `890f0fc086cbf71989507f10945f5129794c3c6ab472cba6cc27101ac65d4289`; three existing baseline jobs match |
+| Patch / upstream | `git diff --check`, `git fetch origin` and `git rev-list --left-right --count HEAD...origin/main` | No whitespace errors; no new upstream main commits to merge |
+
+This extension has no Bicep/ARM resource delta, container or Azure policy change,
+so Bicep compilation, ARM template validation/what-if and Docker build are not
+applicable. The existing Python/REST deployment recipe is preserved; its baseline
+ARM proof remains below. Public source requests are anonymous. The app uses the
+existing delegated Fabric/KQL permissions and requires the signed-in user's
+read access to the GeoContext Lakehouse as well as the Eventhouse.
+
+Initial live source import, external-table readback and the hosted Map tab remain
+post-deployment gates. UMM explicitly covers the last 30 publication days, not
+every older active notice; cancelled/undatable/unlocated records remain in its
+unplotted list. No new recurring source schedule is enabled.
+
+### Completed baseline execution checklist
 
 - [x] Read the deployment runbooks and existing private connectivity helper.
 - [x] Verify live target, policy, identity and resource inventory.
@@ -128,7 +177,7 @@ Service references:
 - [x] Execute the canonical deployment only after validation.
 - [x] Verify target-only data bindings, hosted app/auth and baseline data.
 
-## 8. Validation checklist and proof
+## 8. Baseline validation checklist and proof
 
 - [x] Python bootstrap/private-endpoint regression suite.
 - [x] Azure CLI identity, workspace/capacity, provider and policy checks.
@@ -157,7 +206,7 @@ outputs, source/config files and logs; actual values exist only in secure deploy
 parameters at execution time. Runtime credential usability was confirmed by the
 successful setup and strict seed notebook runs.
 
-## 9. Current checkpoint
+## 9. Completed baseline checkpoint
 
 Private-only vault credentials, scoped roles, the dedicated API group and the
 approved Fabric managed private endpoint are provisioned. All 23 repository
@@ -201,6 +250,7 @@ alerts remain disabled as planned. Live weather provider credentials, the option
 Foundry model endpoint and mailbox setup are separate integrations, not fabricated
 as part of the fresh-demo baseline.
 
-This completes the existing-solution feature workspace. The separately planned
-energy-map tab and external energy-source ingestion are not implemented by this
-deployment.
+This completed the existing-solution feature workspace. That baseline deployment
+did not include the energy-map tab or external energy-source ingestion. The map
+extension is now implemented and validated as described in Section 7, but is not
+yet deployed.

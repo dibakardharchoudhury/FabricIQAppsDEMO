@@ -1,6 +1,6 @@
 # Hydro Operations Fabric App
 
-A React + Leaflet + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
+A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
 **three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
 
@@ -24,11 +24,63 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 | **Lakehouse (STID)** | Engineering master data — facilities, systems, equipment, instruments | Workspace **GraphQL API** item (created + auto‑bound by `RTI_011`, discovered at runtime) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
 | **Rayfin SQL (operational)** | Work orders, notifications, inspections, spare parts, 3D models | Rayfin `data` client (Data API Builder) |
+| **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo
 data is synthetic but each record lives where it would in production (no reference or telemetry rows
 are copied into Rayfin SQL).
+
+## Operations Map
+
+The separate **Map** tab in both UI shells uses a lazy-loaded MapLibre renderer.
+It is distinct from the Overview facility map and shows **real imported energy
+data**, not simulated STID coordinates. Enable its Fabric provisioning with
+`enable_energy_map: true` in the local feature-bootstrap config; deploy through
+the existing orchestrator in [DEPLOY.md](DEPLOY.md).
+
+`04_Pipe_EnergyMap` runs `Geo_001_ingest_energy_context` against a separate
+`Hydro_GeoContext_<suffix>` Lakehouse. Layers cover NVE's six public grid datasets,
+hydropower reference records, reservoir **area** statistics, Statnett country
+balance/interconnector flows/frequency, and Nord Pool UMM. UMM importance is
+explicitly labeled rule-based application enrichment, not an official market or
+grid-safety rating. Aviation providers are not included.
+
+**UMM coverage:** the last 30 publication days (at most 10,000 reconciled revisions),
+not every older, still-active outage. A changed/incomplete upstream page fails the
+import instead of silently truncating coverage. Latest revisions retain all affected
+areas; cancelled/undatable/unlocated notices stay in the list, not the active map.
+The public area-directory endpoint returned 403, so only area names and EIC/name
+pairs explicitly present in provider messages are resolved.
+
+**Importance `rules-v1`:** direct Norwegian relevance +10; explicitly unplanned
++25; largest reported single-unit interval unavailable capacity >0/+5,
+>=100 MW/+20, >=1000 MW/+35; longest continuous interval >=4 h/+5, >=24 h/+15.
+High is >=65, medium >=35, otherwise low. Missing evidence or inactive notices
+are unranked. Overlapping units/intervals are not summed into a fictitious system
+impact, and capacities are not extracted from prose.
+
+The browser queries only selected layers in the current viewport, with
+zoom thresholds for dense distribution/mast data and a visible 4,000-feature
+limit. It never downloads the full national network at startup. The layer panel
+shows import age, errors and unmapped counts; unplotted UMMs remain accessible in
+the event list. Unknown or failed data is not replaced with invented features.
+
+**Reload map** rereads Fabric snapshots; **Import latest data** starts the cloud
+ingestion pipeline. Initial provisioning is on-demand: no new recurring schedule
+is enabled automatically. Stale snapshots remain labeled as stale. Provider
+permissions, terms and approved refresh cadence must be reviewed before enabling
+continuous collection or wider redistribution. OpenStreetMap supplies only the
+basemap; energy overlays come from Fabric. Review its tile usage policy before
+production traffic and replace the basemap with an approved provider when needed.
+
+Create GeoContext with `creationPayload.enableSchemas: false` (the orchestrator
+does this), and keep the pipeline's concurrency at one. Its Delta feature table
+is partitioned by layer; a complete validated snapshot atomically replaces only
+that layer. Raw responses and attempt logs remain in OneLake. Healthy grid/plant
+snapshots are reused for 24 hours unless `force_refresh=true`; `refresh_mode=operational`
+always skips those static sources. Existing baseline setup/seed/telemetry jobs are
+not rerun just because map ingestion is added or changed.
 
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital

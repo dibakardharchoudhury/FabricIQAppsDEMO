@@ -21,12 +21,19 @@ from sync_workspace_from_git import (
     Fabric,
     configure_weather_assets,
     fabric_operation_url,
+    bind_notebook_definition,
+    notebook_definition,
 )
 from key_vault_preflight import PreflightError, ensure_key_vault_access
 
 
 class FeatureWorkspaceError(RuntimeError):
     pass
+
+
+ENERGY_NOTEBOOK = "Geo_001_ingest_energy_context"
+ENERGY_PIPELINE = "04_Pipe_EnergyMap"
+ENERGY_ITEMS = {ENERGY_NOTEBOOK, ENERGY_PIPELINE}
 
 
 @dataclass(frozen=True)
@@ -40,6 +47,7 @@ class FeatureConfig:
     allow_public_api_group: bool
     state_path: Path
     env_suffix: str = "V6"
+    enable_energy_map: bool = False
 
     @classmethod
     def load(cls, path: Path, tenant_id: str, workspace_id: str) -> FeatureConfig:
@@ -50,7 +58,7 @@ class FeatureConfig:
         }
         if not isinstance(raw, dict) or not required.issubset(raw):
             raise FeatureWorkspaceError("Feature bootstrap config is missing required fields.")
-        if set(raw) - required - {"env_suffix"}:
+        if set(raw) - required - {"env_suffix", "enable_energy_map"}:
             raise FeatureWorkspaceError("Feature bootstrap config contains unsupported fields.")
         for key in ("tenant_id", "workspace_id", "subscription_id"):
             try:
@@ -70,6 +78,8 @@ class FeatureConfig:
                 raise FeatureWorkspaceError(f"Invalid feature bootstrap {key}.")
         if type(raw["allow_public_api_group"]) is not bool:
             raise FeatureWorkspaceError("allow_public_api_group must be a JSON boolean.")
+        if type(raw.get("enable_energy_map", False)) is not bool:
+            raise FeatureWorkspaceError("enable_energy_map must be a JSON boolean.")
         return cls(**raw, state_path=path.with_suffix(".state.json"))
 
 
@@ -174,7 +184,13 @@ class FeatureWorkspace:
         self.specs = self._read_specs()
         self.source_digest = hashlib.sha256(b"".join(
             path.encode() + data
-            for spec in self.specs for path, data in sorted(spec["files"].items())
+            for spec in self.specs if spec["name"] not in ENERGY_ITEMS
+            for path, data in sorted(spec["files"].items())
+        )).hexdigest()
+        self.energy_digest = hashlib.sha256(b"".join(
+            path.encode() + data
+            for spec in self.specs if spec["name"] in ENERGY_ITEMS
+            for path, data in sorted(spec["files"].items())
         )).hexdigest()
 
     def _save(self) -> None:
@@ -194,6 +210,8 @@ class FeatureWorkspace:
                 platform = json.loads((directory / ".platform").read_text(encoding="utf-8"))
                 metadata = platform["metadata"]
                 name = metadata["displayName"]
+                if name in ENERGY_ITEMS and not self.config.enable_energy_map:
+                    continue
                 logical_id = platform["config"]["logicalId"]
                 if metadata["type"] != item_type or logical_id in logical_ids or (item_type, name) in names:
                     raise FeatureWorkspaceError(f"Invalid or duplicate source item {directory.name}.")
@@ -216,6 +234,10 @@ class FeatureWorkspace:
         }
         if not required.issubset(names):
             raise FeatureWorkspaceError("The checkout is missing required feature workspace items.")
+        if self.config.enable_energy_map and not {
+            ("Notebook", ENERGY_NOTEBOOK), ("DataPipeline", ENERGY_PIPELINE),
+        }.issubset(names):
+            raise FeatureWorkspaceError("The checkout is missing the enabled energy map ingestion items.")
         # Check every pipeline reference before provisioning any items.
         notebook_ids = {s["logical_id"]: s["logical_id"] for s in specs if s["type"] == "Notebook"}
         for spec in specs:
@@ -301,7 +323,8 @@ class FeatureWorkspace:
     def _run(self, name: str, item_type: str, body: dict[str, Any] | None = None) -> None:
         item = self._item(name, item_type)
         request_digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-        key = f"{item['id']}:{self.source_digest}:{request_digest}"
+        digest = self.energy_digest if name in ENERGY_ITEMS else self.source_digest
+        key = f"{item['id']}:{digest}:{request_digest}"
         status_url = self.state["jobs"].get(key)
         if status_url:
             response = self.fabric.request("GET", status_url)
@@ -421,6 +444,121 @@ class FeatureWorkspace:
             ("Pipe_SendEmailAlert", "DataPipeline"),
         ):
             self._item(name, item_type)
+        if self.config.enable_energy_map:
+            self._prepare_energy_map()
+
+    def _prepare_energy_map(self) -> None:
+        name = f"Hydro_GeoContext_{self.config.env_suffix}"
+        matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
+                   if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+        if len(matches) > 1:
+            raise FeatureWorkspaceError("Energy context Lakehouse discovery is ambiguous.")
+        marker = f"{self.marker}: energy context"
+        if matches and matches[0].get("description") != marker:
+            raise FeatureWorkspaceError("Refusing to bind to an unowned energy context Lakehouse.")
+        if not matches:
+            response = self.fabric.request("POST", f"{self.base}/lakehouses", json={
+                "displayName": name, "description": marker,
+                "creationPayload": {"enableSchemas": False},
+            })
+            check_response(response, "Create energy context Lakehouse", {200, 201, 202})
+            self.fabric.poll_lro(response)
+        for attempt in range(12):
+            matches = [item for item in self.fabric.list_workspace_items(self.config.workspace_id)
+                       if item.get("type") == "Lakehouse" and item.get("displayName") == name]
+            if len(matches) == 1:
+                break
+            time.sleep(5)
+        if len(matches) != 1:
+            raise FeatureWorkspaceError("The energy context Lakehouse did not become visible.")
+        lakehouse = matches[0]
+        self.state["energy_lakehouse_id"] = lakehouse["id"]
+        self._save()
+        notebook = self._item(ENERGY_NOTEBOOK, "Notebook")
+        definition = notebook_definition(self.fabric, self.config.workspace_id, notebook["id"])
+        target_lakehouse = {
+            "default_lakehouse": lakehouse["id"], "default_lakehouse_name": name,
+            "default_lakehouse_workspace_id": self.config.workspace_id,
+            "known_lakehouses": [{"id": lakehouse["id"]}],
+        }
+        if bind_notebook_definition(definition, target_lakehouse, {}):
+            response = self.fabric.request("POST",
+                f"{self.base}/notebooks/{notebook['id']}/updateDefinition?updateMetadata=true",
+                json={"definition": definition},
+            )
+            check_response(response, "Bind energy map notebook", {200, 202})
+            self.fabric.poll_lro(response)
+        self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
+            "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
+            "refresh_mode": "all", "force_refresh": False,
+        }}})
+        self._publish_energy_read_models(lakehouse["id"])
+
+    def _publish_energy_read_models(self, lakehouse_id: str) -> None:
+        database = f"RTI_Demo_Eventhouse_{self.config.env_suffix}"
+        eventhouse = self._item(database, "Eventhouse")
+        response = self.fabric.request("GET", f"{self.base}/eventhouses/{eventhouse['id']}")
+        check_response(response, "Read energy serving Eventhouse", {200})
+        cluster = response.json().get("properties", {}).get("queryServiceUri", "").rstrip("/")
+        if not cluster.startswith("https://") or not (urlparse(cluster).hostname or "").endswith(".kusto.fabric.microsoft.com"):
+            raise FeatureWorkspaceError("Unexpected energy serving endpoint.")
+        token = self.fabric._credential.get_token(f"{cluster}/.default").token
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        url = f"{self.base}/lakehouses/{lakehouse_id}/tables"
+        discovered = []
+        seen = set()
+        while url:
+            if url in seen:
+                raise FeatureWorkspaceError("Energy table discovery repeated a continuation.")
+            seen.add(url)
+            response = self.fabric.request("GET", url)
+            check_response(response, "Discover energy Delta table locations", {200})
+            payload = response.json()
+            discovered.extend(payload.get("data") or [])
+            url = payload.get("continuationUri")
+            if not url and payload.get("continuationToken"):
+                url = f"{self.base}/lakehouses/{lakehouse_id}/tables?continuationToken={quote(payload['continuationToken'], safe='')}"
+        for name, table in (("HydroGeoFeatures", "geo_map_features"), ("HydroGeoStatus", "geo_source_status")):
+            matches = [item for item in discovered if item.get("name", "").split(".")[-1] == table]
+            if len(matches) != 1 or matches[0].get("format", "").lower() != "delta":
+                raise FeatureWorkspaceError(f"Cannot resolve the energy Delta table {table}.")
+            location = matches[0].get("location", "")
+            parts = urlparse(location)
+            if (parts.scheme != "abfss" or parts.username != self.config.workspace_id
+                    or parts.password is not None or parts.port is not None
+                    or not (parts.hostname or "").endswith("onelake.dfs.fabric.microsoft.com")
+                    or not parts.path.startswith(f"/{lakehouse_id}/Tables/")
+                    or parts.query or parts.fragment or "'" in location or ";" in location):
+                raise FeatureWorkspaceError("Energy table location is outside the selected GeoContext Lakehouse.")
+            query = f".create-or-alter external table {name} kind=delta (h@'{location};impersonate')"
+            response = requests.post(f"{cluster}/v1/rest/mgmt", headers=headers,
+                                     json={"db": database, "csl": query}, timeout=90)
+            check_response(response, f"Publish {name} map read model", {200})
+            if response.json().get("error") or response.json().get("Exceptions"):
+                raise FeatureWorkspaceError(f"Eventhouse rejected the {name} map read model.")
+        response = requests.post(f"{cluster}/v1/rest/query", headers=headers, json={
+            "db": database,
+            "csl": "external_table('HydroGeoStatus') | project layer_id, state, row_count",
+        }, timeout=90)
+        check_response(response, "Verify energy map source status", {200})
+        payload = response.json()
+        if payload.get("error") or payload.get("Exceptions"):
+            raise FeatureWorkspaceError("Eventhouse returned a partial or failed energy source-status query.")
+        tables = payload.get("Tables") or []
+        rows = tables[0].get("Rows", []) if tables else []
+        required = {
+            "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
+            "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
+        }
+        if len(rows) != len(required) or any(len(row) != 3 or row[0] not in required for row in rows):
+            raise FeatureWorkspaceError("Energy map source status does not match the twelve-layer contract.")
+        ready = {row[0] for row in rows if row[1] == "ready"
+                 and type(row[2]) is int and (row[2] > 0 or (row[0] == "umm" and row[2] == 0))}
+        if required != ready:
+            raise FeatureWorkspaceError(f"Energy map import is incomplete: {sorted(required - ready)}.")
+        self.state["energy_map_verification"] = {row[0]: row[2] for row in rows}
+        self._save()
+        print(f"Energy map read models are ready: {len(ready)} layers.", flush=True)
 
     def configure_app(self, env_path: Path) -> None:
         values = {
@@ -439,11 +577,13 @@ class FeatureWorkspace:
         env_path.write_text(content, encoding="utf-8")
 
     def _verify_schedules_disabled(self) -> None:
-        pipeline = self._item("03_Pipe_Weather", "DataPipeline")
-        response = self.fabric.request("GET", f"{self.base}/items/{pipeline['id']}/jobs/Pipeline/schedules")
-        check_response(response, "Check feature weather schedule", {200})
-        if any(schedule.get("enabled") for schedule in response.json().get("value", [])):
-            raise FeatureWorkspaceError("Feature weather schedule must remain disabled.")
+        names = ["03_Pipe_Weather"] + ([ENERGY_PIPELINE] if self.config.enable_energy_map else [])
+        for name in names:
+            pipeline = self._item(name, "DataPipeline")
+            response = self.fabric.request("GET", f"{self.base}/items/{pipeline['id']}/jobs/Pipeline/schedules")
+            check_response(response, f"Check feature {name} schedule", {200})
+            if any(schedule.get("enabled") for schedule in response.json().get("value", [])):
+                raise FeatureWorkspaceError(f"Feature {name} schedule must remain disabled.")
 
     def finish(self) -> None:
         self._run("RTI_011_seed_sql_wire_graphql_agent", "Notebook", {
