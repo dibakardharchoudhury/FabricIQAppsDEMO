@@ -163,10 +163,29 @@ approved Fabric managed private endpoint are provisioned. All 23 repository
 definition items are imported without Git. The foundation notebook completed,
 proving private secret retrieval and notebook authentication.
 
-The first Stage 2 run failed when `RTI_002` queried the custom Eventstream endpoint
-before it became ready. A later read returned the documented connection shape
-with HTTP 200. The notebook now waits for definition LRO completion and retries
-connection readiness; an unchanged definition is reused. Thirty-one targeted
-readiness, bootstrap and weather-contract checks passed before retrying.
+The complete setup pipeline succeeded on retry. Eventstream startup readiness and
+native notebook definition handling were corrected and persisted on the feature
+branch. The Weather schedule remains disabled and the Operations Agent remains
+stopped; external weather keys and mailbox connections were not fabricated.
 
-The baseline deployment is not yet complete; no application URL has been published.
+`hydro-operations-ui` now exists in FEATURE:
+
+- AppBackend: `d87864ad-ecaf-4970-8ce7-84f9b4bbcf9a`.
+- Hosted app: https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net
+- Fabric item: https://app.fabric.microsoft.com/groups/313d99ca-4280-4772-87cb-2c928164c428/appbackends/d87864ad-ecaf-4970-8ce7-84f9b4bbcf9a?ctid=cfbb67d9-96a6-4e29-a919-1fc7cfb80776
+
+**Deployment is blocked at the Entra consent gate.** App/backend/schema deployment
+and HTTP checks passed; the SPA redirect and requested delegated permissions are
+configured. `setup-live-auth` was corrected to preserve literal Azure CLI arguments
+on macOS/Linux. Both blanket and targeted tenant-wide consent calls then returned
+403 `Authorization_RequestDenied` for the signed-in user.
+
+An authorized Entra administrator must grant the already configured delegated
+permissions on **Hydro Operations Fabric Client**
+(`10a4844e-22f6-4186-ad00-6d7f93fc7589`) in the target tenant. Do not grant the
+notebook principal admin roles or bypass this consent gate.
+
+After consent, rerun the canonical deployment command. The completed setup and
+app are reused; strict SQL data seeding, GraphQL provisioning, operational Data
+Agent binding and final telemetry checks still need to run. No complete-deployment
+SUCCESS has been reported by the orchestrator.
