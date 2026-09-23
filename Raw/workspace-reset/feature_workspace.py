@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import requests
@@ -21,6 +21,7 @@ from sync_workspace_from_git import (
     Fabric,
     configure_weather_assets,
 )
+from key_vault_preflight import PreflightError, ensure_key_vault_access
 
 
 class FeatureWorkspaceError(RuntimeError):
@@ -124,6 +125,7 @@ class FeatureFabric(Fabric):
             raise FeatureWorkspaceError("Refusing a non-Fabric API URL.")
         headers = dict(kwargs.pop("headers", {}))
         headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
+        kwargs["allow_redirects"] = False
         return super().request(method, url, headers=headers, **kwargs)
 
     def poll_lro(self, response: requests.Response) -> requests.Response:
@@ -345,6 +347,26 @@ class FeatureWorkspace:
         check_response(connection, "Check Git isolation", {200})
         if connection.json().get("gitConnectionState") != "NotConnected":
             raise FeatureWorkspaceError("Git-free bootstrap requires a Git-disconnected target workspace.")
+        workspace = self.fabric.request("GET", self.base)
+        check_response(workspace, "Read target capacity assignment", {200})
+        capacity_id = workspace.json().get("capacityId")
+        capacities = []
+        url = f"{FABRIC_BASE}/capacities"
+        seen = set()
+        while url:
+            if url in seen:
+                raise FeatureWorkspaceError("Capacity pagination returned a repeated continuation.")
+            seen.add(url)
+            response = self.fabric.request("GET", url)
+            check_response(response, "Read target capacity status", {200})
+            page = response.json()
+            capacities.extend(page.get("value") or [])
+            url = page.get("continuationUri")
+            if not url and page.get("continuationToken"):
+                url = f"{FABRIC_BASE}/capacities?continuationToken={quote(page['continuationToken'], safe='')}"
+        matches = [capacity for capacity in capacities if capacity.get("id") == capacity_id]
+        if len(matches) != 1 or matches[0].get("state") != "Active":
+            raise FeatureWorkspaceError("The target Fabric capacity must be active before feature provisioning.")
         print("Preparing dedicated feature workspace prerequisites.", flush=True)
         try:
             prerequisites = ensure_feature_prerequisites(
@@ -356,6 +378,14 @@ class FeatureWorkspace:
         except FeaturePrerequisiteError as exc:
             raise FeatureWorkspaceError(str(exc)) from exc
         self.state["prerequisites"] = prerequisites
+        self._save()
+        try:
+            ensure_key_vault_access(
+                self.config.tenant_id, self.config.workspace_id, prerequisites["key_vault_uri"],
+            )
+        except PreflightError as exc:
+            raise FeatureWorkspaceError(f"Feature Key Vault private connectivity is not ready: {exc}") from exc
+        self.state["private_connectivity_ready"] = True
         self._save()
         defaults = {
             "env_suffix": self.config.env_suffix, "workspace_id": self.config.workspace_id,

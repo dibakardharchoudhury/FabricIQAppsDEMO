@@ -80,6 +80,7 @@ class FakeCloud:
         self.roles: dict[str, fp.Json] = {}
         self.workspace_roles: list[fp.Json] = []
         self.secrets: dict[str, fp.Json] = {}
+        self.deployments: dict[str, fp.Json] = {}
         self.policy = policy()
         self.admin_policy = {
             "settingName": "ServicePrincipalAccessGlobalAPIs", "enabled": True,
@@ -176,6 +177,36 @@ class FakeCloud:
                     return response(201, self.vault)
                 if method == "GET":
                     return response(200, self.vault) if self.vault is not None else response(404)
+            if path.startswith(f"{self.target.vault_id}/secrets/") and method == "GET":
+                name = path.rsplit("/", 1)[-1]
+                secret = self.secrets.get(name)
+                if secret is None:
+                    return response(404)
+                return response(data={
+                    "id": path, "name": name, "tags": secret["tags"],
+                    "properties": {
+                        "attributes": secret["attributes"], "contentType": "text/plain",
+                        "secretUri": f"{self.target.vault_uri}secrets/{name}",
+                        "secretUriWithVersion": f"{self.target.vault_uri}secrets/{name}/fake-version",
+                    },
+                })
+            if path.startswith(f"{self.target.resource_group_id}/providers/Microsoft.Resources/deployments/"):
+                if method == "PUT":
+                    if self.fail_password_write:
+                        return response(503, {"error": {"code": "Unavailable", "message": f"Never echo {SECRET} or {TOKEN}"}})
+                    props = body["properties"]
+                    for resource in props["template"]["resources"]:
+                        name = resource["name"].rsplit("/", 1)[-1]
+                        parameter = resource["properties"]["value"].split("'")[1]
+                        self.secrets[name] = {
+                            "value": props["parameters"][parameter]["value"],
+                            "tags": copy.deepcopy(resource["tags"]),
+                            "attributes": copy.deepcopy(resource["properties"]["attributes"]),
+                        }
+                    self.deployments[path] = {"properties": {"provisioningState": "Succeeded"}}
+                    return response(201, self.deployments[path])
+                if method == "GET":
+                    return response(data=self.deployments[path])
             role_prefix = f"{self.target.vault_id}/providers/Microsoft.Authorization/roleAssignments/"
             if path.startswith(role_prefix):
                 if method == "PUT":
@@ -283,8 +314,8 @@ class TargetAndOwnershipTests(OfflineTestCase):
         self.assertEqual(props["sku"], {"family": "A", "name": "standard"})
         self.assertTrue(props["enableRbacAuthorization"])
         self.assertEqual(props["accessPolicies"], [])
-        self.assertEqual(props["publicNetworkAccess"], "Enabled")
-        self.assertEqual(props["networkAcls"]["defaultAction"], "Allow")
+        self.assertEqual(props["publicNetworkAccess"], "Disabled")
+        self.assertEqual(props["networkAcls"]["defaultAction"], "Deny")
         self.assertEqual(props["createMode"], "default")
         self.assertTrue(props["enablePurgeProtection"])
 
@@ -330,13 +361,14 @@ class TargetAndOwnershipTests(OfflineTestCase):
         base["properties"]["vaultUri"] = self.target.vault_uri
         for changes in (
             {"enableRbacAuthorization": False}, {"tenantId": CALLER},
-            {"publicNetworkAccess": "Disabled"}, {"networkAcls": {"defaultAction": "Deny"}},
+            {"publicNetworkAccess": "Unrecognized"},
             {"sku": {"family": "A", "name": "premium"}},
         ):
             vault = copy.deepcopy(base)
             vault["properties"].update(changes)
             with self.subTest(changes=changes), self.assertRaises(fp.FeaturePrerequisiteError):
                 fp._validate_arm_resource(vault, self.target, vault=True)
+        fp._validate_arm_resource(base, self.target, vault=True)
 
     def test_uuid5_role_assignment_is_stable_and_vault_scoped(self):
         one = fp.role_assignment_spec(self.target, PRINCIPAL, fp.SECRETS_USER)
@@ -746,10 +778,10 @@ class EndToEndTests(OfflineTestCase):
     def test_expired_or_mismatched_credentials_stop_instead_of_rotating(self):
         self.ensure()
         first_writes = copy.deepcopy(self.cloud.writes)
-        self.cloud.secrets["tenantid"]["value"] = CALLER
+        self.cloud.secrets["tenantid"]["tags"]["tenantId"] = CALLER
         with self.assertRaisesRegex(fp.FeaturePrerequisiteError, "tenantid"):
             self.ensure()
-        self.cloud.secrets["tenantid"]["value"] = TENANT
+        self.cloud.secrets["tenantid"]["tags"]["tenantId"] = TENANT
         self.cloud.secrets["clientsecret"]["attributes"]["exp"] = int(time.time()) - 10
         with self.assertRaisesRegex(fp.FeaturePrerequisiteError, "expired"):
             self.ensure()
@@ -774,6 +806,42 @@ class EndToEndTests(OfflineTestCase):
         self.assertEqual(stderr.getvalue(), "")
         writes = [url for _, url, _ in self.cloud.writes if url.endswith("/addPassword")]
         self.assertEqual(len(writes), 1)
+
+    def test_private_initialization_uses_secure_parameters_and_no_data_plane_calls(self):
+        self.ensure()
+        for method, url, call in self.cloud.calls:
+            self.assertNotEqual(urlsplit(url).hostname, urlsplit(self.target.vault_uri).hostname)
+            if method == "PUT" and "/deployments/" in url:
+                props = call["json"]["properties"]
+                self.assertEqual(props["mode"], "Incremental")
+                self.assertNotIn(SECRET, repr(props["template"]))
+                self.assertNotIn("outputs", props["template"])
+                self.assertTrue(all(parameter["type"] == "secureString" for parameter in props["template"]["parameters"].values()))
+                self.assertEqual({resource["name"] for resource in props["template"]["resources"]},
+                                 {f"{self.target.vault_name}/{name}" for name in ("tenantid", "clientid", "clientsecret")})
+        self.assertEqual(self.cloud.vault["properties"]["publicNetworkAccess"], "Disabled")
+
+    def test_existing_public_vault_keeps_the_original_data_plane_path(self):
+        self.cloud.vault = {**fp.vault_body(self.target), "id": self.target.vault_id}
+        self.cloud.vault["properties"].update(
+            publicNetworkAccess="Enabled", networkAcls={"defaultAction": "Allow"},
+            vaultUri=self.target.vault_uri, provisioningState="Succeeded",
+        )
+        self.ensure()
+        first_writes = copy.deepcopy(self.cloud.writes)
+        self.ensure()
+        self.assertEqual(first_writes, self.cloud.writes)
+        self.assertFalse(self.cloud.deployments)
+        self.assertTrue(any(urlsplit(url).hostname == urlsplit(self.target.vault_uri).hostname
+                            for _, url, _ in self.cloud.calls))
+
+    def test_existing_identifier_secrets_do_not_block_initial_password_creation(self):
+        self.ensure()
+        self.cloud.app["passwordCredentials"] = []
+        del self.cloud.secrets["clientsecret"]
+        self.ensure()
+        self.assertIn("clientsecret", self.cloud.secrets)
+        self.assertEqual(len(self.cloud.app["passwordCredentials"]), 1)
 
 
 if __name__ == "__main__":

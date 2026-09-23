@@ -66,11 +66,22 @@ Outlook OAuth connection are not fabricated: provision those separately before
 enabling their respective jobs. Missing sign-in readiness is a hard failure in this
 bootstrap mode, even where app-only deployment would report a warning.
 
-The prerequisite bootstrap currently requires an Entra/RBAC-protected public TLS
-endpoint on its dedicated Key Vault. If an organizational policy forces
-`publicNetworkAccess: Disabled`, it stops before creating notebook credentials.
-Do not bypass that policy: use a governance-approved exception or arrange an
-approved private-network provisioning path before continuing.
+New prerequisite vaults are private-only and RBAC-protected. For a private vault,
+the orchestrator initializes credentials through an incremental ARM template with
+`secureString` parameters; it does not call the local Key Vault data plane, log
+credentials, or store them in files. ARM exposes only secret metadata. The existing
+`key_vault_preflight.py` then creates/reuses a Fabric managed private endpoint,
+approves its Key Vault connection when authorized, and waits for readiness before
+any setup notebook runs. `RTI_001` verifies actual secret reads and notebook
+service-principal authentication from Fabric.
+
+This uses the documented [ARM provisioning plane](https://learn.microsoft.com/azure/key-vault/general/overview-vnet-service-endpoints#usage-scenarios)
+while keeping runtime reads private. It does not require a VM, public IP, VPN,
+public-vault access or a policy exception. The caller needs ARM deployment/secret
+provisioning rights and private-endpoint approval rights; the notebook principal
+receives only vault secret-read access and FEATURE workspace Contributor. A paused
+capacity must be resumed explicitly before deployment; the bootstrap does not
+resize or resume capacity automatically.
 
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the

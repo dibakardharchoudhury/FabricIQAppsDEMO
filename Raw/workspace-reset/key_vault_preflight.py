@@ -118,6 +118,10 @@ class CloudClient:
         self.tokens: dict[str, tuple[str, float]] = {}
 
     def request(self, scope: str, method: str, url: str, **kwargs: Any) -> requests.Response:
+        expected = {FABRIC_SCOPE: "api.fabric.microsoft.com", ARM_SCOPE: "management.azure.com"}.get(scope)
+        parsed = urlparse(url)
+        if (not expected or parsed.scheme != "https" or parsed.netloc != expected):
+            raise PreflightError("Refusing an unexpected preflight API URL.")
         token, expiry = self.tokens.get(scope, ("", 0.0))
         if not token or time.time() >= expiry - 300:
             access = self.credential.get_token(scope)
@@ -125,8 +129,10 @@ class CloudClient:
             self.tokens[scope] = (token, expiry)
         headers = dict(kwargs.pop("headers", {}))
         headers["Authorization"] = f"Bearer {token}"
+        if scope == FABRIC_SCOPE:
+            headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
         for attempt in range(6):
-            response = self.session.request(method, url, headers=headers, timeout=120, **kwargs)
+            response = self.session.request(method, url, headers=headers, timeout=120, allow_redirects=False, **kwargs)
             if response.status_code != 429:
                 return response
             time.sleep(min(30, int(response.headers.get("Retry-After", "5")) * (attempt + 1)))

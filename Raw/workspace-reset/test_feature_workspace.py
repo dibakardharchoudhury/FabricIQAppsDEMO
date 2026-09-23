@@ -217,6 +217,50 @@ class FeatureWorkspaceTests(unittest.TestCase):
             deploy.deploy(args)
         self.assertEqual(events, ["validate", "prepare", "app", "auth", "finish"])
 
+    def test_private_endpoint_is_ready_before_import_or_setup(self):
+        events = []
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json")
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            workspace.specs = []
+            workspace.fabric.request.side_effect = [
+                Mock(status_code=200, json=lambda: {"gitConnectionState": "NotConnected"}),
+                Mock(status_code=200, json=lambda: {"capacityId": "capacity"}),
+                Mock(status_code=200, json=lambda: {"value": [{"id": "capacity", "state": "Active"}]}),
+            ]
+            prerequisites = {"key_vault_uri": "https://kv-hydro-feature.vault.azure.net/"}
+            with (
+                patch("feature_prerequisites.ensure_feature_prerequisites", return_value=prerequisites),
+                patch.object(feature, "ensure_key_vault_access", side_effect=lambda *args: events.append("private")),
+                patch.object(feature, "configure_weather_assets", side_effect=lambda *args, **kwargs: events.append("environment")),
+                patch.object(workspace, "_run", side_effect=lambda *args: events.append("setup")),
+                patch.object(workspace, "_verify_schedules_disabled"),
+                patch.object(workspace, "_item"),
+            ):
+                workspace.prepare()
+            self.assertEqual(events, ["private", "environment", "setup", "environment"])
+            self.assertTrue(workspace.state["private_connectivity_ready"])
+
+    def test_private_endpoint_failure_blocks_setup(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json")
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            workspace.fabric.request.side_effect = [
+                Mock(status_code=200, json=lambda: {"gitConnectionState": "NotConnected"}),
+                Mock(status_code=200, json=lambda: {"capacityId": "capacity"}),
+                Mock(status_code=200, json=lambda: {"value": [{"id": "capacity", "state": "Active"}]}),
+            ]
+            with (
+                patch("feature_prerequisites.ensure_feature_prerequisites", return_value={"key_vault_uri": "https://kv-hydro-feature.vault.azure.net/"}),
+                patch.object(feature, "ensure_key_vault_access", side_effect=feature.PreflightError("approval needed")),
+                patch.object(workspace, "_upsert") as upsert,
+                patch.object(workspace, "_run") as run,
+            ):
+                with self.assertRaisesRegex(feature.FeatureWorkspaceError, "approval needed"):
+                    workspace.prepare()
+            upsert.assert_not_called()
+            run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,11 +11,12 @@ Workspace.ReadWrite.All with tenant administrator/workspace role-management
 privileges. ARM needs resource/vault creation and vault-scoped RBAC assignment
 permissions. None of those administrative permissions are granted to the notebook.
 
-New vaults use Standard, RBAC, soft delete and purge protection. Their public TLS
-endpoint is intentional for the demo: network reachability is public, but secret
-access is exclusively Entra identity/RBAC based, not anonymous or access-policy
-based. Only the caller gets Secrets Officer; the notebook gets Secrets User on
-this vault and Contributor on this workspace. No Git or SPA APIs are used.
+New vaults use Standard, RBAC, soft delete, purge protection and private-only
+networking. Private vault credentials are initialized by an incremental ARM
+deployment with secure parameters; no local data-plane access is attempted.
+The workspace preflight provisions the private endpoint for notebook reads.
+Only the caller gets Secrets Officer; the notebook gets Secrets User on this
+vault and Contributor on this workspace. No Git or SPA APIs are used.
 
 Operations are bounded but not transactional. Serialize calls for one workspace:
 Fabric's update API has no documented conditional-write/ETag contract. We reread
@@ -63,6 +64,7 @@ RESOURCE_API = "2021-04-01"
 VAULT_API = "2024-11-01"
 SECRET_API = "7.4"
 ROLE_API = "2022-04-01"
+DEPLOYMENT_API = "2022-09-01"
 SECRETS_OFFICER = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
 SECRETS_USER = "4633458b-17de-408a-b874-0445c86b69e6"
 MANAGED_BY = "hydro-feature-bootstrap"
@@ -206,8 +208,8 @@ def vault_body(target: FeatureTarget) -> Json:
             "softDeleteRetentionInDays": 90,
             "enablePurgeProtection": True,
             "createMode": "default",  # Never recover a soft-deleted name collision.
-            "publicNetworkAccess": "Enabled",
-            "networkAcls": {"bypass": "None", "defaultAction": "Allow"},
+            "publicNetworkAccess": "Disabled",
+            "networkAcls": {"bypass": "None", "defaultAction": "Deny"},
         },
     }
 
@@ -521,9 +523,8 @@ def _validate_arm_resource(resource: Json, target: FeatureTarget, *, vault: bool
                 or str(sku.get("name", "")).lower() != "standard" or sku.get("family") != "A"
                 or properties.get("enableRbacAuthorization") is not True
                 or properties.get("accessPolicies")
-                or properties.get("publicNetworkAccess", "Enabled") != "Enabled"
-                or network.get("defaultAction", "Allow") != "Allow"):
-            raise FeaturePrerequisiteError("Owned vault does not match the tenant/Standard/RBAC/public-TLS contract.")
+                or properties.get("publicNetworkAccess", "Enabled") not in {"Enabled", "Disabled"}):
+            raise FeaturePrerequisiteError("Owned vault does not match the tenant/Standard/RBAC contract.")
         _validate_url(str(properties.get("vaultUri", "")), target.vault_uri)
         if urlsplit(properties["vaultUri"]).path not in ("", "/"):
             raise FeaturePrerequisiteError("Owned vault returned an unexpected data-plane URI.")
@@ -867,6 +868,166 @@ def _ensure_credentials(client: _Client, target: FeatureTarget, app: Json) -> di
     return {"notebook_password_key_id": key_id, "notebook_password_expires_on": _iso(expiry)}
 
 
+def credential_deployment_body(target: FeatureTarget, records: dict[str, Json]) -> Json:
+    """Use write-only ARM secret provisioning; secret values are secure parameters."""
+    if not records or set(records) - {"tenantid", "clientid", "clientsecret"}:
+        raise FeaturePrerequisiteError("Unsupported credential deployment records.")
+    template: Json = {
+        "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+        "contentVersion": "1.0.0.0", "parameters": {}, "resources": [],
+    }
+    parameters: Json = {}
+    for name, record in records.items():
+        if not isinstance(record.get("value"), str) or not record["value"]:
+            raise FeaturePrerequisiteError("A credential deployment value is missing.")
+        parameter = f"{name}Value"
+        parameters[parameter] = {"value": record["value"]}
+        template["parameters"][parameter] = {"type": "secureString"}
+        template["resources"].append({
+            "type": "Microsoft.KeyVault/vaults/secrets", "apiVersion": VAULT_API,
+            "name": f"{target.vault_name}/{name}",
+            "tags": record["tags"],
+            "properties": {
+                "value": f"[parameters('{parameter}')]",
+                "contentType": "text/plain", "attributes": record["attributes"],
+            },
+        })
+    return {"properties": {"mode": "Incremental", "template": template, "parameters": parameters}}
+
+
+def _read_arm_secret(client: _Client, target: FeatureTarget, name: str) -> Json | None:
+    return client.object(
+        ARM_SCOPE, "GET", f"{ARM_BASE}{target.vault_id}/secrets/{name}?api-version={VAULT_API}",
+        action=f"Reading ARM credential metadata for {name}", missing=True,
+    )
+
+
+def _validate_arm_secret(secret: Json, target: FeatureTarget, app: Json, name: str) -> None:
+    # ARM intentionally never returns values. Verify ownership and validity here;
+    # the setup notebook verifies actual values and client-credential sign-in.
+    if str(secret.get("id", "")).lower() != f"{target.vault_id}/secrets/{name}".lower():
+        raise FeaturePrerequisiteError("ARM credential metadata belongs to a different resource.")
+    tags = secret.get("tags") or {}
+    expected = {**target.tags, "applicationObjectId": app["id"],
+                "tenantId": target.tenant_id, "clientId": app["appId"]}
+    if not isinstance(tags, dict) or any(tags.get(key) != value for key, value in expected.items()):
+        raise FeaturePrerequisiteError(f"Existing {name} metadata does not match this deployment.")
+    props = secret.get("properties") or {}
+    if not isinstance(props, dict):
+        raise FeaturePrerequisiteError(f"Existing {name} has invalid ARM metadata.")
+    attributes = props.get("attributes") or {}
+    if not isinstance(attributes, dict):
+        raise FeaturePrerequisiteError(f"Existing {name} has invalid credential attributes.")
+    not_before = attributes.get("nbf") or 0
+    expires = attributes.get("exp") if attributes.get("exp") is not None else time.time() + 3600
+    if (attributes.get("enabled") is not True
+            or not isinstance(not_before, (int, float)) or not isinstance(expires, (int, float))
+            or not_before > time.time() or expires <= time.time() + 60):
+        raise FeaturePrerequisiteError(f"Existing {name} is disabled, not yet valid or expired.")
+    uri = props.get("secretUriWithVersion") or ""
+    _validate_url(uri, target.vault_uri)
+    if not re.fullmatch(rf"/secrets/{name}/[A-Za-z0-9-]+", urlsplit(uri).path):
+        raise FeaturePrerequisiteError(f"Existing {name} has invalid secret-version metadata.")
+
+
+def _deploy_arm_credentials(client: _Client, target: FeatureTarget, records: dict[str, Json]) -> None:
+    deployment_name = f"hydro-credentials-{target.workspace_id[:8]}-{uuid4().hex[:8]}"
+    url = (
+        f"{ARM_BASE}{target.resource_group_id}/providers/Microsoft.Resources/"
+        f"deployments/{deployment_name}?api-version={DEPLOYMENT_API}"
+    )
+    client.request(
+        ARM_SCOPE, "PUT", url, action="Deploying secure notebook credentials",
+        body=credential_deployment_body(target, records), ok=(200, 201, 202),
+        retry_throttling=False,
+    )
+    for attempt in range(120):
+        deployment = client.object(ARM_SCOPE, "GET", url, action="Checking secure credential deployment")
+        assert deployment is not None
+        state = (deployment.get("properties") or {}).get("provisioningState")
+        if state == "Succeeded":
+            return
+        if state in {"Failed", "Canceled", "Cancelled"}:
+            raise FeaturePrerequisiteError(
+                f"Secure credential deployment {deployment_name} {state}; inspect its ARM status."
+            )
+        if state not in {"Accepted", "Running", "Creating", "Updating"}:
+            raise FeaturePrerequisiteError(f"Unexpected credential deployment state: {state}.")
+        if attempt < 119:
+            time.sleep(5)
+    raise FeaturePrerequisiteError(
+        f"Secure credential deployment {deployment_name} did not finish within ten minutes; do not rotate credentials."
+    )
+
+
+def _ensure_private_credentials(client: _Client, target: FeatureTarget, app: Json) -> dict[str, str]:
+    secrets = {name: _read_arm_secret(client, target, name) for name in ("tenantid", "clientid", "clientsecret")}
+    for name, secret in secrets.items():
+        if secret is not None:
+            _validate_arm_secret(secret, target, app, name)
+    passwords = _objects(app.get("passwordCredentials", []), "password metadata")
+    existing = secrets["clientsecret"]
+    records: dict[str, Json] = {}
+    tags = {**target.tags, "applicationObjectId": app["id"],
+            "tenantId": target.tenant_id, "clientId": app["appId"]}
+    for name, value in (("tenantid", target.tenant_id), ("clientid", app["appId"])):
+        if secrets[name] is None:
+            records[name] = {"value": value, "tags": tags, "attributes": {"enabled": True}}
+    if existing is not None:
+        key_id = _uuid(existing["tags"].get("passwordKeyId"), "stored password key id")
+        matches = [item for item in passwords if str(item.get("keyId", "")).lower() == key_id]
+        if len(matches) != 1 or matches[0].get("displayName") != target.names.password:
+            raise FeaturePrerequisiteError("Private credential is not linked to the managed Graph password.")
+        expiry = _date(matches[0].get("endDateTime"), "Graph password expiry")
+        if (_date(matches[0].get("startDateTime"), "Graph password start") > datetime.now(timezone.utc)
+                or expiry <= datetime.now(timezone.utc) + timedelta(minutes=1)
+                or _date(existing["tags"].get("passwordEndDateTime"), "stored password expiry") != expiry
+                or existing["properties"]["attributes"].get("exp") != int(expiry.timestamp())):
+            raise FeaturePrerequisiteError("Private credential expiry metadata is inconsistent; explicit recovery is required.")
+    else:
+        if any(item.get("displayName") == target.names.password for item in passwords):
+            raise FeaturePrerequisiteError(
+                "A managed Graph password exists without a stored private credential; "
+                "explicit recovery is required, and another password will not be created."
+            )
+        requested_expiry = datetime.now(timezone.utc) + timedelta(days=PASSWORD_DAYS)
+        password = client.object(
+            GRAPH_SCOPE, "POST", f"{GRAPH_BASE}/applications/{app['id']}/addPassword",
+            action="Creating private-vault notebook password", retry_throttling=False,
+            body={"passwordCredential": {
+                "displayName": target.names.password, "startDateTime": _iso(datetime.now(timezone.utc)),
+                "endDateTime": _iso(requested_expiry),
+            }},
+        )
+        assert password is not None
+        key_id = _uuid(password.get("keyId"), "created password key id")
+        expiry = _date(password.get("endDateTime"), "created password expiry")
+        value = password.get("secretText")
+        if (not isinstance(value, str) or not value or expiry > requested_expiry
+                or expiry <= datetime.now(timezone.utc) + timedelta(minutes=1)):
+            raise FeaturePrerequisiteError("Graph returned invalid password metadata; explicit recovery is required.")
+        records["clientsecret"] = {
+            "value": value, "tags": {**tags, "passwordKeyId": key_id, "passwordEndDateTime": _iso(expiry)},
+            "attributes": {"enabled": True, "exp": int(expiry.timestamp())},
+        }
+    if records:
+        try:
+            _deploy_arm_credentials(client, target, records)
+        except FeaturePrerequisiteError as exc:
+            raise FeaturePrerequisiteError(f"Private credential persistence failed; explicit recovery may be required. {exc}") from None
+    for name in secrets:
+        secret = _read_arm_secret(client, target, name)
+        if secret is None:
+            raise FeaturePrerequisiteError(f"ARM deployment did not persist {name}.")
+        _validate_arm_secret(secret, target, app, name)
+        if name in records and (
+            secret["tags"] != records[name]["tags"]
+            or any(secret["properties"]["attributes"].get(k) != v for k, v in records[name]["attributes"].items())
+        ):
+            raise FeaturePrerequisiteError(f"ARM persistence metadata verification failed for {name}.")
+    return {"notebook_password_key_id": key_id, "notebook_password_expires_on": _iso(expiry)}
+
+
 def _isolated_cli_config() -> None:
     config = os.environ.get("AZURE_CONFIG_DIR", "")
     if (not config or not os.path.isabs(config) or not os.path.isdir(config)
@@ -949,7 +1110,7 @@ def _ensure(client: _Client, target: FeatureTarget, allow_public_api_group: bool
     )
 
     _ensure_arm_resource(client, target, rg, vault=False)
-    _ensure_arm_resource(client, target, vault, vault=True)
+    vault = _ensure_arm_resource(client, target, vault, vault=True)
     if app is None:
         # Recheck Graph names at the write boundary. Graph display names are not
         # unique keys, so a concurrent creator still requires serialized callers.
@@ -1011,7 +1172,11 @@ def _ensure(client: _Client, target: FeatureTarget, allow_public_api_group: bool
     # Read fresh password metadata immediately before deciding whether to create.
     app = _graph_read(client, "applications", app["id"], APP_SELECT)
     _validate_application(app, target)
-    password_metadata = _ensure_credentials(client, target, app)
+    private_only = (vault.get("properties") or {}).get("publicNetworkAccess") == "Disabled"
+    password_metadata = (
+        _ensure_private_credentials(client, target, app) if private_only
+        else _ensure_credentials(client, target, app)
+    )
     return {
         "tenant_id": target.tenant_id,
         "workspace_id": target.workspace_id,
@@ -1027,5 +1192,6 @@ def _ensure(client: _Client, target: FeatureTarget, allow_public_api_group: bool
         "caller_vault_role_assignment_id": caller_role,
         "notebook_vault_role_assignment_id": notebook_role,
         "public_api_policy_changed": str(policy_changed).lower(),
+        "credential_provisioning": "secure-arm-deployment" if private_only else "vault-data-plane",
         **password_metadata,
     }

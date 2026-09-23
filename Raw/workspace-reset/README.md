@@ -132,6 +132,9 @@ See [the feature-workspace runbook](../../HydroOperationsApp/DEPLOY.md#optional-
 It imports local definitions with target-specific notebook references, creates
 approved dedicated prerequisites, and runs setup/seed/stream without introducing a
 second app deployment command. It does not copy source workspace data or credentials.
+Private-only Key Vaults use secure ARM initialization followed by the same managed
+private-endpoint preflight described below. Public network access stays disabled;
+no separate VM or Fabric Git connection is needed.
 
 `01_Pipe_Setup` chains the `RTI_*` notebooks, and nearly all of them call
 `notebookutils.credentials.getSecret(key_vault_uri, ...)` to load a service principal. **A Key
