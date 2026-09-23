@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -357,6 +357,16 @@ checkboxes and the feature inspector. On small screens, the filter panel remains
 scrollable above the map.
 
 The production build and all six desktop/tablet/mobile browser cases passed.
-Use the same target and canonical orchestrator in its documented **app-only**
-mode (`FABRIC_FEATURE_CONFIG` unset). Existing imports, pipeline definitions and
-baseline jobs remain untouched; only the app's static layout is redeployed.
+The canonical orchestrator completed in its documented **app-only** mode
+(`FABRIC_FEATURE_CONFIG` unset), with exit code 0, `DEPLOYED_APP_URL` and
+`SUCCESS`. Deployment: `deploy-20260923150713-1eb24615`; code: `787e57d`.
+Existing imports, pipeline definitions and baseline jobs were untouched.
+
+All six hosted browser cases also passed: the full-width filter panel is above
+the map, controls remain functional, and the canvas fits on desktop, tablet and
+mobile in both layouts. No uncaught page errors were reported.
+
+The routine blanket-consent regrant returned 403 because the current user no
+longer held the required administrator role. Existing targeted grants were
+already present, and all required live-auth/redirect checks passed; no additional
+consent or administrator action was needed.
