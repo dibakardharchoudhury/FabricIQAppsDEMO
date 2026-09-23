@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock
 
-from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule
+from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule, notebook_definition
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -113,6 +113,18 @@ class FakeFabric:
 
 
 class WeatherProvisioningTests(unittest.TestCase):
+    def test_notebook_result_uses_the_same_canonical_operation_as_polling(self):
+        operation_id = "11111111-1111-4111-8111-111111111111"
+        pending = FakeResponse(202)
+        pending.headers = {"Location": "https://backend.example.invalid/operation", "x-ms-operation-id": operation_id}
+        definition = ipynb_definition({})
+        fabric = Mock()
+        fabric.request.side_effect = [pending, FakeResponse(200, definition)]
+        self.assertEqual(notebook_definition(fabric, "workspace", "notebook"), definition["definition"])
+        self.assertEqual(fabric.request.call_args.args, (
+            "GET", f"https://api.fabric.microsoft.com/v1/operations/{operation_id}/result",
+        ))
+
     def test_weather_schedule_is_created_every_six_hours(self):
         fabric = FakeFabric()
 

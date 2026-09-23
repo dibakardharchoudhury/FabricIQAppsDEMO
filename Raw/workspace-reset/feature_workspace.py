@@ -20,6 +20,7 @@ from sync_workspace_from_git import (
     FABRIC_BASE,
     Fabric,
     configure_weather_assets,
+    fabric_operation_url,
 )
 from key_vault_preflight import PreflightError, ensure_key_vault_access
 
@@ -132,17 +133,10 @@ class FeatureFabric(Fabric):
     def poll_lro(self, response: requests.Response) -> requests.Response:
         if response.status_code != 202:
             return response
-        location = response.headers.get("Location") or response.headers.get("Operation-Location")
-        operation_id = response.headers.get("x-ms-operation-id")
-        if operation_id:
-            try:
-                location = f"{FABRIC_BASE}/operations/{UUID(operation_id)}"
-            except (ValueError, TypeError, AttributeError) as exc:
-                raise FeatureWorkspaceError("Fabric returned an invalid operation ID.") from exc
-        elif location and location.startswith("/v1/operations/"):
-            location = f"https://api.fabric.microsoft.com{location}"
-        if not location:
-            raise FeatureWorkspaceError("Fabric operation returned no status URL.")
+        try:
+            location = fabric_operation_url(response)
+        except ValueError as exc:
+            raise FeatureWorkspaceError(str(exc)) from exc
         deadline = time.monotonic() + 1800
         while time.monotonic() < deadline:
             time.sleep(max(1, int(response.headers.get("Retry-After", "5"))))

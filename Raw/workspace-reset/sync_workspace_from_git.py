@@ -92,6 +92,22 @@ FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+
+def fabric_operation_url(response: requests.Response) -> str:
+    operation_id = response.headers.get("x-ms-operation-id")
+    if operation_id:
+        if not GUID_RE.fullmatch(operation_id):
+            raise ValueError("Fabric returned an invalid operation ID.")
+        return f"{FABRIC_BASE}/operations/{operation_id}"
+    location = response.headers.get("Location") or response.headers.get("Operation-Location", "")
+    if location.startswith("/v1/operations/"):
+        location = f"https://api.fabric.microsoft.com{location}"
+    if not location.startswith(f"{FABRIC_BASE}/operations/"):
+        raise ValueError("Fabric operation returned no supported status URL.")
+    return location.rstrip("/")
+
+
 WEATHER_ENVIRONMENT_NAME = "Weather"
 WEATHER_NOTEBOOK_FOLDER = "Notebooks"
 WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
@@ -265,10 +281,8 @@ class Fabric:
         """Follow a 202 long-running-operation to completion; return the final response."""
         if resp.status_code != 202:
             return resp
-        location = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+        location = fabric_operation_url(resp)
         retry = int(resp.headers.get("Retry-After", "5"))
-        if not location:
-            return resp
         while True:
             time.sleep(retry)
             status = self.request("GET", location)
@@ -430,7 +444,7 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
     )
     response = fab.request("POST", url)
     if response.status_code == 202:
-        operation = response.headers.get("Location")
+        operation = fabric_operation_url(response)
         fab.poll_lro(response)
         response = fab.request("GET", f"{operation}/result")
     if response.status_code != 200:
