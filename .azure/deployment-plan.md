@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -393,5 +393,12 @@ messages into the collapsed disclosure. The existing page-level status alerts
 remain unchanged.
 
 This shared UI-only change passed build, lint and responsive disclosure/placement
-checks and is ready for the canonical app-only deployment to FEATURE. No data,
-infrastructure, authentication or pipeline changes are required.
+checks and was deployed with the canonical app-only workflow. Deployment
+`deploy-20260923162346-ada8c15e` completed with exit code 0, `DEPLOYED_APP_URL`
+and `SUCCESS`; deployed code is `4cb73a5`.
+
+All six hosted browser cases also passed: supporting text starts hidden, keyboard
+expansion reveals it, collapse hides it again, and the compact layout preserves
+layer selection and map sizing. The existing consent grants and redirect/auth
+contracts passed despite the already-documented blanket-consent warning.
+Data, infrastructure and pipeline definitions were not changed.
