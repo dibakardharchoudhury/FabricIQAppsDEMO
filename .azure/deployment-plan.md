@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -26,7 +26,7 @@ connection, alter STABLE, or implement the future energy-map feature in this ste
 
 The user reconfirmed this subscription, region, capacity and workspace on 2026-09-23.
 Browser sign-in completed as `espenb@MngEnvMCAP679828.onmicrosoft.com`.
-Live checks confirm the workspace is empty and Git-disconnected, the vault is
+Initial preflight confirmed the workspace was empty and Git-disconnected, the vault was
 private-only/RBAC-protected, and Microsoft.Network is registered. The user
 approved resuming the existing F2. A subsequent ARM read returned `Active`, so
 no resume action was necessary or performed by this session.
@@ -125,8 +125,8 @@ Service references:
 - [x] Obtain approval for the completed infrastructure plan, including resuming the existing F2 capacity (2026-09-23).
 - [x] Implement only required extensions to the canonical workflow.
 - [x] Mark Ready for Validation; azure-validate is loaded for the checks below.
-- [ ] Execute the canonical deployment only after validation.
-- [ ] Verify target-only data bindings, hosted app/auth and baseline data.
+- [x] Execute the canonical deployment only after validation.
+- [x] Verify target-only data bindings, hosted app/auth and baseline data.
 
 ## 8. Validation checklist and proof
 
@@ -154,7 +154,8 @@ Validated under the azure-validate workflow on 2026-09-23.
 
 No Azure policy is removed or bypassed. Secret values are absent from templates,
 outputs, source/config files and logs; actual values exist only in secure deployment
-parameters at execution time. Runtime credential usability remains a deployment check.
+parameters at execution time. Runtime credential usability was confirmed by the
+successful setup and strict seed notebook runs.
 
 ## 9. Current checkpoint
 
@@ -174,18 +175,32 @@ stopped; external weather keys and mailbox connections were not fabricated.
 - Hosted app: https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net
 - Fabric item: https://app.fabric.microsoft.com/groups/313d99ca-4280-4772-87cb-2c928164c428/appbackends/d87864ad-ecaf-4970-8ce7-84f9b4bbcf9a?ctid=cfbb67d9-96a6-4e29-a919-1fc7cfb80776
 
-**Deployment is blocked at the Entra consent gate.** App/backend/schema deployment
-and HTTP checks passed; the SPA redirect and requested delegated permissions are
-configured. `setup-live-auth` was corrected to preserve literal Azure CLI arguments
-on macOS/Linux. Both blanket and targeted tenant-wide consent calls then returned
-403 `Authorization_RequestDenied` for the signed-in user.
+**Deployment completed on 2026-09-23.** After the administrator granted consent,
+the canonical orchestrator verified the SPA redirect, required delegated scopes
+and tenant-wide consent. Strict `RTI_011` completed operational SQL seeding,
+GraphQL binding and operational Data Agent publication. The finite telemetry
+pipeline completed and the orchestrator printed both `DEPLOYED_APP_URL` and
+`SUCCESS`, exiting with code 0.
 
-An authorized Entra administrator must grant the already configured delegated
-permissions on **Hydro Operations Fabric Client**
-(`10a4844e-22f6-4186-ad00-6d7f93fc7589`) in the target tenant. Do not grant the
-notebook principal admin roles or bypass this consent gate.
+Final persisted evidence:
 
-After consent, rerun the canonical deployment command. The completed setup and
-app are reused; strict SQL data seeding, GraphQL provisioning, operational Data
-Agent binding and final telemetry checks still need to run. No complete-deployment
-SUCCESS has been reported by the orchestrator.
+| Component | Result |
+| --- | --- |
+| Operational SQL database | `hydro-operations-ui`, `df1bbd16-d8f6-4849-9d7c-54a519c8b949`; strict seed succeeded |
+| GraphQL | `Hydro_STID_API`, `889efa17-23d5-4341-b9e7-706f3c1389b7`; returned 3 facilities, 15 equipment rows and 90 instruments |
+| Telemetry | 9,000 Eventhouse events; latest event `2026-09-23T10:45:11.975092Z` at final verification |
+| Hosted page | HTTP 200 |
+| Browser telemetry access | CORS preflight permits the exact deployed origin, POST and authorization/content-type headers |
+| Workspace | 40 items, Git state `NotConnected` |
+| Source STABLE | Not modified |
+| Deployment configuration | Generated origin committed and pushed as `b348210` |
+
+The private endpoint and vault-scoped credentials remain in place; Key Vault
+public network access remains disabled. Weather scheduling and outbound agent
+alerts remain disabled as planned. Live weather provider credentials, the optional
+Foundry model endpoint and mailbox setup are separate integrations, not fabricated
+as part of the fresh-demo baseline.
+
+This completes the existing-solution feature workspace. The separately planned
+energy-map tab and external energy-source ingestion are not implemented by this
+deployment.
