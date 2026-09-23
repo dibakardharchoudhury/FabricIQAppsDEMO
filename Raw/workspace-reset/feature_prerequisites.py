@@ -223,7 +223,7 @@ def _objects(value: Any, field: str) -> list[Json]:
 def _policy_body(setting: Json) -> Json:
     setting = copy.deepcopy(setting)
     for key in ("enabledSecurityGroups", "excludedSecurityGroups", "properties"):
-        if setting.get(key) is None:
+        if key in setting and setting[key] is None:
             setting[key] = []
     if setting.get("settingName") != PUBLIC_API_SETTING:
         raise FeaturePrerequisiteError("Only ServicePrincipalAccessPermissionAPIs may be changed.")
@@ -329,7 +329,8 @@ def _http_failure(response: requests.Response, action: str, resource: str) -> Fe
             payload = response.json()
             error = payload.get("error", payload)
             if isinstance(error, dict) and isinstance(error.get("message"), str):
-                detail = f" {error['message'][:1000]}"
+                code = error.get("errorCode") or error.get("code") or "Unknown"
+                detail = f" {code}: {error['message'][:1000]}"
         except (ValueError, AttributeError):
             pass
     return FeaturePrerequisiteError(

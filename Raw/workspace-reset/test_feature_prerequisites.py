@@ -456,6 +456,14 @@ class PolicyTests(OfflineTestCase):
                 self.assertEqual(body[key], before[key])
         self.assertNotIn("canSpecifySecurityGroups", body)
 
+    def test_append_does_not_invent_absent_optional_policy_properties(self):
+        before = policy()
+        for key in ("properties", "excludedSecurityGroups"):
+            del before[key]
+        body = self.merge(before)
+        self.assertNotIn("properties", body)
+        self.assertNotIn("excludedSecurityGroups", body)
+
     def test_opt_out_refuses_only_an_actual_policy_change(self):
         with self.assertRaisesRegex(fp.FeaturePrerequisiteError, "allow_public_api_group"):
             self.merge(policy(), allow_public_api_group=False)
