@@ -137,7 +137,7 @@ Service references:
   - [x] Azure CLI installation and authentication: CLI 2.84.0; tenant and approved subscription unchanged.
   - [x] Fabric target: FEATURE on the active Norway East F2; Git `NotConnected`.
   - [x] App typecheck, targeted ESLint, nine map-contract tests and Node 24 production build.
-  - [x] Python integration regressions: 116 tests passed in the existing provisioning virtual environment.
+  - [x] Python integration regressions: 117 tests passed in the existing provisioning virtual environment.
   - [x] Browser checks: V1/V2 Map navigation, WebGL canvas, layer toggles and tab unmount; no uncaught page errors.
   - [x] Static identity review: no new Azure resources, RBAC assignments, secrets, tenant settings or permissions in this extension.
   - [x] Policy preservation: vault still RBAC-enabled with public network access `Disabled`.
@@ -145,7 +145,7 @@ Service references:
 
 | Check | Actual command / evidence | Result |
 | --- | --- | --- |
-| Backend integration | Provisioning venv `python -m unittest test_energy_ingestion test_feature_workspace test_deploy_fabric_app test_agent_deployment_contract -q` | 116 passed at 2026-09-23T12:14Z; includes 51 ingestion tests, source completeness, last-good preservation, pipeline parameters/concurrency, baseline digest reuse, read-model checks and actionable service errors |
+| Backend integration | Provisioning venv `python -m unittest test_energy_ingestion test_feature_workspace test_deploy_fabric_app test_agent_deployment_contract -q` | 117 passed at 2026-09-23T12:43Z; includes 51 ingestion tests, source completeness, last-good preservation, pipeline parameters/concurrency, baseline digest reuse, read-model checks, actionable service errors and bounded TLS connection retries |
 | Frontend | Node 24 `npm run typecheck`, `node --import tsx --test scripts/energy-map-model.test.ts`, targeted ESLint, `npm run validate-env && npm run build` | Passed; locally bundled lazy MapLibre worker, nine tests; existing large-chunk warning remains |
 | Browser | Session-only Playwright `check-map.mjs` against the production preview | Both UI shells passed; browser rendering is verified locally, not yet on the deployed map |
 | Azure / Fabric | `az account show`, `az version`, read-only workspace, capacity and Git-connection API calls | Exact approved target; active F2; no Git connection |
@@ -174,6 +174,16 @@ Fabric failures now include the service error code/message. No existing data or
 deployment state was removed.
 The corrected notebook mirror, 116-test integration suite and production build
 were revalidated at 2026-09-23T12:14Z before retrying the same orchestrator.
+
+The retry created `Hydro_GeoContext_V6`
+(`7fca0386-d447-4dd2-8d9f-460396fbea7a`), bound the notebook and completed the
+initial energy import (`abaad838-9981-4ee9-8ac5-8e10a345c613`). Read-model
+publication then encountered an intermittent TLS EOF at the Eventhouse endpoint.
+Read-only diagnostic queries confirmed both query and management HTTP 200 with
+a pooled, certificate-verifying connection and bounded connection retries.
+The canonical helper now uses that transport, does not retry authentication
+failures or partial reads, and preserves the completed import checkpoint. Its
+117-test regression suite passed before resumption; no source reimport is needed.
 
 ### Completed baseline execution checklist
 

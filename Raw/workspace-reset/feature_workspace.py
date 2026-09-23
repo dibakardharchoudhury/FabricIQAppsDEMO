@@ -15,6 +15,8 @@ from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from sync_workspace_from_git import (
     FABRIC_BASE,
@@ -127,6 +129,14 @@ def rebind_pipeline(content: dict[str, Any], notebook_ids: dict[str, str],
 
 def definition_part(path: str, content: bytes) -> dict[str, str]:
     return {"path": path, "payloadType": "InlineBase64", "payload": base64.b64encode(content).decode("ascii")}
+
+
+def kusto_session() -> requests.Session:
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=Retry(
+        total=3, connect=3, read=0, backoff_factor=1, allowed_methods={"POST"},
+    )))
+    return session
 
 
 class FeatureFabric(Fabric):
@@ -527,28 +537,29 @@ class FeatureWorkspace:
             url = payload.get("continuationUri")
             if not url and payload.get("continuationToken"):
                 url = f"{self.base}/lakehouses/{lakehouse_id}/tables?continuationToken={quote(payload['continuationToken'], safe='')}"
-        for name, table in (("HydroGeoFeatures", "geo_map_features"), ("HydroGeoStatus", "geo_source_status")):
-            matches = [item for item in discovered if item.get("name", "").split(".")[-1] == table]
-            if len(matches) != 1 or matches[0].get("format", "").lower() != "delta":
-                raise FeatureWorkspaceError(f"Cannot resolve the energy Delta table {table}.")
-            location = matches[0].get("location", "")
-            parts = urlparse(location)
-            if (parts.scheme != "abfss" or parts.username != self.config.workspace_id
-                    or parts.password is not None or parts.port is not None
-                    or not (parts.hostname or "").endswith("onelake.dfs.fabric.microsoft.com")
-                    or not parts.path.startswith(f"/{lakehouse_id}/Tables/")
-                    or parts.query or parts.fragment or "'" in location or ";" in location):
-                raise FeatureWorkspaceError("Energy table location is outside the selected GeoContext Lakehouse.")
-            query = f".create-or-alter external table {name} kind=delta (h@'{location};impersonate')"
-            response = requests.post(f"{cluster}/v1/rest/mgmt", headers=headers,
-                                     json={"db": database, "csl": query}, timeout=90)
-            check_response(response, f"Publish {name} map read model", {200})
-            if response.json().get("error") or response.json().get("Exceptions"):
-                raise FeatureWorkspaceError(f"Eventhouse rejected the {name} map read model.")
-        response = requests.post(f"{cluster}/v1/rest/query", headers=headers, json={
-            "db": database,
-            "csl": "external_table('HydroGeoStatus') | project layer_id, state, row_count",
-        }, timeout=90)
+        with kusto_session() as session:
+            for name, table in (("HydroGeoFeatures", "geo_map_features"), ("HydroGeoStatus", "geo_source_status")):
+                matches = [item for item in discovered if item.get("name", "").split(".")[-1] == table]
+                if len(matches) != 1 or matches[0].get("format", "").lower() != "delta":
+                    raise FeatureWorkspaceError(f"Cannot resolve the energy Delta table {table}.")
+                location = matches[0].get("location", "")
+                parts = urlparse(location)
+                if (parts.scheme != "abfss" or parts.username != self.config.workspace_id
+                        or parts.password is not None or parts.port is not None
+                        or not (parts.hostname or "").endswith("onelake.dfs.fabric.microsoft.com")
+                        or not parts.path.startswith(f"/{lakehouse_id}/Tables/")
+                        or parts.query or parts.fragment or "'" in location or ";" in location):
+                    raise FeatureWorkspaceError("Energy table location is outside the selected GeoContext Lakehouse.")
+                query = f".create-or-alter external table {name} kind=delta (h@'{location};impersonate')"
+                response = session.post(f"{cluster}/v1/rest/mgmt", headers=headers,
+                                        json={"db": database, "csl": query}, timeout=90, allow_redirects=False)
+                check_response(response, f"Publish {name} map read model", {200})
+                if response.json().get("error") or response.json().get("Exceptions"):
+                    raise FeatureWorkspaceError(f"Eventhouse rejected the {name} map read model.")
+            response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
+                "db": database,
+                "csl": "external_table('HydroGeoStatus') | project layer_id, state, row_count",
+            }, timeout=90, allow_redirects=False)
         check_response(response, "Verify energy map source status", {200})
         payload = response.json()
         if payload.get("error") or payload.get("Exceptions"):
@@ -640,19 +651,21 @@ class FeatureWorkspace:
             raise FeatureWorkspaceError("Unexpected feature Eventhouse query endpoint.")
         token = self.fabric._credential.get_token(f"{cluster}/.default").token
         rows = []
-        for attempt in range(12):
-            response = requests.post(f"{cluster}/v1/rest/query", headers={
-                "Authorization": f"Bearer {token}", "Content-Type": "application/json",
-            }, json={"db": name, "csl": "OPCUAEvents | summarize count(), max(event_time)"}, timeout=60)
-            check_response(response, "Read feature telemetry", {200})
-            tables = response.json().get("Tables") or []
-            rows = tables[0].get("Rows", []) if tables else []
-            if rows and rows[0][0] > 0:
-                break
-            print("  Waiting for the feature telemetry stream to become queryable.", flush=True)
-            time.sleep(10)
-        else:
-            raise FeatureWorkspaceError("The feature Eventhouse has no queryable demo telemetry.")
+        with kusto_session() as session:
+            for attempt in range(12):
+                response = session.post(f"{cluster}/v1/rest/query", headers={
+                    "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                }, json={"db": name, "csl": "OPCUAEvents | summarize count(), max(event_time)"},
+                    timeout=60, allow_redirects=False)
+                check_response(response, "Read feature telemetry", {200})
+                tables = response.json().get("Tables") or []
+                rows = tables[0].get("Rows", []) if tables else []
+                if rows and rows[0][0] > 0:
+                    break
+                print("  Waiting for the feature telemetry stream to become queryable.", flush=True)
+                time.sleep(10)
+            else:
+                raise FeatureWorkspaceError("The feature Eventhouse has no queryable demo telemetry.")
         self.state["verification"] = {"stid_counts": graphql_counts, "telemetry_count": rows[0][0],
                                       "latest_telemetry_time": rows[0][1]}
         print(f"  Verified STID {graphql_counts}; telemetry rows: {rows[0][0]}.", flush=True)

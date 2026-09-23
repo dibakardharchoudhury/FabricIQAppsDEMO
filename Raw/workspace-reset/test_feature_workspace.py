@@ -182,8 +182,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
         for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location"):
             with (
                 self.subTest(case=case), tempfile.TemporaryDirectory() as directory,
-                patch.object(feature, "FeatureFabric"), patch.object(feature.requests, "post") as post,
+                patch.object(feature, "FeatureFabric"), patch.object(feature, "kusto_session") as session_factory,
             ):
+                post = session_factory.return_value.__enter__.return_value.post
                 config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", enable_energy_map=True)
                 workspace = feature.FeatureWorkspace(config, ROOT)
                 location = f"abfss://{WORKSPACE}@onelake.dfs.fabric.microsoft.com/{SUBSCRIPTION}/Tables"
@@ -227,6 +228,17 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         with self.assertRaises(feature.FeatureWorkspaceError):
                             workspace._publish_energy_read_models(SUBSCRIPTION)
                         self.assertNotIn("energy_map_verification", workspace.state)
+
+    def test_kusto_transport_retries_connections_without_weakening_tls_or_retrying_auth(self):
+        with feature.kusto_session() as session:
+            self.assertTrue(session.verify)
+            retry = session.get_adapter("https://feature.kusto.fabric.microsoft.com").max_retries
+            self.assertEqual(retry.total, 3)
+            self.assertEqual(retry.connect, 3)
+            self.assertEqual(retry.read, 0)
+            self.assertEqual(retry.allowed_methods, {"POST"})
+            self.assertFalse(retry.is_retry("POST", 401))
+            self.assertFalse(retry.is_retry("POST", 403))
 
     def test_import_refuses_unowned_existing_items(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
