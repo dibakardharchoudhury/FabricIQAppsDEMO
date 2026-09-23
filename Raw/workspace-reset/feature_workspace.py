@@ -121,7 +121,8 @@ def definition_part(path: str, content: bytes) -> dict[str, str]:
 class FeatureFabric(Fabric):
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.netloc != "api.fabric.microsoft.com":
+        if (parsed.scheme != "https" or parsed.hostname != "api.fabric.microsoft.com"
+                or parsed.port not in (None, 443) or parsed.username or parsed.password):
             raise FeatureWorkspaceError("Refusing a non-Fabric API URL.")
         headers = dict(kwargs.pop("headers", {}))
         headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
@@ -132,6 +133,14 @@ class FeatureFabric(Fabric):
         if response.status_code != 202:
             return response
         location = response.headers.get("Location") or response.headers.get("Operation-Location")
+        operation_id = response.headers.get("x-ms-operation-id")
+        if operation_id:
+            try:
+                location = f"{FABRIC_BASE}/operations/{UUID(operation_id)}"
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise FeatureWorkspaceError("Fabric returned an invalid operation ID.") from exc
+        elif location and location.startswith("/v1/operations/"):
+            location = f"https://api.fabric.microsoft.com{location}"
         if not location:
             raise FeatureWorkspaceError("Fabric operation returned no status URL.")
         deadline = time.monotonic() + 1800

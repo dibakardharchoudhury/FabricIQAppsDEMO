@@ -135,6 +135,18 @@ class FeatureWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(feature.FeatureWorkspaceError, "BadDefinition"):
                 client.poll_lro(accepted)
 
+    def test_lro_uses_canonical_operation_id_instead_of_backend_location(self):
+        with patch.object(feature.Fabric, "__init__", return_value=None):
+            client = feature.FeatureFabric(TENANT)
+        accepted = Mock(status_code=202, headers={
+            "Location": "https://backend.example.invalid/operation",
+            "x-ms-operation-id": WORKSPACE,
+        })
+        done = Mock(status_code=200, headers={}, json=lambda: {"status": "Succeeded"})
+        with patch.object(client, "request", return_value=done) as request, patch.object(feature.time, "sleep"):
+            self.assertIs(client.poll_lro(accepted), done)
+        request.assert_called_once_with("GET", f"{feature.FABRIC_BASE}/operations/{WORKSPACE}")
+
     def test_feature_configuration_does_not_edit_generated_env_local(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", env_suffix="V8")
