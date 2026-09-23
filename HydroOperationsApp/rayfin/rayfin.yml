@@ -15,6 +15,7 @@ services:
     fabric:
       enabled: true
     allowedRedirectUris:
+      - https://solar-dew-0ad1824bab-norwayeast.webapp.fabricapps.net
       - http://localhost:5173
   staticHosting:
     enabled: true
