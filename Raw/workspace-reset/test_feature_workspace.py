@@ -216,7 +216,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
             patch.object(deploy, "write_rayfin_redirects", side_effect=lambda uris: uris),
             patch.object(deploy, "prepare_rayfin_env", return_value=True),
             patch.object(deploy, "ensure_deploy_dependencies"),
-            patch.object(deploy, "ensure_rayfin_login"),
+            patch.object(deploy, "ensure_rayfin_login", side_effect=lambda tenant: events.append("login")),
             patch.object(deploy, "npm24", return_value=["validate"]),
             patch.object(deploy, "rayfin24", return_value=["app"]),
             patch.object(deploy, "node24_script", return_value=["auth"]),
@@ -227,7 +227,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
             patch.object(deploy, "validate_entra_live_auth_with_reauth"),
         ):
             deploy.deploy(args)
-        self.assertEqual(events, ["validate", "prepare", "app", "auth", "finish"])
+        self.assertEqual(events, ["validate", "login", "prepare", "app", "auth", "finish"])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):
         events = []

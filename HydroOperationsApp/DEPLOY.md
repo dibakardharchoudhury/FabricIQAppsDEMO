@@ -58,6 +58,8 @@ seeding retains its existing best-effort behavior. The bootstrap checks queryabl
 STID and telemetry before reporting completion. It keeps a nonsecret
 `*.state.json` checkpoint beside the config to resume interrupted work. Preserve
 that checkpoint. It refuses to overwrite unowned items or use a Git-connected target.
+Rayfin browser sign-in is requested before lengthy feature setup, so unattended
+provisioning does not finish only to wait on an unseen sign-in prompt.
 
 This produces **fresh demo data**, not copies of another workspace's operational
 records or history. Teams delivery remains unconfigured, the Operations Agent stays

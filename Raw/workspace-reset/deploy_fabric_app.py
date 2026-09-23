@@ -1172,13 +1172,15 @@ def deploy(args: argparse.Namespace) -> None:
     ensure_deploy_dependencies()
     if feature_workspace:
         run_stream(npm24("run", "validate-env"), cwd=APP_DIR)
+
+    print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
+    ensure_rayfin_login(args.tenant)
+
+    if feature_workspace:
         try:
             feature_workspace.prepare()
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
-
-    print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
-    ensure_rayfin_login(args.tenant)
 
     print("[5/8] Provisioning backend, database schema, and static app", flush=True)
     if reuse_deployment:
