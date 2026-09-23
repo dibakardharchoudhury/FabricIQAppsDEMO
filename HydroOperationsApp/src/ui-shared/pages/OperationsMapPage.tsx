@@ -143,14 +143,17 @@ export function OperationsMapPage() {
                 event.target.checked ? [...current, layer.id] : current.filter(id => id !== layer.id))} />
               <i style={{ backgroundColor: layer.color }} /><strong>{layer.label}</strong>
             </label>
-            <small>{layer.source}{tooFar ? ` - zoom to ${layer.minZoom}+` : ''}</small>
-            <small className={status?.state === 'error' || stale ? 'energy-map-stale' : ''}>
-              {status ? `${status.rowCount.toLocaleString()} imported - ${sourceAge(status.lastSuccessAt, now)}` : 'Not imported'}
-              {status?.state === 'error' ? ' - import error' : stale ? ' - stale snapshot' : ''}
-            </small>
-            {!!status?.unmappedCount && <small>{status.unmappedCount.toLocaleString()} without map coordinates</small>}
-            {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected geometries; records retained</small>}
-            {status?.message && <details><summary>Source details</summary><p>{status.message}</p></details>}
+            <details>
+              <summary aria-label={`${layer.label} details`}>Details</summary>
+              <small>{layer.source}{tooFar ? ` - zoom to ${layer.minZoom}+` : ''}</small>
+              <small className={status?.state === 'error' || stale ? 'energy-map-stale' : ''}>
+                {status ? `${status.rowCount.toLocaleString()} imported - ${sourceAge(status.lastSuccessAt, now)}` : 'Not imported'}
+                {status?.state === 'error' ? ' - import error' : stale ? ' - stale snapshot' : ''}
+              </small>
+              {!!status?.unmappedCount && <small>{status.unmappedCount.toLocaleString()} without map coordinates</small>}
+              {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected geometries; records retained</small>}
+              {status?.message && <p>{status.message}</p>}
+            </details>
           </div>
         })}
       </aside>

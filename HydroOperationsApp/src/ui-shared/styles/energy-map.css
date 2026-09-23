@@ -15,9 +15,10 @@
 .energy-map-layer label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; }
 .energy-map-layer label i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .energy-map-layer input { accent-color: #0f766e; }
-.energy-map-layer small { display: block; margin: 5px 0 0 25px; color: var(--cp-text-muted); font-size: 10px; line-height: 1.4; }
+.energy-map-layer small { display: block; margin: 5px 0 0; color: var(--cp-text-muted); font-size: 10px; line-height: 1.4; }
 .energy-map-layer small.energy-map-stale { color: #b45309; }
 .energy-map-layer details { margin: 6px 0 0 25px; font-size: 10px; color: var(--cp-text-muted); overflow-wrap: anywhere; }
+.energy-map-layer summary { cursor: pointer; width: fit-content; }
 .energy-map-layer details p { max-height: 160px; overflow-y: auto; }
 .energy-map-main { position: relative; min-width: 0; display: flex; flex-direction: column; }
 .energy-map-canvas-wrap { position: relative; flex: 1; min-height: 590px; }

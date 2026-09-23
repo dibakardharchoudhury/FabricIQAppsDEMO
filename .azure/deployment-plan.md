@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,19 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Compact filter details iteration (2026-09-23T16:20:46Z)
+
+- Node 24 environment validation, targeted page ESLint and production build passed.
+- All six V1/V2 desktop/tablet/mobile browser cases passed. Every filter starts
+  closed with no visible supporting text; keyboard expansion reveals it, changing
+  a layer preserves disclosure state, and closing hides it again.
+- Actual card/panel bounds confirm collapsed details consume less vertical space.
+  The desktop panel is 194px high when closed; map placement and responsive
+  canvas sizing remain correct.
+- Azure CLI confirms the previously approved tenant/subscription. This change
+  adds no roles, permissions, data jobs or infrastructure; app-only deployment
+  preserves the existing source snapshots and bindings.
 
 ### Filter placement iteration (2026-09-23T15:04Z)
 
@@ -370,3 +383,15 @@ The routine blanket-consent regrant returned 403 because the current user no
 longer held the required administrator role. Existing targeted grants were
 already present, and all required live-auth/redirect checks passed; no additional
 consent or administrator action was needed.
+
+## 12. Compact map filter details
+
+User-approved on 2026-09-23: show each filter's supporting text only when its
+Details control is expanded. Keep checkboxes, names and accessible disclosure
+controls visible; move provider/zoom guidance, freshness, counts and source
+messages into the collapsed disclosure. The existing page-level status alerts
+remain unchanged.
+
+This shared UI-only change passed build, lint and responsive disclosure/placement
+checks and is ready for the canonical app-only deployment to FEATURE. No data,
+infrastructure, authentication or pipeline changes are required.
