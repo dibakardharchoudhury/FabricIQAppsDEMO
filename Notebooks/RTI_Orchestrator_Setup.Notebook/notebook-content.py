@@ -77,6 +77,7 @@ key_vault_client_secret_name = "clientsecret"
 
 import requests
 import notebookutils
+from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
@@ -101,7 +102,15 @@ setup_dag = {
     "concurrency": 4,
 }
 
-results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+try:
+    results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+except RunMultipleFailedException as error:
+    failures = []
+    for name, outcome in error.result.items():
+        if outcome.get("exception"):
+            message = str(outcome["exception"]).splitlines()[0][:500]
+            failures.append(f"{name}: {message}")
+    raise RuntimeError("Stage 2 failed: " + "; ".join(failures)) from error
 
 
 def _require_successful_dag(results_by_activity: dict) -> None:

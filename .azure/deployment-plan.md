@@ -158,6 +158,15 @@ parameters at execution time. Runtime credential usability remains a deployment 
 
 ## 9. Current checkpoint
 
-The last deployment stopped before notebook credentials and Fabric item import:
-the vault was created private-only by organization policy. Public access retries
-must not be used. The existing app deployment is incomplete.
+Private-only vault credentials, scoped roles, the dedicated API group and the
+approved Fabric managed private endpoint are provisioned. All 23 repository
+definition items are imported without Git. The foundation notebook completed,
+proving private secret retrieval and notebook authentication.
+
+The first Stage 2 run failed when `RTI_002` queried the custom Eventstream endpoint
+before it became ready. A later read returned the documented connection shape
+with HTTP 200. The notebook now waits for definition LRO completion and retries
+connection readiness; an unchanged definition is reused. Thirty-one targeted
+readiness, bootstrap and weather-contract checks passed before retrying.
+
+The baseline deployment is not yet complete; no application URL has been published.

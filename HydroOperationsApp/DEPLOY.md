@@ -75,6 +75,11 @@ approves its Key Vault connection when authorized, and waits for readiness befor
 any setup notebook runs. `RTI_001` verifies actual secret reads and notebook
 service-principal authentication from Fabric.
 
+`RTI_002` waits for Eventstream definition operations and custom-endpoint connection
+readiness instead of assuming a fixed startup delay. Transient provisioning 404s
+are retried with a bound; authorization failures stop immediately. An unchanged
+Eventstream definition is reused without restarting provisioning.
+
 This uses the documented [ARM provisioning plane](https://learn.microsoft.com/azure/key-vault/general/overview-vnet-service-endpoints#usage-scenarios)
 while keeping runtime reads private. It does not require a VM, public IP, VPN,
 public-vault access or a policy exception. The caller needs ARM deployment/secret
