@@ -70,6 +70,14 @@ or **Update failed**; readings older than 30 seconds are marked stale. Errors
 retain the last successful value with a warning, never a simulated replacement.
 Its one-second age display is isolated from the map renderer's state.
 
+**Country power balance** is a separate Norway-wide tile alongside frequency
+and visible capacity, not a selectable map layer or representative point.
+It shows imported production, consumption and signed net exchange in MW.
+**Balance details** expands the generation breakdown and individual observation
+times. Missing values are shown as unavailable, not zero. This tile remains an
+explicit Fabric snapshot and is independent of map/property/area filters;
+**Import latest data** refreshes its upstream measurements.
+
 **Visible plant capacity**, beside frequency, sums known non-negative installed
 hydropower capacity in the rendered, filtered viewport. It scales units between
 MW, GW and TW, never TWh. It does not add transformer voltage, unknown transformer

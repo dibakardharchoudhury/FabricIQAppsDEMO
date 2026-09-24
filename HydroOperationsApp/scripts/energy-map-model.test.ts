@@ -53,7 +53,7 @@ test('unmapped events remain records rather than being turned into fake coordina
   assert.equal(asFeatureCollection([feature]).features.length, 0)
 })
 
-test('frequency and market messages are no longer global map markers', () => {
+test('frequency, country balance and messages are not global map markers', () => {
   const row = {
     feature_id: 'message', layer_id: 'umm', label: 'Market event',
     geometry_json: '{"type":"Point","coordinates":[5,60]}',
@@ -61,9 +61,12 @@ test('frequency and market messages are no longer global map markers', () => {
   }
   const message = parseEnergyFeature(row)
   const frequency = parseEnergyFeature({ ...row, layer_id: 'grid-frequency' })
-  assert.equal(asFeatureCollection([message, frequency]).features.length, 0)
-  assert.equal(MAP_VISIBLE_LAYERS.length, 10)
+  const balance = parseEnergyFeature({ ...row, layer_id: 'power-balance' })
+  assert.equal(asFeatureCollection([message, frequency, balance]).features.length, 0)
+  assert.equal(MAP_VISIBLE_LAYERS.length, 9)
   assert.ok(!DEFAULT_LAYERS.includes('umm') && !DEFAULT_LAYERS.includes('grid-frequency'))
+  assert.ok(!visibleLayerIds(['power-balance'], 12).length)
+  assert.match(buildEnergyMapQuery(INITIAL_VIEW, ['power-balance']), /where false/)
 })
 
 test('cancelled and undatable UMMs are never plotted even when their area is known', () => {

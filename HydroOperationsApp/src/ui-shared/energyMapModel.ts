@@ -41,7 +41,8 @@ export type EnergySourceStatus = {
 }
 export const FEATURE_LIMIT = 4000
 export const INITIAL_VIEW: MapViewport = { west: 3, south: 56, east: 33, north: 72, zoom: 4 }
-export const MAP_VISIBLE_LAYERS = MAP_LAYERS.filter(layer => layer.id !== 'grid-frequency' && layer.id !== 'umm')
+export const MAP_VISIBLE_LAYERS = MAP_LAYERS.filter(layer =>
+  layer.id !== 'grid-frequency' && layer.id !== 'power-balance' && layer.id !== 'umm')
 export const DEFAULT_LAYERS: EnergyLayerId[] = MAP_VISIBLE_LAYERS.filter(layer => layer.defaultVisible).map(layer => layer.id)
 export const RESERVOIR_AREAS = [
   { code: 'NO1', label: 'NO1 - East Norway', color: '#2563eb' },
@@ -246,7 +247,7 @@ export function renderLayerSignature(features: EnergyFeature[], capacityMaximum?
 
 export function asFeatureCollection(features: EnergyFeature[], capacityMaximum?: number | null): FeatureCollection {
   const mapped: Feature[] = features.flatMap(feature => {
-    if (!feature.geometry || feature.layerId === 'umm' || feature.layerId === 'grid-frequency') return []
+    if (!feature.geometry || feature.layerId === 'umm' || feature.layerId === 'grid-frequency' || feature.layerId === 'power-balance') return []
     const layer = MAP_LAYERS.find(item => item.id === feature.layerId)!
     const filling = feature.properties.filling_fraction
     const hasReservoirData = feature.properties.has_reservoir_data === true && typeof filling === 'number' && Number.isFinite(filling)

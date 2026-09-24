@@ -2,11 +2,12 @@ import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
 import {
-  queryAssetMarketMessages, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
+  queryAssetMarketMessages, queryCountryPowerBalance, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
   queryEnergySourceStatus, queryReservoirAreas,
 } from '../../services/energyMap'
 import { EnergyPropertyFiltersPanel } from '../components/energyMap/EnergyPropertyFilters'
 import { LiveGridFrequencyTile } from '../components/energyMap/LiveGridFrequencyTile'
+import { CountryPowerBalanceTile } from '../components/energyMap/CountryPowerBalanceTile'
 import {
   createEnergyPropertyFilters, matchesEnergyPropertyFilters, propertyFilterCount,
   type EnergyPropertyFilters, type EnergyPropertyOptions,
@@ -53,6 +54,8 @@ export function OperationsMapPage() {
   const [statuses, setStatuses] = useState<EnergySourceStatus[]>([])
   const [areas, setAreas] = useState<EnergyFeature[]>([])
   const [areaError, setAreaError] = useState<string>()
+  const [powerBalance, setPowerBalance] = useState<EnergyFeature | null>()
+  const [powerBalanceError, setPowerBalanceError] = useState<string>()
   const [selected, setSelected] = useState<EnergyFeature>()
   const [detailResult, setDetailResult] = useState<{ key: string; data?: EnergyFeature; error?: string }>()
   const [messageResult, setMessageResult] = useState<{ key: string; data?: EnergyFeature[]; error?: string }>()
@@ -173,6 +176,14 @@ export function OperationsMapPage() {
       console.error('Reservoir-area geometry failed.', reason)
       setAreaError(reason instanceof Error ? reason.message : 'Reservoir-area geometry is unavailable.')
     })
+    void queryCountryPowerBalance(controller.signal).then(data => {
+      if (controller.signal.aborted) return
+      setPowerBalance(data); setPowerBalanceError(undefined)
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      console.error('Country power-balance snapshot failed.', reason)
+      setPowerBalanceError(reason instanceof Error ? reason.message : 'Country power balance is unavailable.')
+    })
     return () => controller.abort()
   }, [revision])
 
@@ -259,6 +270,7 @@ export function OperationsMapPage() {
     <div className="energy-map-stat-tiles">
       <LiveGridFrequencyTile />
       <VisibleCapacityTile capacity={capacity} pending={viewPending} error={error} truncated={truncated} />
+      <CountryPowerBalanceTile feature={powerBalance} error={powerBalanceError} now={now} />
     </div>
     <div className="energy-map-filter-toolbar" aria-label="Map filter groups">
       <button type="button" aria-controls={layersPanelId} aria-expanded={panels.layers} onClick={() => togglePanel('layers')}>

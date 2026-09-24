@@ -70,9 +70,18 @@
 .energy-map-frequency-tile > strong { font-size: 27px; color: var(--cp-text); }
 .energy-map-frequency-tile > span { font-size: 11px; }
 .energy-map-frequency-tile small, .energy-map-frequency-tile p { margin: 0; font-size: 10px; line-height: 1.5; color: var(--cp-text-muted); }
-.energy-map-stat-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 390px)); gap: 14px; }
+.energy-map-stat-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .energy-map-stat-tiles .energy-map-frequency-tile { align-self: stretch; width: auto; }
 .energy-map-capacity-tile small.energy-map-stale { color: #b45309; }
+.energy-map-balance-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 4px 0; }
+.energy-map-balance-tile dt { color: var(--cp-text-muted); font-size: 10px; }
+.energy-map-balance-metrics dd { margin: 6px 0 0; font-size: 16px; font-weight: 700; color: var(--cp-text); overflow-wrap: anywhere; }
+.energy-map-balance-tile details { font-size: 11px; color: var(--cp-text-muted); }
+.energy-map-balance-tile summary { cursor: pointer; }
+.energy-map-balance-tile details dl { margin: 9px 0; }
+.energy-map-balance-tile details dl > div { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.energy-map-balance-tile details dd { margin: 0; text-align: right; }
+.energy-map-balance-tile a { display: inline-block; margin-top: 7px; color: #0284c7; }
 .energy-map-area-panel { padding: 16px; border: 1px solid var(--cp-border); border-radius: 12px; background: var(--cp-surface); }
 .energy-map-area-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
 .energy-map-area-heading h2 { margin: 0 auto 0 0; font-size: 14px; }

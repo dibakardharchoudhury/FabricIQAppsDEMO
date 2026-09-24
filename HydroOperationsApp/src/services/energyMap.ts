@@ -53,6 +53,15 @@ export async function queryLiveGridFrequency(signal: AbortSignal): Promise<LiveF
   return parseLiveFrequency(result, requestedAt, Date.now())
 }
 
+export async function queryCountryPowerBalance(signal: AbortSignal): Promise<EnergyFeature | null> {
+  const result = rows(await runKustoQuery("external_table('HydroGeoFeatures') | where layer_id == 'power-balance' | take 2", 2, signal))
+  if (result.length > 1) throw new Error('The country power-balance snapshot contains duplicate records.')
+  if (!result.length) return null
+  const feature = parseEnergyFeature(result[0])
+  if (feature.properties.country_code !== 'NO') throw new Error('Unexpected country in the power-balance snapshot.')
+  return feature
+}
+
 export async function queryEnergyFeatureDetails(feature: EnergyFeature, signal: AbortSignal): Promise<EnergyFeature> {
   if (!isEnergyLayer(feature.layerId) || feature.id.length > 2048) throw new Error('Invalid asset selection.')
   const table = feature.layerId === 'reservoirs' ? 'HydroGeoReservoirAreas' : 'HydroGeoFeatures'

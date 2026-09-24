@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,17 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Country-balance tile (2026-09-24T14:21Z)
+
+- 38 focused regression/component tests, TypeScript, targeted ESLint and Node 24
+  production build passed. Signs, missing values, snapshot age and map-marker
+  exclusion are covered.
+- Both-shell fixture checks confirmed the Norway metrics stay unchanged when
+  map properties/areas change. All six responsive cases confirmed three separate
+  tiles and nine remaining map-layer controls.
+- Live Fabric readback confirmed the field contract and metric-specific source
+  timestamps. Same approved tenant/subscription; no infrastructure or role delta.
 
 ### Visible-only live frequency (2026-09-24T12:56Z)
 
@@ -623,3 +634,15 @@ Post-deployment reads through the exact production query returned 49.976 Hz
 All six hosted V1/V2 responsive map/tile checks passed. Existing consent and
 redirect contracts remain valid; no administrator action or new infrastructure
 was required.
+
+## 17. Country power-balance tile
+
+User-approved on 2026-09-24: remove country balance from the map and display it
+as a separate tile. Retain the existing Norway-wide Fabric snapshot semantics;
+only frequency is live. No source ingestion, schema, permission or infrastructure
+change is needed.
+
+Verified source fields: production 16,017 MW, consumption 14,213 MW, net exchange
+-1,804 MW. Source signs remain unchanged. Observation times differ by metric,
+some are absent, and the tile exposes that rather than inventing one common
+measurement time. Missing metrics are unavailable, not zero.
