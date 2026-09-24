@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -646,3 +646,9 @@ Verified source fields: production 16,017 MW, consumption 14,213 MW, net exchang
 -1,804 MW. Source signs remain unchanged. Observation times differ by metric,
 some are absent, and the tile exposes that rather than inventing one common
 measurement time. Missing metrics are unavailable, not zero.
+
+Code `c812a3e` was deployed through the canonical app-only workflow:
+`deploy-20260924142341-f68ffd68`, exit code 0, `DEPLOYED_APP_URL` and `SUCCESS`.
+All six hosted V1/V2 responsive cases confirmed the three-tile layout and absence
+of the country-balance map toggle. Existing source data, live-frequency behavior,
+permissions and infrastructure were preserved.
