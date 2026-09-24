@@ -50,12 +50,29 @@ grid-safety rating. Aviation providers are not included.
 polygons and country backgrounds for Norway, Sweden, Finland and Denmark.
 Country coverage includes provider-supplied offshore territories. Geometry
 comes from NVE Nettomraader and pinned Natural Earth 1:10m data, with provenance
-and raw snapshots retained. Non-Norwegian reservoir figures are unavailable,
-not zero; gray polygons are explicitly no-data. Norway's national statistic is
+and raw snapshots retained. Every area has a stable distinct color; colors identify
+regions rather than filling levels. Non-Norwegian reservoir figures are unavailable,
+not zero, and explicitly labeled. Norway's national statistic is
 an aggregate, not a measurement for every island or reservoir.
 
 **Grid frequency** is a separate tile above the map, showing the latest imported
 Statnett sample and its observation age. It is not a map marker or a live feed.
+
+**Visible plant capacity**, beside frequency, sums known non-negative installed
+hydropower capacity in the rendered, filtered viewport. It scales units between
+MW, GW and TW, never TWh. It does not add transformer voltage, unknown transformer
+capacity, country production or cross-border flows. Missing/invalid plant values
+and a truncated map subset are explicitly flagged; pending/failed queries do not
+show an old total as current.
+
+The **Areas** group allows one or several colored regions to be selected. Plants
+and transformers must fall inside at least one selected polygon; other selected
+layers remain as context. This spatial filter is applied in KQL before the map's
+feature limit. Overlapping regions do not duplicate assets or capacity.
+**All areas** resets the spatial restriction, **Select none** hides point assets,
+and choosing Norway replaces its NO1-NO5 subareas. An area's inspector also has
+**Filter to this area**. Area selection remains active when its panel or overlay
+is hidden. Polygon visibility changes without re-indexing the stored geometry.
 
 **UMM coverage:** the last 30 publication days (at most 10,000 reconciled revisions),
 not every older, still-active outage. A changed/incomplete upstream page fails the

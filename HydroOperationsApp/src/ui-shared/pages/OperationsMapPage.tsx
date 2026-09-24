@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
 import {
   queryAssetMarketMessages, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
@@ -11,14 +11,15 @@ import {
   type EnergyPropertyFilters, type EnergyPropertyOptions,
 } from '../energyMapFilters'
 import {
-  DEFAULT_LAYERS, FEATURE_LIMIT, INITIAL_VIEW, isAssetLayer, MAP_LAYERS, MAP_VISIBLE_LAYERS, safeSourceUrl, sourceAge, sourceIsStale,
-  type EnergyFeature, type EnergyLayerId, type EnergySourceStatus, type MapViewport,
+  DEFAULT_LAYERS, FEATURE_LIMIT, formatCapacityPower, INITIAL_VIEW, isAssetLayer, isReservoirAreaCode,
+  MAP_LAYERS, MAP_VISIBLE_LAYERS, RESERVOIR_AREAS, safeSourceUrl, sourceAge, sourceIsStale, visiblePlantCapacity,
+  type EnergyFeature, type EnergyLayerId, type EnergySourceStatus, type MapViewport, type ReservoirAreaCode, type ReservoirAreaSelection,
 } from '../energyMapModel'
 import '../styles/energy-map.css'
 
 const EnergyMapCanvas = lazy(() => import('../components/energyMap/EnergyMapCanvas').then(module => ({ default: module.EnergyMapCanvas })))
 
-type FilterPanel = 'layers' | 'properties'
+type FilterPanel = 'layers' | 'properties' | 'areas'
 const panelStorageKey = (panel: FilterPanel) => `hydro.map.${panel}.expanded.v1`
 
 function readPanelExpansion(panel: FilterPanel, defaultValue: boolean): boolean {
@@ -37,13 +38,16 @@ export function OperationsMapPage() {
   const [viewport, setViewport] = useState<MapViewport>(INITIAL_VIEW)
   const [layers, setLayers] = useState<EnergyLayerId[]>(DEFAULT_LAYERS)
   const [panels, setPanels] = useState(() => ({
-    layers: readPanelExpansion('layers', true), properties: readPanelExpansion('properties', false),
+    layers: readPanelExpansion('layers', true), properties: readPanelExpansion('properties', false), areas: readPanelExpansion('areas', false),
   }))
   const [propertyFilters, setPropertyFilters] = useState(createEnergyPropertyFilters)
   const [propertyOptions, setPropertyOptions] = useState<EnergyPropertyOptions>()
   const [propertyError, setPropertyError] = useState<string>()
   const layersPanelId = useId()
   const propertiesPanelId = useId()
+  const areasPanelId = useId()
+  const [areaSelection, setAreaSelection] = useState<ReservoirAreaSelection>(null)
+  const [loadedQueryKey, setLoadedQueryKey] = useState<string>()
   const [features, setFeatures] = useState<EnergyFeature[]>([])
   const [statuses, setStatuses] = useState<EnergySourceStatus[]>([])
   const [areas, setAreas] = useState<EnergyFeature[]>([])
@@ -64,6 +68,7 @@ export function OperationsMapPage() {
   const [now, setNow] = useState(Date.now)
   const active = useRef(true)
   const visibleLayers = useMemo(() => new Set(layers), [layers])
+  const queryKey = useMemo(() => JSON.stringify([viewport, layers, propertyFilters, areaSelection]), [viewport, layers, propertyFilters, areaSelection])
   const selectFeature = useCallback((feature: EnergyFeature) => setSelected(feature), [])
   const setLayerEnabled = useCallback((layer: EnergyLayerId, enabled: boolean) => {
     setLayers(current => enabled ? current.includes(layer) ? current : [...current, layer] : current.filter(id => id !== layer))
@@ -73,6 +78,18 @@ export function OperationsMapPage() {
     setSelected(undefined)
     setBusy(true)
   }, [])
+  const changeAreas = useCallback((value: ReservoirAreaSelection) => {
+    setAreaSelection(value)
+    setSelected(undefined)
+    setBusy(true)
+  }, [])
+  const toggleArea = (code: ReservoirAreaCode, checked: boolean) => {
+    let current = areaSelection ?? RESERVOIR_AREAS.map(area => area.code)
+    if (code.startsWith('NO') && code !== 'NO') current = current.filter(value => value !== 'NO')
+    if (code === 'NO' && checked) current = current.filter(value => !value.startsWith('NO'))
+    const next = checked ? [...new Set([...current, code])] : current.filter(value => value !== code)
+    changeAreas(next.length === RESERVOIR_AREAS.length ? null : next)
+  }
   const togglePanel = (panel: FilterPanel) => {
     const expanded = !panels[panel]
     setPanels(current => ({ ...current, [panel]: expanded }))
@@ -103,11 +120,12 @@ export function OperationsMapPage() {
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
       setBusy(true)
-      void queryEnergyMap(viewport, layers, controller.signal, propertyFilters).then(data => {
+      void queryEnergyMap(viewport, layers, controller.signal, propertyFilters, areaSelection).then(data => {
         if (controller.signal.aborted) return
         setFeatures(data.features)
         setTruncated(data.truncated)
         setError(undefined)
+        setLoadedQueryKey(queryKey)
       }).catch((reason: unknown) => {
         if (controller.signal.aborted) return
         console.error('Fabric energy map query failed.', reason)
@@ -115,7 +133,7 @@ export function OperationsMapPage() {
       }).finally(() => { if (!controller.signal.aborted) setBusy(false) })
     }, 350)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [viewport, layers, revision, propertyFilters])
+  }, [viewport, layers, revision, propertyFilters, areaSelection, queryKey])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -224,7 +242,10 @@ export function OperationsMapPage() {
   const selectionKey = selected ? `${selected.layerId}:${selected.id}` : undefined
   const details = detailResult?.key === selectionKey ? detailResult : undefined
   const messages = messageResult?.key === selectionKey ? messageResult : undefined
-  const shownAreas = layers.includes('reservoirs') ? areas : []
+  const shownAreas = layers.includes('reservoirs') ? areas.filter(area => areaSelection === null
+    || (isReservoirAreaCode(area.properties.area_code) && areaSelection.includes(area.properties.area_code))) : []
+  const capacity = useMemo(() => visiblePlantCapacity(displayed), [displayed])
+  const viewPending = busy || loadedQueryKey !== queryKey
 
   return <div className="energy-map-page">
     <header className="energy-map-heading">
@@ -244,7 +265,10 @@ export function OperationsMapPage() {
     {(error || sourceError || areaError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError, areaError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
     {importStatus && <div className="energy-map-notice" role="status">{importStatus} {importing && 'This runs a cloud pipeline; changing tabs does not cancel it.'}</div>}
     {truncated && <div className="energy-map-notice" role="status">This viewport exceeds {FEATURE_LIMIT.toLocaleString()} features. Only the first {FEATURE_LIMIT.toLocaleString()} are displayed; zoom in or turn off dense layers.</div>}
-    <GridFrequencyTile feature={frequency} error={frequencyError} now={now} />
+    <div className="energy-map-stat-tiles">
+      <GridFrequencyTile feature={frequency} error={frequencyError} now={now} />
+      <VisibleCapacityTile capacity={capacity} pending={viewPending} error={error} truncated={truncated} />
+    </div>
     <div className="energy-map-filter-toolbar" aria-label="Map filter groups">
       <button type="button" aria-controls={layersPanelId} aria-expanded={panels.layers} onClick={() => togglePanel('layers')}>
         <Layers size={16} />Layers <span>{layers.length} selected</span>{panels.layers ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -252,7 +276,11 @@ export function OperationsMapPage() {
       <button type="button" aria-controls={propertiesPanelId} aria-expanded={panels.properties} onClick={() => togglePanel('properties')}>
         <SlidersHorizontal size={16} />Properties <span>{propertyCount} active</span>{panels.properties ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>
+      <button type="button" aria-controls={areasPanelId} aria-expanded={panels.areas} onClick={() => togglePanel('areas')}>
+        <MapPin size={16} />Areas <span>{areaSelection === null ? 'All' : `${areaSelection.length} selected`}</span>{panels.areas ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>
       {propertyCount > 0 && <button type="button" onClick={() => changeProperties(createEnergyPropertyFilters())}>Clear property filters</button>}
+      {areaSelection !== null && <button type="button" onClick={() => changeAreas(null)}>Reset areas</button>}
     </div>
     <aside id={layersPanelId} className="energy-map-layers" aria-label="Energy map layers" hidden={!panels.layers}>
       <h2><Layers size={17} />Layers and freshness</h2>
@@ -283,18 +311,38 @@ export function OperationsMapPage() {
       <EnergyPropertyFiltersPanel value={propertyFilters} options={propertyOptions} error={propertyError}
         layers={layers} zoom={viewport.zoom} onChange={changeProperties} onLayerChange={setLayerEnabled} />
     </div>
+    <section id={areasPanelId} className="energy-map-area-panel" aria-label="Reservoir area selection" hidden={!panels.areas}>
+      <div className="energy-map-area-heading"><h2>Reservoir areas</h2><button type="button" onClick={() => changeAreas(null)}>All areas</button><button type="button" onClick={() => changeAreas([])}>Select none</button></div>
+      <div className="energy-map-area-choices">
+        {RESERVOIR_AREAS.map(area => {
+          const feature = areas.find(value => value.properties.area_code === area.code)
+          return <label key={area.code}>
+            <input type="checkbox" checked={areaSelection === null || areaSelection.includes(area.code)}
+              disabled={!feature} onChange={event => toggleArea(area.code, event.target.checked)} />
+            <i style={{ backgroundColor: area.color }} /><span>{area.label}</span>
+            {feature?.properties.has_reservoir_data === false && <small>No reservoir figures</small>}
+          </label>
+        })}
+      </div>
+      <p>Plants and transformers must be inside at least one selected area. Selecting Norway replaces its NO1-NO5 subareas; selecting a subarea replaces Norway. Other selected layers stay visible. Colors identify areas, not filling levels.</p>
+      {!layers.includes('reservoirs') && <p>Area filtering is active independently of overlay visibility. Enable the reservoir layer to see the colored boundaries.</p>}
+    </section>
     <div className="energy-map-layout">
       <section className="energy-map-main">
         <Suspense fallback={<div className="energy-map-loading">Loading map renderer...</div>}>
           <EnergyMapCanvas features={displayed} areas={areas} capacityMaximum={propertyOptions?.hydro.capacityMax}
-            showAreas={layers.includes('reservoirs')} onViewport={setViewport} onSelect={selectFeature} />
+            showAreas={layers.includes('reservoirs')} areaSelection={areaSelection} onViewport={setViewport} onSelect={selectFeature} />
         </Suspense>
-        {busy && <div className="energy-map-query-state" role="status">Loading this viewport from Fabric...</div>}
-        <p className="energy-map-disclaimer">Reservoir shading represents area statistics, not individual reservoirs; gray countries have no reservoir figures in this source. Boundaries are generalized. Plant marker area scales with installed MW; transformer capacity is unknown and markers are uniform. Power-flow lines are schematic.</p>
+        {viewPending && !error && <div className="energy-map-query-state" role="status">Updating the filtered map from Fabric...</div>}
+        <p className="energy-map-disclaimer">Area colors identify regions, not reservoir filling levels. Foreign reservoir figures are unavailable. Boundaries are generalized. Plant marker area scales with installed MW; transformer capacity is unknown and markers are uniform. Power-flow lines are schematic.</p>
       </section>
       <aside className="energy-map-details" aria-label="Selected feature and visible features">
         {selected ? <>
           <FeatureDetails feature={details?.data ?? selected} onClose={() => setSelected(undefined)} />
+          {selected.layerId === 'reservoirs' && isReservoirAreaCode(selected.properties.area_code)
+            && <button type="button" className="energy-map-area-focus" onClick={() => {
+              if (isReservoirAreaCode(selected.properties.area_code)) changeAreas([selected.properties.area_code])
+            }}>Filter to this area</button>}
           {!details && <p role="status">Loading full source details...</p>}
           {details?.error && <p className="energy-map-stale" role="alert">{details.error}</p>}
           {isAssetLayer(selected.layerId) && <AssetMarketMessages result={messages} />}
@@ -344,6 +392,23 @@ function GridFrequencyTile({ feature, error, now }: { feature?: EnergyFeature | 
     <span className={stale ? 'energy-map-stale' : ''}>{observed ? `Observed ${sourceAge(observed, now)}${stale ? ' - stale snapshot' : ''}` : 'No observation time available'}</span>
     <small>Statnett snapshot, not a live grid-control feed. Use Import latest data to refresh.</small>
     {error && <p role="alert">{error}</p>}
+  </section>
+}
+
+function VisibleCapacityTile({ capacity, pending, error, truncated }: {
+  capacity: ReturnType<typeof visiblePlantCapacity>; pending: boolean; error?: string; truncated: boolean
+}) {
+  const formatted = formatCapacityPower(capacity.totalMw)
+  const unavailable = capacity.knownPlants === 0 && capacity.unknownPlants > 0
+  return <section className="energy-map-frequency-tile energy-map-capacity-tile" aria-label="Visible plant capacity" aria-busy={pending && !error}>
+    <div><Zap size={19} /><h2>Visible plant capacity</h2></div>
+    <strong>{error ? 'Unavailable' : pending ? 'Updating...' : unavailable ? 'Unknown' : `${formatted.value} ${formatted.unit}`}</strong>
+    <span>{error ? 'Filtered capacity is not available' : pending ? 'Waiting for the filtered map view' : `${capacity.knownPlants + capacity.unknownPlants} hydropower plants in the filtered map view`}</span>
+    <small>Installed capacity, not current production. Updates with the viewport, layers and filters.</small>
+    {capacity.unknownPlants > 0 && <small className="energy-map-stale">{capacity.unknownPlants} plants have missing or invalid capacity and are excluded from the sum.</small>}
+    {capacity.transformers > 0 && <small>Transformer capacities are unknown and are not added.</small>}
+    {truncated && <small className="energy-map-stale">Visible subset only: the map feature limit is applied.</small>}
+    {error && <small role="alert">Capacity cannot be confirmed until the filtered map loads.</small>}
   </section>
 }
 

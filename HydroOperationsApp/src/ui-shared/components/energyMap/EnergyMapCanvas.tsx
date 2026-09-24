@@ -1,23 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Map as MapLibreMap, NavigationControl, ScaleControl, setWorkerUrl, type GeoJSONSource } from 'maplibre-gl'
+import { Map as MapLibreMap, NavigationControl, ScaleControl, setWorkerUrl, type FilterSpecification, type GeoJSONSource } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
   asFeatureCollection, MAP_VISIBLE_LAYERS, renderLayerSignature,
-  type EnergyFeature, type EnergyLayerId, type MapViewport,
+  type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../../energyMapModel'
 
 setWorkerUrl(workerUrl)
 
-export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, onViewport, onSelect }: {
+export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, areaSelection, onViewport, onSelect }: {
   features: EnergyFeature[]
   areas: EnergyFeature[]
   capacityMaximum?: number | null
   showAreas: boolean
+  areaSelection: ReservoirAreaSelection
   onViewport: (viewport: MapViewport) => void
   onSelect: (feature: EnergyFeature) => void
 }) {
-  const dataRef = useRef({ features, areas, capacityMaximum, showAreas })
+  const dataRef = useRef({ features, areas, capacityMaximum, showAreas, areaSelection })
   const callbacks = useRef({ onViewport, onSelect })
   const updateSources = useRef<(() => void) | null>(null)
   const camera = useRef<{ center: [number, number]; zoom: number }>({ center: [12.8, 64], zoom: 4 })
@@ -26,9 +27,9 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, o
 
   useEffect(() => { callbacks.current = { onViewport, onSelect } }, [onViewport, onSelect])
   useEffect(() => {
-    dataRef.current = { features, areas, capacityMaximum, showAreas }
+    dataRef.current = { features, areas, capacityMaximum, showAreas, areaSelection }
     updateSources.current?.()
-  }, [features, areas, capacityMaximum, showAreas])
+  }, [features, areas, capacityMaximum, showAreas, areaSelection])
 
   const initializeMap = useCallback((container: HTMLDivElement | null) => {
     if (!container) return
@@ -84,6 +85,11 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, o
       for (const id of ['reservoir-country-fill', 'reservoir-price-fill', 'reservoir-borders']) {
         if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', data.showAreas ? 'visible' : 'none')
       }
+      const areaFilter: FilterSpecification = data.areaSelection === null
+        ? ['has', 'area_code'] : ['in', ['get', 'area_code'], ['literal', data.areaSelection]]
+      if (map.getLayer('reservoir-country-fill')) map.setFilter('reservoir-country-fill', ['all', ['==', ['get', 'area_kind'], 'country'], areaFilter])
+      if (map.getLayer('reservoir-price-fill')) map.setFilter('reservoir-price-fill', ['all', ['==', ['get', 'area_kind'], 'price_area'], areaFilter])
+      if (map.getLayer('reservoir-borders')) map.setFilter('reservoir-borders', areaFilter)
     }
     updateSources.current = applyData
     const updateViewport = () => {

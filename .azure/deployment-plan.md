@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,23 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Capacity tile and multi-area iteration (2026-09-24T12:00Z)
+
+- 31 targeted tests, ESLint, TypeScript and Node 24 production build passed.
+- Live polygons passed KQL validity checks. Six spatial selections, including
+  overlapping/adjacent regions and no selection, retained all 390 context lines.
+  The combined NO1/NO2 asset IDs exactly equal their individual set union.
+- Client totals matched independent KQL sums of non-negative source values:
+  NO1 2,772.7935 MW; NO2 11,651.138 MW; NO1+NO2 14,423.9315 MW.
+  Unrestricted default viewport: 32,547.3546 MW, with 33 missing/invalid values
+  excluded and explicitly flagged.
+- Both-shell fixture interactions verified 850 -> 50 -> 250 -> 850 MW changes
+  for all/NO1/NO1+NO2/Norway, no double-counting, and nine distinct colors.
+- All six production-preview layout cases passed: capacity sits alongside
+  frequency on desktop/tablet and stacks on mobile; existing map controls work.
+- Same tenant/subscription confirmed. No infrastructure, role, schema or
+  data-write changes; deploy only the static app through the canonical entry point.
 
 ### Areas, asset links and embedded rendering (2026-09-24T10:58Z)
 
@@ -540,3 +557,23 @@ without a new administrator action. After refreshing the Fabric item, the user
 confirmed that Owner/Price area filtering now leaves the map and embedded app
 visible. The observed crash is resolved in that environment; its original
 native-process failure was not reproduced locally.
+
+## 15. Visible capacity and area selection
+
+User-approved on 2026-09-24: add a capacity tile alongside frequency, assign each
+reservoir area a distinct color, and allow single/multi-area selection. The user
+explicitly chose to filter plants/transformers and the total inside selected
+areas while retaining other layers as context.
+
+Existing polygons are validated by KQL geospatial operations. The spatial
+predicate uses their union before the feature cap, with an explicit error result
+for missing/invalid selected geometry. No data, schemas, infrastructure or
+permissions change. Use the canonical app-only deployment.
+
+The tile sums unique plotted hydro plants with finite, non-negative installed
+MW, scales MW/GW/TW, and discloses missing/invalid values and truncation. Real data
+contains negative source capacities; these are excluded, not subtracted or
+converted to invented positive values. The total waits for the matching query
+result after viewport/filter changes. Country production and transformer
+voltages/capacities are not mixed into it.
+Implementation and pre-deployment validation are complete.

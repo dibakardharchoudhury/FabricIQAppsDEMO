@@ -1,7 +1,7 @@
 import { runKustoQuery, type KustoResult } from './fabric'
 import {
   buildAssetMarketMessagesQuery, buildEnergyMapQuery, FEATURE_LIMIT, isEnergyLayer, parseEnergyFeature, parseSourceStatus,
-  type EnergyFeature, type EnergyLayerId, type MapViewport,
+  type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../ui-shared/energyMapModel'
 import { ENERGY_PROPERTY_OPTIONS_QUERY, parseEnergyPropertyOptions, type EnergyPropertyFilters } from '../ui-shared/energyMapFilters'
 
@@ -9,9 +9,11 @@ function rows(result: KustoResult): Record<string, unknown>[] {
   return result.rows.map(row => Object.fromEntries(result.columns.map((name, index) => [name, row[index]])))
 }
 
-export async function queryEnergyMap(viewport: MapViewport, layers: EnergyLayerId[], signal: AbortSignal, properties?: EnergyPropertyFilters) {
-  const result = await runKustoQuery(buildEnergyMapQuery(viewport, layers, properties), FEATURE_LIMIT + 1, signal)
+export async function queryEnergyMap(viewport: MapViewport, layers: EnergyLayerId[], signal: AbortSignal, properties?: EnergyPropertyFilters, areaSelection: ReservoirAreaSelection = null) {
+  const result = await runKustoQuery(buildEnergyMapQuery(viewport, layers, properties, areaSelection), FEATURE_LIMIT + 1, signal)
   const records = rows(result)
+  const invalidArea = records.find(row => typeof row.area_filter_error === 'string' && row.area_filter_error)
+  if (invalidArea) throw new Error(String(invalidArea.area_filter_error))
   return { features: records.slice(0, FEATURE_LIMIT).map(parseEnergyFeature), truncated: records.length > FEATURE_LIMIT }
 }
 
