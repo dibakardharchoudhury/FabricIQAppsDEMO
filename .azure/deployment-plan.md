@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -448,4 +448,17 @@ a visible active-filter count, multi-select dropdowns and min/max sliders. No
 source refresh is triggered by filtering or changing panel visibility.
 The existing capacity-sized plant markers now read the same verified
 `installed_capacity_mw` field used by filtering, rather than an absent legacy key.
-Implementation and pre-deployment validation are complete; hosted rollout is next.
+The canonical app-only deployment completed with exit code 0,
+`DEPLOYED_APP_URL` and `SUCCESS`. Deployed code: `d80aa51`; deployment ID:
+`deploy-20260924083504-6db99ed9`.
+
+All six hosted layout cases passed for V1/V2 desktop, tablet and mobile:
+the Layers box disappears when minimized, restores without changing selections,
+remains minimized after reload until explicitly expanded, and leaves the map
+correctly sized. The full property-control interaction tests used isolated local
+fixtures; actual facet values and predicate results were independently verified
+against Fabric as recorded in Section 7.
+
+Existing redirects, permissions and targeted consent grants passed the
+post-deployment checks. The routine blanket-consent warning did not require any
+administrator action. No infrastructure, pipeline or source data was changed.
