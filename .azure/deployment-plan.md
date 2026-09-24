@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -615,3 +615,11 @@ hidden/offscreen/offline/unmount, uses 12-second request bounds and bounded erro
 backoff, and labels observation age and stale/failure states. It does not redraw
 map layers each second or re-label the old Delta snapshot as live. Use the
 canonical app-only deployment after validation.
+
+The canonical app-only run completed with exit code 0, `DEPLOYED_APP_URL` and
+`SUCCESS`: code `58ce033`, deployment `deploy-20260924125947-34d75e67`.
+Post-deployment reads through the exact production query returned 49.976 Hz
+(0.443s source age), then 49.971 Hz (0.585s source age) five seconds later.
+All six hosted V1/V2 responsive map/tile checks passed. Existing consent and
+redirect contracts remain valid; no administrator action or new infrastructure
+was required.
