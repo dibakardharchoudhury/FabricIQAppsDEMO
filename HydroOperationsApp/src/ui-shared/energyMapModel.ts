@@ -41,7 +41,12 @@ export type EnergySourceStatus = {
 }
 export const FEATURE_LIMIT = 4000
 export const INITIAL_VIEW: MapViewport = { west: 3, south: 56, east: 33, north: 72, zoom: 4 }
-export const DEFAULT_LAYERS: EnergyLayerId[] = MAP_LAYERS.filter(layer => layer.defaultVisible).map(layer => layer.id)
+export const MAP_VISIBLE_LAYERS = MAP_LAYERS.filter(layer => layer.id !== 'grid-frequency' && layer.id !== 'umm')
+export const DEFAULT_LAYERS: EnergyLayerId[] = MAP_VISIBLE_LAYERS.filter(layer => layer.defaultVisible).map(layer => layer.id)
+
+export function isAssetLayer(layer: EnergyLayerId): boolean {
+  return ['hydro-plants', 'transformers', 'transmission', 'regional', 'distribution', 'sea-cables', 'masts'].includes(layer)
+}
 
 export function isEnergyLayer(value: unknown): value is EnergyLayerId {
   return typeof value === 'string' && MAP_LAYERS.some(layer => layer.id === value)
@@ -118,7 +123,7 @@ export function parseSourceStatus(row: Record<string, unknown>): EnergySourceSta
 }
 
 export function visibleLayerIds(selected: EnergyLayerId[], zoom: number): EnergyLayerId[] {
-  return MAP_LAYERS.filter(layer => selected.includes(layer.id) && zoom >= layer.minZoom).map(layer => layer.id)
+  return MAP_VISIBLE_LAYERS.filter(layer => selected.includes(layer.id) && zoom >= layer.minZoom).map(layer => layer.id)
 }
 
 export const UMM_MAP_PREDICATE = "tobool(parse_json(properties_json).map_eligible) == true"
@@ -130,34 +135,68 @@ export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[], 
     || view.zoom < 0 || view.zoom > 24 || layers.some(layer => !isEnergyLayer(layer))) {
     throw new Error('Invalid map viewport or layer selection.')
   }
-  const selected = visibleLayerIds(layers, view.zoom)
+  const selected = visibleLayerIds(layers, view.zoom).filter(layer => layer !== 'reservoirs')
   const filter = selected.length ? `layer_id in (${selected.map(id => `'${id}'`).join(',')})` : 'false'
   const propertyPredicate = buildEnergyPropertyPredicate(properties)
   return `external_table('HydroGeoFeatures')
 | where ${filter}
-| where layer_id != 'umm' or ${UMM_MAP_PREDICATE}
 | where max_lon >= ${view.west} and min_lon <= ${view.east} and max_lat >= ${view.south} and min_lat <= ${view.north}
 ${propertyPredicate ? `| extend map_properties = parse_json(iff(layer_id in ('hydro-plants', 'transformers'), properties_json, '{}'))\n| where ${propertyPredicate}\n` : ''}| extend layer_order = case(layer_id == 'umm', 0, layer_id == 'reservoirs', 1, layer_id == 'power-flows', 2, layer_id == 'power-balance', 3, layer_id == 'grid-frequency', 4, layer_id == 'hydro-plants', 5, layer_id == 'transformers', 6, 7)
 | order by layer_order asc, layer_id asc, feature_id asc
 | take ${FEATURE_LIMIT + 1}
-| project feature_id, layer_id, label, geometry_json, properties_json, observed_at, ingested_at, source_url`
+| project feature_id, layer_id, label, geometry_json,
+    properties_json = tostring(bag_remove_keys(parse_json(properties_json), dynamic(['source_properties', 'gis_properties', 'source_message']))),
+    observed_at, ingested_at, source_url`
 }
 
-export function asFeatureCollection(features: EnergyFeature[]): FeatureCollection {
+export function buildAssetMarketMessagesQuery(asset: Pick<EnergyFeature, 'id' | 'layerId'>): string {
+  if (!isAssetLayer(asset.layerId) || typeof asset.id !== 'string' || !asset.id || asset.id.length > 2048) {
+    throw new Error('Invalid market-message asset selection.')
+  }
+  return `let links = external_table('HydroGeoMarketAssetLinks')
+| where asset_feature_id == ${JSON.stringify(asset.id)} and asset_layer_id == ${JSON.stringify(asset.layerId)}
+| project message_feature_id, message_version, match_method, match_evidence_json;
+external_table('HydroGeoFeatures')
+| where layer_id == 'umm'
+| extend message_version = tolong(parse_json(properties_json).version)
+| join kind=inner links on $left.feature_id == $right.message_feature_id, message_version
+| order by observed_at desc
+| take 101
+| project feature_id, layer_id, label, geometry_json,
+    properties_json = tostring(bag_merge(parse_json(properties_json), bag_pack('asset_match_method', match_method, 'asset_match_evidence', parse_json(match_evidence_json)))),
+    observed_at, ingested_at, source_url`
+}
+
+export function capacityRadius(capacity: unknown, maximum: number | null | undefined): number {
+  if (typeof capacity !== 'number' || !Number.isFinite(capacity) || capacity < 0
+    || typeof maximum !== 'number' || !Number.isFinite(maximum) || maximum <= 0) return 5
+  return Math.sqrt(3 ** 2 + (18 ** 2 - 3 ** 2) * Math.min(capacity / maximum, 1))
+}
+
+export function renderLayerSignature(features: EnergyFeature[], capacityMaximum?: number | null): string {
+  return JSON.stringify([capacityMaximum ?? null, features.map(feature => [
+    feature.id, feature.ingestedAt, feature.observedAt, feature.label,
+  ])])
+}
+
+export function asFeatureCollection(features: EnergyFeature[], capacityMaximum?: number | null): FeatureCollection {
   const mapped: Feature[] = features.flatMap(feature => {
-    if (!feature.geometry || (feature.layerId === 'umm' && feature.properties.map_eligible !== true)) return []
+    if (!feature.geometry || feature.layerId === 'umm' || feature.layerId === 'grid-frequency') return []
     const layer = MAP_LAYERS.find(item => item.id === feature.layerId)!
-    const importance = feature.properties.importance_bucket
-    const color = feature.layerId === 'umm'
-      ? ({ high: '#dc2626', medium: '#d97706', low: '#64748b' }[String(importance)] ?? '#9333ea')
+    const filling = feature.properties.filling_fraction
+    const hasReservoirData = feature.properties.has_reservoir_data === true && typeof filling === 'number' && Number.isFinite(filling)
+    const color = feature.layerId === 'reservoirs'
+      ? hasReservoirData ? `hsl(${Math.round(190 + 35 * Math.min(1, Math.max(0, filling)))}, 70%, 45%)` : '#94a3b8'
       : layer.color
-    const capacity = feature.properties.installed_capacity_mw
-    const radius = feature.layerId === 'hydro-plants' && typeof capacity === 'number' && Number.isFinite(capacity)
-      ? Math.min(11, 4 + Math.sqrt(Math.max(0, capacity)) / 3) : feature.layerId === 'reservoirs' ? 10 : 6
+    const radius = feature.layerId === 'hydro-plants'
+      ? capacityRadius(feature.properties.installed_capacity_mw, capacityMaximum) : feature.layerId === 'masts' ? 3 : 6
     return [{
       type: 'Feature' as const, id: `${feature.layerId}:${feature.id}`,
       geometry: feature.geometry,
-      properties: { feature_id: feature.id, layer_id: feature.layerId, label: feature.label, color, radius },
+      properties: {
+        feature_id: feature.id, layer_id: feature.layerId, label: feature.label, color, radius,
+        area_kind: feature.properties.area_kind ?? '', has_reservoir_data: hasReservoirData,
+      },
     }]
   })
   return { type: 'FeatureCollection', features: mapped }

@@ -84,6 +84,35 @@
 # Missing quantitative/type evidence, unknown relevance, cancelled/ended or
 # undatable notices are **unranked** (null score), not low.
 #
+# **Auxiliary outputs (no changes to the twelve source layers or their facts):**
+# - `geo_reservoir_areas`: the FEATURE_FIELDS schema, nine reservoir-layer features:
+#   NO1-NO5 from NVE Nettomraader/0 (NLOD, overview boundaries, not street-level)
+#   and four complete Natural Earth 1:10m v5.1.2 country backgrounds (public domain).
+#   Preserve every supplied polygon/ring, including islands. Country membership
+#   uses the provider's sovereign grouping: FI includes Aland; DK includes Greenland
+#   and the Faroe Islands; Norway includes its published offshore territories.
+#   These generalized boundaries are not a survey-grade coastline or land mask.
+#   NO country figures are explicitly NATIONAL aggregates, not island measurements.
+#   SE/FI/DK have no NVE reservoir figures: false availability, null filling.
+#   Original NVE EL/NO/VASS facts remain unchanged in `geo_map_features`.
+#   Source family stays `nve-reservoir`; geometry provenance/terms are separate.
+#   Healthy price boundaries cache for 24h; pinned, validated country geometry can
+#   be reused indefinitely. Force/all refreshes both. Statistics are rejoined each run.
+# - `geo_market_asset_links`: exact normalized unit name AND verified source owner
+#   versus publisher/market-participant name, only when the asset is unambiguous.
+#   Unicode/case/whitespace normalization is allowed; corporate periods normalize
+#   A.S. to AS. No fuzzy names, area/proximity matching, capacity inference or EIC
+#   crosswalk guesses. No validated EIC-to-NVE crosswalk is currently available.
+#   Only hydro plants and transformers are indexed, never the mast inventory.
+#   Cancellations may link, but a link never asserts an active outage.
+#   `manual` links override automation for their exact message ID AND version.
+#   Historical manual corrections are retained byte-for-byte, not promoted to a
+#   later revision. Serving MUST join message_feature_id AND message_version.
+#   Unsupported/ambiguous notices remain unlinked with coverage counts in run logs.
+# Both new tables have validated flat `Tables/<table>` locations and atomic writes.
+# Auxiliary failures keep last-good tables, are archived/reported, and fail the job.
+# Auxiliary attempt logs do not add rows or change counts in `geo_source_status`.
+#
 # References:
 # https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer
 # https://api.nve.no/web/Powerplant/GetHydroPowerPlants
@@ -92,6 +121,10 @@
 # https://driftsdata.statnett.no/
 # https://developers.nordpoolgroup.com/reference/umm-api-messages-search
 # https://developers.nordpoolgroup.com/reference/messages-copy
+# https://kart.nve.no/enterprise/rest/services/Nettomraader/MapServer/0
+# https://www.nve.no/karttjenester/
+# https://www.naturalearthdata.com/about/terms-of-use/
+# https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/
 
 # PARAMETERS CELL ********************
 
@@ -116,6 +149,7 @@ import math
 import re
 import tempfile
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -126,6 +160,8 @@ import requests
 
 FEATURE_TABLE = "geo_map_features"
 STATUS_TABLE = "geo_source_status"
+RESERVOIR_AREA_TABLE = "geo_reservoir_areas"
+ASSET_LINK_TABLE = "geo_market_asset_links"
 FEATURE_FIELDS = (
     ("feature_id", "string"), ("source_id", "string"), ("layer_id", "string"),
     ("label", "string"), ("geometry_json", "string"), ("properties_json", "string"),
@@ -139,6 +175,20 @@ STATUS_FIELDS = (
     ("row_count", "long"), ("unmapped_count", "long"), ("rejected_count", "long"),
     ("message", "string"), ("source_url", "string"),
 )
+ASSET_LINK_FIELDS = (
+    ("message_feature_id", "string"), ("message_version", "long"),
+    ("asset_feature_id", "string"), ("asset_layer_id", "string"),
+    ("match_method", "string"), ("match_evidence_json", "string"),
+    ("linked_at", "string"), ("run_id", "string"),
+)
+LINK_MESSAGE_KEY = ("message_feature_id", "message_version")
+LINK_ROW_KEY = ("message_feature_id", "message_version", "asset_feature_id", "asset_layer_id")
+TABLE_CONTRACTS = (
+    (FEATURE_TABLE, FEATURE_FIELDS, ["layer_id"]),
+    (STATUS_TABLE, STATUS_FIELDS, []),
+    (RESERVOIR_AREA_TABLE, FEATURE_FIELDS, ["layer_id"]),
+    (ASSET_LINK_TABLE, ASSET_LINK_FIELDS, []),
+)
 GRID_SERVICE = "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer"
 HYDRO_SERVICE = "https://kart.nve.no/enterprise/rest/services/Vannkraft1/MapServer"
 HYDRO_URL = "https://api.nve.no/web/Powerplant/GetHydroPowerPlants"
@@ -147,6 +197,28 @@ BALANCE_URL = "https://driftsdata.statnett.no/restapi/ProductionConsumption/GetL
 FLOW_URL = "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetFlow"
 FREQUENCY_URL = "https://driftsdata.statnett.no/restapi/Frequency/BySecondWithXy"
 UMM_URL = "https://ummapi.nordpoolgroup.com/messages"
+PRICE_AREA_SERVICE = "https://kart.nve.no/enterprise/rest/services/Nettomraader/MapServer"
+PRICE_AREA_URL = f"{PRICE_AREA_SERVICE}/0"
+NVE_MAP_TERMS_URL = "https://www.nve.no/karttjenester/"
+NATURAL_EARTH_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson"
+NATURAL_EARTH_TERMS_URL = "https://www.naturalearthdata.com/about/terms-of-use/"
+NATURAL_EARTH_BLOB_SHA = "5ebc66e25fc1af01edaebe9375c546655e04cf1e"
+PRICE_AREA_CODES = ("NO1", "NO2", "NO3", "NO4", "NO5")
+COUNTRY_COMPONENTS = {
+    "NO": ("NOR",), "SE": ("SWE",), "FI": ("FIN", "ALD"),
+    "DK": ("DNK", "GRL", "FRO"),
+}
+COUNTRY_NAMES = {"NO": "Norway", "SE": "Sweden", "FI": "Finland", "DK": "Denmark"}
+BOUNDARY_MAX_BYTES = 20 * 1024 * 1024
+BOUNDARY_MAX_POSITIONS = 300000
+LINKABLE_ASSET_LAYERS = ("hydro-plants", "transformers")
+MAX_LINKABLE_ASSETS = 25000  # bounded small dimension, not national network features
+AUXILIARY_CONFIGS = (
+    {"artifact_id": RESERVOIR_AREA_TABLE, "layer_id": "reservoirs",
+     "source_id": "nve-reservoir", "source_url": PRICE_AREA_URL},
+    {"artifact_id": ASSET_LINK_TABLE, "layer_id": "umm",
+     "source_id": "nordpool", "source_url": UMM_URL},
+)
 GRID_LAYERS = (
     (0, "transmission"), (1, "regional"), (2, "distribution"),
     (3, "sea-cables"), (4, "masts"), (5, "transformers"),
@@ -325,6 +397,29 @@ def geometry_bounds(geometry, extent=None):
         for value in values:
             position(value)
 
+    def polygon(rings):
+        if not isinstance(rings, list) or not rings:
+            raise GeometryError("polygon has no exterior ring")
+        exterior_area = None
+        for ring in rings:
+            sequence(ring, 4)
+            if ring[0] != ring[-1] or len({tuple(p[:2]) for p in ring[:-1]}) < 3:
+                raise GeometryError("polygon ring must close and have three distinct vertices")
+            # Offset first to avoid cancellation when a small island is far from (0, 0).
+            x0, y0 = ring[0][:2]
+            area = abs(math.fsum(
+                (a[0] - x0) * (b[1] - y0) - (b[0] - x0) * (a[1] - y0)
+                for a, b in zip(ring, ring[1:])
+            )) / 2
+            if area == 0:
+                raise GeometryError("polygon ring is degenerate or self-crossing")
+            if exterior_area is None:
+                exterior_area = area
+            elif area >= exterior_area or not point_in_ring(ring[0], rings[0]):
+                raise GeometryError("polygon hole is outside/larger than its exterior ring")
+        if len(points) > BOUNDARY_MAX_POSITIONS:
+            raise GeometryError("polygon exceeds the bounded geometry position budget")
+
     if kind == "Point":
         position(coordinates)
     elif kind in ("MultiPoint", "LineString"):
@@ -334,10 +429,28 @@ def geometry_bounds(geometry, extent=None):
             raise GeometryError("empty MultiLineString")
         for line in coordinates:
             sequence(line, 2)
+    elif kind == "Polygon":
+        polygon(coordinates)
+    elif kind == "MultiPolygon":
+        if not isinstance(coordinates, list) or not coordinates:
+            raise GeometryError("empty MultiPolygon")
+        for rings in coordinates:
+            polygon(rings)
     else:
         raise GeometryError(f"unsupported geometry type: {kind}")
     return (min(p[0] for p in points), min(p[1] for p in points),
             max(p[0] for p in points), max(p[1] for p in points))
+
+
+def point_in_ring(point, ring):
+    x, y = point[:2]
+    inside = False
+    for a, b in zip(ring, ring[1:]):
+        if (a[1] > y) != (b[1] > y):
+            crossing_x = (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]
+            if x < crossing_x:
+                inside = not inside
+    return inside
 
 
 def make_feature(feature_id, source_id, layer_id, label, geometry, properties,
@@ -417,14 +530,15 @@ def normalize_grid(feature, config, run_id, ingested_at):
 class LayerSpool:
     def __init__(self, root, config, run_id, ingested_at):
         self.config, self.run_id, self.ingested_at = config, run_id, ingested_at
-        self.local = Path(root) / config["source_id"] / config["layer_id"]
+        artifact = config.get("artifact_id", config["layer_id"])
+        self.local = Path(root) / config["source_id"] / artifact
         self.local.mkdir(parents=True, exist_ok=False)
         self.raw = gzip.open(self.local / "responses.jsonl.gz", "wt", encoding="utf-8")
         self.normalized = None
         self.row_count = self.unmapped_count = self.rejected_count = 0
         self.details = {}
         self.closed = False
-        self.uri = f"Files/bronze/geo_context/{config['source_id']}/{run_id}/{config['layer_id']}"
+        self.uri = f"Files/bronze/geo_context/{config['source_id']}/{run_id}/{artifact}"
 
     def record(self, value):
         json.dump(value, self.raw, ensure_ascii=False, allow_nan=False)
@@ -460,6 +574,7 @@ class LayerSpool:
     def manifest(self, state, message):
         return {
             "run_id": self.run_id, "source_id": self.config["source_id"],
+            "artifact_id": self.config.get("artifact_id", self.config["layer_id"]),
             "layer_id": self.config["layer_id"], "source_url": self.config["source_url"],
             "state": state, "message": message, "ingested_at": self.ingested_at,
             "row_count": self.row_count, "unmapped_count": self.unmapped_count,
@@ -500,18 +615,20 @@ class PublicHTTP:
         query = params or {}
         arcgis = any(
             url == base or re.fullmatch(re.escape(base) + r"/\d+(?:/query)?", url)
-            for base in (GRID_SERVICE, HYDRO_SERVICE)
+            for base in (GRID_SERVICE, HYDRO_SERVICE, PRICE_AREA_SERVICE)
         )
-        if url not in {HYDRO_URL, RESERVOIR_URL, BALANCE_URL, FLOW_URL, FREQUENCY_URL, UMM_URL} and not arcgis:
+        if url not in {HYDRO_URL, RESERVOIR_URL, BALANCE_URL, FLOW_URL, FREQUENCY_URL, UMM_URL, NATURAL_EARTH_URL} and not arcgis:
             raise SourceError("HTTP endpoint is not an approved public source")
         if method not in ("GET", "POST") or (method == "POST" and not (arcgis and url.endswith("/query"))):
             raise SourceError("Only GET and read-only ArcGIS query POST are allowed")
+        bounded_boundary = url == NATURAL_EARTH_URL or url.startswith(PRICE_AREA_SERVICE)
         for attempt in range(self.attempts):
             try:
                 response = self.session.request(
                     method, url, params=query if method == "GET" else None,
                     data=query if method == "POST" else None, timeout=(15, 90),
                     allow_redirects=False,
+                    **({"stream": True} if bounded_boundary else {}),
                 )
             except (requests.Timeout, requests.ConnectionError) as exc:
                 self.spool.record({"url": url, "method": method, "parameters": query,
@@ -522,7 +639,21 @@ class PublicHTTP:
                 continue
             try:
                 status = response.status_code
-                text = response.text
+                if bounded_boundary:
+                    raw = bytearray()
+                    for chunk in response.iter_content(65536):
+                        raw.extend(chunk)
+                        if len(raw) > BOUNDARY_MAX_BYTES:
+                            self.spool.record({"url": url, "http_status": status,
+                                               "error": "boundary response exceeded byte budget", "bytes_read": len(raw),
+                                               "response_prefix": bytes(raw[:4096]).decode("utf-8", errors="replace")})
+                            raise SourceError("boundary response exceeds bounded byte budget")
+                    try:
+                        text = raw.decode("utf-8-sig")
+                    except UnicodeDecodeError as exc:
+                        raise SourceError("boundary response is not UTF-8 JSON") from exc
+                else:
+                    text = response.text
                 self.spool.record({
                     "url": url, "method": method, "parameters": query,
                     "attempt": attempt + 1, "received_at": utc_text(datetime.now(timezone.utc)),
@@ -533,6 +664,10 @@ class PublicHTTP:
                     continue
                 if status != 200:
                     raise SourceError(f"public source HTTP {status}: {url}; response retained in bronze")
+                if url == NATURAL_EARTH_URL:
+                    digest = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+                    if digest != NATURAL_EARTH_BLOB_SHA:
+                        raise SourceError("pinned Natural Earth content hash changed; review source/version before publishing")
                 try:
                     result = json.loads(text, parse_constant=reject_json_constant)
                 except ValueError as exc:
@@ -581,7 +716,7 @@ def arcgis_page_features(body, requested_ids, oid_field):
     return features
 
 
-def iter_arcgis(http, url, details):
+def iter_arcgis(http, url, details, expected_count=None):
     service_url = url.rsplit("/", 1)[0]
     service = require_object(http.get_json(service_url, {"f": "json"}), "ArcGIS service metadata")
     metadata = require_object(http.get_json(url, {"f": "json"}), "ArcGIS layer metadata", ("fields", "maxRecordCount"))
@@ -589,11 +724,14 @@ def iter_arcgis(http, url, details):
     field_names = {require_object(field, "ArcGIS field", ("name",))["name"] for field in fields}
     limit = min(ARCGIS_CHUNK_SIZE, integer(metadata["maxRecordCount"], "maxRecordCount", minimum=1))
     ids, oid_field, digest = arcgis_inventory(http, url)
+    if expected_count is not None and len(ids) != expected_count:
+        raise SourceError(f"ArcGIS inventory expected {expected_count} features, found {len(ids)}")
     if oid_field not in field_names:
         raise SourceError("ArcGIS object ID field is absent from layer schema")
     details.update({
         "initial_count": len(ids), "object_id_field": oid_field, "id_sha256": digest,
         "service_notice": service.get("copyrightText"), "layer_notice": metadata.get("copyrightText"),
+        "layer_description": metadata.get("description"),
         "page_size": limit, "reconciled": False,
     })
     fetched = 0
@@ -1041,6 +1179,467 @@ def fetch_umm_threads(http, now, details):
 
 # MARKDOWN ********************
 
+# ## Reservoir coverage and evidence-only asset matching
+# Auxiliary inputs come from existing Delta snapshots, not fresh national downloads.
+# Polygons remain source geometries; aggregation concatenates complete country
+# components without drawing, clipping, repairing or inferring new boundaries.
+
+# CELL ********************
+
+def properties_object(text, label):
+    try:
+        value = json.loads(text, parse_constant=reject_json_constant)
+    except (ValueError, TypeError) as exc:
+        raise SourceError(f"{label}: invalid properties JSON") from exc
+    return require_object(value, label)
+
+
+def polygon_parts(geometry):
+    require_object(geometry, "boundary geometry", ("type", "coordinates"))
+    if geometry["type"] == "Polygon":
+        return [geometry["coordinates"]]
+    if geometry["type"] == "MultiPolygon":
+        return geometry["coordinates"]
+    raise GeometryError("required area boundary is not Polygon/MultiPolygon")
+
+
+def price_area_code(value):
+    text = re.sub(r"\s+", "", source_text(value, "NVE budomr", True)).upper()
+    if text not in PRICE_AREA_CODES:
+        raise SourceError(f"unsupported/unverified NVE price area: {text}")
+    return text
+
+
+def boundary_record(kind, code, country, geometry, source_properties, acquired_at, bronze_uri):
+    polygon_parts(geometry)
+    geometry_bounds(geometry, NVE_EXTENT if kind == "price_area" else None)
+    country_boundary = kind == "country"
+    return {
+        "area_kind": kind, "area_code": code, "country_code": country, "geometry": geometry,
+        "source_url": NATURAL_EARTH_URL if country_boundary else PRICE_AREA_URL,
+        "terms_url": NATURAL_EARTH_TERMS_URL if country_boundary else NVE_MAP_TERMS_URL,
+        "license": "Public domain" if country_boundary else "NLOD (NVE map-data distribution)",
+        "attribution": "Made with Natural Earth" if country_boundary else "NVE / Statnett bidding areas",
+        "source_version": f"Natural Earth 5.1.2 / Git blob {NATURAL_EARTH_BLOB_SHA}" if country_boundary else "Nettomraader/0 live reconciled snapshot",
+        "source_properties": source_properties, "acquired_at": acquired_at, "bronze_uri": bronze_uri,
+        "geometry_sha256": hashlib.sha256(json_text(geometry).encode("utf-8")).hexdigest(),
+    }
+
+
+def validate_boundary(boundary):
+    require_object(boundary, "boundary", (
+        "area_kind", "area_code", "country_code", "geometry", "source_url", "terms_url",
+        "license", "attribution", "source_version", "source_properties", "acquired_at",
+        "bronze_uri", "geometry_sha256",
+    ))
+    kind, code, country = boundary["area_kind"], boundary["area_code"], boundary["country_code"]
+    if kind == "price_area":
+        if code not in PRICE_AREA_CODES or country != "NO":
+            raise SourceError("price boundary has an invalid verified area/country code")
+        expected_url, terms = PRICE_AREA_URL, NVE_MAP_TERMS_URL
+        raw = require_list(boundary["source_properties"], "price boundary source properties", True)
+        if len(raw) != 1 or price_area_code(require_object(raw[0], "price properties", ("budomr",))["budomr"]) != code:
+            raise SourceError("price boundary code is not supported by its source properties")
+    elif kind == "country":
+        if code != country or country not in COUNTRY_COMPONENTS:
+            raise SourceError("country boundary has an unexpected country code")
+        expected_url, terms = NATURAL_EARTH_URL, NATURAL_EARTH_TERMS_URL
+        raw = require_list(boundary["source_properties"], "country source components", True)
+        components = [require_object(item, "country properties", ("ADM0_A3", "SOVEREIGNT"))["ADM0_A3"] for item in raw]
+        if len(components) != len(set(components)) or set(components) != set(COUNTRY_COMPONENTS[country]):
+            raise SourceError(f"{country}: incomplete/duplicate country land components")
+        if any(item["SOVEREIGNT"] != COUNTRY_NAMES[country] for item in raw):
+            raise SourceError("country component sovereignty/provenance does not match")
+        if NATURAL_EARTH_BLOB_SHA not in boundary["source_version"]:
+            raise SourceError("cached country geometry is not the pinned Natural Earth release")
+    else:
+        raise SourceError("unexpected reservoir boundary kind")
+    if boundary["source_url"] != expected_url or boundary["terms_url"] != terms:
+        raise SourceError("boundary provenance does not match approved sources/terms")
+    if not boundary["license"] or not boundary["attribution"] or not str(boundary["bronze_uri"]).startswith("Files/bronze/geo_context/"):
+        raise SourceError("boundary is missing license, attribution or raw-snapshot provenance")
+    parse_time(boundary["acquired_at"], "boundary acquired_at", required=True)
+    polygon_parts(boundary["geometry"])
+    geometry_bounds(boundary["geometry"], NVE_EXTENT if kind == "price_area" else None)
+    if hashlib.sha256(json_text(boundary["geometry"]).encode("utf-8")).hexdigest() != boundary["geometry_sha256"]:
+        raise SourceError("boundary geometry digest does not reconcile")
+
+
+def validate_boundary_coverage(boundaries):
+    expected = {("price_area", code) for code in PRICE_AREA_CODES} | {("country", code) for code in COUNTRY_COMPONENTS}
+    keys = []
+    for boundary in boundaries:
+        validate_boundary(boundary)
+        keys.append((boundary["area_kind"], boundary["area_code"]))
+    if len(keys) != len(expected) or set(keys) != expected:
+        raise SourceError(f"reservoir boundary coverage incomplete/duplicated; expected {sorted(expected)}, found {sorted(keys)}")
+
+
+def country_boundaries(body, acquired_at, bronze_uri):
+    require_object(body, "Natural Earth GeoJSON", ("type", "features"))
+    if body["type"] != "FeatureCollection":
+        raise SourceError("Natural Earth response is not a FeatureCollection")
+    features = require_list(body["features"], "Natural Earth features", True)
+    if len(features) > 400:
+        raise SourceError("Natural Earth country collection exceeds its bounded feature budget")
+    component_country = {component: country for country, components in COUNTRY_COMPONENTS.items() for component in components}
+    found = {}
+    for feature in features:
+        require_object(feature, "Natural Earth Feature", ("type", "properties", "geometry"))
+        props = require_object(feature["properties"], "Natural Earth properties", ("ADM0_A3",))
+        component = props["ADM0_A3"]
+        if component not in component_country:
+            continue
+        country = component_country[component]
+        if feature["type"] != "Feature" or props.get("SOVEREIGNT") != COUNTRY_NAMES[country] or component in found:
+            raise SourceError("Natural Earth selected component has invalid/duplicate identity")
+        polygon_parts(feature["geometry"])
+        geometry_bounds(feature["geometry"])
+        found[component] = feature
+    if set(found) != set(component_country):
+        raise SourceError(f"Natural Earth missing required land components: {sorted(set(component_country) - found.keys())}")
+    result = []
+    for country, components in COUNTRY_COMPONENTS.items():
+        parts = [polygon for component in components for polygon in polygon_parts(found[component]["geometry"])]
+        result.append(boundary_record(
+            "country", country, country, {"type": "MultiPolygon", "coordinates": parts},
+            [found[component]["properties"] for component in components], acquired_at, bronze_uri,
+        ))
+    return result
+
+
+def cached_boundary_groups(rows, now, force, fs, details):
+    groups = {"price_area": [], "country": []}
+    if force:
+        details["boundary_cache"] = {"reason": "manual all/force refresh"}
+        return groups
+    reasons = {}
+    try:
+        boundaries = []
+        for row in rows:
+            props = properties_object(row["properties_json"], "cached reservoir area")
+            provenance = require_object(props.get("boundary_provenance"), "cached boundary provenance")
+            boundary = {**provenance, "geometry": properties_object(row["geometry_json"], "cached area geometry")}
+            validate_boundary(boundary)
+            if row["source_url"] != boundary["source_url"]:
+                raise SourceError("cached feature source URL disagrees with boundary provenance")
+            boundaries.append(boundary)
+        validate_boundary_coverage(boundaries)
+    except SourceError as exc:
+        details["boundary_cache"] = {"reason": "cache missing/invalid; reacquire", "validation": str(exc)}
+        return groups
+    for kind in groups:
+        members = [boundary for boundary in boundaries if boundary["area_kind"] == kind]
+        times = [parse_time(boundary["acquired_at"], "boundary acquired_at", required=True) for boundary in members]
+        if any(stamp > now for stamp in times):
+            reasons[kind] = "future cache timestamp; reacquire"
+        elif kind == "price_area" and any(now - stamp >= timedelta(hours=24) for stamp in times):
+            reasons[kind] = "price boundary cache older than 24h"
+        elif not all(fs.exists(f"{boundary['bronze_uri']}/responses.jsonl.gz") for boundary in members):
+            reasons[kind] = "raw boundary provenance missing; reacquire"
+        else:
+            groups[kind] = members
+            reasons[kind] = "reused validated geometry; current statistics are rejoined"
+    details["boundary_cache"] = reasons
+    return groups
+
+
+def reservoir_statistics_index(rows):
+    index, without_overlay = {}, []
+    for row in rows:
+        if row["layer_id"] != "reservoirs" or row["source_id"] != "nve-reservoir":
+            raise SourceError("reservoir statistics crossed source/layer boundaries")
+        props = properties_object(row["properties_json"], "reservoir statistics")
+        raw = require_object(props.get("source_properties"), "NVE reservoir source record", ("omrType", "omrnr"))
+        kind = source_text(raw["omrType"], "omrType", True).upper()
+        if kind == "EL":
+            code = f"NO{integer(raw['omrnr'], 'omrnr')}"
+            if code not in PRICE_AREA_CODES:
+                without_overlay.append(row["feature_id"])
+                continue
+            if props.get("price_area") != code:
+                raise SourceError("normalized price area disagrees with NVE EL code")
+        elif kind == "NO":
+            code = "NO"
+        else:
+            without_overlay.append(row["feature_id"])
+            continue
+        if code in index:
+            raise SourceError(f"ambiguous/duplicate reservoir statistic for {code}")
+        value = number(raw.get("fyllingsgrad"), "fyllingsgrad")
+        if value is not None and not 0 <= value <= 1:
+            raise SourceError("reservoir area filling must be a fraction in [0, 1]")
+        index[code] = {"feature_id": row["feature_id"], "observed_at": row["observed_at"],
+                       "source_url": row["source_url"], "source_properties": raw, "filling_fraction": value}
+    return index, without_overlay
+
+
+def reservoir_area_feature(boundary, statistics, run_id, ingested_at):
+    validate_boundary(boundary)
+    kind, code, country = boundary["area_kind"], boundary["area_code"], boundary["country_code"]
+    stat = statistics.get(code) if country == "NO" else None
+    fraction = stat["filling_fraction"] if stat is not None else None
+    raw = stat["source_properties"] if stat is not None else None
+    properties = {
+        "area_code": code, "country_code": country, "area_kind": kind,
+        "price_area": code if kind == "price_area" else None,
+        "has_reservoir_data": fraction is not None, "filling_fraction": fraction,
+        "fill_pct": fraction * 100 if fraction is not None else None,
+        "capacity_twh": number(raw.get("kapasitet_TWh"), "kapasitet_TWh") if raw else None,
+        "stored_twh": number(raw.get("fylling_TWh"), "fylling_TWh") if raw else None,
+        "source_stats": raw, "statistics_feature_id": stat["feature_id"] if stat else None,
+        "statistics_source_url": stat["source_url"] if stat else None,
+        "iso_year": integer(raw["iso_aar"], "iso_aar") if raw and raw.get("iso_aar") is not None else None,
+        "iso_week": integer(raw["iso_uke"], "iso_uke", 1) if raw and raw.get("iso_uke") is not None else None,
+        "observed_at_precision": "provider weekly date; not an exact measurement time" if stat else None,
+        "statistics_scope": (
+            "Norway country aggregate of reporting reservoirs; NOT an island/site measurement"
+            if country == "NO" and kind == "country"
+            else ("NVE price-area reservoir aggregate" if kind == "price_area" else "no reservoir statistics from this source")
+        ),
+        "geographic_precision": (
+            "NVE bidding-area overview boundary; not street-level"
+            if kind == "price_area" else "Natural Earth 1:10m generalized country land coverage; not survey-grade"
+        ),
+        "country_components": list(COUNTRY_COMPONENTS[country]) if kind == "country" else [],
+        "territorial_scope": "complete provider sovereign-country components, including islands" if kind == "country" else "provider bidding area",
+        "boundary_provenance": {key: value for key, value in boundary.items() if key != "geometry"},
+        "attribution": boundary["attribution"],
+    }
+    return make_feature(
+        f"nve-reservoir:area:{kind}:{code}", "nve-reservoir", "reservoirs",
+        f"{code} reservoir aggregate" if kind == "price_area" else f"{COUNTRY_NAMES[country]} country background",
+        boundary["geometry"], properties, stat["observed_at"] if stat else None,
+        boundary["source_url"], run_id, ingested_at,
+    )
+
+
+def produce_reservoir_areas(spool, http, cached_rows, statistics_rows, now, force, fs):
+    groups = cached_boundary_groups(cached_rows, now, force, fs, spool.details)
+    acquired_at = utc_text(now)
+    if not groups["price_area"]:
+        inventory = {}
+        for feature in iter_arcgis(http, PRICE_AREA_URL, inventory, expected_count=5):
+            props = require_object(feature["properties"], "Budomraade properties", ("budomr",))
+            code = price_area_code(props["budomr"])
+            groups["price_area"].append(boundary_record(
+                "price_area", code, "NO", feature["geometry"], [props], acquired_at, spool.uri,
+            ))
+        spool.details["price_area_inventory"] = inventory
+    if not groups["country"]:
+        groups["country"] = country_boundaries(http.get_json(NATURAL_EARTH_URL), acquired_at, spool.uri)
+    boundaries = groups["price_area"] + groups["country"]
+    validate_boundary_coverage(boundaries)
+    statistics, without_overlay = reservoir_statistics_index(statistics_rows)
+    for boundary in boundaries:
+        spool.emit(reservoir_area_feature(boundary, statistics, spool.run_id, spool.ingested_at))
+    spool.details.update({
+        "reconciled": True, "price_areas": list(PRICE_AREA_CODES), "country_components": COUNTRY_COMPONENTS,
+        "statistics_without_overlay": without_overlay, "original_statistics_unchanged": True,
+        "missing_price_area_statistics": sorted(set(PRICE_AREA_CODES) - statistics.keys()),
+        "geometry_sources": [PRICE_AREA_URL, NATURAL_EARTH_URL],
+        "terms": [NVE_MAP_TERMS_URL, NATURAL_EARTH_TERMS_URL],
+    })
+
+
+def exact_name(value, owner=False):
+    text = unicodedata.normalize("NFKC", source_text(value, "identity name")).casefold()
+    text = re.sub(r"\s+", " ", text).strip()
+    if owner:
+        text = re.sub(r"(?<!\w)a\.\s*s\.(?!\w)", "as", text)
+    return text
+
+
+def asset_identity_aliases(row):
+    layer = row["layer_id"]
+    if layer not in LINKABLE_ASSET_LAYERS:
+        return []
+    expected_source = "nve-hydro" if layer == "hydro-plants" else "nve-grid"
+    if row["source_id"] != expected_source:
+        raise SourceError("asset-index source/layer identity mismatch")
+    props = properties_object(row["properties_json"], "asset properties")
+    raw = require_object(props.get("source_properties"), "asset source properties")
+    owners = []
+    if layer == "hydro-plants":
+        require_object(raw, "Powerplant identity", ("Navn", "HovedEier", "VannKraftverkID"))
+        name_field, owner_field = "Navn", "HovedEier"
+        reported_owners = raw.get("Eiere")
+        for index, owner in enumerate(require_list([] if reported_owners is None else reported_owners, "Powerplant owners")):
+            require_object(owner, "Powerplant owner")
+            if owner.get("Navn"):
+                owners.append((source_text(owner["Navn"], "owner.Navn", True), f"Eiere[{index}].Navn"))
+        identifiers = {"VannKraftverkID": raw.get("VannKraftverkID")}
+    else:
+        require_object(raw, "transformer identity", ("navn", "eier", "objectid"))
+        name_field, owner_field = "navn", "eier"
+        identifiers = {name: raw.get(name) for name in ("globalid", "nvenetbasid", "objectid")}
+    name = source_text(raw.get(name_field), name_field)
+    if raw.get(owner_field):
+        owners.append((source_text(raw[owner_field], owner_field, True), owner_field))
+    if not name:
+        return []
+    return [
+        {
+            "asset_feature_id": row["feature_id"], "asset_layer_id": layer,
+            "name_key": exact_name(name), "owner_key": exact_name(owner, owner=True),
+            "asset_name": name, "asset_owner": owner, "asset_name_field": name_field,
+            "asset_owner_field": owner_path, "asset_source_url": row["source_url"],
+            "source_asset_identifiers": identifiers,
+        }
+        for owner, owner_path in owners if exact_name(owner, owner=True)
+    ]
+
+
+def build_asset_identity_index(rows):
+    """Stream only the small hydro/transformer dimension; retain identity evidence, not geometry."""
+    index, seen, counts = {}, set(), {layer: 0 for layer in LINKABLE_ASSET_LAYERS}
+    unnamed_or_ownerless = 0
+    for row in rows:
+        if row["layer_id"] not in LINKABLE_ASSET_LAYERS:
+            raise SourceError("asset index must be partition-filtered before driver iteration")
+        key = (row["feature_id"], row["layer_id"])
+        if key in seen:
+            raise SourceError("duplicate asset identity in eligible Delta features")
+        seen.add(key)
+        if len(seen) > MAX_LINKABLE_ASSETS:
+            raise SourceError("eligible asset dimension exceeds its bounded size; refusing truncation")
+        counts[row["layer_id"]] += 1
+        aliases = asset_identity_aliases(row)
+        unnamed_or_ownerless += int(not aliases)
+        for alias in aliases:
+            pair = (alias["name_key"], alias["owner_key"])
+            candidates = index.setdefault(pair, {})
+            previous = candidates.get(key)
+            if previous is None or json_text(alias) < json_text(previous):
+                candidates[key] = alias
+    if any(count == 0 for count in counts.values()):
+        raise SourceError("hydro-plants and transformers must both have a last-good snapshot before linking")
+    return {
+        key: tuple(candidates[identity] for identity in sorted(candidates))
+        for key, candidates in index.items()
+    }, {"eligible_assets": counts, "unnamed_or_ownerless_assets": unnamed_or_ownerless,
+        "identity_pairs": len(index), "identifier_crosswalk": "none verified; EICs are evidence only"}
+
+
+def asset_references(message):
+    """Only documented asset/unit fields, never area IDs or a transmission border name."""
+    references = []
+
+    def add(name, path, identifiers):
+        name = source_text(name, path)
+        if not name:
+            return
+        # An area supplied in an asset field is not an asset crosswalk.
+        identifiers = {key: source_text(value, key) for key, value in identifiers.items() if value}
+        if any(re.fullmatch(r"\d{2}Y[A-Z0-9-]{13}", value.upper()) for value in identifiers.values()):
+            return
+        if re.fullmatch(r"NO\s*[1-5]", name, re.IGNORECASE):
+            return
+        references.append({"unit_name": name, "name_key": exact_name(name),
+                           "source_field": path, "provider_unit_identifiers": identifiers})
+
+    for field in ("productionUnits", "consumptionUnits", "otherUnits"):
+        for index, unit in enumerate(require_list(message.get(field, []), field)):
+            require_object(unit, field + " unit")
+            add(unit.get("name"), f"{field}[{index}].name", {"eic": unit.get("eic")})
+    for index, unit in enumerate(require_list(message.get("generationUnits", []), "generationUnits")):
+        require_object(unit, "generation unit")
+        add(unit.get("productionUnitName"), f"generationUnits[{index}].productionUnitName", {
+            "productionUnitEic": unit.get("productionUnitEic"), "generationUnitEic": unit.get("eic"),
+        })
+    for index, asset in enumerate(require_list(message.get("assets", []), "UMM assets")):
+        require_object(asset, "UMM asset")
+        add(asset.get("name"), f"assets[{index}].name", {"asset_code": asset.get("code")})
+    if message.get("otherMarketUnits"):
+        add(message["otherMarketUnits"], "otherMarketUnits (entire field)", {})
+    return references
+
+
+def message_publishers(message):
+    publishers = []
+    if message.get("publisherName"):
+        publishers.append({"name": source_text(message["publisherName"], "publisherName", True),
+                           "source_field": "publisherName"})
+    for index, participant in enumerate(require_list(message.get("marketParticipants", []), "marketParticipants")):
+        require_object(participant, "market participant")
+        if participant.get("name"):
+            publishers.append({"name": source_text(participant["name"], "participant.name", True),
+                               "source_field": f"marketParticipants[{index}].name"})
+    return [{**publisher, "owner_key": exact_name(publisher["name"], owner=True)} for publisher in publishers]
+
+
+def match_message_assets(message_feature_id, properties_json, asset_index, linked_at, run_id):
+    props = properties_object(properties_json, "retained UMM feature")
+    message = require_object(props.get("source_message"), "retained source UMM")
+    message_id, version = umm_identity(message)
+    if message_feature_id != f"nordpool:UMM:{message_id}" or integer(props.get("version"), "retained UMM version", 1) != version:
+        raise SourceError("retained UMM feature identity/version disagrees with its source revision")
+    result = {"message_version": version, "state": "unsupported", "reference_count": 0,
+              "matched_reference_count": 0, "ambiguous_reference_count": 0, "links": []}
+    if message["isOutdated"] or props.get("is_outdated"):
+        result["state"] = "outdated"
+        return result
+    references, publishers = asset_references(message), message_publishers(message)
+    result["reference_count"] = len(references)
+    if not references or not publishers:
+        return result
+    linked_assets = {}
+    for reference in references:
+        candidates = {}
+        for publisher in publishers:
+            for asset in asset_index.get((reference["name_key"], publisher["owner_key"]), ()):
+                identity = (asset["asset_feature_id"], asset["asset_layer_id"])
+                candidate = candidates.setdefault(identity, {"asset": asset, "matched_pairs": []})
+                candidate["matched_pairs"].append({
+                    "publisher": publisher, "asset_owner": asset["asset_owner"],
+                    "asset_owner_field": asset["asset_owner_field"],
+                    "normalized_owner": publisher["owner_key"],
+                })
+        if len(candidates) > 1:
+            result["ambiguous_reference_count"] += 1
+        elif len(candidates) == 1:
+            identity = next(iter(candidates))
+            candidate = candidates[identity]
+            linked = linked_assets.setdefault(identity, {"asset": candidate["asset"], "references": []})
+            linked["references"].append({
+                **reference, "matched_pairs": sorted(candidate["matched_pairs"], key=json_text),
+            })
+            result["matched_reference_count"] += 1
+    if result["ambiguous_reference_count"]:
+        result["state"] = "ambiguous"
+        return result  # an ambiguous notice is not partially guessed onto another asset
+    if not linked_assets:
+        result["state"] = "unmatched"
+        return result
+    cancelled = str(message["eventStatus"]).lower() in ("3", "dismissed") or bool(message.get("cancellationReason"))
+    for identity in sorted(linked_assets):
+        linked = linked_assets[identity]
+        evidence = {
+            "policy": "exact-name-owner-v1", "identifier_crosswalk": "none verified",
+            "message_id": message_id, "message_version": version,
+            "event_status": message["eventStatus"], "is_cancelled": cancelled,
+            "does_not_assert_active_outage": True,
+            "asset": linked["asset"], "matched_references": sorted(linked["references"], key=json_text),
+            "normalization": "Unicode NFKC/casefold/whitespace; corporate A.S. -> AS; no fuzzy/area/proximity match",
+        }
+        result["links"].append({
+            "message_feature_id": message_feature_id, "message_version": version,
+            "asset_feature_id": identity[0], "asset_layer_id": identity[1],
+            "match_method": "exact_name_owner", "match_evidence_json": json_text(evidence),
+            "linked_at": linked_at, "run_id": run_id,
+        })
+    result["state"] = "linked"
+    return result
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# MARKDOWN ********************
+
 # ## Per-layer import orchestration and atomic Delta publication
 
 # CELL ********************
@@ -1154,13 +1753,13 @@ def delta_location(table_name, location):
 
 def validate_table_locations(locations):
     mismatches = [
-        name for name in (FEATURE_TABLE, STATUS_TABLE)
+        name for name, _, _ in TABLE_CONTRACTS
         if name not in locations or locations[name]["relative_path"] != f"Tables/{name}"
     ]
     if mismatches:
         raise SourceError(
             "GeoContext requires a schema-disabled Lakehouse and flat Tables/<table> paths for "
-            "HydroGeoFeatures/HydroGeoStatus. Refusing source imports into an incompatible layout. "
+            "the source and auxiliary serving tables. Refusing source imports into an incompatible layout. "
             "Actual Delta locations: " + json_text(locations)
         )
 
@@ -1170,11 +1769,10 @@ class SparkStore:
         from delta.tables import DeltaTable
         self.spark, self.delta = spark, DeltaTable
         self.feature_schema, self.status_schema = spark_schema(FEATURE_FIELDS), spark_schema(STATUS_FIELDS)
+        self.link_schema = spark_schema(ASSET_LINK_FIELDS)
         self.table_locations = {}
-        for name, schema, fields, partitions in (
-            (FEATURE_TABLE, self.feature_schema, FEATURE_FIELDS, ["layer_id"]),
-            (STATUS_TABLE, self.status_schema, STATUS_FIELDS, []),
-        ):
+        for name, fields, partitions in TABLE_CONTRACTS:
+            schema = spark_schema(fields)
             if not spark.catalog.tableExists(name):
                 writer = spark.createDataFrame([], schema).write.format("delta").mode("errorifexists")
                 if partitions:
@@ -1226,9 +1824,15 @@ class SparkStore:
         ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
         self.statuses[value["layer_id"]] = value
 
-    def publish(self, spool):
+    def publish(self, spool, table_name=FEATURE_TABLE):
         from pyspark import StorageLevel
         from pyspark.sql import functions as F
+        if table_name not in (FEATURE_TABLE, RESERVOIR_AREA_TABLE):
+            raise SourceError("unexpected feature publication target")
+        if table_name == RESERVOIR_AREA_TABLE and (
+            spool.row_count != 9 or spool.unmapped_count or spool.rejected_count or not spool.details.get("reconciled")
+        ):
+            raise SourceError("refusing incomplete reservoir-area coverage")
         frame = (
             self.spark.read.schema(self.feature_schema).option("mode", "FAILFAST")
             .json(f"{spool.uri}/normalized/*.jsonl.gz")
@@ -1253,13 +1857,160 @@ class SparkStore:
             validate_snapshot_metrics(metrics, spool)
             # No MERGE/delete per page and no whole-table overwrite. Delta commits
             # the replacement only after every upstream/normalization gate passed.
-            frame.repartition(max(1, min(32, math.ceil(spool.row_count / 50000)))).write.format("delta").mode(
-                "overwrite",
-            ).option("replaceWhere", f"layer_id = '{spool.config['layer_id']}'").option(
-                "mergeSchema", "false",
-            ).partitionBy("layer_id").saveAsTable(FEATURE_TABLE)
+            if table_name == RESERVOIR_AREA_TABLE:
+                frame.coalesce(1).write.format("delta").mode("overwrite").option(
+                    "mergeSchema", "false",
+                ).partitionBy("layer_id").saveAsTable(RESERVOIR_AREA_TABLE)
+            else:
+                frame.repartition(max(1, min(32, math.ceil(spool.row_count / 50000)))).write.format("delta").mode(
+                    "overwrite",
+                ).option("replaceWhere", f"layer_id = '{spool.config['layer_id']}'").option(
+                    "mergeSchema", "false",
+                ).partitionBy("layer_id").saveAsTable(FEATURE_TABLE)
         finally:
             frame.unpersist()
+
+    def require_source_snapshot(self, layer):
+        status = self.get_status(layer)
+        if not status or status["state"] != "ready" or not status["last_success_at"]:
+            raise SourceError(f"required last-good {layer} source snapshot is unavailable")
+
+    def reservoir_inputs(self):
+        from pyspark.sql import functions as F
+        self.require_source_snapshot("reservoirs")
+        stats = self.spark.table(FEATURE_TABLE).where(F.col("layer_id") == "reservoirs").limit(65).collect()
+        if len(stats) > 64:
+            raise SourceError("reservoir statistics exceed their bounded area-record budget")
+        cache = self.spark.table(RESERVOIR_AREA_TABLE).limit(10).collect()
+        return [row.asDict() for row in cache], [row.asDict() for row in stats]
+
+    def table_version(self, table_name):
+        return int(self.delta.forName(self.spark, table_name).history(1).select("version").first()["version"])
+
+    def snapshot_at(self, table_name, version):
+        return self.spark.read.format("delta").option("versionAsOf", version).load(self.table_locations[table_name]["location"])
+
+    def prepare_asset_links(self, spool):
+        from pyspark import StorageLevel
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import ArrayType, StructField
+        for layer in (*LINKABLE_ASSET_LAYERS, "umm"):
+            self.require_source_snapshot(layer)
+        source_version = self.table_version(FEATURE_TABLE)
+        link_version = self.table_version(ASSET_LINK_TABLE)
+        source = self.snapshot_at(FEATURE_TABLE, source_version)
+        # Partition pruning happens before streaming this small dimension. Only
+        # identity evidence is retained, never masts or full asset geometries.
+        assets = source.where(F.col("layer_id").isin(*LINKABLE_ASSET_LAYERS)).select(
+            "feature_id", "source_id", "layer_id", "source_url", "properties_json",
+        )
+        index, asset_counts = build_asset_identity_index(row.asDict() for row in assets.toLocalIterator())
+        index_broadcast = self.spark.sparkContext.broadcast(index)
+        linked_at, link_run_id = spool.ingested_at, spool.run_id
+        match_schema = spark_schema((
+            ("message_version", "long"), ("state", "string"), ("reference_count", "long"),
+            ("matched_reference_count", "long"), ("ambiguous_reference_count", "long"),
+        )).add(StructField("links", ArrayType(self.link_schema), True))
+        matcher = F.udf(
+            lambda feature_id, props: match_message_assets(
+                feature_id, props, index_broadcast.value, linked_at, link_run_id,
+            ), match_schema,
+        )
+        processed = source.where(F.col("layer_id") == "umm").select(
+            "feature_id", matcher("feature_id", "properties_json").alias("match"),
+        ).persist(StorageLevel.DISK_ONLY)
+        try:
+            state_rows = processed.groupBy("match.state").agg(
+                F.count("*").alias("messages"), F.sum("match.reference_count").alias("references"),
+                F.sum("match.ambiguous_reference_count").alias("ambiguous_references"),
+            ).collect()
+            candidate_states = {row["state"]: row["messages"] for row in state_rows}
+            total_messages = sum(candidate_states.values())
+            if total_messages != self.get_status("umm")["row_count"]:
+                raise SourceError("retained UMM count differs from its last-good source status")
+            current_versions = processed.where(F.col("match.state") != "outdated").select(
+                F.col("feature_id").alias("message_feature_id"), F.col("match.message_version").alias("message_version"),
+            )
+            manual = self.snapshot_at(ASSET_LINK_TABLE, link_version).where(F.col("match_method") == "manual")
+            manual_count = validate_link_frame(manual, manual=True)
+            automatic = processed.select(F.explode("match.links").alias("link")).select("link.*")
+            automatic = exclude_manually_curated_messages(automatic, manual).select(*[name for name, _ in ASSET_LINK_FIELDS])
+            automatic_count = validate_link_frame(automatic)
+            candidate_uri = f"{spool.uri}/automatic-links.delta"
+            automatic.coalesce(1).write.format("delta").mode("errorifexists").save(candidate_uri)
+            staged = self.spark.read.format("delta").load(candidate_uri)
+            automatic_messages = staged.select(*LINK_MESSAGE_KEY).distinct()
+            manual_for_current_messages = manual.join(
+                current_versions, list(LINK_MESSAGE_KEY), "inner",
+            )
+            real_assets = source.where(F.col("layer_id").isin(
+                *LINKABLE_ASSET_LAYERS, *[layer for _, layer in GRID_LAYERS],
+            )).select(F.col("feature_id").alias("asset_feature_id"), F.col("layer_id").alias("asset_layer_id"))
+            # Validate curated references with a distributed join, not a driver
+            # collection of national network features. Preserve orphaned history.
+            current_manual_rows = real_assets.join(
+                F.broadcast(manual_for_current_messages), ["asset_feature_id", "asset_layer_id"], "inner",
+            ) if manual_count else manual_for_current_messages
+            current_manual = current_manual_rows.select(*LINK_MESSAGE_KEY).distinct()
+            linked_messages = automatic_messages.unionByName(current_manual).distinct().count()
+            current_manual_count = current_manual.count()
+            orphaned_manual_current = manual_for_current_messages.count() - current_manual_rows.count() if manual_count else 0
+            spool.row_count = automatic_count + manual_count
+            spool.details.update({
+                **asset_counts, "source_feature_table_version": source_version,
+                "link_table_version_before_publication": link_version,
+                "retained_messages": total_messages, "automatic_candidate_states": candidate_states,
+                "linked_current_messages": linked_messages,
+                "unlinked_current_messages": total_messages - linked_messages,
+                "current_manual_messages": current_manual_count,
+                "manual_current_links_without_asset": orphaned_manual_current,
+                "automatic_links": automatic_count, "preserved_manual_links": manual_count,
+                "manual_history_is_not_promoted_to_new_versions": True,
+                "candidate_delta_uri": candidate_uri,
+                "serving_join": "message_feature_id AND message_version; a link does not assert active status",
+                "reconciled": True,
+            })
+            spool.record({"input_lineage": spool.details})
+            return staged, link_version
+        finally:
+            processed.unpersist()
+            index_broadcast.destroy()
+
+    def publish_asset_links(self, staged, expected_version):
+        if self.table_version(ASSET_LINK_TABLE) != expected_version:
+            raise SourceError("asset-link table changed while preparing the snapshot; rerun to preserve concurrent manual corrections")
+        merge_automatic_links(self.delta.forName(self.spark, ASSET_LINK_TABLE), staged)
+
+
+def exclude_manually_curated_messages(automatic, manual):
+    return automatic.join(manual.select(*LINK_MESSAGE_KEY).distinct(), list(LINK_MESSAGE_KEY), "left_anti")
+
+
+def validate_link_frame(frame, manual=False):
+    from pyspark.sql import functions as F
+    invalid = F.col("message_version").isNull() | (F.col("message_version") < 1)
+    required = ("message_feature_id", "asset_feature_id", "asset_layer_id", "match_method")
+    if not manual:
+        required += ("match_evidence_json", "linked_at", "run_id")
+        invalid = invalid | (F.col("match_method") != "exact_name_owner") | F.get_json_object("match_evidence_json", "$").isNull()
+    for name in required:
+        invalid = invalid | F.col(name).isNull() | (F.trim(F.col(name)) == "")
+    metrics = frame.agg(
+        F.count("*").alias("rows"), F.countDistinct(*LINK_ROW_KEY).alias("identities"),
+        F.coalesce(F.sum(F.when(invalid, 1).otherwise(0)), F.lit(0)).alias("invalid"),
+    ).first().asDict()
+    if metrics["invalid"] or metrics["rows"] != metrics["identities"]:
+        raise SourceError("manual/automatic asset links have invalid or duplicate revision-qualified identities")
+    return metrics["rows"]
+
+
+def merge_automatic_links(target, staged):
+    condition = " AND ".join(f"target.{name} = incoming.{name}" for name in LINK_ROW_KEY)
+    target.alias("target").merge(staged.alias("incoming"), condition).whenMatchedUpdateAll(
+        condition="target.match_method <> 'manual'",
+    ).whenNotMatchedInsertAll().whenNotMatchedBySourceDelete(
+        condition="target.match_method IS NULL OR target.match_method <> 'manual'",
+    ).execute()
 
 
 def source_status(config, previous, attempted_at, state, message, finished_at=None, counts=None):
@@ -1364,6 +2115,71 @@ def run_layers(configs, store, fs, root, run_id, session, mode, force, clock,
     return results
 
 
+def run_auxiliary_output(config, store, fs, root, run_id, session, mode, force, clock,
+                         failure_types=(SourceError, OSError)):
+    spool = LayerSpool(root, config, run_id, utc_text(clock()))
+    archived = False
+    publication_attempted = False
+    table_name = config["artifact_id"]
+    fs.mkdirs(spool.uri)
+    if fs.put(f"{spool.uri}/attempt.json", json_text(spool.manifest("started", "Auxiliary import in progress")), True) is False:
+        spool.close()
+        raise SourceError(f"{table_name}: failed to persist initial auxiliary attempt")
+    try:
+        if table_name == RESERVOIR_AREA_TABLE:
+            cached, statistics = store.reservoir_inputs()
+            produce_reservoir_areas(
+                spool, PublicHTTP(session, spool), cached, statistics, clock(),
+                force and mode == "all", fs,
+            )
+            spool.archive(fs, "prepared", "All nine real boundaries and source provenance validated")
+            archived = True
+            publication_attempted = True
+            store.publish(spool, table_name=RESERVOIR_AREA_TABLE)
+        elif table_name == ASSET_LINK_TABLE:
+            staged, previous_version = store.prepare_asset_links(spool)
+            spool.archive(fs, "prepared", "Revision-qualified automatic links staged; manual corrections preserved")
+            archived = True
+            publication_attempted = True
+            store.publish_asset_links(staged, previous_version)
+        else:
+            raise SourceError(f"unsupported auxiliary table: {table_name}")
+    except failure_types as exc:
+        publication_note = (
+            "publication failed/unconfirmed; inspect Delta history before assuming a new snapshot is ready"
+            if publication_attempted else "previous published auxiliary snapshot retained"
+        )
+        message = f"{table_name}: {type(exc).__name__}: {exc}; {publication_note}"
+        try:
+            if not archived:
+                spool.archive(fs, "error", message)
+            elif fs.put(f"{spool.uri}/attempt.json", json_text(spool.manifest("error", message)), True) is False:
+                raise SourceError("failed to persist auxiliary error log")
+        except failure_types as archive_error:
+            message += f"; bronze archive failure: {archive_error}"
+        return {"table": table_name, "state": "error", "message": message, "bronze_uri": spool.uri}
+    finally:
+        spool.close()
+    message = f"Published {table_name}; rows={spool.row_count}; coverage={json_text(spool.details)}"
+    if fs.put(f"{spool.uri}/attempt.json", json_text(spool.manifest("ready", message)), True) is False:
+        raise SourceError(f"{table_name}: committed but final auxiliary log persistence failed")
+    return {"table": table_name, "state": "ready", "row_count": spool.row_count,
+            "coverage": spool.details, "bronze_uri": spool.uri}
+
+
+def run_auxiliary_outputs(store, fs, root, run_id, session, mode, force, clock,
+                          failure_types=(SourceError, OSError)):
+    results = []
+    for config in AUXILIARY_CONFIGS:
+        result = run_auxiliary_output(config, store, fs, root, run_id, session, mode, force, clock, failure_types)
+        results.append(result)
+        print(json_text(result))
+    failures = [result["table"] for result in results if result["state"] == "error"]
+    if failures:
+        raise SourceError("Required auxiliary publication failed: " + ", ".join(failures) + "; see archived attempt logs")
+    return results
+
+
 def validate_parameters(workspace, suffix, mode, force, context):
     if mode not in ("all", "operational"):
         raise SourceError("refresh_mode must be 'all' or 'operational'")
@@ -1424,9 +2240,14 @@ with requests.Session() as public_session:
             refresh_mode, force_refresh, lambda: datetime.now(timezone.utc),
             failure_types=(SourceError, requests.RequestException, OSError, PySparkException, Py4JJavaError),
         )
+        auxiliary_results = run_auxiliary_outputs(
+            store, notebookutils.fs, owned_temp, run_id, public_session,
+            refresh_mode, force_refresh, lambda: datetime.now(timezone.utc),
+            failure_types=(SourceError, requests.RequestException, OSError, PySparkException, Py4JJavaError),
+        )
 print(json_text({
     "run_id": run_id, "refresh_mode": refresh_mode, "is_for_pipeline": is_for_pipeline,
-    "table_locations": store.table_locations, "layers": results,
+    "table_locations": store.table_locations, "layers": results, "auxiliary_outputs": auxiliary_results,
 }))
 
 # METADATA ********************

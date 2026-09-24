@@ -179,7 +179,8 @@ class FeatureWorkspaceTests(unittest.TestCase):
             "transmission", "regional", "distribution", "sea-cables", "masts", "transformers",
             "hydro-plants", "reservoirs", "power-balance", "power-flows", "grid-frequency", "umm",
         ]
-        for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location"):
+        for case in ("ready", "missing", "failed", "duplicate", "empty", "partial-query", "foreign-location",
+                     "missing-area", "invented-foreign-data", "invalid-links"):
             with (
                 self.subTest(case=case), tempfile.TemporaryDirectory() as directory,
                 patch.object(feature, "FeatureFabric"), patch.object(feature, "kusto_session") as session_factory,
@@ -192,7 +193,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     location = location.replace(WORKSPACE, TENANT)
                 tables = [
                     {"name": table, "format": "delta", "location": f"{location}/{table}"}
-                    for table in ("geo_map_features", "geo_source_status")
+                    for table in ("geo_map_features", "geo_source_status", "geo_reservoir_areas", "geo_market_asset_links")
                 ]
                 workspace.fabric.request.side_effect = [
                     Mock(status_code=200, json=lambda: {"properties": {"queryServiceUri": "https://feature.kusto.fabric.microsoft.com"}}),
@@ -211,16 +212,28 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 result = {"Tables": [{"Rows": rows}]}
                 if case == "partial-query":
                     result["Exceptions"] = ["partial result failure"]
+                areas = [[code, code[:2], code.startswith("NO"), 0.5 if code.startswith("NO") else None]
+                         for code in ("NO", "SE", "FI", "DK", "NO1", "NO2", "NO3", "NO4", "NO5")]
+                if case == "missing-area":
+                    areas.pop()
+                elif case == "invented-foreign-data":
+                    areas[1][3] = 0
                 post.side_effect = [
                     Mock(status_code=200, json=lambda: {}),
                     Mock(status_code=200, json=lambda: {}),
+                    Mock(status_code=200, json=lambda: {}),
+                    Mock(status_code=200, json=lambda: {}),
                     Mock(status_code=200, json=lambda: result),
+                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": areas}]}),
+                    Mock(status_code=200, json=lambda: {"Tables": [{"Rows": [[-1 if case == "invalid-links" else 0]]}]}),
                 ]
                 with patch.object(workspace, "_item", return_value={"id": "eventhouse"}):
                     if case == "ready":
                         workspace._publish_energy_read_models(SUBSCRIPTION)
                         self.assertEqual(workspace.state["energy_map_verification"]["umm"], 0)
                         self.assertEqual(len(workspace.state["energy_map_verification"]), 12)
+                        self.assertEqual(workspace.state["energy_area_count"], 9)
+                        self.assertEqual(workspace.state["energy_asset_link_count"], 0)
                         for index, table in enumerate(tables):
                             self.assertIn(table["location"] + ";impersonate", post.call_args_list[index].kwargs["json"]["csl"])
                         self.assertIn("continuationToken=next%2Fpage", workspace.fabric.request.call_args.args[1])

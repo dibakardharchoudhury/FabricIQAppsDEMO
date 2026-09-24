@@ -1,14 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
-import { queryEnergyMap, queryEnergyPropertyOptions, queryEnergySourceStatus, queryUnplottedMarketMessages } from '../../services/energyMap'
+import {
+  queryAssetMarketMessages, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
+  queryEnergySourceStatus, queryGridFrequency, queryReservoirAreas,
+} from '../../services/energyMap'
 import { EnergyPropertyFiltersPanel } from '../components/energyMap/EnergyPropertyFilters'
 import {
   createEnergyPropertyFilters, matchesEnergyPropertyFilters, propertyFilterCount,
   type EnergyPropertyFilters, type EnergyPropertyOptions,
 } from '../energyMapFilters'
 import {
-  DEFAULT_LAYERS, FEATURE_LIMIT, INITIAL_VIEW, MAP_LAYERS, safeSourceUrl, sourceAge, sourceIsStale,
+  DEFAULT_LAYERS, FEATURE_LIMIT, INITIAL_VIEW, isAssetLayer, MAP_LAYERS, MAP_VISIBLE_LAYERS, safeSourceUrl, sourceAge, sourceIsStale,
   type EnergyFeature, type EnergyLayerId, type EnergySourceStatus, type MapViewport,
 } from '../energyMapModel'
 import '../styles/energy-map.css'
@@ -43,8 +46,13 @@ export function OperationsMapPage() {
   const propertiesPanelId = useId()
   const [features, setFeatures] = useState<EnergyFeature[]>([])
   const [statuses, setStatuses] = useState<EnergySourceStatus[]>([])
-  const [unplotted, setUnplotted] = useState<EnergyFeature[]>([])
+  const [areas, setAreas] = useState<EnergyFeature[]>([])
+  const [areaError, setAreaError] = useState<string>()
+  const [frequency, setFrequency] = useState<EnergyFeature | null>()
+  const [frequencyError, setFrequencyError] = useState<string>()
   const [selected, setSelected] = useState<EnergyFeature>()
+  const [detailResult, setDetailResult] = useState<{ key: string; data?: EnergyFeature; error?: string }>()
+  const [messageResult, setMessageResult] = useState<{ key: string; data?: EnergyFeature[]; error?: string }>()
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string>()
   const [sourceError, setSourceError] = useState<string>()
@@ -110,7 +118,6 @@ export function OperationsMapPage() {
   }, [viewport, layers, revision, propertyFilters])
 
   useEffect(() => {
-    if (!panels.properties) return
     const controller = new AbortController()
     void queryEnergyPropertyOptions(controller.signal).then(options => {
       if (controller.signal.aborted) return
@@ -122,15 +129,14 @@ export function OperationsMapPage() {
       setPropertyError(reason instanceof Error ? reason.message : 'Property filter options are unavailable.')
     })
     return () => controller.abort()
-  }, [panels.properties, revision])
+  }, [revision])
 
   useEffect(() => {
     const controller = new AbortController()
-    void Promise.all([queryEnergySourceStatus(controller.signal), queryUnplottedMarketMessages(controller.signal)])
-      .then(([sourceStatus, messages]) => {
+    void queryEnergySourceStatus(controller.signal)
+      .then(sourceStatus => {
         if (controller.signal.aborted) return
         setStatuses(sourceStatus)
-        setUnplotted(messages)
         setSourceError(undefined)
       }).catch((reason: unknown) => {
         if (controller.signal.aborted) return
@@ -139,6 +145,50 @@ export function OperationsMapPage() {
       })
     return () => controller.abort()
   }, [revision])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void queryReservoirAreas(controller.signal).then(data => {
+      if (controller.signal.aborted) return
+      setAreas(data); setAreaError(undefined)
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      console.error('Reservoir-area geometry failed.', reason)
+      setAreaError(reason instanceof Error ? reason.message : 'Reservoir-area geometry is unavailable.')
+    })
+    void queryGridFrequency(controller.signal).then(data => {
+      if (controller.signal.aborted) return
+      setFrequency(data); setFrequencyError(undefined)
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      console.error('Frequency snapshot failed.', reason)
+      setFrequencyError(reason instanceof Error ? reason.message : 'Frequency snapshot is unavailable.')
+    })
+    return () => controller.abort()
+  }, [revision])
+
+  useEffect(() => {
+    if (!selected) return
+    const controller = new AbortController()
+    const key = `${selected.layerId}:${selected.id}`
+    void queryEnergyFeatureDetails(selected, controller.signal).then(data => {
+      if (!controller.signal.aborted) setDetailResult({ key, data })
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      console.error('Selected map feature details failed.', reason)
+      setDetailResult({ key, error: reason instanceof Error ? reason.message : 'Feature details are unavailable.' })
+    })
+    if (isAssetLayer(selected.layerId)) {
+      void queryAssetMarketMessages(selected, controller.signal).then(data => {
+        if (!controller.signal.aborted) setMessageResult({ key, data })
+      }).catch((reason: unknown) => {
+        if (controller.signal.aborted) return
+        console.error('Selected asset market messages failed.', reason)
+        setMessageResult({ key, error: reason instanceof Error ? reason.message : 'Asset market messages are unavailable.' })
+      })
+    }
+    return () => controller.abort()
+  }, [selected, revision])
 
   const connect = async () => {
     try {
@@ -167,9 +217,14 @@ export function OperationsMapPage() {
     && viewport.zoom >= MAP_LAYERS.find(layer => layer.id === feature.layerId)!.minZoom
     && matchesEnergyPropertyFilters(feature, propertyFilters)), [features, visibleLayers, viewport.zoom, propertyFilters])
   const listed = displayed.filter(feature => `${feature.label} ${feature.layerId}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).slice(0, 100)
-  const readyCount = statuses.filter(status => status.state === 'ready').length
-  const staleCount = statuses.filter(status => sourceIsStale(status, now)).length
+  const mapStatuses = statuses.filter(status => MAP_VISIBLE_LAYERS.some(layer => layer.id === status.layerId))
+  const readyCount = mapStatuses.filter(status => status.state === 'ready').length
+  const staleCount = mapStatuses.filter(status => sourceIsStale(status, now)).length
   const propertyCount = propertyFilterCount(propertyFilters)
+  const selectionKey = selected ? `${selected.layerId}:${selected.id}` : undefined
+  const details = detailResult?.key === selectionKey ? detailResult : undefined
+  const messages = messageResult?.key === selectionKey ? messageResult : undefined
+  const shownAreas = layers.includes('reservoirs') ? areas : []
 
   return <div className="energy-map-page">
     <header className="energy-map-heading">
@@ -181,14 +236,15 @@ export function OperationsMapPage() {
       </div>
     </header>
     <div className="energy-map-summary">
-      <span><Layers size={14} />{readyCount}/{MAP_LAYERS.length} layers ready</span>
-      <span><MapPin size={14} />{displayed.length.toLocaleString()} features in view</span>
+      <span><Layers size={14} />{readyCount}/{MAP_VISIBLE_LAYERS.length} layers ready</span>
+      <span><MapPin size={14} />{displayed.length.toLocaleString()} features in view{shownAreas.length ? ` + ${shownAreas.length} area overlays` : ''}</span>
       <span>Fabric snapshots, not a live grid-control feed</span>
       {staleCount > 0 && <strong>{staleCount} layer{staleCount === 1 ? '' : 's'} need a fresh import</strong>}
     </div>
-    {(error || sourceError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
+    {(error || sourceError || areaError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError, areaError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
     {importStatus && <div className="energy-map-notice" role="status">{importStatus} {importing && 'This runs a cloud pipeline; changing tabs does not cancel it.'}</div>}
     {truncated && <div className="energy-map-notice" role="status">This viewport exceeds {FEATURE_LIMIT.toLocaleString()} features. Only the first {FEATURE_LIMIT.toLocaleString()} are displayed; zoom in or turn off dense layers.</div>}
+    <GridFrequencyTile feature={frequency} error={frequencyError} now={now} />
     <div className="energy-map-filter-toolbar" aria-label="Map filter groups">
       <button type="button" aria-controls={layersPanelId} aria-expanded={panels.layers} onClick={() => togglePanel('layers')}>
         <Layers size={16} />Layers <span>{layers.length} selected</span>{panels.layers ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -200,7 +256,7 @@ export function OperationsMapPage() {
     </div>
     <aside id={layersPanelId} className="energy-map-layers" aria-label="Energy map layers" hidden={!panels.layers}>
       <h2><Layers size={17} />Layers and freshness</h2>
-      {MAP_LAYERS.map(layer => {
+      {MAP_VISIBLE_LAYERS.map(layer => {
         const status = statuses.find(value => value.layerId === layer.id)
         const tooFar = viewport.zoom < layer.minZoom
         const stale = status && sourceIsStale(status, now)
@@ -230,13 +286,19 @@ export function OperationsMapPage() {
     <div className="energy-map-layout">
       <section className="energy-map-main">
         <Suspense fallback={<div className="energy-map-loading">Loading map renderer...</div>}>
-          <EnergyMapCanvas features={displayed} onViewport={setViewport} onSelect={selectFeature} />
+          <EnergyMapCanvas features={displayed} areas={areas} capacityMaximum={propertyOptions?.hydro.capacityMax}
+            showAreas={layers.includes('reservoirs')} onViewport={setViewport} onSelect={selectFeature} />
         </Suspense>
         {busy && <div className="energy-map-query-state" role="status">Loading this viewport from Fabric...</div>}
-        <p className="energy-map-disclaimer">NVE public infrastructure can be incomplete or approximate. Reservoir markers represent area statistics; power-flow lines are schematic. UMM covers the last 30 publication days, not all older active notices. Importance is application-derived, not an official Nord Pool or grid-safety rating.</p>
+        <p className="energy-map-disclaimer">Reservoir shading represents area statistics, not individual reservoirs; gray countries have no reservoir figures in this source. Boundaries are generalized. Plant marker area scales with installed MW; transformer capacity is unknown and markers are uniform. Power-flow lines are schematic.</p>
       </section>
       <aside className="energy-map-details" aria-label="Selected feature and visible features">
-        {selected ? <FeatureDetails feature={selected} onClose={() => setSelected(undefined)} /> : <div className="energy-map-empty"><MapPin size={23} /><h2>Explore a feature</h2><p>Select a line, plant or message on the map to see its source details.</p></div>}
+        {selected ? <>
+          <FeatureDetails feature={details?.data ?? selected} onClose={() => setSelected(undefined)} />
+          {!details && <p role="status">Loading full source details...</p>}
+          {details?.error && <p className="energy-map-stale" role="alert">{details.error}</p>}
+          {isAssetLayer(selected.layerId) && <AssetMarketMessages result={messages} />}
+        </> : <div className="energy-map-empty"><MapPin size={23} /><h2>Explore a feature</h2><p>Select an asset or area. Market messages appear only when they are linked to the selected asset.</p></div>}
         <div className="energy-map-search"><Search size={15} /><input aria-label="Search loaded map features" value={search} placeholder="Search this viewport" onChange={event => setSearch(event.target.value)} /></div>
         <div className="energy-map-feature-list">
           {listed.map(feature => <button type="button" key={`${feature.layerId}:${feature.id}`} onClick={() => setSelected(feature)}>
@@ -245,10 +307,6 @@ export function OperationsMapPage() {
           {!listed.length && <p>No matching features loaded in this viewport.</p>}
           {displayed.length > 100 && <small>List shows up to 100 matching loaded features.</small>}
         </div>
-        {unplotted.length > 0 && <details className="energy-map-unmapped"><summary>Messages not plotted ({unplotted.length > 100 ? '100+' : unplotted.length})</summary>
-          <p>Unlocated, cancelled and undatable notices are retained here, not shown as active map events.</p>
-          {unplotted.slice(0, 100).map(feature => <button type="button" key={feature.id} onClick={() => setSelected(feature)}>{feature.label}</button>)}
-        </details>}
       </aside>
     </div>
   </div>
@@ -256,7 +314,9 @@ export function OperationsMapPage() {
 
 function FeatureDetails({ feature, onClose }: { feature: EnergyFeature; onClose: () => void }) {
   const url = safeSourceUrl(feature.sourceUrl)
-  const fields = Object.entries(feature.properties).filter(([, value]) => value !== null && value !== undefined && value !== '')
+  const rawFields = ['source_properties', 'gis_properties', 'source_message']
+  const fields = Object.entries(feature.properties).filter(([name, value]) =>
+    !rawFields.includes(name) && value !== null && value !== undefined && value !== '')
   return <section className="energy-map-inspector">
     <button type="button" className="energy-map-close" aria-label="Close feature details" onClick={onClose}><X size={18} /></button>
     <span className="v2-eyebrow">{MAP_LAYERS.find(layer => layer.id === feature.layerId)?.label}</span>
@@ -265,8 +325,44 @@ function FeatureDetails({ feature, onClose }: { feature: EnergyFeature; onClose:
     <p>Observed: {feature.observedAt ? new Date(feature.observedAt).toLocaleString() : 'Not supplied by source'}</p>
     <p>Imported: {new Date(feature.ingestedAt).toLocaleString()}</p>
     {!feature.geometry && <p className="energy-map-stale">No verified map coordinates are available.</p>}
-    {feature.layerId === 'umm' && feature.properties.map_eligible !== true && <p className="energy-map-stale">This notice is not eligible for the active-event map.</p>}
+    {feature.layerId === 'transformers' && <p>Capacity: unknown. Marker size is uniform; voltage is not used as a capacity proxy.</p>}
     <dl>{fields.map(([name, value]) => <div key={name}><dt>{name.replaceAll('_', ' ')}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}</dl>
     {url && <a href={url} target="_blank" rel="noreferrer">Source information</a>}
+    {rawFields.map(name => feature.properties[name] !== undefined && feature.properties[name] !== null
+      ? <details className="energy-map-raw-properties" key={name}><summary>{name === 'gis_properties' ? 'GIS properties' : name === 'source_properties' ? 'Source properties' : 'Source message'}</summary><pre>{JSON.stringify(feature.properties[name], null, 2)}</pre></details> : null)}
+  </section>
+}
+
+function GridFrequencyTile({ feature, error, now }: { feature?: EnergyFeature | null; error?: string; now: number }) {
+  const value = feature?.properties.frequency_hz
+  const valid = typeof value === 'number' && Number.isFinite(value) && value > 0
+  const observed = feature?.observedAt
+  const stale = !observed || !Number.isFinite(Date.parse(observed)) || now - Date.parse(observed) > 120_000
+  return <section className="energy-map-frequency-tile" aria-label="Grid frequency">
+    <div><Activity size={19} /><h2>Grid frequency</h2></div>
+    <strong>{valid ? `${value.toFixed(3)} Hz` : feature === undefined && !error ? 'Loading...' : 'Unavailable'}</strong>
+    <span className={stale ? 'energy-map-stale' : ''}>{observed ? `Observed ${sourceAge(observed, now)}${stale ? ' - stale snapshot' : ''}` : 'No observation time available'}</span>
+    <small>Statnett snapshot, not a live grid-control feed. Use Import latest data to refresh.</small>
+    {error && <p role="alert">{error}</p>}
+  </section>
+}
+
+function AssetMarketMessages({ result }: { result?: { data?: EnergyFeature[]; error?: string } }) {
+  return <section className="energy-map-asset-messages" aria-label="Selected asset market messages">
+    <h3>Related market messages</h3>
+    {!result && <p role="status">Loading asset links from Fabric...</p>}
+    {result?.error && <p className="energy-map-stale" role="alert">{result.error}</p>}
+    {result?.data && <>
+      {!result.data.length && <p>No linked messages in the imported publication window. Unmatched or ambiguous notices are not assigned to this asset.</p>}
+      {result.data.slice(0, 100).map(message => <details key={message.id}>
+        <summary>{message.label}</summary>
+        <dl>{Object.entries(message.properties).filter(([name, value]) =>
+          name !== 'source_message' && value !== null && value !== undefined && value !== '')
+          .map(([name, value]) => <div key={name}><dt>{name.replaceAll('_', ' ')}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}</dl>
+        {message.properties.source_message !== undefined && <details className="energy-map-raw-properties"><summary>Source message</summary><pre>{JSON.stringify(message.properties.source_message, null, 2)}</pre></details>}
+      </details>)}
+      {result.data.length > 100 && <p>Showing the latest 100 linked notices.</p>}
+    </>}
+    <small>UMM covers the last 30 publication days. Matches show their evidence; importance is application-derived, not an official severity rating.</small>
   </section>
 }

@@ -100,6 +100,13 @@ completed base setup/seed/telemetry checkpoints. Subsequent source refreshes can
 be triggered from the Map tab or its dedicated pipeline; no recurring map
 schedule is enabled by deployment.
 
+The optional energy import also publishes `geo_reservoir_areas` and
+`geo_market_asset_links` in the existing GeoContext Lakehouse, served by
+`HydroGeoReservoirAreas` and `HydroGeoMarketAssetLinks`. The same canonical
+bootstrap verifies the nine expected area polygons and the link table before
+app publication. Linking preserves manual corrections and does not invent
+asset matches from price-area membership.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform

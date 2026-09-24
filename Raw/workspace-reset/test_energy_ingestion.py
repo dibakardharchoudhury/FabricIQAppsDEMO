@@ -44,7 +44,7 @@ def load_helpers():
     """AST-load only stdlib imports, constants, classes and function definitions."""
     tree = ast.parse(NOTEBOOK.read_text(encoding="utf-8"))
     allowed = {"gzip", "hashlib", "json", "math", "re", "tempfile", "time",
-               "datetime", "email.utils", "pathlib", "urllib.parse", "uuid"}
+               "datetime", "email.utils", "pathlib", "urllib.parse", "uuid", "unicodedata"}
     selected = []
     for node in tree.body:
         if isinstance(node, ast.Import) and all(alias.name in allowed for alias in node.names):
@@ -150,6 +150,11 @@ class FakeResponse:
     def close(self):
         self.closed = True
 
+    def iter_content(self, chunk_size):
+        raw = self.text.encode("utf-8")
+        for start in range(0, len(raw), chunk_size):
+            yield raw[start:start + chunk_size]
+
 
 class MemoryFS:
     """Small offline bronze store; no network calls and no writes outside temp dirs."""
@@ -166,6 +171,9 @@ class MemoryFS:
     def put(self, path, text, overwrite):
         self.files[path] = text.encode()
         return True
+
+    def exists(self, path):
+        return path in self.files
 
 
 class MemoryStore:
@@ -761,18 +769,20 @@ class RepositoryContractTests(HelpersTest):
         base = f"abfss://{UUID(int=100)}@example.invalid/{UUID(int=101)}/Tables"
         locations = {
             table: self.call("delta_location", table, f"{base}/{table}/")
-            for table in ("geo_map_features", "geo_source_status")
+            for table, _, _ in self.ns["TABLE_CONTRACTS"]
         }
         self.call("validate_table_locations", locations)
         self.assertEqual(locations["geo_map_features"]["relative_path"], "Tables/geo_map_features")
         self.assertEqual(locations["geo_source_status"]["relative_path"], "Tables/geo_source_status")
+        self.assertEqual(locations["geo_reservoir_areas"]["relative_path"], "Tables/geo_reservoir_areas")
+        self.assertEqual(locations["geo_market_asset_links"]["relative_path"], "Tables/geo_market_asset_links")
         self.assertEqual(locations["geo_map_features"]["location"], f"{base}/geo_map_features/")
 
     def test_schema_enabled_paths_fail_with_actual_locations_and_creation_guidance(self):
         base = f"abfss://{UUID(int=100)}@example.invalid/{UUID(int=101)}/Tables/dbo"
         locations = {
             table: self.call("delta_location", table, f"{base}/{table}")
-            for table in ("geo_map_features", "geo_source_status")
+            for table, _, _ in self.ns["TABLE_CONTRACTS"]
         }
         with self.assertRaisesRegex(self.error, "schema-disabled") as raised:
             self.call("validate_table_locations", locations)
@@ -807,6 +817,22 @@ class RepositoryContractTests(HelpersTest):
         })
         self.assertEqual({item["source_id"] for item in configs}, {"nve-grid", "nve-hydro", "nve-reservoir", "statnett", "nordpool"})
         self.assertEqual(len(configs), 12)
+
+    def test_auxiliary_schemas_keep_exact_contracts_and_logical_id(self):
+        self.assertEqual(self.ns["ASSET_LINK_FIELDS"], (
+            ("message_feature_id", "string"), ("message_version", "long"),
+            ("asset_feature_id", "string"), ("asset_layer_id", "string"),
+            ("match_method", "string"), ("match_evidence_json", "string"),
+            ("linked_at", "string"), ("run_id", "string"),
+        ))
+        contracts = {name: (fields, partitions) for name, fields, partitions in self.ns["TABLE_CONTRACTS"]}
+        self.assertEqual(contracts["geo_reservoir_areas"], (self.ns["FEATURE_FIELDS"], ["layer_id"]))
+        self.assertEqual(contracts["geo_market_asset_links"], (self.ns["ASSET_LINK_FIELDS"], []))
+        self.assertEqual(self.ns["LINK_MESSAGE_KEY"], ("message_feature_id", "message_version"))
+        source = NOTEBOOK.read_text(encoding="utf-8")
+        self.assertIn('source.where(F.col("layer_id").isin(*LINKABLE_ASSET_LAYERS))', source)
+        self.assertIn("assets.toLocalIterator()", source)
+        self.assertNotIn('enableSchemas: false', source)
 
     def test_parameters_are_used_directly_and_wrong_lakehouse_is_rejected(self):
         workspace = str(UUID(int=100))
@@ -863,6 +889,398 @@ class RepositoryContractTests(HelpersTest):
                 compile("".join(cell["source"]), f"Geo mirror cell {index}", "exec")
                 self.assertEqual(cell["outputs"], [])
                 self.assertIsNone(cell["execution_count"])
+
+
+def test_polygon(x=8.0, y=60.0):
+    return {"type": "Polygon", "coordinates": [
+        [[x, y], [x + 0.1, y], [x + 0.1, y + 0.1], [x, y + 0.1], [x, y]],
+    ]}
+
+
+class BoundaryTests(HelpersTest):
+    def boundaries(self):
+        result = []
+        bronze = f"Files/bronze/geo_context/nve-reservoir/{RUN_ID}/geo_reservoir_areas"
+        for code in self.ns["PRICE_AREA_CODES"]:
+            result.append(self.call("boundary_record", "price_area", code, "NO", test_polygon(),
+                                    [{"budomr": f"NO {code[-1]}"}], self.stamp, bronze))
+        for country, components in self.ns["COUNTRY_COMPONENTS"].items():
+            raw = [{"ADM0_A3": item, "SOVEREIGNT": self.ns["COUNTRY_NAMES"][country]} for item in components]
+            result.append(self.call("boundary_record", "country", country, country,
+                                    {"type": "MultiPolygon", "coordinates": [test_polygon()["coordinates"] for _ in components]},
+                                    raw, self.stamp, bronze))
+        return result
+
+    def stats_row(self, kind="EL", area=1, filling=0.75):
+        raw = {"omrType": kind, "omrnr": area, "iso_aar": 2026, "iso_uke": 38,
+               "dato_Id": "2026-09-20", "fyllingsgrad": filling, "kapasitet_TWh": 10,
+               "fylling_TWh": 7.5, "endring_fyllingsgrad": 0.01}
+        return self.call("normalize_reservoir", raw, RUN_ID, self.stamp)
+
+    def country_payload(self):
+        return {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"ADM0_A3": component, "SOVEREIGNT": self.ns["COUNTRY_NAMES"][country]},
+             "geometry": test_polygon()}
+            for country, components in self.ns["COUNTRY_COMPONENTS"].items() for component in components
+        ]}
+
+    def test_polygon_and_multipolygon_preserve_holes_islands_and_bounds(self):
+        outer = [[5, 58], [8, 58], [8, 61], [5, 61], [5, 58]]
+        hole = [[6, 59], [7, 59], [7, 60], [6, 60], [6, 59]]
+        island = test_polygon(10, 63)["coordinates"]
+        geometry = {"type": "MultiPolygon", "coordinates": [[outer, hole], island]}
+        original = copy.deepcopy(geometry)
+        self.assertEqual(self.call("geometry_bounds", geometry), (5.0, 58.0, 10.1, 63.1))
+        self.assertEqual(geometry, original)
+
+    def test_invalid_polygon_rings_and_holes_fail(self):
+        examples = [
+            {"type": "Polygon", "coordinates": []},
+            {"type": "Polygon", "coordinates": [[[1, 1], [2, 2], [3, 3], [1, 1]]]},
+            {"type": "Polygon", "coordinates": [[[1, 1], [2, 1], [2, 2], [1, 2]]]},
+            {"type": "Polygon", "coordinates": [[[1, 1], [2, 2], [1, 2], [2, 1], [1, 1]]]},
+            {"type": "MultiPolygon", "coordinates": []},
+            {"type": "Polygon", "coordinates": [test_polygon()["coordinates"][0], test_polygon(30, 30)["coordinates"][0]]},
+        ]
+        for geometry in examples:
+            with self.subTest(geometry=geometry), self.assertRaises(self.ns["GeometryError"]):
+                self.call("geometry_bounds", geometry)
+        geometry = test_polygon()
+        geometry["coordinates"][0][1][0] = float("inf")
+        with self.assertRaises(self.ns["GeometryError"]):
+            self.call("geometry_bounds", geometry)
+
+    def test_all_five_price_areas_four_countries_and_provenance_are_required(self):
+        boundaries = self.boundaries()
+        self.call("validate_boundary_coverage", boundaries)
+        for incomplete in (boundaries[:-1], boundaries + [boundaries[0]], boundaries[1:]):
+            with self.assertRaisesRegex(self.error, "coverage"):
+                self.call("validate_boundary_coverage", incomplete)
+        invalid = copy.deepcopy(boundaries)
+        invalid[0]["source_url"] = "https://unverified.invalid/polygon"
+        with self.assertRaisesRegex(self.error, "provenance"):
+            self.call("validate_boundary_coverage", invalid)
+        invalid = copy.deepcopy(boundaries)
+        invalid[0]["geometry"]["coordinates"][0][1][0] += 0.01
+        with self.assertRaisesRegex(self.error, "digest"):
+            self.call("validate_boundary_coverage", invalid)
+
+    def test_country_source_preserves_every_component_including_aland_greenland_faroe(self):
+        body = self.country_payload()
+        output = self.call("country_boundaries", body, self.stamp, "Files/bronze/geo_context/fixture")
+        by_country = {row["country_code"]: row for row in output}
+        self.assertEqual(set(by_country), {"NO", "SE", "FI", "DK"})
+        self.assertEqual(len(by_country["FI"]["geometry"]["coordinates"]), 2)
+        self.assertEqual(len(by_country["DK"]["geometry"]["coordinates"]), 3)
+        self.assertEqual([p["ADM0_A3"] for p in by_country["DK"]["source_properties"]], ["DNK", "GRL", "FRO"])
+        for boundary in output:
+            self.call("validate_boundary", boundary)
+        with self.assertRaisesRegex(self.error, "missing required land"):
+            self.call("country_boundaries", {**body, "features": body["features"][:-1]}, self.stamp, "Files/bronze/geo_context/fixture")
+
+    def test_stats_join_only_uses_verified_el_codes_and_retains_unlocated_facts(self):
+        rows = [self.stats_row("EL", 1), self.stats_row("NO", 0), self.stats_row("VASS", 1)]
+        original = copy.deepcopy(rows)
+        stats, no_overlay = self.call("reservoir_statistics_index", rows)
+        self.assertEqual(set(stats), {"NO1", "NO"})
+        self.assertEqual(no_overlay, [rows[-1]["feature_id"]])
+        self.assertEqual(rows, original)
+        row = self.call("reservoir_area_feature", self.boundaries()[0], stats, RUN_ID, self.stamp)
+        props = self.properties(row)
+        self.assertTrue(props["has_reservoir_data"])
+        self.assertEqual(props["filling_fraction"], 0.75)
+        self.assertEqual(props["fill_pct"], 75)
+        self.assertEqual(props["source_stats"]["omrType"], "EL")
+        self.assertEqual(row["source_url"], self.ns["PRICE_AREA_URL"])
+
+    def test_foreign_and_missing_statistics_are_null_not_zero(self):
+        stats, _ = self.call("reservoir_statistics_index", [self.stats_row("EL", 1), self.stats_row("NO", 0)])
+        for boundary in self.boundaries():
+            row = self.call("reservoir_area_feature", boundary, stats, RUN_ID, self.stamp)
+            props = self.properties(row)
+            if boundary["area_code"] not in ("NO1", "NO"):
+                self.assertFalse(props["has_reservoir_data"])
+                for field in ("filling_fraction", "fill_pct", "stored_twh", "capacity_twh", "source_stats"):
+                    self.assertIsNone(props[field])
+                self.assertIsNone(row["observed_at"])
+            if boundary["area_code"] == "NO":
+                self.assertIn("country aggregate", props["statistics_scope"])
+                self.assertIn("NOT an island", props["statistics_scope"])
+        zero_stats, _ = self.call("reservoir_statistics_index", [self.stats_row("EL", 1, 0)])
+        zero = self.properties(self.call("reservoir_area_feature", self.boundaries()[0], zero_stats, RUN_ID, self.stamp))
+        self.assertTrue(zero["has_reservoir_data"])
+        self.assertEqual(zero["filling_fraction"], 0.0)
+
+    def test_mismatched_or_duplicate_stat_codes_fail(self):
+        row = self.stats_row()
+        with self.assertRaisesRegex(self.error, "ambiguous"):
+            self.call("reservoir_statistics_index", [row, row])
+        props = self.properties(row)
+        props["price_area"] = "NO2"
+        with self.assertRaisesRegex(self.error, "disagrees"):
+            self.call("reservoir_statistics_index", [{**row, "properties_json": json.dumps(props)}])
+
+    def test_boundary_cache_reuses_static_geometry_but_refreshes_stats(self):
+        boundaries = self.boundaries()
+        rows = [self.call("reservoir_area_feature", boundary, {}, RUN_ID, self.stamp) for boundary in boundaries]
+        fs = MemoryFS()
+        fs.files[f"{boundaries[0]['bronze_uri']}/responses.jsonl.gz"] = b"raw archive exists"
+        details = {}
+        cached = self.call("cached_boundary_groups", rows, NOW + timedelta(hours=1), False, fs, details)
+        self.assertEqual(len(cached["price_area"]), 5)
+        self.assertEqual(len(cached["country"]), 4)
+        stale = self.call("cached_boundary_groups", rows, NOW + timedelta(days=2), False, fs, {})
+        self.assertEqual(stale["price_area"], [])
+        self.assertEqual(len(stale["country"]), 4)
+        forced = self.call("cached_boundary_groups", rows, NOW, True, fs, {})
+        self.assertFalse(any(forced.values()))
+        missing_raw = self.call("cached_boundary_groups", rows, NOW, False, MemoryFS(), {})
+        self.assertFalse(any(missing_raw.values()))
+        config = self.ns["AUXILIARY_CONFIGS"][0]
+        http = SequenceHTTP([])
+        with tempfile.TemporaryDirectory() as root:
+            spool = self.ns["LayerSpool"](root, config, RUN_ID, self.stamp)
+            try:
+                self.call("produce_reservoir_areas", spool, http, rows, [self.stats_row(filling=0.9)], NOW, False, fs)
+                self.assertEqual(spool.row_count, 9)
+                self.assertTrue(spool.details["reconciled"])
+                spool.close()
+                with gzip.open(next((spool.local / "normalized").glob("*.gz")), "rt") as handle:
+                    produced = [json.loads(line) for line in handle]
+                no1 = next(row for row in produced if self.properties(row)["area_code"] == "NO1")
+                self.assertEqual(self.properties(no1)["filling_fraction"], 0.9)
+                self.assertIn("/geo_reservoir_areas", spool.uri)
+            finally:
+                spool.close()
+        self.assertFalse(http.calls)
+
+    def test_boundary_http_budget_and_pinned_content_hash_fail_closed(self):
+        spool = types.SimpleNamespace(record=Mock())
+        wrong_hash = FakeResponse(self.country_payload())
+        session = Mock(request=Mock(return_value=wrong_hash))
+        with self.assertRaisesRegex(self.error, "content hash changed"):
+            self.ns["PublicHTTP"](session, spool).get_json(self.ns["NATURAL_EARTH_URL"])
+        self.assertTrue(wrong_hash.closed)
+        self.ns["BOUNDARY_MAX_BYTES"] = 16
+        oversized = FakeResponse(text="x" * 100)
+        with self.assertRaisesRegex(self.error, "byte budget"):
+            self.ns["PublicHTTP"](Mock(request=Mock(return_value=oversized)), spool).get_json(self.ns["PRICE_AREA_URL"])
+        self.assertTrue(oversized.closed)
+
+
+class TinyFrame:
+    def __init__(self, rows):
+        self.rows = copy.deepcopy(rows)
+
+    def select(self, *columns):
+        return TinyFrame([{key: row[key] for key in columns} for row in self.rows])
+
+    def distinct(self):
+        rows = {}
+        for row in self.rows:
+            rows[json.dumps(row, sort_keys=True)] = row
+        return TinyFrame(list(rows.values()))
+
+    def join(self, other, keys, how):
+        if how != "left_anti":
+            raise AssertionError("Unexpected join kind")
+        excluded = {tuple(row[key] for key in keys) for row in other.rows}
+        return TinyFrame([row for row in self.rows if tuple(row[key] for key in keys) not in excluded])
+
+    def alias(self, name):
+        return self
+
+
+class AssetLinkTests(HelpersTest):
+    def asset(self, identifier="plant:1", name="Test Plant", owner="Example Energy AS", layer="hydro-plants", **extra):
+        raw = {"Navn": name, "HovedEier": owner, "VannKraftverkID": 1, **extra} if layer == "hydro-plants" else {
+            "navn": name, "eier": owner, "objectid": 1, **extra,
+        }
+        return {"feature_id": identifier, "layer_id": layer, "source_id": "nve-hydro" if layer == "hydro-plants" else "nve-grid",
+                "source_url": self.ns["HYDRO_URL"] if layer == "hydro-plants" else self.ns["GRID_SERVICE"] + "/5",
+                "properties_json": json.dumps({"source_properties": raw})}
+
+    def index(self, assets=None):
+        if assets is None:
+            assets = [self.asset(), self.asset("transformer:1", "Test Station", "Grid Owner SF", "transformers")]
+        return self.call("build_asset_identity_index", assets)[0]
+
+    def linked(self, message=None, index=None, normalized_version=None):
+        message = message or umm_message(messageType=1, publisherName="Example Energy A.S.",
+                                         productionUnits=[{"name": "TEST PLANT", "eic": "50WTEST000000001"}])
+        props = {"source_message": message, "version": normalized_version or message["version"], "is_outdated": False}
+        return self.call("match_message_assets", f"nordpool:UMM:{message['messageId']}",
+                         json.dumps(props), index if index is not None else self.index(), self.stamp, RUN_ID)
+
+    def test_exact_normalized_name_and_owner_produce_explained_versioned_link(self):
+        result = self.linked()
+        self.assertEqual(result["state"], "linked")
+        self.assertEqual(len(result["links"]), 1)
+        row = result["links"][0]
+        self.assertEqual(set(row), {name for name, _ in self.ns["ASSET_LINK_FIELDS"]})
+        self.assertEqual(row["asset_feature_id"], "plant:1")
+        self.assertEqual(row["message_version"], 1)
+        self.assertEqual(row["match_method"], "exact_name_owner")
+        evidence = json.loads(row["match_evidence_json"])
+        self.assertEqual(evidence["policy"], "exact-name-owner-v1")
+        self.assertEqual(evidence["identifier_crosswalk"], "none verified")
+        self.assertTrue(evidence["does_not_assert_active_outage"])
+        self.assertEqual(evidence["matched_references"][0]["source_field"], "productionUnits[0].name")
+
+    def test_wrong_owner_fuzzy_name_or_shared_area_never_links(self):
+        for overrides in (
+            {"publisherName": "Different Energy AS"},
+            {"productionUnits": [{"name": "Test Plant Kraftverk"}]},
+            {"productionUnits": [{"name": "Test Plnt"}]},
+            {"productionUnits": [], "areas": [{"name": "NO2"}]},
+        ):
+            message = umm_message(messageType=1, publisherName="Example Energy AS",
+                                  productionUnits=[{"name": "Test Plant"}])
+            message.update(overrides)
+            with self.subTest(overrides=overrides):
+                self.assertEqual(self.linked(message)["links"], [])
+
+    def test_transformer_asset_and_provider_ownership_roles_are_supported(self):
+        msg = umm_message(publisherName="Grid Owner SF", assets=[{"name": "Test Station", "code": "50TTEST000000001"}])
+        link = self.linked(msg)["links"][0]
+        self.assertEqual(link["asset_layer_id"], "transformers")
+        self.assertNotIn("capacity", link["match_evidence_json"].lower())
+        assets = [self.asset(Eiere=[{"Navn": "Minority Owner AS"}]),
+                  self.asset("transformer:1", "Test Station", "Grid Owner SF", "transformers")]
+        msg = umm_message(publisherName="Different Publisher", marketParticipants=[{"name": "Minority Owner AS"}],
+                          productionUnits=[{"name": "Test Plant"}])
+        self.assertEqual(self.linked(msg, self.index(assets))["links"][0]["asset_feature_id"], "plant:1")
+
+    def test_generation_unit_uses_documented_parent_plant_not_bare_generator_name(self):
+        msg = umm_message(publisherName="Example Energy AS",
+                          generationUnits=[{"name": "G1", "productionUnitName": "Test Plant",
+                                            "productionUnitEic": "50WTEST000000001", "eic": "50WGEN000000001X"}])
+        link = self.linked(msg)["links"][0]
+        self.assertIn("productionUnitName", link["match_evidence_json"])
+        msg["generationUnits"][0].pop("productionUnitName")
+        self.assertEqual(self.linked(msg)["links"], [])
+
+    def test_area_and_transmission_border_eics_are_not_asset_eics(self):
+        msg = umm_message(publisherName="Example Energy AS",
+                          transmissionUnits=[{"name": "Test Plant", "inAreaEic": "50WTEST000000001",
+                                              "outAreaEic": "10YNO-2--------T"}])
+        self.assertEqual(self.linked(msg)["links"], [])
+        msg = umm_message(publisherName="Example Energy AS",
+                          assets=[{"name": "Test Plant", "code": "10YNO-2--------T"}])
+        self.assertEqual(self.linked(msg)["links"], [])
+        msg = umm_message(publisherName="Example Energy AS",
+                          productionUnits=[{"eic": "50WTEST000000001"}])
+        self.assertEqual(self.linked(msg)["state"], "unsupported")
+
+    def test_ambiguous_name_owner_blocks_entire_notice_without_arbitrary_choice(self):
+        assets = [self.asset(), self.asset("plant:2"),
+                  self.asset("transformer:1", "Test Station", "Grid Owner SF", "transformers")]
+        msg = umm_message(publisherName="Example Energy AS", marketParticipants=[{"name": "Grid Owner SF"}],
+                          productionUnits=[{"name": "Test Plant"}], assets=[{"name": "Test Station"}])
+        result = self.linked(msg, self.index(assets))
+        self.assertEqual(result["state"], "ambiguous")
+        self.assertEqual(result["ambiguous_reference_count"], 1)
+        self.assertEqual(result["links"], [])
+
+    def test_same_asset_multiple_units_produces_one_link_with_all_evidence(self):
+        msg = umm_message(publisherName="Example Energy AS",
+                          productionUnits=[{"name": "Test Plant"}],
+                          generationUnits=[{"productionUnitName": "Test Plant", "name": "G1"}])
+        result = self.linked(msg)
+        self.assertEqual(len(result["links"]), 1)
+        self.assertEqual(result["matched_reference_count"], 2)
+        self.assertEqual(len(json.loads(result["links"][0]["match_evidence_json"])["matched_references"]), 2)
+
+    def test_revisions_cancellations_and_outdated_notices(self):
+        msg = umm_message(version=7, eventStatus=3, cancellationReason="Cancelled",
+                          publisherName="Example Energy AS", productionUnits=[{"name": "Test Plant"}])
+        result = self.linked(msg)
+        self.assertEqual(result["links"][0]["message_version"], 7)
+        self.assertTrue(json.loads(result["links"][0]["match_evidence_json"])["is_cancelled"])
+        with self.assertRaisesRegex(self.error, "version disagrees"):
+            self.linked(msg, normalized_version=6)
+        msg["isOutdated"] = True
+        result = self.linked(msg)
+        self.assertEqual(result["state"], "outdated")
+        self.assertEqual(result["links"], [])
+
+    def test_index_is_bounded_and_rejects_mast_collection(self):
+        assets = [self.asset(), self.asset("transformer:1", "Station", "Grid", "transformers")]
+        with self.assertRaisesRegex(self.error, "partition-filtered"):
+            self.index(assets + [{**assets[0], "layer_id": "masts"}])
+        self.ns["MAX_LINKABLE_ASSETS"] = 1
+        with self.assertRaisesRegex(self.error, "bounded size"):
+            self.index(assets)
+
+    def test_unknown_owner_is_unlinked_but_missing_identity_schema_fails(self):
+        plant = self.asset(owner=None, Eiere=None)
+        transformer = self.asset("transformer:1", "Station", "Grid", "transformers")
+        index, counts = self.call("build_asset_identity_index", [plant, transformer])
+        self.assertEqual(counts["unnamed_or_ownerless_assets"], 1)
+        self.assertEqual(self.linked(index=index)["links"], [])
+        invalid = {**transformer, "properties_json": json.dumps({"source_properties": {"objectid": 1}})}
+        with self.assertRaisesRegex(self.error, "missing fields"):
+            self.call("build_asset_identity_index", [plant, invalid])
+
+    def test_manual_precedence_is_exact_message_and_version_not_carried_forward(self):
+        auto = TinyFrame([
+            {"message_feature_id": "message:1", "message_version": 1, "asset_feature_id": "auto-old"},
+            {"message_feature_id": "message:1", "message_version": 2, "asset_feature_id": "auto-new"},
+        ])
+        manual = TinyFrame([{"message_feature_id": "message:1", "message_version": 1, "asset_feature_id": "curated"}])
+        result = self.call("exclude_manually_curated_messages", auto, manual)
+        self.assertEqual(result.rows, [auto.rows[1]])
+        self.assertEqual(manual.rows[0]["message_version"], 1)
+
+    def test_atomic_merge_protects_manual_updates_and_historical_rows(self):
+        target = Mock()
+        target.alias.return_value = target
+        merge = target.merge.return_value
+        merge.whenMatchedUpdateAll.return_value = merge
+        merge.whenNotMatchedInsertAll.return_value = merge
+        merge.whenNotMatchedBySourceDelete.return_value = merge
+        staged = TinyFrame([])
+        self.call("merge_automatic_links", target, staged)
+        condition = target.merge.call_args.args[1]
+        self.assertIn("target.message_version = incoming.message_version", condition)
+        self.assertIn("target.asset_layer_id = incoming.asset_layer_id", condition)
+        self.assertEqual(merge.whenMatchedUpdateAll.call_args.kwargs["condition"], "target.match_method <> 'manual'")
+        self.assertEqual(merge.whenNotMatchedBySourceDelete.call_args.kwargs["condition"],
+                         "target.match_method IS NULL OR target.match_method <> 'manual'")
+        merge.execute.assert_called_once()
+
+
+class AuxiliaryFailureTests(HelpersTest):
+    def test_area_acquisition_failure_preserves_last_good_and_links_still_run(self):
+        fs = MemoryFS()
+        store = Mock()
+        store.reservoir_inputs.side_effect = self.error("required country coverage unavailable")
+
+        def prepare(spool):
+            spool.details["reconciled"] = True
+            spool.row_count = 0
+            return "staged-empty-automatic-links", 4
+
+        store.prepare_asset_links.side_effect = prepare
+        with tempfile.TemporaryDirectory() as root, self.assertRaisesRegex(self.error, "geo_reservoir_areas"):
+            self.call("run_auxiliary_outputs", store, fs, root, RUN_ID, None, "all", False, lambda: NOW)
+        store.publish.assert_not_called()
+        store.publish_asset_links.assert_called_once_with("staged-empty-automatic-links", 4)
+        logs = {path: json.loads(value) for path, value in fs.files.items() if path.endswith("/attempt.json")}
+        area = next(value for path, value in logs.items() if "/geo_reservoir_areas/" in path)
+        links = next(value for path, value in logs.items() if "/geo_market_asset_links/" in path)
+        self.assertEqual(area["state"], "error")
+        self.assertEqual(links["state"], "ready")
+
+    def test_failed_link_validation_never_publishes_or_erases_manual_corrections(self):
+        store, fs = Mock(), MemoryFS()
+        store.prepare_asset_links.side_effect = self.error("ambiguous invalid retained revision")
+        with tempfile.TemporaryDirectory() as root:
+            result = self.call("run_auxiliary_output", self.ns["AUXILIARY_CONFIGS"][1], store, fs,
+                               root, RUN_ID, None, "all", False, lambda: NOW)
+        self.assertEqual(result["state"], "error")
+        store.publish_asset_links.assert_not_called()
+        self.assertTrue(any(path.endswith("/responses.jsonl.gz") for path in fs.files))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,28 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Areas, asset links and embedded rendering (2026-09-24T10:58Z)
+
+- 141 Python regressions passed, including 75 ingestion/auxiliary tests:
+  polygon/ring coverage, explicit foreign no-data values, conservative linking,
+  revision handling, protected manual corrections and last-good publication.
+- 25 frontend model tests, targeted ESLint, TypeScript and Node 24 production
+  build passed. Marker sizing remains increasing through the global maximum;
+  frequency/UMM are not map markers; message queries bind asset and revision.
+- Real-data embedded replay used 2,549 exported features plus all nine validated
+  polygons (101,487 coordinates). Owner/price-area changes did not re-index
+  unchanged transmission geometry, one renderer remained alive, framebuffer
+  dimensions stayed bounded, and forced context loss recovered without errors.
+- Fixture interactions verified frequency tile, selected-asset-only notices,
+  collapsed raw properties, property controls and reset behavior in both shells.
+  Six production-preview layout cases passed across desktop/tablet/mobile.
+- The same tenant/subscription/workspace remains selected. The existing capacity
+  now reports **F4, Active**, changed outside this session; no resize was performed.
+  Pipeline history has no active/recent duplicate import to reuse.
+- No Azure infrastructure, role or policy delta. The existing feature bootstrap
+  updates only the energy notebook/read models; baseline setup/stream digests
+  remain isolated from the energy definition.
 
 ### Property filter iteration (2026-09-24T08:31:47Z)
 
@@ -462,3 +484,32 @@ against Fabric as recorded in Section 7.
 Existing redirects, permissions and targeted consent grants passed the
 post-deployment checks. The routine blanket-consent warning did not require any
 administrator action. No infrastructure, pipeline or source data was changed.
+
+## 14. Geographic areas, selected-asset messages and embedded rendering
+
+User-approved on 2026-09-24:
+
+- Move frequency to a snapshot tile above the map.
+- Use Norway NO1-NO5 reservoir areas plus Norway/Sweden/Finland/Denmark country
+  coverage; foreign reservoir figures must be explicitly unavailable.
+- Scale hydro markers monotonically by installed capacity. The user chose
+  uniform transformer markers with unknown capacity, not a voltage proxy.
+- Collapse raw Source/GIS properties at the end of the selected feature.
+- Persist a separate, evidence-backed market-message/asset link table and show
+  only the selected asset's messages.
+- Keep MapLibre and harden rendering inside Fabric. The supplied screenshot
+  shows the whole embedded app renderer crashing, not a zero-result map.
+
+The existing notebook adds two atomic, schema-validated Delta outputs:
+`geo_reservoir_areas` and `geo_market_asset_links`; no new Lakehouse, capacity,
+identities or schedules. The canonical feature bootstrap exposes both through
+Delta external tables and preserves baseline setup/seed/stream checkpoints.
+Country geometry is pinned public-domain Natural Earth 1:10m; price areas use
+NVE Nettomraader/NLOD. Linking is conservative and reports unmatched coverage.
+
+Renderer changes isolate/version layers, strip bulk raw metadata from viewport
+responses, bound framebuffer allocation and defer offscreen updates. The exact
+native Fabric process crash was not reproduced locally; a cross-origin embedded
+replay with the real 2,549-feature snapshot and 101,487 polygon coordinates stayed
+responsive through Owner/price-area filtering and recovered from deliberate
+WebGL context loss. Unchanged transmission geometry was not re-indexed.

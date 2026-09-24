@@ -538,7 +538,11 @@ class FeatureWorkspace:
             if not url and payload.get("continuationToken"):
                 url = f"{self.base}/lakehouses/{lakehouse_id}/tables?continuationToken={quote(payload['continuationToken'], safe='')}"
         with kusto_session() as session:
-            for name, table in (("HydroGeoFeatures", "geo_map_features"), ("HydroGeoStatus", "geo_source_status")):
+            for name, table in (
+                ("HydroGeoFeatures", "geo_map_features"), ("HydroGeoStatus", "geo_source_status"),
+                ("HydroGeoReservoirAreas", "geo_reservoir_areas"),
+                ("HydroGeoMarketAssetLinks", "geo_market_asset_links"),
+            ):
                 matches = [item for item in discovered if item.get("name", "").split(".")[-1] == table]
                 if len(matches) != 1 or matches[0].get("format", "").lower() != "delta":
                     raise FeatureWorkspaceError(f"Cannot resolve the energy Delta table {table}.")
@@ -560,6 +564,15 @@ class FeatureWorkspace:
                 "db": database,
                 "csl": "external_table('HydroGeoStatus') | project layer_id, state, row_count",
             }, timeout=90, allow_redirects=False)
+            area_response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
+                "db": database,
+                "csl": "external_table('HydroGeoReservoirAreas') | extend p=parse_json(properties_json)"
+                       " | project area_code=tostring(p.area_code), country_code=tostring(p.country_code),"
+                       " has_data=tobool(p.has_reservoir_data), filling=todouble(p.filling_fraction)",
+            }, timeout=90, allow_redirects=False)
+            link_response = session.post(f"{cluster}/v1/rest/query", headers=headers, json={
+                "db": database, "csl": "external_table('HydroGeoMarketAssetLinks') | summarize count()",
+            }, timeout=90, allow_redirects=False)
         check_response(response, "Verify energy map source status", {200})
         payload = response.json()
         if payload.get("error") or payload.get("Exceptions"):
@@ -576,9 +589,28 @@ class FeatureWorkspace:
                  and type(row[2]) is int and (row[2] > 0 or (row[0] == "umm" and row[2] == 0))}
         if required != ready:
             raise FeatureWorkspaceError(f"Energy map import is incomplete: {sorted(required - ready)}.")
+        for result, label in ((area_response, "reservoir areas"), (link_response, "asset message links")):
+            check_response(result, f"Verify {label}", {200})
+            if result.json().get("error") or result.json().get("Exceptions"):
+                raise FeatureWorkspaceError(f"Eventhouse returned partial or failed {label}.")
+        area_tables = area_response.json().get("Tables") or []
+        area_rows = area_tables[0].get("Rows", []) if area_tables else []
+        expected_areas = {"NO", "SE", "FI", "DK", "NO1", "NO2", "NO3", "NO4", "NO5"}
+        if len(area_rows) != 9 or {row[0] for row in area_rows if len(row) == 4} != expected_areas:
+            raise FeatureWorkspaceError("Reservoir polygon coverage is incomplete.")
+        if any(row[1] != row[0][:2] for row in area_rows):
+            raise FeatureWorkspaceError("Reservoir polygon country/area identities are inconsistent.")
+        if any(row[1] != "NO" and (row[2] is not False or row[3] is not None) for row in area_rows):
+            raise FeatureWorkspaceError("Foreign reservoir values must be explicitly unavailable.")
+        link_tables = link_response.json().get("Tables") or []
+        link_rows = link_tables[0].get("Rows", []) if link_tables else []
+        if len(link_rows) != 1 or len(link_rows[0]) != 1 or type(link_rows[0][0]) is not int or link_rows[0][0] < 0:
+            raise FeatureWorkspaceError("Asset-message link table could not be verified.")
         self.state["energy_map_verification"] = {row[0]: row[2] for row in rows}
+        self.state["energy_area_count"] = len(area_rows)
+        self.state["energy_asset_link_count"] = link_rows[0][0]
         self._save()
-        print(f"Energy map read models are ready: {len(ready)} layers.", flush=True)
+        print(f"Energy map read models are ready: {len(ready)} source layers, {len(area_rows)} area polygons, {link_rows[0][0]} asset-message links.", flush=True)
 
     def configure_app(self, env_path: Path) -> None:
         values = {

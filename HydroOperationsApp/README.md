@@ -46,12 +46,31 @@ balance/interconnector flows/frequency, and Nord Pool UMM. UMM importance is
 explicitly labeled rule-based application enrichment, not an official market or
 grid-safety rating. Aviation providers are not included.
 
+**Reservoir overlay:** `geo_reservoir_areas` stores NVE NO1-NO5 price-area
+polygons and country backgrounds for Norway, Sweden, Finland and Denmark.
+Country coverage includes provider-supplied offshore territories. Geometry
+comes from NVE Nettomraader and pinned Natural Earth 1:10m data, with provenance
+and raw snapshots retained. Non-Norwegian reservoir figures are unavailable,
+not zero; gray polygons are explicitly no-data. Norway's national statistic is
+an aggregate, not a measurement for every island or reservoir.
+
+**Grid frequency** is a separate tile above the map, showing the latest imported
+Statnett sample and its observation age. It is not a map marker or a live feed.
+
 **UMM coverage:** the last 30 publication days (at most 10,000 reconciled revisions),
 not every older, still-active outage. A changed/incomplete upstream page fails the
 import instead of silently truncating coverage. Latest revisions retain all affected
-areas; cancelled/undatable/unlocated notices stay in the list, not the active map.
+areas; cancellations and unlocated notices remain in Fabric.
 The public area-directory endpoint returned 403, so only area names and EIC/name
 pairs explicitly present in provider messages are resolved.
+
+Market messages are displayed **only for the selected asset**, through
+`geo_market_asset_links` / `HydroGeoMarketAssetLinks`. Automatic links require
+an unambiguous normalized unit-name and owner/publisher match; a shared price
+area, proximity or an area EIC is not an asset identity. Matching evidence is
+shown, ambiguous notices stay unlinked, and manual corrections are preserved.
+Reads join both message ID and revision, so an old link is not silently assigned
+to a revised notice. There are no global UMM dots or unrelated-message lists.
 
 **Importance `rules-v1`:** direct Norwegian relevance +10; explicitly unplanned
 +25; largest reported single-unit interval unavailable capacity >0/+5,
@@ -65,8 +84,19 @@ zoom thresholds for dense distribution/mast data and a visible 4,000-feature
 limit. It never downloads the full national network at startup. Layer filters sit
 in a responsive panel above the map and are compact by default. Expand a filter's
 **Details** to see its provider, zoom guidance, import age, errors and unmapped
-counts. Unplotted UMMs remain accessible in the event list. Unknown or failed data
-is not replaced with invented features.
+counts. Unknown or failed data is not replaced with invented features.
+
+Plant marker area scales monotonically against the global installed-capacity
+maximum. Transformer capacity is not supplied by the imported source: those
+markers are uniform and explicitly capacity-unknown, not sized by voltage.
+Bulky source/GIS properties are fetched only for a selected feature and appear
+as collapsed sections at the end of its details.
+
+The MapLibre renderer retains separate versioned sources per layer, so changing
+an owner/price-area filter does not re-index unchanged national line or area
+geometry. Raw provider objects are omitted from viewport responses, offscreen
+updates are deferred, and framebuffer allocation is capped for Fabric's iframe.
+Context-loss recovery and a renderer-only retry preserve data/filter state.
 
 The **Layers** button minimizes the entire layer box; **Properties** opens a
 separate, independently collapsible filter group. Panel visibility is remembered

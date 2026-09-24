@@ -1,7 +1,7 @@
 import { runKustoQuery, type KustoResult } from './fabric'
 import {
-  buildEnergyMapQuery, FEATURE_LIMIT, parseEnergyFeature, parseSourceStatus, UMM_MAP_PREDICATE,
-  type EnergyLayerId, type MapViewport,
+  buildAssetMarketMessagesQuery, buildEnergyMapQuery, FEATURE_LIMIT, isEnergyLayer, parseEnergyFeature, parseSourceStatus,
+  type EnergyFeature, type EnergyLayerId, type MapViewport,
 } from '../ui-shared/energyMapModel'
 import { ENERGY_PROPERTY_OPTIONS_QUERY, parseEnergyPropertyOptions, type EnergyPropertyFilters } from '../ui-shared/energyMapFilters'
 
@@ -24,11 +24,36 @@ export async function queryEnergySourceStatus(signal: AbortSignal) {
     .map(parseSourceStatus)
 }
 
-export async function queryUnplottedMarketMessages(signal: AbortSignal) {
-  return rows(await runKustoQuery(`external_table('HydroGeoFeatures')
-| where layer_id == 'umm' and (isempty(geometry_json) or not(coalesce(${UMM_MAP_PREDICATE}, false)))
-| order by observed_at desc
-| take 101
-| project feature_id, layer_id, label, geometry_json, properties_json, observed_at, ingested_at, source_url`, 101, signal))
-    .map(parseEnergyFeature)
+export async function queryReservoirAreas(signal: AbortSignal) {
+  const result = rows(await runKustoQuery("external_table('HydroGeoReservoirAreas') | take 21", 21, signal))
+  if (result.length > 20) throw new Error('Reservoir-area coverage exceeds the expected geometry contract.')
+  const features = result.map(parseEnergyFeature)
+  const codes = new Set(features.map(feature => feature.properties.area_code))
+  if (features.length !== 9 || codes.size !== 9
+    || !['NO', 'SE', 'FI', 'DK', 'NO1', 'NO2', 'NO3', 'NO4', 'NO5'].every(code => codes.has(code))
+    || features.some(feature => feature.layerId !== 'reservoirs' || !feature.geometry
+      || !['Polygon', 'MultiPolygon'].includes(feature.geometry.type))) {
+    throw new Error('Reservoir-area geometry is incomplete. Check the Fabric import.')
+  }
+  return features
+}
+
+export async function queryGridFrequency(signal: AbortSignal): Promise<EnergyFeature | null> {
+  const result = rows(await runKustoQuery("external_table('HydroGeoFeatures') | where layer_id == 'grid-frequency' | take 2", 2, signal))
+  if (result.length > 1) throw new Error('The frequency snapshot contains duplicate records.')
+  return result.length ? parseEnergyFeature(result[0]) : null
+}
+
+export async function queryEnergyFeatureDetails(feature: EnergyFeature, signal: AbortSignal): Promise<EnergyFeature> {
+  if (!isEnergyLayer(feature.layerId) || feature.id.length > 2048) throw new Error('Invalid asset selection.')
+  const table = feature.layerId === 'reservoirs' ? 'HydroGeoReservoirAreas' : 'HydroGeoFeatures'
+  const result = rows(await runKustoQuery(`external_table('${table}')
+| where layer_id == ${JSON.stringify(feature.layerId)} and feature_id == ${JSON.stringify(feature.id)}
+| take 2`, 2, signal))
+  if (result.length !== 1) throw new Error('Selected feature details are unavailable or ambiguous. Reload the map.')
+  return parseEnergyFeature(result[0])
+}
+
+export async function queryAssetMarketMessages(asset: EnergyFeature, signal: AbortSignal): Promise<EnergyFeature[]> {
+  return rows(await runKustoQuery(buildAssetMarketMessagesQuery(asset), 101, signal)).map(parseEnergyFeature)
 }

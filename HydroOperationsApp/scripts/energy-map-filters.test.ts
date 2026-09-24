@@ -143,5 +143,5 @@ test('hydro marker sizing reads the same installed-capacity field as the filters
     feature_id: 'plant', layer_id: 'hydro-plants', label: 'Plant', ingested_at: '2026-09-24T08:00:00Z',
     geometry_json: '{"type":"Point","coordinates":[5,60]}', properties_json: '{"installed_capacity_mw":400}',
   })
-  assert.ok(Number(asFeatureCollection([feature]).features[0].properties?.radius) > 6)
+  assert.ok(Number(asFeatureCollection([feature], 1240).features[0].properties?.radius) > 6)
 })

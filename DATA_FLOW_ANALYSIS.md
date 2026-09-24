@@ -8,7 +8,13 @@ The optional Operations Map adds a separate real-data path:
 public energy APIs -> `Geo_001_ingest_energy_context` -> raw snapshots and curated
 Delta tables in `Hydro_GeoContext_<suffix>` -> Eventhouse Delta external tables
 `HydroGeoFeatures` / `HydroGeoStatus` -> bounded, zoom/viewport-filtered queries
-from the Map tab. No external features are inserted into synthetic STID or
+from the Map tab. Auxiliary `geo_reservoir_areas` and `geo_market_asset_links`
+tables provide authoritative/generalized area coverage and evidence-backed,
+revision-specific asset-message relationships through `HydroGeoReservoirAreas`
+and `HydroGeoMarketAssetLinks`. Frequency is read into a separate snapshot tile,
+and market messages are read only for a selected asset. Viewport responses omit
+bulky provider objects; full source/GIS details are loaded on selection.
+No external features are inserted into synthetic STID or
 operational SQL. Source failures retain last-good snapshots and explicit status;
 the browser refresh does not imply a new upstream observation. A separate
 `04_Pipe_EnergyMap` import refreshes the source snapshots on demand.
