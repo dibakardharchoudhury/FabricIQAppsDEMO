@@ -64,6 +64,9 @@
 .energy-map-frequency-tile { display: flex; flex-direction: column; align-self: flex-start; gap: 8px; width: min(100%, 390px); padding: 14px 18px; border: 1px solid var(--cp-border); border-radius: 10px; background: var(--cp-surface); }
 .energy-map-frequency-tile > div { display: flex; align-items: center; gap: 8px; color: var(--cp-text-muted); }
 .energy-map-frequency-tile h2 { font-size: 13px; margin: 0; }
+.energy-map-frequency-tile > div > span { margin-left: auto; font-size: 10px; font-weight: 600; }
+.energy-map-live { color: #0f766e; }
+.energy-map-live-retry { align-self: flex-start; padding: 5px 9px; border: 1px solid var(--cp-border); border-radius: 5px; color: var(--cp-text); background: var(--cp-surface); cursor: pointer; font-size: 11px; }
 .energy-map-frequency-tile > strong { font-size: 27px; color: var(--cp-text); }
 .energy-map-frequency-tile > span { font-size: 11px; }
 .energy-map-frequency-tile small, .energy-map-frequency-tile p { margin: 0; font-size: 10px; line-height: 1.5; color: var(--cp-text-muted); }

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
 import {
   queryAssetMarketMessages, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
-  queryEnergySourceStatus, queryGridFrequency, queryReservoirAreas,
+  queryEnergySourceStatus, queryReservoirAreas,
 } from '../../services/energyMap'
 import { EnergyPropertyFiltersPanel } from '../components/energyMap/EnergyPropertyFilters'
+import { LiveGridFrequencyTile } from '../components/energyMap/LiveGridFrequencyTile'
 import {
   createEnergyPropertyFilters, matchesEnergyPropertyFilters, propertyFilterCount,
   type EnergyPropertyFilters, type EnergyPropertyOptions,
@@ -52,8 +53,6 @@ export function OperationsMapPage() {
   const [statuses, setStatuses] = useState<EnergySourceStatus[]>([])
   const [areas, setAreas] = useState<EnergyFeature[]>([])
   const [areaError, setAreaError] = useState<string>()
-  const [frequency, setFrequency] = useState<EnergyFeature | null>()
-  const [frequencyError, setFrequencyError] = useState<string>()
   const [selected, setSelected] = useState<EnergyFeature>()
   const [detailResult, setDetailResult] = useState<{ key: string; data?: EnergyFeature; error?: string }>()
   const [messageResult, setMessageResult] = useState<{ key: string; data?: EnergyFeature[]; error?: string }>()
@@ -174,14 +173,6 @@ export function OperationsMapPage() {
       console.error('Reservoir-area geometry failed.', reason)
       setAreaError(reason instanceof Error ? reason.message : 'Reservoir-area geometry is unavailable.')
     })
-    void queryGridFrequency(controller.signal).then(data => {
-      if (controller.signal.aborted) return
-      setFrequency(data); setFrequencyError(undefined)
-    }).catch((reason: unknown) => {
-      if (controller.signal.aborted) return
-      console.error('Frequency snapshot failed.', reason)
-      setFrequencyError(reason instanceof Error ? reason.message : 'Frequency snapshot is unavailable.')
-    })
     return () => controller.abort()
   }, [revision])
 
@@ -259,14 +250,14 @@ export function OperationsMapPage() {
     <div className="energy-map-summary">
       <span><Layers size={14} />{readyCount}/{MAP_VISIBLE_LAYERS.length} layers ready</span>
       <span><MapPin size={14} />{displayed.length.toLocaleString()} features in view{shownAreas.length ? ` + ${shownAreas.length} area overlays` : ''}</span>
-      <span>Fabric snapshots, not a live grid-control feed</span>
+      <span>Map layers use Fabric snapshots</span>
       {staleCount > 0 && <strong>{staleCount} layer{staleCount === 1 ? '' : 's'} need a fresh import</strong>}
     </div>
     {(error || sourceError || areaError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError, areaError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
     {importStatus && <div className="energy-map-notice" role="status">{importStatus} {importing && 'This runs a cloud pipeline; changing tabs does not cancel it.'}</div>}
     {truncated && <div className="energy-map-notice" role="status">This viewport exceeds {FEATURE_LIMIT.toLocaleString()} features. Only the first {FEATURE_LIMIT.toLocaleString()} are displayed; zoom in or turn off dense layers.</div>}
     <div className="energy-map-stat-tiles">
-      <GridFrequencyTile feature={frequency} error={frequencyError} now={now} />
+      <LiveGridFrequencyTile />
       <VisibleCapacityTile capacity={capacity} pending={viewPending} error={error} truncated={truncated} />
     </div>
     <div className="energy-map-filter-toolbar" aria-label="Map filter groups">
@@ -378,20 +369,6 @@ function FeatureDetails({ feature, onClose }: { feature: EnergyFeature; onClose:
     {url && <a href={url} target="_blank" rel="noreferrer">Source information</a>}
     {rawFields.map(name => feature.properties[name] !== undefined && feature.properties[name] !== null
       ? <details className="energy-map-raw-properties" key={name}><summary>{name === 'gis_properties' ? 'GIS properties' : name === 'source_properties' ? 'Source properties' : 'Source message'}</summary><pre>{JSON.stringify(feature.properties[name], null, 2)}</pre></details> : null)}
-  </section>
-}
-
-function GridFrequencyTile({ feature, error, now }: { feature?: EnergyFeature | null; error?: string; now: number }) {
-  const value = feature?.properties.frequency_hz
-  const valid = typeof value === 'number' && Number.isFinite(value) && value > 0
-  const observed = feature?.observedAt
-  const stale = !observed || !Number.isFinite(Date.parse(observed)) || now - Date.parse(observed) > 120_000
-  return <section className="energy-map-frequency-tile" aria-label="Grid frequency">
-    <div><Activity size={19} /><h2>Grid frequency</h2></div>
-    <strong>{valid ? `${value.toFixed(3)} Hz` : feature === undefined && !error ? 'Loading...' : 'Unavailable'}</strong>
-    <span className={stale ? 'energy-map-stale' : ''}>{observed ? `Observed ${sourceAge(observed, now)}${stale ? ' - stale snapshot' : ''}` : 'No observation time available'}</span>
-    <small>Statnett snapshot, not a live grid-control feed. Use Import latest data to refresh.</small>
-    {error && <p role="alert">{error}</p>}
   </section>
 }
 

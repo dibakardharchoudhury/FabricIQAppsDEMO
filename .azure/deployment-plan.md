@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,19 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Visible-only live frequency (2026-09-24T12:56Z)
+
+- 35 targeted tests, TypeScript, ESLint and Node 24 production build passed.
+- The exact production query/parser returned advancing live samples through
+  Fabric: 49.996 Hz (1.151s old) then 49.991 Hz (0.274s old).
+- Browser lifecycle checks passed for visible polling, hidden/offscreen pause,
+  last-good retention, bounded failure backoff, manual retry, stopping on unmount
+  and stale-source labeling. No uncaught browser errors.
+- Both-shell property/area interactions and all six responsive map/tile layout
+  cases passed. Live age updates are isolated to the frequency component.
+- Same approved tenant/subscription; no schema, role or infrastructure changes.
+  The existing Azure/permission validation applies; deploy app-only.
 
 ### Capacity tile and multi-area iteration (2026-09-24T12:00Z)
 
@@ -585,3 +598,20 @@ frequency/capacity tiles and stacked mobile layout. Full area-selection/tile
 interactions were tested with isolated fixtures, and real spatial results/totals
 were verified independently against Fabric. Existing auth and redirect checks
 passed; no source data, schedules or infrastructure were changed.
+
+## 16. Live frequency while viewed
+
+User-approved on 2026-09-24: make the frequency tile live only while the page is
+open, with no always-on infrastructure or stored live history.
+
+Statnett's public endpoint returned fresh per-second measurements but no browser
+CORS header. A documented, mapped KQL `externaldata` query successfully retrieved
+advancing live samples through the existing Eventhouse: 50.013 and 50.033 Hz five
+seconds apart, both less than a second old. No new permissions or resources are
+needed; the public HTTP request carries no browser/provider credentials.
+
+An isolated tile polls about every five seconds while visible, stops on
+hidden/offscreen/offline/unmount, uses 12-second request bounds and bounded error
+backoff, and labels observation age and stale/failure states. It does not redraw
+map layers each second or re-label the old Delta snapshot as live. Use the
+canonical app-only deployment after validation.

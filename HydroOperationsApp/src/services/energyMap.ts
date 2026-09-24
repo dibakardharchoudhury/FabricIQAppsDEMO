@@ -4,6 +4,7 @@ import {
   type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../ui-shared/energyMapModel'
 import { ENERGY_PROPERTY_OPTIONS_QUERY, parseEnergyPropertyOptions, type EnergyPropertyFilters } from '../ui-shared/energyMapFilters'
+import { buildLiveFrequencyQuery, parseLiveFrequency, type LiveFrequencyReading } from '../ui-shared/liveFrequencyModel'
 
 function rows(result: KustoResult): Record<string, unknown>[] {
   return result.rows.map(row => Object.fromEntries(result.columns.map((name, index) => [name, row[index]])))
@@ -44,6 +45,12 @@ export async function queryGridFrequency(signal: AbortSignal): Promise<EnergyFea
   const result = rows(await runKustoQuery("external_table('HydroGeoFeatures') | where layer_id == 'grid-frequency' | take 2", 2, signal))
   if (result.length > 1) throw new Error('The frequency snapshot contains duplicate records.')
   return result.length ? parseEnergyFeature(result[0]) : null
+}
+
+export async function queryLiveGridFrequency(signal: AbortSignal): Promise<LiveFrequencyReading> {
+  const requestedAt = Date.now()
+  const result = rows(await runKustoQuery(buildLiveFrequencyQuery(requestedAt), 2, signal))
+  return parseLiveFrequency(result, requestedAt, Date.now())
 }
 
 export async function queryEnergyFeatureDetails(feature: EnergyFeature, signal: AbortSignal): Promise<EnergyFeature> {

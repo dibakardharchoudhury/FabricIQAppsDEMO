@@ -11,8 +11,10 @@ Delta tables in `Hydro_GeoContext_<suffix>` -> Eventhouse Delta external tables
 from the Map tab. Auxiliary `geo_reservoir_areas` and `geo_market_asset_links`
 tables provide authoritative/generalized area coverage and evidence-backed,
 revision-specific asset-message relationships through `HydroGeoReservoirAreas`
-and `HydroGeoMarketAssetLinks`. Frequency is read into a separate snapshot tile,
-and market messages are read only for a selected asset. Viewport responses omit
+and `HydroGeoMarketAssetLinks`. The separate frequency tile reads fresh Statnett
+samples on demand through Fabric KQL `externaldata`, with visible-only polling
+and no continuous collection; its imported Lakehouse snapshot is retained separately.
+Market messages are read only for a selected asset. Viewport responses omit
 bulky provider objects; full source/GIS details are loaded on selection.
 No external features are inserted into synthetic STID or
 operational SQL. Source failures retain last-good snapshots and explicit status;

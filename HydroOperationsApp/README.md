@@ -55,8 +55,20 @@ regions rather than filling levels. Non-Norwegian reservoir figures are unavaila
 not zero, and explicitly labeled. Norway's national statistic is
 an aggregate, not a measurement for every island or reservoir.
 
-**Grid frequency** is a separate tile above the map, showing the latest imported
-Statnett sample and its observation age. It is not a map marker or a live feed.
+**Grid frequency** is a live, on-demand tile above the map. While the tile is
+visible on the active Map page, it requests the latest Statnett sample through
+a read-only Fabric KQL `externaldata` query about every five seconds. Explicit
+JSON mapping reads the provider's timestamp and Hz value; this avoids Statnett's
+browser CORS restriction without introducing another service or sending browser
+credentials to the provider. No always-on collector or live history is created.
+The previously imported Lakehouse frequency snapshot remains a separate record.
+
+Polling pauses offscreen, when the document is hidden/offline, and on leaving the
+Map page. Requests are bounded and non-overlapping, with failure backoff up to
+60 seconds. The tile shows observation age, **Live**, **Paused**, **Source delayed**
+or **Update failed**; readings older than 30 seconds are marked stale. Errors
+retain the last successful value with a warning, never a simulated replacement.
+Its one-second age display is isolated from the map renderer's state.
 
 **Visible plant capacity**, beside frequency, sums known non-negative installed
 hydropower capacity in the rendered, filtered viewport. It scales units between
