@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -513,3 +513,29 @@ native Fabric process crash was not reproduced locally; a cross-origin embedded
 replay with the real 2,549-feature snapshot and 101,487 polygon coordinates stayed
 responsive through Owner/price-area filtering and recovered from deliberate
 WebGL context loss. Unchanged transmission geometry was not re-indexed.
+
+The canonical feature deployment completed with exit code 0,
+`DEPLOYED_APP_URL` and `SUCCESS`. Code: `7c67d9f`; deployment ID:
+`deploy-20260924111642-ead538b7`; energy job:
+`278a1dbd-2948-41fd-8207-36a389f4397d`.
+
+Live readback at 2026-09-24T11:18:52Z confirmed:
+
+| Surface | Result |
+| --- | --- |
+| Imported facts | 831,249 records; 12 source statuses ready |
+| Reservoir geometry | Nine Polygon/MultiPolygon features: NO1-NO5 and NO/SE/FI/DK; 3,129,257 geometry bytes |
+| Foreign reservoir figures | Explicit no-data flags and null filling values |
+| Asset-message links | 199 evidence-backed, revision-specific rows in `geo_market_asset_links` |
+| Selected-asset query | Sample returned 10 notices, each matching the selected asset and exact linked revision; nonexistent asset returned none |
+| Frequency | 50.009 Hz in the refreshed imported snapshot |
+| Property filters | Five exact live predicate comparisons passed, preserving all 390 context transmission lines |
+| Viewport memory | Response reduced from 8,597,370 to 3,771,752 bytes (56.1% smaller); area geometry is separate |
+| Hosted UI | All six V1/V2 desktop/tablet/mobile layout, tile and panel cases passed |
+| Baseline | Setup, seed and stream reused; 3 facilities, 15 equipment, 90 instruments and 9,000 telemetry rows retained |
+
+No transformer capacity was inferred. Source/GIS details are fetched on asset
+selection and collapsed at the end. Existing auth/redirect contracts passed
+without a new administrator action. The exact native Fabric renderer crash
+still requires confirmation in the user's browser after refreshing the item;
+the mitigation and recovery behavior are verified, not the original crash cause.
