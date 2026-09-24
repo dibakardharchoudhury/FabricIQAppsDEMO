@@ -536,6 +536,7 @@ Live readback at 2026-09-24T11:18:52Z confirmed:
 
 No transformer capacity was inferred. Source/GIS details are fetched on asset
 selection and collapsed at the end. Existing auth/redirect contracts passed
-without a new administrator action. The exact native Fabric renderer crash
-still requires confirmation in the user's browser after refreshing the item;
-the mitigation and recovery behavior are verified, not the original crash cause.
+without a new administrator action. After refreshing the Fabric item, the user
+confirmed that Owner/Price area filtering now leaves the map and embedded app
+visible. The observed crash is resolved in that environment; its original
+native-process failure was not reproduced locally.
