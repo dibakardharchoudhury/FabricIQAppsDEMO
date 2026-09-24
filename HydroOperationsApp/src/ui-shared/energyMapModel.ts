@@ -1,4 +1,5 @@
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
+import { buildEnergyPropertyPredicate, createEnergyPropertyFilters, type EnergyPropertyFilters } from './energyMapFilters'
 
 export const MAP_LAYERS = [
   { id: 'transmission', label: 'Transmission lines', source: 'NVE grid', color: '#0f766e', minZoom: 3, defaultVisible: true },
@@ -122,7 +123,7 @@ export function visibleLayerIds(selected: EnergyLayerId[], zoom: number): Energy
 
 export const UMM_MAP_PREDICATE = "tobool(parse_json(properties_json).map_eligible) == true"
 
-export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[]): string {
+export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[], properties: EnergyPropertyFilters = createEnergyPropertyFilters()): string {
   const values = [view.west, view.south, view.east, view.north, view.zoom]
   if (!values.every(Number.isFinite) || view.west >= view.east || view.south >= view.north
     || view.west < -180 || view.east > 180 || view.south < -90 || view.north > 90
@@ -131,11 +132,12 @@ export function buildEnergyMapQuery(view: MapViewport, layers: EnergyLayerId[]):
   }
   const selected = visibleLayerIds(layers, view.zoom)
   const filter = selected.length ? `layer_id in (${selected.map(id => `'${id}'`).join(',')})` : 'false'
+  const propertyPredicate = buildEnergyPropertyPredicate(properties)
   return `external_table('HydroGeoFeatures')
 | where ${filter}
 | where layer_id != 'umm' or ${UMM_MAP_PREDICATE}
 | where max_lon >= ${view.west} and min_lon <= ${view.east} and max_lat >= ${view.south} and min_lat <= ${view.north}
-| extend layer_order = case(layer_id == 'umm', 0, layer_id == 'reservoirs', 1, layer_id == 'power-flows', 2, layer_id == 'power-balance', 3, layer_id == 'grid-frequency', 4, layer_id == 'hydro-plants', 5, 6)
+${propertyPredicate ? `| extend map_properties = parse_json(iff(layer_id in ('hydro-plants', 'transformers'), properties_json, '{}'))\n| where ${propertyPredicate}\n` : ''}| extend layer_order = case(layer_id == 'umm', 0, layer_id == 'reservoirs', 1, layer_id == 'power-flows', 2, layer_id == 'power-balance', 3, layer_id == 'grid-frequency', 4, layer_id == 'hydro-plants', 5, layer_id == 'transformers', 6, 7)
 | order by layer_order asc, layer_id asc, feature_id asc
 | take ${FEATURE_LIMIT + 1}
 | project feature_id, layer_id, label, geometry_json, properties_json, observed_at, ingested_at, source_url`
@@ -149,8 +151,8 @@ export function asFeatureCollection(features: EnergyFeature[]): FeatureCollectio
     const color = feature.layerId === 'umm'
       ? ({ high: '#dc2626', medium: '#d97706', low: '#64748b' }[String(importance)] ?? '#9333ea')
       : layer.color
-    const capacity = Number(feature.properties.capacity_mw)
-    const radius = feature.layerId === 'hydro-plants' && Number.isFinite(capacity)
+    const capacity = feature.properties.installed_capacity_mw
+    const radius = feature.layerId === 'hydro-plants' && typeof capacity === 'number' && Number.isFinite(capacity)
       ? Math.min(11, 4 + Math.sqrt(Math.max(0, capacity)) / 3) : feature.layerId === 'reservoirs' ? 10 : 6
     return [{
       type: 'Feature' as const, id: `${feature.layerId}:${feature.id}`,

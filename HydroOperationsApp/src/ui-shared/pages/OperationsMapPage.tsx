@@ -1,7 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Database, Layers, MapPin, RefreshCw, Search, X } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
-import { queryEnergyMap, queryEnergySourceStatus, queryUnplottedMarketMessages } from '../../services/energyMap'
+import { queryEnergyMap, queryEnergyPropertyOptions, queryEnergySourceStatus, queryUnplottedMarketMessages } from '../../services/energyMap'
+import { EnergyPropertyFiltersPanel } from '../components/energyMap/EnergyPropertyFilters'
+import {
+  createEnergyPropertyFilters, matchesEnergyPropertyFilters, propertyFilterCount,
+  type EnergyPropertyFilters, type EnergyPropertyOptions,
+} from '../energyMapFilters'
 import {
   DEFAULT_LAYERS, FEATURE_LIMIT, INITIAL_VIEW, MAP_LAYERS, safeSourceUrl, sourceAge, sourceIsStale,
   type EnergyFeature, type EnergyLayerId, type EnergySourceStatus, type MapViewport,
@@ -10,9 +15,32 @@ import '../styles/energy-map.css'
 
 const EnergyMapCanvas = lazy(() => import('../components/energyMap/EnergyMapCanvas').then(module => ({ default: module.EnergyMapCanvas })))
 
+type FilterPanel = 'layers' | 'properties'
+const panelStorageKey = (panel: FilterPanel) => `hydro.map.${panel}.expanded.v1`
+
+function readPanelExpansion(panel: FilterPanel, defaultValue: boolean): boolean {
+  try {
+    const value = localStorage.getItem(panelStorageKey(panel))
+    if (value === null) return defaultValue
+    if (value === 'true' || value === 'false') return value === 'true'
+    console.warn(`Invalid saved ${panel} panel preference; using the default.`)
+  } catch (reason) {
+    console.warn('Map panel preferences could not be read.', reason)
+  }
+  return defaultValue
+}
+
 export function OperationsMapPage() {
   const [viewport, setViewport] = useState<MapViewport>(INITIAL_VIEW)
   const [layers, setLayers] = useState<EnergyLayerId[]>(DEFAULT_LAYERS)
+  const [panels, setPanels] = useState(() => ({
+    layers: readPanelExpansion('layers', true), properties: readPanelExpansion('properties', false),
+  }))
+  const [propertyFilters, setPropertyFilters] = useState(createEnergyPropertyFilters)
+  const [propertyOptions, setPropertyOptions] = useState<EnergyPropertyOptions>()
+  const [propertyError, setPropertyError] = useState<string>()
+  const layersPanelId = useId()
+  const propertiesPanelId = useId()
   const [features, setFeatures] = useState<EnergyFeature[]>([])
   const [statuses, setStatuses] = useState<EnergySourceStatus[]>([])
   const [unplotted, setUnplotted] = useState<EnergyFeature[]>([])
@@ -29,6 +57,20 @@ export function OperationsMapPage() {
   const active = useRef(true)
   const visibleLayers = useMemo(() => new Set(layers), [layers])
   const selectFeature = useCallback((feature: EnergyFeature) => setSelected(feature), [])
+  const setLayerEnabled = useCallback((layer: EnergyLayerId, enabled: boolean) => {
+    setLayers(current => enabled ? current.includes(layer) ? current : [...current, layer] : current.filter(id => id !== layer))
+  }, [])
+  const changeProperties = useCallback((value: EnergyPropertyFilters) => {
+    setPropertyFilters(value)
+    setSelected(undefined)
+    setBusy(true)
+  }, [])
+  const togglePanel = (panel: FilterPanel) => {
+    const expanded = !panels[panel]
+    setPanels(current => ({ ...current, [panel]: expanded }))
+    try { localStorage.setItem(panelStorageKey(panel), String(expanded)) }
+    catch (reason) { console.warn('Map panel preference could not be saved.', reason) }
+  }
 
   useEffect(() => {
     active.current = true
@@ -53,7 +95,7 @@ export function OperationsMapPage() {
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
       setBusy(true)
-      void queryEnergyMap(viewport, layers, controller.signal).then(data => {
+      void queryEnergyMap(viewport, layers, controller.signal, propertyFilters).then(data => {
         if (controller.signal.aborted) return
         setFeatures(data.features)
         setTruncated(data.truncated)
@@ -65,7 +107,22 @@ export function OperationsMapPage() {
       }).finally(() => { if (!controller.signal.aborted) setBusy(false) })
     }, 350)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [viewport, layers, revision])
+  }, [viewport, layers, revision, propertyFilters])
+
+  useEffect(() => {
+    if (!panels.properties) return
+    const controller = new AbortController()
+    void queryEnergyPropertyOptions(controller.signal).then(options => {
+      if (controller.signal.aborted) return
+      setPropertyOptions(options)
+      setPropertyError(undefined)
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      console.error('Fabric map property options failed.', reason)
+      setPropertyError(reason instanceof Error ? reason.message : 'Property filter options are unavailable.')
+    })
+    return () => controller.abort()
+  }, [panels.properties, revision])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -107,10 +164,12 @@ export function OperationsMapPage() {
   }
   const displayed = useMemo(() => features.filter(feature =>
     visibleLayers.has(feature.layerId)
-    && viewport.zoom >= MAP_LAYERS.find(layer => layer.id === feature.layerId)!.minZoom), [features, visibleLayers, viewport.zoom])
+    && viewport.zoom >= MAP_LAYERS.find(layer => layer.id === feature.layerId)!.minZoom
+    && matchesEnergyPropertyFilters(feature, propertyFilters)), [features, visibleLayers, viewport.zoom, propertyFilters])
   const listed = displayed.filter(feature => `${feature.label} ${feature.layerId}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).slice(0, 100)
   const readyCount = statuses.filter(status => status.state === 'ready').length
   const staleCount = statuses.filter(status => sourceIsStale(status, now)).length
+  const propertyCount = propertyFilterCount(propertyFilters)
 
   return <div className="energy-map-page">
     <header className="energy-map-heading">
@@ -130,33 +189,45 @@ export function OperationsMapPage() {
     {(error || sourceError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
     {importStatus && <div className="energy-map-notice" role="status">{importStatus} {importing && 'This runs a cloud pipeline; changing tabs does not cancel it.'}</div>}
     {truncated && <div className="energy-map-notice" role="status">This viewport exceeds {FEATURE_LIMIT.toLocaleString()} features. Only the first {FEATURE_LIMIT.toLocaleString()} are displayed; zoom in or turn off dense layers.</div>}
+    <div className="energy-map-filter-toolbar" aria-label="Map filter groups">
+      <button type="button" aria-controls={layersPanelId} aria-expanded={panels.layers} onClick={() => togglePanel('layers')}>
+        <Layers size={16} />Layers <span>{layers.length} selected</span>{panels.layers ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>
+      <button type="button" aria-controls={propertiesPanelId} aria-expanded={panels.properties} onClick={() => togglePanel('properties')}>
+        <SlidersHorizontal size={16} />Properties <span>{propertyCount} active</span>{panels.properties ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>
+      {propertyCount > 0 && <button type="button" onClick={() => changeProperties(createEnergyPropertyFilters())}>Clear property filters</button>}
+    </div>
+    <aside id={layersPanelId} className="energy-map-layers" aria-label="Energy map layers" hidden={!panels.layers}>
+      <h2><Layers size={17} />Layers and freshness</h2>
+      {MAP_LAYERS.map(layer => {
+        const status = statuses.find(value => value.layerId === layer.id)
+        const tooFar = viewport.zoom < layer.minZoom
+        const stale = status && sourceIsStale(status, now)
+        return <div key={layer.id} className="energy-map-layer">
+          <label>
+            <input type="checkbox" checked={layers.includes(layer.id)} onChange={event => setLayerEnabled(layer.id, event.target.checked)} />
+            <i style={{ backgroundColor: layer.color }} /><strong>{layer.label}</strong>
+          </label>
+          <details>
+            <summary aria-label={`${layer.label} details`}>Details</summary>
+            <small>{layer.source}{tooFar ? ` - zoom to ${layer.minZoom}+` : ''}</small>
+            <small className={status?.state === 'error' || stale ? 'energy-map-stale' : ''}>
+              {status ? `${status.rowCount.toLocaleString()} imported - ${sourceAge(status.lastSuccessAt, now)}` : 'Not imported'}
+              {status?.state === 'error' ? ' - import error' : stale ? ' - stale snapshot' : ''}
+            </small>
+            {!!status?.unmappedCount && <small>{status.unmappedCount.toLocaleString()} without map coordinates</small>}
+            {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected geometries; records retained</small>}
+            {status?.message && <p>{status.message}</p>}
+          </details>
+        </div>
+      })}
+    </aside>
+    <div id={propertiesPanelId} className="energy-map-property-panel" hidden={!panels.properties}>
+      <EnergyPropertyFiltersPanel value={propertyFilters} options={propertyOptions} error={propertyError}
+        layers={layers} zoom={viewport.zoom} onChange={changeProperties} onLayerChange={setLayerEnabled} />
+    </div>
     <div className="energy-map-layout">
-      <aside className="energy-map-layers" aria-label="Energy map layers">
-        <h2><Layers size={17} />Layers and freshness</h2>
-        {MAP_LAYERS.map(layer => {
-          const status = statuses.find(value => value.layerId === layer.id)
-          const tooFar = viewport.zoom < layer.minZoom
-          const stale = status && sourceIsStale(status, now)
-          return <div key={layer.id} className="energy-map-layer">
-            <label>
-              <input type="checkbox" checked={layers.includes(layer.id)} onChange={event => setLayers(current =>
-                event.target.checked ? [...current, layer.id] : current.filter(id => id !== layer.id))} />
-              <i style={{ backgroundColor: layer.color }} /><strong>{layer.label}</strong>
-            </label>
-            <details>
-              <summary aria-label={`${layer.label} details`}>Details</summary>
-              <small>{layer.source}{tooFar ? ` - zoom to ${layer.minZoom}+` : ''}</small>
-              <small className={status?.state === 'error' || stale ? 'energy-map-stale' : ''}>
-                {status ? `${status.rowCount.toLocaleString()} imported - ${sourceAge(status.lastSuccessAt, now)}` : 'Not imported'}
-                {status?.state === 'error' ? ' - import error' : stale ? ' - stale snapshot' : ''}
-              </small>
-              {!!status?.unmappedCount && <small>{status.unmappedCount.toLocaleString()} without map coordinates</small>}
-              {!!status?.rejectedCount && <small>{status.rejectedCount.toLocaleString()} rejected geometries; records retained</small>}
-              {status?.message && <p>{status.message}</p>}
-            </details>
-          </div>
-        })}
-      </aside>
       <section className="energy-map-main">
         <Suspense fallback={<div className="energy-map-loading">Loading map renderer...</div>}>
           <EnergyMapCanvas features={displayed} onViewport={setViewport} onSelect={selectFeature} />

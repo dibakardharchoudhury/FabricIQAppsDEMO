@@ -68,6 +68,30 @@ in a responsive panel above the map and are compact by default. Expand a filter'
 counts. Unplotted UMMs remain accessible in the event list. Unknown or failed data
 is not replaced with invented features.
 
+The **Layers** button minimizes the entire layer box; **Properties** opens a
+separate, independently collapsible filter group. Panel visibility is remembered
+in the browser, and minimizing a group does not clear its selections.
+
+| Property group | Filters |
+| --- | --- |
+| Hydropower plants | Main owner (multi-select), installed capacity (MW range), in operation (All/True/False), price area (multi-select), gross head (m range), plant status |
+| Transformer substations | Owner (multi-select), source layer (multi-select), voltage (kV range), network level (multi-select) |
+
+Dropdown values and numeric maxima come from the **complete imported plant and
+transformer snapshots**, not just the current viewport. Numeric controls span
+zero to the available maximum and let users set minimum and maximum values.
+Property predicates run in KQL **before** the viewport feature cap. Selections
+within a dropdown are alternatives; different properties combine. Plant filters
+affect only plants, transformer filters affect only transformers, and other
+selected layers remain visible as context.
+
+Each property group includes a **Show on map** checkbox; transformer markers still
+require zoom level 8 or closer. NVE source-layer and network-level values are shown
+as source codes. Unrestricted filters include missing values; narrowed numeric
+ranges exclude missing measurements, and **Not provided** selects missing
+categorical values. Reset buttons restore unrestricted filtering. The source
+snapshots and the original synthetic-data stores are not modified by filtering.
+
 **Reload map** rereads Fabric snapshots; **Import latest data** starts the cloud
 ingestion pipeline. Initial provisioning is on-demand: no new recurring schedule
 is enabled automatically. Stale snapshots remain labeled as stale. Provider

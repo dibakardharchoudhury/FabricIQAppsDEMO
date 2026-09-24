@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,28 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Property filter iteration (2026-09-24T08:31:47Z)
+
+- Node 24 environment validation, twenty map-model/filter tests, targeted ESLint,
+  TypeScript and the production build passed. Tests cover query ordering before
+  the feature cap, safe string literals, numeric bounds, missing values, reset
+  isolation and keeping other layer types unchanged.
+- Live KQL at 08:14:53Z validated the full-snapshot facet query and five filtering
+  cases against complete baseline feature-ID sets. Plant-only, transformer-only,
+  combined, missing-owner and escaped-owner cases all matched the client predicate
+  exactly and preserved all 390 transmission context lines.
+- Live maxima are 1,240 MW / 1,163 m / 420 kV; owner dropdowns contain 806 plant
+  and 89 transformer values. No source data was written during these checks.
+- Both UI shells passed isolated synthetic-fixture interaction tests for
+  multi-selection/search, operation/status, all three range controls, scoped
+  results, resets and retained filters while minimized. Dropdowns fit desktop,
+  tablet and mobile widths and close with Escape or an outside click.
+- All six production-preview layout cases passed: panel minimization releases
+  space, selection survives hiding, saved visibility survives reload, and the
+  existing per-layer disclosures and map canvas remain functional.
+- Existing tenant/workspace/KQL endpoint resolved through Fabric REST. The
+  infrastructure/permission delta is empty; use the documented app-only path.
 
 ### Compact filter details iteration (2026-09-23T16:20:46Z)
 
@@ -402,3 +424,28 @@ expansion reveals it, collapse hides it again, and the compact layout preserves
 layer selection and map sizing. The existing consent grants and redirect/auth
 contracts passed despite the already-documented blanket-consent warning.
 Data, infrastructure and pipeline definitions were not changed.
+
+## 13. Collapsible groups and property filters
+
+User-approved on 2026-09-24: minimize/expand the complete Layers box and add an
+independent Properties group for hydro/transformer attributes. The user explicitly
+chose to preserve other selected layers as context.
+
+This is an app-only change: query existing Delta external tables read-only,
+without modifying schemas, imports, schedules, roles or infrastructure. Facets
+come from all imported plant/transformer rows. Filters apply in KQL before the
+feature cap; a matching client predicate also prevents stale responses from
+showing features excluded by the currently selected properties.
+
+Verified live fields: plant main owner (806 values), installed capacity maximum
+1,240 MW, gross head maximum 1,163 m, operation boolean, price area and three
+plant statuses. Transformer data has 89 owners, source-layer code 5, voltage
+maximum 420 kV and network-level codes 0/1/2/3/5/6/7. Missing values are retained
+in unrestricted views and handled explicitly by narrowed filters.
+
+Panel visibility is remembered locally. Property controls include group resets,
+a visible active-filter count, multi-select dropdowns and min/max sliders. No
+source refresh is triggered by filtering or changing panel visibility.
+The existing capacity-sized plant markers now read the same verified
+`installed_capacity_mw` field used by filtering, rather than an absent legacy key.
+Implementation and pre-deployment validation are complete; hosted rollout is next.
