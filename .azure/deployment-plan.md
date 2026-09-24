@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-23
 
@@ -576,4 +576,12 @@ contains negative source capacities; these are excluded, not subtracted or
 converted to invented positive values. The total waits for the matching query
 result after viewport/filter changes. Country production and transformer
 voltages/capacities are not mixed into it.
-Implementation and pre-deployment validation are complete.
+The canonical app-only deployment completed with exit code 0,
+`DEPLOYED_APP_URL` and `SUCCESS`. Code: `24cf6a7`; deployment:
+`deploy-20260924120453-02b04d3c`.
+
+All six hosted V1/V2 desktop/tablet/mobile checks passed, including adjacent
+frequency/capacity tiles and stacked mobile layout. Full area-selection/tile
+interactions were tested with isolated fixtures, and real spatial results/totals
+were verified independently against Fabric. Existing auth and redirect checks
+passed; no source data, schedules or infrastructure were changed.
