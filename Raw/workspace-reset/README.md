@@ -101,8 +101,9 @@ situation.
   and Azure Data Explorer `user_impersonation` are all `type: User`), so where the tenant permits
   user consent each person simply accepts a one-time prompt at first sign-in. Granting consent for
   the whole directory just suppresses that prompt and requires **Application Administrator** or
-  **Cloud Application Administrator** — not Global Administrator. Without it the deploy still
-  finishes and reports degraded-success warnings; see the administrator handoff below.
+  **Cloud Application Administrator** — not Global Administrator. Without it the Fabric resources
+  can still be created, but the orchestrator does not print `SUCCESS` until the intended user or an
+  administrator grants consent and the same deployment is rerun.
 - **GitHub PAT** for the sync (unless you reuse an existing connection) with **`repo`**
   scope (classic) or fine-grained **Contents: Read** on the repo. The PAT is never a
   CLI flag and never logged — it comes from an env var or a hidden prompt.
@@ -254,11 +255,12 @@ tenant and workspace selected in the sidebar:
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send
   browser-equivalent CORS preflights to `/graphql` and `/api/auth/v1/token`. Backend warm-up is
-  retried with bounded backoff; missing CORS headers or an unhealthy data plane fails deployment.
+  retried with bounded backoff. The checks also send a minimal GraphQL query and a deliberately
+  incomplete token request; missing CORS headers, GraphQL failure, or a persistent token HTTP 5xx
+  fails deployment.
   The final check also verifies the SPA redirect, every delegated scope, and its consent grant from
-  Microsoft Graph. Missing SPA access, redirects,
-  permissions, or consent are reported as **degraded-success warnings and do not fail the Fabric
-  app deployment**. Browser sign-in and live Fabric data remain unavailable until corrected.
+  Microsoft Graph. Missing SPA access, redirects, permissions, or consent blocks `SUCCESS` because
+  browser sign-in and live Fabric data would otherwise be unavailable.
 6. Leave generated hosting-origin changes local. The web UI never commits or pushes Git changes.
   For an intentional CLI-driven persistence step, use `--push-config`; it requires a clean
   checkout and refuses divergent or unpushed local commits.
@@ -286,9 +288,10 @@ Add `--client-id <spa-app-guid>` when more than one matching SPA registration ex
 ### If SPA automation fails: Entra administrator handoff
 
 The required registration is the single-tenant, no-secret SPA **`Hydro Operations Fabric Client`**.
-The Fabric AppBackend and static host are deployed even when this registration cannot be created or
-configured. The successful job log prints the generated hosting origin and warnings. Give those
-values to the tenant administrator and ask them to complete these actions on that registration:
+The Fabric AppBackend and static host may already exist when registration configuration needs an
+administrator, but the job remains failed and does not print `SUCCESS`. Give the generated hosting
+origin and printed handoff to the tenant administrator, then rerun the same deployment after they
+complete these actions:
 
 The **app registration** defines the client ID, redirect URIs, and requested delegated scopes. Its
 tenant-local **enterprise application/service principal** stores the actual delegated consent

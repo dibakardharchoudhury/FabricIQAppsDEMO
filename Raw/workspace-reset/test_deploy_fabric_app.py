@@ -258,6 +258,24 @@ class DeployOrderTests(unittest.TestCase):
             ):
                 DEPLOY.resolve_spa(None, "tenant-id")
 
+    def test_explicit_spa_must_exist_before_deployment(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=DEPLOY.DeployError("Application was not found"),
+            ),
+            patch.object(DEPLOY, "ensure_spa_service_principal") as ensure_sp,
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError, "Deployment stopped before changing Rayfin state"
+            ):
+                DEPLOY.resolve_spa(client_id, "tenant-id")
+
+        ensure_sp.assert_not_called()
+
     def test_spa_discovery_failed_login_does_not_use_fallback(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
         with (
@@ -638,6 +656,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
             patch.object(DEPLOY, "validate_fabric_app"),
             patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
+            patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
             patch.object(DEPLOY, "validate_appbackend_cors"),
             patch.object(DEPLOY, "validate_spa_redirect_preservation"),
             patch.object(DEPLOY, "validate_entra_live_auth"),
@@ -678,6 +697,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
             patch.object(DEPLOY, "validate_fabric_app"),
             patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
+            patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
             patch.object(DEPLOY, "validate_appbackend_cors"),
             patch.object(DEPLOY, "validate_spa_redirect_preservation"),
             patch.object(DEPLOY, "validate_entra_live_auth"),
@@ -787,11 +807,57 @@ class DeployOrderTests(unittest.TestCase):
                 "options",
                 side_effect=[failed, ready, ready],
             ) as options,
+            patch.object(
+                DEPLOY.requests,
+                "post",
+                side_effect=[
+                    Mock(
+                        status_code=200,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
+                    Mock(
+                        status_code=400,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
+                ],
+            ) as post,
             patch.object(DEPLOY.time, "sleep") as sleep,
         ):
-            DEPLOY.validate_appbackend_cors("https://api.test", origin)
+            DEPLOY.validate_appbackend_cors("https://api.test", origin, "pk-test")
 
         self.assertEqual(options.call_count, 3)
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+    def test_browser_readiness_retries_token_endpoint_http_500(self):
+        origin = "https://app.webapp.fabricapps.net"
+        ready = Mock(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": (
+                    "authorization, content-type, x-publishable-key"
+                ),
+            },
+        )
+        with (
+            patch.object(DEPLOY.requests, "options", return_value=ready),
+            patch.object(
+                DEPLOY.requests,
+                "post",
+                side_effect=[
+                    Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=500, headers={}),
+                    Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
+                ],
+            ) as post,
+            patch.object(DEPLOY.time, "sleep") as sleep,
+        ):
+            DEPLOY.validate_appbackend_cors(
+                "https://api.test", origin, "pk-test"
+            )
+
+        self.assertEqual(post.call_count, 3)
         sleep.assert_called_once_with(2)
 
     def test_cors_validation_rejects_missing_allow_origin(self):
@@ -814,7 +880,22 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY.validate_appbackend_cors(
                     "https://api.test",
                     "https://app.webapp.fabricapps.net",
+                    "pk-test",
                 )
+
+    def test_publishable_key_must_match_deployment_state(self):
+        with patch.object(
+            DEPLOY,
+            "current_rayfin_target",
+            return_value=(
+                {"RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-current"},
+                {"publishableKey": "pk-stale"},
+            ),
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError, "publishable-key validation failed"
+            ):
+                DEPLOY.validate_rayfin_publishable_key()
 
     def test_state_rotation_moves_only_known_files_to_temp_backup(self):
         with tempfile.TemporaryDirectory() as temp_dir:

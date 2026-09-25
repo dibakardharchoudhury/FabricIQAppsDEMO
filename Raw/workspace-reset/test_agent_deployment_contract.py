@@ -20,6 +20,9 @@ RUNTIME_READINESS_FILES = (
 class AgentDeploymentContractTests(unittest.TestCase):
     def test_canonical_orchestrator_exists(self):
         self.assertTrue((REPO_ROOT / CANONICAL_SCRIPT).is_file())
+        self.assertFalse(
+            (REPO_ROOT / "Raw/workspace-reset/deploy_fabric_app.old").exists()
+        )
 
     def test_all_agent_instructions_name_the_one_shot_orchestrator(self):
         for file in INSTRUCTION_FILES:

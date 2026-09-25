@@ -346,7 +346,7 @@
         <ul>
           <li>Workspace or capacity changes are detected automatically; generated API URLs are never copied between targets.</li>
           <li>Every deploy reapplies AppBackend runtime/CORS settings and the SQL data configuration, including same-workspace redeploys.</li>
-          <li>Success requires working CORS preflights for both <code>/graphql</code> and <code>/api/auth/v1/token</code>; backend warm-up is retried automatically.</li>
+          <li>Success requires working CORS preflights and POST probes for both <code>/graphql</code> and <code>/api/auth/v1/token</code>; backend warm-up and token HTTP 5xx responses are retried automatically.</li>
           <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
           <li>A tenant administrator may need to approve those permissions.</li>
           <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>

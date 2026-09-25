@@ -98,6 +98,7 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_deploy_page_explains_portable_backend_readiness_contract(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn("Workspace or capacity changes are detected automatically", page)
+        self.assertIn("CORS preflights and POST probes", page)
         self.assertIn("/graphql", page)
         self.assertIn("/api/auth/v1/token", page)
 

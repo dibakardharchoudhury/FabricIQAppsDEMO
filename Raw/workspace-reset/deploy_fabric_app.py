@@ -597,10 +597,10 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
             run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
             print(f"Using requested SPA app registration: {client_id}", flush=True)
         except DeployError as exc:
-            warn_live_auth(
-                f"The requested SPA {client_id} could not be verified ({exc}). "
-                "It will still be included in the deployed app configuration."
-            )
+            raise DeployError(
+                f"The requested SPA {client_id} could not be verified. Deployment stopped "
+                f"before changing Rayfin state. Underlying error: {exc}"
+            ) from exc
         ensure_spa_service_principal(client_id)
         return client_id
 
@@ -783,12 +783,35 @@ def validate_rayfin_endpoint_contract(
     return env_url
 
 
-def validate_appbackend_cors(api_url: str, hosting_url: str) -> None:
+def validate_rayfin_publishable_key() -> str:
+    values, deployment = current_rayfin_target()
+    env_key = values.get("RAYFIN_PUBLIC_PUBLISHABLE_KEY", "")
+    deployment_key = str((deployment or {}).get("publishableKey") or "")
+    if not env_key.startswith("pk-") or env_key != deployment_key:
+        raise DeployError(
+            "Rayfin publishable-key validation failed: rayfin/.env and deployment state "
+            "do not contain the same valid publishable key."
+        )
+    return env_key
+
+
+def validate_appbackend_cors(
+    api_url: str, hosting_url: str, publishable_key: str
+) -> None:
     origin = urlparse(hosting_url).scheme + "://" + str(urlparse(hosting_url).netloc)
-    headers = {
+    preflight_headers = {
         "Origin": origin,
         "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "authorization,content-type,x-publishable-key",
+    }
+    post_headers = {
+        "Origin": origin,
+        "Content-Type": "application/json",
+        "x-publishable-key": publishable_key,
+    }
+    post_bodies = {
+        "/graphql": {"query": "query { __typename }"},
+        "/api/auth/v1/token": {},
     }
     failures: list[str] = []
     for path in APPBACKEND_CORS_PATHS:
@@ -799,7 +822,7 @@ def validate_appbackend_cors(api_url: str, hosting_url: str) -> None:
             try:
                 response = requests.options(
                     f"{api_url}{path}",
-                    headers=headers,
+                    headers=preflight_headers,
                     timeout=60,
                 )
                 allow_origin = response.headers.get("Access-Control-Allow-Origin", "")
@@ -811,21 +834,44 @@ def validate_appbackend_cors(api_url: str, hosting_url: str) -> None:
                     if value.strip()
                 }
                 required_headers = {"authorization", "content-type", "x-publishable-key"}
-                if (
+                if not (
                     200 <= response.status_code < 300
                     and allow_origin in {"*", origin}
                     and required_headers.issubset(allow_headers)
                 ):
+                    last_failure = (
+                        f"preflight HTTP {response.status_code}; Access-Control-Allow-Origin="
+                        f"{allow_origin or '(missing)'}; Access-Control-Allow-Headers="
+                        f"{response.headers.get('Access-Control-Allow-Headers', '(missing)')}"
+                    )
+                    continue
+
+                post_response = requests.post(
+                    f"{api_url}{path}",
+                    headers=post_headers,
+                    json=post_bodies[path],
+                    timeout=60,
+                )
+                post_allow_origin = post_response.headers.get(
+                    "Access-Control-Allow-Origin", ""
+                )
+                expected_status = (
+                    post_response.status_code == 200
+                    if path == "/graphql"
+                    else 200 <= post_response.status_code < 500
+                    and post_response.status_code not in {404, 405}
+                )
+                if expected_status and post_allow_origin in {"*", origin}:
                     print(
-                        f"Validated AppBackend CORS preflight: {path} "
-                        f"(HTTP {response.status_code}, origin {allow_origin}).",
+                        f"Validated AppBackend browser path: {path} "
+                        f"(preflight HTTP {response.status_code}, POST HTTP "
+                        f"{post_response.status_code}, origin {post_allow_origin}).",
                         flush=True,
                     )
                     break
                 last_failure = (
-                    f"HTTP {response.status_code}; Access-Control-Allow-Origin="
-                    f"{allow_origin or '(missing)'}; Access-Control-Allow-Headers="
-                    f"{response.headers.get('Access-Control-Allow-Headers', '(missing)')}"
+                    f"POST HTTP {post_response.status_code}; Access-Control-Allow-Origin="
+                    f"{post_allow_origin or '(missing)'}"
                 )
             except requests.RequestException as exc:
                 last_failure = str(exc)
@@ -917,7 +963,7 @@ def validate_fabric_app(workspace_id: str, tenant: str) -> str:
 
 
 def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
-    """Validate Entra runtime contracts; callers decide whether failures are fatal."""
+    """Validate every Entra runtime contract required for a usable deployment."""
     app = json.loads(run_capture(az("ad", "app", "show", "--id", client_id, "-o", "json")))
     redirect_uris = set((app.get("spa") or {}).get("redirectUris") or [])
     if hosting_url not in redirect_uris:
@@ -1353,17 +1399,13 @@ def deploy(args: argparse.Namespace) -> None:
         )
     item_id = validate_fabric_app(workspace_id, args.tenant)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
-    validate_appbackend_cors(api_url, hosting_url)
+    publishable_key = validate_rayfin_publishable_key()
+    validate_appbackend_cors(api_url, hosting_url, publishable_key)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
         validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
-        try:
-            validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
-        except (DeployError, json.JSONDecodeError) as exc:
-            warn_live_auth(
-                f"Browser sign-in readiness check did not pass for SPA {client_id}:\n{exc}"
-            )
+        validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "

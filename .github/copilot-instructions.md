@@ -26,8 +26,11 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
   workspace's current capacity and rotates stale state automatically.
 - A routine same-workspace deploy is not static-only: the orchestrator must reapply AppBackend
   runtime/CORS settings and DAB/SQL configuration, then validate browser-equivalent preflights for
-  `/graphql` and `/api/auth/v1/token`. Missing CORS headers or a stale endpoint is a hard failure;
-  do not bypass it or report success from the hosted HTML page alone.
+  `/graphql` and `/api/auth/v1/token` plus real POST readiness. Missing CORS headers, GraphQL
+  failures, token HTTP 5xx responses, or a stale endpoint is a hard failure; do not bypass it or
+  report success from the hosted HTML page alone.
+- Treat an explicit `--client-id` that cannot be verified in the target tenant as a hard
+  pre-deployment failure. Never publish a bundle with an unverified SPA GUID.
 - The only genuinely manual step is creating the SPA app registration (`az ad app create`), because
   an app registration is tenant-scoped.
 

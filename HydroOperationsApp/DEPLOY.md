@@ -322,8 +322,10 @@ managed-service restart.
 The one-shot orchestrator does not report `SUCCESS` from the hosted HTML page alone. It also checks
 that the generated API URL contains the workspace's current capacity, workspace, and AppBackend
 ids, then sends browser-equivalent CORS preflights to both `/graphql` and
-`/api/auth/v1/token`. Transient backend warm-up responses are retried with bounded backoff; missing
-`Access-Control-Allow-Origin` or required headers remains a deployment failure.
+`/api/auth/v1/token`, a minimal GraphQL POST, and a deliberately incomplete token POST. Transient
+backend warm-up and token HTTP 5xx responses are retried with bounded backoff; missing
+`Access-Control-Allow-Origin`, required headers, GraphQL readiness, or persistent token 5xx remains
+a deployment failure.
 
 The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
 `services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run

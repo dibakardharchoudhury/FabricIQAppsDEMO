@@ -21,8 +21,8 @@ SPA, validates required configuration, restores Node 24 dependencies, reuses or
 provisions Rayfin state, deploys the app, runs live-auth setup, preserves Entra SPA
 redirects, verifies permissions/consent, detects capacity drift, reapplies AppBackend
 runtime/CORS and SQL settings, validates the generated capacity/workspace/AppBackend
-URL, checks browser preflights for `/graphql` and `/api/auth/v1/token`, and persists
-the current generated hosting origin.
+URL, checks browser preflights and POST readiness for `/graphql` and
+`/api/auth/v1/token`, and persists the current generated hosting origin.
 
 Mandatory rules:
 
@@ -36,6 +36,8 @@ Mandatory rules:
 - Do not work around AppBackend CORS in application code or the portal. The orchestrator
   reapplies runtime settings and treats missing CORS headers as a failed deployment.
 - Stop if the orchestrator reports an unresolved prerequisite or administrator action.
+- A supplied `--client-id` must resolve to an app registration in the target tenant; never
+  continue with an unverified GUID.
 - A deployment is complete only when the orchestrator prints `SUCCESS` and
   `DEPLOYED_APP_URL`, after its endpoint-contract and AppBackend CORS checks pass.
 
