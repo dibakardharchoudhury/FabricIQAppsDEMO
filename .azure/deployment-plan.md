@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 Updated: 2026-09-25
 
@@ -788,3 +788,12 @@ pipeline concurrency=1 and forwarding of both refresh parameters. No new
 notebook, pipeline, schedule, source write or infrastructure is needed for this
 UI-only change. Deployment must use the canonical app-only path. No full
 national refresh is started implicitly while adding this control.
+
+Code `3a52c20` was deployed through the canonical app-only workflow:
+`deploy-20260925112700-c46abfdf`, exit code 0, `DEPLOYED_APP_URL` and `SUCCESS`.
+Existing Entra live-auth contracts passed despite transient Graph retry warnings.
+Hosted V1/V2 checks confirmed the Administration section, enabled start action,
+all source descriptions, notebook/pipeline names and desktop/tablet/mobile layout.
+Displaying Administration did not issue any job-start request. Six hosted Map
+layout regressions also passed. The notebooks and pipeline were reused unchanged;
+no full data refresh or recurring schedule was started by this deployment.
