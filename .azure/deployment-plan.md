@@ -1,8 +1,8 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
-Updated: 2026-09-23
+Updated: 2026-09-25
 
 ## 1. Goal and scope
 
@@ -733,3 +733,22 @@ explicit full-dataset plant counts. An independent SQL query confirmed Adamselv
 is 50 MW and the projection contains 2,010 plant rows. Final natural-language
 verification is repeated after this correction, not inferred from deployment
 success or the state-table canary alone.
+
+Final deployment `deploy-20260925104827-450ac9db` completed through the canonical
+workflow with exit code 0, `DEPLOYED_APP_URL` and `SUCCESS`. Code: `a8f9355`;
+publisher job: `90183971-aff7-40a2-a1a2-06de29072fad`; dedicated agent:
+`edee345d-ed8d-4726-a22b-099e8f004cbc`.
+
+Post-deployment questions through the exact app prompt and published MCP endpoint
+returned the verified complete count of 2,010 hydropower plants, and Adamselv's
+owner `STATKRAFT ENERGI AS`, capacity 50 MW, price area NO4 and correct navigation
+reference `nve-hydro:Powerplant:2`. The agent distinguished stored frequency from
+live samples and correctly reported transformer MW/MVA capacity as unknown.
+The earlier schema/context failure is resolved for these acceptance cases.
+
+Both hosted UI shells open and close the right-side drawer, restore keyboard
+focus, and fit desktop/tablet/mobile widths. The client navigation path was tested
+with real Fabric identifier/bounds lookups and isolated browser interaction tests.
+Baseline setup/seed/stream and source imports remained reused. Existing STID still
+has 3 facilities, 15 equipment and 90 instruments; telemetry readback now contains
+27,000 rows from prior workspace activity, not a stream restarted by chat deployment.
