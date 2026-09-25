@@ -1,4 +1,4 @@
-import { Activity, Bot, CloudSun, Factory, Gauge, Network, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Wrench } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { AdministrationPage } from './pages/AdministrationPage'
 import { CopilotPage } from './pages/CopilotPage'
@@ -8,8 +8,9 @@ import { MaintenancePage } from './pages/MaintenancePage'
 import { OverviewPage } from './pages/OverviewPage'
 import { TelemetryPage } from './pages/TelemetryPage'
 import { WeatherPage } from './pages/WeatherPage'
+import { OperationsMapPage } from '../ui-shared/pages/OperationsMapPage'
 
-export type V1TabId = 'overview' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
+export type V1TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
 
 export type V1Tab = {
   id: V1TabId
@@ -21,6 +22,7 @@ export type V1Tab = {
 
 export const V1_TABS: V1Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: OverviewPage },
+  { id: 'map', label: 'Map', title: 'Operations Map', icon: Map, Page: OperationsMapPage },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: TelemetryPage },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: WeatherPage },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: DigitalTwinPage },

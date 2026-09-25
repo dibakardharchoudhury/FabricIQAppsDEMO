@@ -126,6 +126,16 @@ everything required.
 
 ## Run the setup pipeline and Key Vault preflight
 
+For a fresh, isolated feature workspace **without Fabric Git integration**, use
+the optional `FABRIC_FEATURE_CONFIG` mode of the existing app orchestrator.
+See [the feature-workspace runbook](../../HydroOperationsApp/DEPLOY.md#optional-isolated-feature-workspace-without-fabric-git).
+It imports local definitions with target-specific notebook references, creates
+approved dedicated prerequisites, and runs setup/seed/stream without introducing a
+second app deployment command. It does not copy source workspace data or credentials.
+Private-only Key Vaults use secure ARM initialization followed by the same managed
+private-endpoint preflight described below. Public network access stays disabled;
+no separate VM or Fabric Git connection is needed.
+
 `01_Pipe_Setup` chains the `RTI_*` notebooks, and nearly all of them call
 `notebookutils.credentials.getSecret(key_vault_uri, ...)` to load a service principal. **A Key
 Vault holding that principal is a hard prerequisite** — create one with three secrets whose
@@ -146,7 +156,9 @@ requests, reads, or stores their values.
 
 Provisioning also creates `03_Pipe_Weather` with its UTC schedule disabled. Stage 2 enables the
 six-hour schedule only after every setup activity, including Weather schema initialization,
-succeeds. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
+succeeds and `enable_weather_schedule` is true (the default). Set it to false for a
+feature workspace without provider credentials; the Git-free bootstrap does this
+automatically. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
 Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
 separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
 tables the app reads. Downstream activities depend on `Succeeded`, so a failed ingestion stops the

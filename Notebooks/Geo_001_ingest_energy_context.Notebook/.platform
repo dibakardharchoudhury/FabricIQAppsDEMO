@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Geo_001_ingest_energy_context",
+    "description": "Validated public energy-context snapshots for the separate HydroOperations Map tab."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "bfb66353-9e7a-4f01-8d67-4b67acbbc49b"
+  }
+}

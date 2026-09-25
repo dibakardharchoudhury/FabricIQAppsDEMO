@@ -307,6 +307,8 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.persist_generated_origin("Demo Workspace")
 
         self.assertEqual(run_stream.call_args_list[-1].args[0], ["git", "push", "origin", "feat/dibakar"])
+        commit = next(call.args[0] for call in run_stream.call_args_list if call.args[0][:2] == ["git", "commit"])
+        self.assertIn("Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>", commit)
 
     def test_fabric_token_missing_from_msal_cache_reauthenticates_once(self):
         missing = DEPLOY.DeployError(

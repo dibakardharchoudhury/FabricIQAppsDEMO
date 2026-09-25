@@ -38,6 +38,7 @@
     "cytoscape": "^3.34.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.26.0",
+    "maplibre-gl": "^6.10.0",
     "papaparse": "^5.5.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

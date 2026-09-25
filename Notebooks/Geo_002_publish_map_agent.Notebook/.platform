@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "Geo_002_publish_map_agent",
+    "description": "Publishes an independently owned Fabric Data Agent over governed real-map read models."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "b3236e30-dd23-4331-a1fc-f3cb977b2506"
+  }
+}

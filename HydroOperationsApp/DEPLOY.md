@@ -25,6 +25,112 @@ validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA set
 preservation, permission/consent checks, hosted-page verification, and generated-origin persistence.
 The remaining numbered sections document those phases for operators and troubleshooting.
 
+### Optional: isolated feature workspace without Fabric Git
+
+Set `FABRIC_FEATURE_CONFIG` to an absolute path to a **local, nonsecret JSON file**
+outside the repository, then run the same one-shot command above. No additional
+deployment command or Fabric Git connection is used. Without this variable, app-only
+deployment is unchanged.
+
+```json
+{
+  "tenant_id": "<target-tenant-guid>",
+  "workspace_id": "<existing-feature-workspace-guid>",
+  "subscription_id": "<target-subscription-guid>",
+  "resource_group": "rg-hydro-feature",
+  "vault_name": "<globally-unique-vault-name>",
+  "location": "norwayeast",
+  "env_suffix": "V6",
+  "enable_energy_map": false,
+  "enable_map_chat": false,
+  "allow_public_api_group": true
+}
+```
+
+Use this option only after approving creation of the dedicated Azure prerequisites
+and the narrowly scoped Fabric API allow-list group. The config must match the CLI
+tenant/workspace exactly; this is not a source-workspace cloning operation.
+
+The orchestrator provisions the dedicated notebook identity and Key Vault, imports
+the checkout's Environment/notebook/pipeline definitions through Fabric REST,
+rebinds pipeline references to target notebook IDs, runs `01_Pipe_Setup`, deploys
+the app, then runs `RTI_011` in strict mode and a demo stream. Strict mode fails the
+job if SQL seeding, GraphQL binding or Data Agent wiring fails; normal interactive
+seeding retains its existing best-effort behavior. The bootstrap checks queryable
+STID and telemetry before reporting completion. It keeps a nonsecret
+`*.state.json` checkpoint beside the config to resume interrupted work. Preserve
+that checkpoint. It refuses to overwrite unowned items or use a Git-connected target.
+Rayfin browser sign-in is requested before lengthy feature setup, so unattended
+provisioning does not finish only to wait on an unseen sign-in prompt.
+
+This produces **fresh demo data**, not copies of another workspace's operational
+records or history. Teams delivery remains unconfigured, the Operations Agent stays
+stopped, and the Weather schedule stays disabled. Weather API credentials and an
+Outlook OAuth connection are not fabricated: provision those separately before
+enabling their respective jobs. Missing sign-in readiness is a hard failure in this
+bootstrap mode, even where app-only deployment would report a warning.
+
+New prerequisite vaults are private-only and RBAC-protected. For a private vault,
+the orchestrator initializes credentials through an incremental ARM template with
+`secureString` parameters; it does not call the local Key Vault data plane, log
+credentials, or store them in files. ARM exposes only secret metadata. The existing
+`key_vault_preflight.py` then creates/reuses a Fabric managed private endpoint,
+approves its Key Vault connection when authorized, and waits for readiness before
+any setup notebook runs. `RTI_001` verifies actual secret reads and notebook
+service-principal authentication from Fabric.
+
+`RTI_002` waits for Eventstream definition operations and custom-endpoint connection
+readiness instead of assuming a fixed startup delay. Transient provisioning 404s
+are retried with a bound; authorization failures stop immediately. An unchanged
+Eventstream definition is reused without restarting provisioning.
+
+This uses the documented [ARM provisioning plane](https://learn.microsoft.com/azure/key-vault/general/overview-vnet-service-endpoints#usage-scenarios)
+while keeping runtime reads private. It does not require a VM, public IP, VPN,
+public-vault access or a policy exception. The caller needs ARM deployment/secret
+provisioning rights and private-endpoint approval rights; the notebook principal
+receives only vault secret-read access and FEATURE workspace Contributor. A paused
+capacity must be resumed explicitly before deployment; the bootstrap does not
+resize or resume capacity automatically.
+
+Set `enable_energy_map` to `true` to provision the optional **Map** tab's energy
+data. The same command imports the map notebook/pipeline, creates a separate
+`Hydro_GeoContext_<suffix>` Lakehouse, runs initial ingestion and exposes its Delta
+tables through Eventhouse read models. Large NVE reference datasets are loaded
+into Fabric, not proxied as WMS images. This opt-in does not invalidate the
+completed base setup/seed/telemetry checkpoints. Subsequent source refreshes can
+be triggered from the Map tab or its dedicated pipeline; no recurring map
+schedule is enabled by deployment.
+
+After provisioning, **Administration → Update map data sources → Update all map
+data** runs the same notebook pipeline with `refresh_mode="all"` and
+`force_refresh=true`, bypassing the normal source cache. This is a user-initiated
+data update, not another app deployment. The section monitors existing runs and
+resumes persisted progress after reload; it never starts a parallel duplicate
+when an active run is found. The separate Map-tab import keeps its cache-aware
+default. A failed source or chat-publication step surfaces as a failed update.
+
+The optional energy import also publishes `geo_reservoir_areas` and
+`geo_market_asset_links` in the existing GeoContext Lakehouse, served by
+`HydroGeoReservoirAreas` and `HydroGeoMarketAssetLinks`. The same canonical
+bootstrap verifies the nine expected area polygons and the link table before
+app publication. Linking preserves manual corrections and does not invent
+asset matches from price-area membership.
+
+Set `enable_map_chat: true` together with `enable_energy_map: true` to provision
+the dedicated `Hydro_Map_Agent_<suffix>`. The orchestrator binds and executes
+`Geo_002_publish_map_agent` against the existing GeoContext Lakehouse, retaining
+the successful baseline and ingestion job checkpoints. The pipeline includes
+Geo_002 after Geo_001 for subsequent refreshes; this step is omitted from imported
+definitions when chat is disabled. Agent-definition changes have their own digest.
+
+The publisher selects only governed map projections and source status, refuses
+unowned/name-colliding artifacts, and leaves `RTI_Demo_Agent_*` unchanged. Publication
+is complete only after published-definition readback and a live MCP grounding
+canary. It requires an authorized user execution identity, applicable Fabric
+Copilot/AI settings and a synchronized Lakehouse SQL endpoint; native service-
+principal notebook token scopes are not sufficient and cause an explicit stop.
+No new Azure model resource, secret, or broad tenant permission is provisioned.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform

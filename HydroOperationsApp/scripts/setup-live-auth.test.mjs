@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
+  az,
   activateFreshTenantAzureCliCache,
   recoverStaleToken,
   runWithStaleTokenRecovery,
@@ -12,6 +13,39 @@ import {
   selectCurrentHostingOrigin,
   synchronizeRedirectUris,
 } from './setup-live-auth.mjs'
+
+test('passes JMESPath and file arguments literally without a POSIX shell', () => {
+  for (const platform of ['darwin', 'linux']) {
+    const argv = ['ad', 'app', 'show', '--query', '{objectId:id,spa:spa.redirectUris}', '--body', '@/tmp/path with spaces/body.json']
+    let called = false
+    const result = az(argv, {
+      platform,
+      execFileSync(command, args, options) {
+        called = true
+        assert.equal(command, 'az')
+        assert.deepEqual(args, argv)
+        assert.equal(options.shell, false)
+        return 'result'
+      },
+    })
+    assert.equal(called, true)
+    assert.equal(result, 'result')
+  }
+})
+
+test('retains the Windows command-shim shell and interactive stdio behavior', () => {
+  az(['login'], {
+    platform: 'win32',
+    stdio: 'inherit',
+    execFileSync(command, args, options) {
+      assert.equal(command, 'az')
+      assert.deepEqual(args, ['login'])
+      assert.equal(options.shell, true)
+      assert.equal(options.stdio, 'inherit')
+      return ''
+    },
+  })
+})
 
 test('selects only the latest configured Fabric host for addition', () => {
   const historical = 'https://historical.webapp.fabricapps.net'
