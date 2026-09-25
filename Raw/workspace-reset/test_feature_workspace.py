@@ -203,6 +203,22 @@ class FeatureWorkspaceTests(unittest.TestCase):
                     ]})
                 self.assertEqual(workspace.state["map_agent_id"], "Hydro_Map_Agent_V6")
 
+    def test_failed_chat_publisher_is_not_silently_resubmitted_without_a_fix(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json",
+                                           enable_energy_map=True, enable_map_chat=True)
+            workspace = feature.FeatureWorkspace(config, ROOT)
+            body = {"parameters": []}
+            digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+            workspace.state["jobs"][f"agent-notebook:{workspace.map_agent_digest}:{digest}"] = "failed-agent-url"
+            workspace.fabric.request.return_value = Mock(status_code=200, json=lambda: {
+                "status": "Failed", "failureReason": {"message": "Publisher prerequisite is unresolved"},
+            })
+            with patch.object(workspace, "_item", return_value={"id": "agent-notebook"}):
+                with self.assertRaisesRegex(feature.FeatureWorkspaceError, "Resolve the failure"):
+                    workspace._run(feature.MAP_AGENT_NOTEBOOK, "Notebook", body)
+            workspace.fabric.request.assert_called_once_with("GET", "failed-agent-url")
+
     def test_energy_lakehouse_is_separate_owned_and_created_without_schemas(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
             config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", enable_energy_map=True)
@@ -326,6 +342,34 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertEqual(retry.allowed_methods, {"POST"})
             self.assertFalse(retry.is_retry("POST", 401))
             self.assertFalse(retry.is_retry("POST", 403))
+
+    def test_fabric_get_transport_retry_preserves_the_same_destination_and_headers(self):
+        response = Mock(status_code=200)
+        url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
+        with (
+            patch.object(feature.Fabric, "request", side_effect=[
+                feature.requests.ReadTimeout("temporary read timeout"), response,
+            ]) as request,
+            patch.object(feature.time, "sleep") as sleep,
+        ):
+            client = feature.FeatureFabric(TENANT)
+            self.assertIs(client.request("GET", url), response)
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all(call.args == ("GET", url) for call in request.call_args_list))
+        self.assertTrue(all(call.kwargs["allow_redirects"] is False for call in request.call_args_list))
+        self.assertTrue(all("x-ms-fabric-skill" in call.kwargs["headers"] for call in request.call_args_list))
+        sleep.assert_called_once_with(5)
+
+    def test_fabric_mutations_are_not_retried_after_transport_uncertainty(self):
+        url = f"{feature.FABRIC_BASE}/workspaces/{WORKSPACE}/items"
+        with (
+            patch.object(feature.Fabric, "request", side_effect=feature.requests.ReadTimeout("uncertain write")) as request,
+            patch.object(feature.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(feature.requests.ReadTimeout):
+                feature.FeatureFabric(TENANT).request("POST", url, json={})
+        request.assert_called_once()
+        sleep.assert_not_called()
 
     def test_import_refuses_unowned_existing_items(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):

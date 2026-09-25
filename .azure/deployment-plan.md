@@ -714,3 +714,10 @@ handling before projection writes or app publication. The owned draft agent is
 `edee345d-ed8d-4726-a22b-099e8f004cbc`; it will be reused, not replaced. The
 corrected notebook retains strict credential-destination checks. Chat is not yet
 declared deployed until the canonical retry and grounding checks succeed.
+
+The corrected run was recorded as `977577aa-61c4-4b20-ae60-5b0dc349f6ba`.
+Its local monitor lost a read connection while the cloud job remained active.
+Feature API GETs now retry that same read up to twice; uncertain writes are never
+retried. The durable job checkpoint is retained, and an unchanged failed map
+publisher cannot be silently resubmitted. Agent/bootstrap regression coverage
+includes these transport and failure-resume cases.

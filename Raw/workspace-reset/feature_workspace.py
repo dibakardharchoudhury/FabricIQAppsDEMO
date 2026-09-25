@@ -165,7 +165,15 @@ class FeatureFabric(Fabric):
         headers = dict(kwargs.pop("headers", {}))
         headers["x-ms-fabric-skill"] = "git-integration-operations-cli"
         kwargs["allow_redirects"] = False
-        return super().request(method, url, headers=headers, **kwargs)
+        for attempt in range(3):
+            try:
+                return super().request(method, url, headers=dict(headers), **kwargs)
+            except (requests.Timeout, requests.ConnectionError):
+                if method.upper() != "GET" or attempt == 2:
+                    raise
+                print(f"  Fabric read interrupted; retrying the same read ({attempt + 1}/2).", flush=True)
+                time.sleep(5 * (attempt + 1))
+        raise FeatureWorkspaceError("Fabric read retry budget exhausted.")
 
     def poll_lro(self, response: requests.Response) -> requests.Response:
         if response.status_code != 202:
@@ -382,6 +390,12 @@ class FeatureWorkspace:
                 print(f"  {name} already completed for this bootstrap.", flush=True)
                 return False
             if state in {"Failed", "Cancelled", "Deduped"}:
+                if name == MAP_AGENT_NOTEBOOK:
+                    reason = response.json().get("failureReason") or {}
+                    raise FeatureWorkspaceError(
+                        f"{name} has a recorded {state} run: {reason.get('message', 'inspect the Fabric job')}. "
+                        "Resolve the failure before rerunning this unchanged publisher."
+                    )
                 print(f"  Retrying the previously {state} job {name}.", flush=True)
                 status_url = None
         if not status_url:
