@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-23
 
@@ -130,6 +130,29 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Dedicated map chat (2026-09-25T06:27Z)
+
+- 48 frontend/component/model tests, targeted ESLint, TypeScript and Node 24
+  production build passed.
+- 177 Python regressions passed, including 33 dedicated-agent notebook tests,
+  ownership refusal, source binding and native/ipynb mirror compilation.
+- Saved baseline/source job digests match the existing successful checkpoints:
+  three baseline jobs and the completed Geo001 import are reused. Adding chat
+  does not restart national source downloads or the demo stream.
+- Live place lookup found the Adamselv plant and substation as separate exact
+  matches. Type-scoped plant lookup resolves `nve-hydro:Powerplant:2` with verified
+  coordinates; NO2 resolves an actual area polygon. Escaped lookup text returned
+  no unintended records.
+- Both UI shells passed isolated chat interaction checks: actual camera movement,
+  analytical-prompt action rejection, ambiguous-place choices, missing geometry,
+  filter-conflict notices, request cancellation/failure, and responsive drawer.
+  Six existing map layout cases also passed.
+- Existing Data Agent MCP answered a live bounded facilities question. The
+  dedicated agent will not be considered ready until its published-definition
+  verification and actual grounding canary pass.
+- Same tenant/subscription, F4 Active; no overlapping map ingestion jobs.
+  Azure resources, credentials, role assignments and Git isolation are unchanged.
 
 ### Country-balance tile (2026-09-24T14:21Z)
 
@@ -652,3 +675,28 @@ Code `c812a3e` was deployed through the canonical app-only workflow:
 All six hosted V1/V2 responsive cases confirmed the three-tile layout and absence
 of the country-balance map toggle. Existing source data, live-frequency behavior,
 permissions and infrastructure were preserved.
+
+## 18. Dedicated map chat and verified navigation
+
+User-approved on 2026-09-24, resumed on 2026-09-25: add a right-side map chat
+using a dedicated Fabric Data Agent, not a new Foundry resource. Requests to see
+an asset resolve against Fabric before moving the map. The user authorized
+clearing conflicting property/area filters with a visible explanation.
+
+`Geo_002_publish_map_agent` creates owned typed map projections and publishes
+`Hydro_Map_Agent_V6` using the existing GeoContext Lakehouse and user execution
+identity. It does not replace Hydro Intelligence's `RTI_Demo_Agent_V6`.
+`enable_map_chat` is an explicit opt-in; source and agent definition digests are
+separate. The completed setup/seed/stream and Geo001 import checkpoints were
+verified unchanged against persisted state. Future map refreshes run the agent
+publisher after ingestion; current provisioning can run Geo002 alone.
+
+Frontend scope includes a bounded map-only conversation, source/filter context,
+strict terminal navigation markers, parameterized name lookup, exact identifier
+and coordinate verification, candidate choices for ambiguous names, cancellation,
+and keyboard/mobile drawer behavior. Analytical prompts do not move the map.
+Fresh frequency is fetched on demand only for frequency questions.
+
+The existing Fabric Data Agent answered a live readiness question. The dedicated
+agent's publication and data-grounding canary remain live deployment gates.
+No new Azure resource, secret, role, capacity or Fabric Git connection is required.

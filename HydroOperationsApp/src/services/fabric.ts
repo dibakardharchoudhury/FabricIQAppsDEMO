@@ -1,6 +1,6 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
-import { selectDataAgent } from './artifactDiscovery'
+import { mapDataAgentName, selectDataAgent, selectNamedDataAgent } from './artifactDiscovery'
 import { selectGraphModel, selectOntology } from './ontologyArtifactDiscovery'
 import { parseOntologyContract, type OntologyContract, type OntologyDefinition } from './ontologyContract'
 import { parseOntologyGraph, type OntologyGraph } from './ontologyGraph'
@@ -22,6 +22,7 @@ const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | 
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
+const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
@@ -123,11 +124,11 @@ function envConfig(): ResolvedConfig {
   }
 }
 
-async function listItems(token: string): Promise<WorkspaceItem[]> {
+async function listItems(token: string, signal?: AbortSignal): Promise<WorkspaceItem[]> {
   const items: WorkspaceItem[] = []
   let nextUrl: string | undefined = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items`
   while (nextUrl) {
-    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` }, signal })
     if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
     const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }
     items.push(...(page.value ?? []))
@@ -846,13 +847,43 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   if (!endpoint) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
+  const answer = await invokeDataAgent(endpoint, token, dataAgentQuestion(question), onProgress)
+  dataAgentConversation.push({ question, answer: answer.text })
+  if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
+  return answer
+}
+
+export async function askMapDataAgent(question: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+  signal.throwIfAborted()
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required for map chat.')
+  signal.throwIfAborted()
+  const agent = selectNamedDataAgent(await listItems(token, signal), mapDataAgentName(eventhouseName, configuredMapAgentName))
+  const endpoint = `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${agent.id}/agent`
+  return invokeDataAgent(endpoint, token, question, onProgress, signal)
+}
+
+export async function ensureMapChatConnection(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  const config = await ensureConfig(true)
+  signal.throwIfAborted()
+  if (!config?.eventhouseQueryUri) throw new Error('No map Eventhouse was found in this workspace.')
+  const scopes = [kustoScope(config.eventhouseQueryUri)]
+  if (!await silentToken(scopes)) {
+    signal.throwIfAborted()
+    await popupToken(scopes)
+  }
+  signal.throwIfAborted()
+}
+
+async function invokeDataAgent(endpoint: string, token: string, question: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<AgentAnswer> {
   const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
   ])
   const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },
+    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() }, signal },
   })
   try {
     await client.connect(transport)
@@ -862,8 +893,9 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
     const result = await client.callTool({
       name: tool.name,
-      arguments: { [questionArgument]: dataAgentQuestion(question) },
-    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
+      arguments: { [questionArgument]: question },
+    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000, signal })
+    signal?.throwIfAborted()
     const content = result.content as McpContent[]
     const text = content
       .flatMap(part => [part.text, part.resource?.text])
@@ -884,8 +916,6 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
       }]
     })
     const answer = text || 'The Data Agent returned no answer.'
-    dataAgentConversation.push({ question, answer })
-    if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
     onProgress?.(answer)
     return { text: answer, artifacts }
   } finally {

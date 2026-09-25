@@ -36,6 +36,7 @@ class FeatureWorkspaceError(RuntimeError):
 ENERGY_NOTEBOOK = "Geo_001_ingest_energy_context"
 ENERGY_PIPELINE = "04_Pipe_EnergyMap"
 ENERGY_ITEMS = {ENERGY_NOTEBOOK, ENERGY_PIPELINE}
+MAP_AGENT_NOTEBOOK = "Geo_002_publish_map_agent"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class FeatureConfig:
     state_path: Path
     env_suffix: str = "V6"
     enable_energy_map: bool = False
+    enable_map_chat: bool = False
 
     @classmethod
     def load(cls, path: Path, tenant_id: str, workspace_id: str) -> FeatureConfig:
@@ -60,7 +62,7 @@ class FeatureConfig:
         }
         if not isinstance(raw, dict) or not required.issubset(raw):
             raise FeatureWorkspaceError("Feature bootstrap config is missing required fields.")
-        if set(raw) - required - {"env_suffix", "enable_energy_map"}:
+        if set(raw) - required - {"env_suffix", "enable_energy_map", "enable_map_chat"}:
             raise FeatureWorkspaceError("Feature bootstrap config contains unsupported fields.")
         for key in ("tenant_id", "workspace_id", "subscription_id"):
             try:
@@ -82,6 +84,10 @@ class FeatureConfig:
             raise FeatureWorkspaceError("allow_public_api_group must be a JSON boolean.")
         if type(raw.get("enable_energy_map", False)) is not bool:
             raise FeatureWorkspaceError("enable_energy_map must be a JSON boolean.")
+        if type(raw.get("enable_map_chat", False)) is not bool:
+            raise FeatureWorkspaceError("enable_map_chat must be a JSON boolean.")
+        if raw.get("enable_map_chat") and not raw.get("enable_energy_map"):
+            raise FeatureWorkspaceError("Map chat requires energy map provisioning.")
         return cls(**raw, state_path=path.with_suffix(".state.json"))
 
 
@@ -129,6 +135,17 @@ def rebind_pipeline(content: dict[str, Any], notebook_ids: dict[str, str],
 
 def definition_part(path: str, content: bytes) -> dict[str, str]:
     return {"path": path, "payloadType": "InlineBase64", "payload": base64.b64encode(content).decode("ascii")}
+
+
+def energy_source_pipeline(content: bytes) -> bytes:
+    definition = json.loads(content)
+    activities = definition["properties"]["activities"]
+    if not any(activity.get("name") == MAP_AGENT_NOTEBOOK for activity in activities):
+        return content
+    definition["properties"]["activities"] = [
+        activity for activity in activities if activity.get("name") != MAP_AGENT_NOTEBOOK
+    ]
+    return (json.dumps(definition, indent=2) + "\n").encode()
 
 
 def kusto_session() -> requests.Session:
@@ -204,12 +221,17 @@ class FeatureWorkspace:
         self.specs = self._read_specs()
         self.source_digest = hashlib.sha256(b"".join(
             path.encode() + data
-            for spec in self.specs if spec["name"] not in ENERGY_ITEMS
+            for spec in self.specs if spec["name"] not in ENERGY_ITEMS | {MAP_AGENT_NOTEBOOK}
             for path, data in sorted(spec["files"].items())
         )).hexdigest()
         self.energy_digest = hashlib.sha256(b"".join(
-            path.encode() + data
+            path.encode() + (energy_source_pipeline(data) if spec["name"] == ENERGY_PIPELINE and path == "pipeline-content.json" else data)
             for spec in self.specs if spec["name"] in ENERGY_ITEMS
+            for path, data in sorted(spec["files"].items())
+        )).hexdigest()
+        self.map_agent_digest = hashlib.sha256(b"".join(
+            path.encode() + data
+            for spec in self.specs if spec["name"] == MAP_AGENT_NOTEBOOK
             for path, data in sorted(spec["files"].items())
         )).hexdigest()
 
@@ -232,6 +254,8 @@ class FeatureWorkspace:
                 name = metadata["displayName"]
                 if name in ENERGY_ITEMS and not self.config.enable_energy_map:
                     continue
+                if name == MAP_AGENT_NOTEBOOK and not self.config.enable_map_chat:
+                    continue
                 logical_id = platform["config"]["logicalId"]
                 if metadata["type"] != item_type or logical_id in logical_ids or (item_type, name) in names:
                     raise FeatureWorkspaceError(f"Invalid or duplicate source item {directory.name}.")
@@ -242,6 +266,8 @@ class FeatureWorkspace:
                     if source.is_file():
                         source.resolve().relative_to(self.repo_root.resolve())
                         files[source.relative_to(directory).as_posix()] = source.read_bytes()
+                if name == ENERGY_PIPELINE and not self.config.enable_map_chat:
+                    files["pipeline-content.json"] = energy_source_pipeline(files["pipeline-content.json"])
                 specs.append({
                     "folder": folder, "type": item_type, "name": name, "logical_id": logical_id,
                     "platform": platform, "files": files,
@@ -258,6 +284,8 @@ class FeatureWorkspace:
             ("Notebook", ENERGY_NOTEBOOK), ("DataPipeline", ENERGY_PIPELINE),
         }.issubset(names):
             raise FeatureWorkspaceError("The checkout is missing the enabled energy map ingestion items.")
+        if self.config.enable_map_chat and ("Notebook", MAP_AGENT_NOTEBOOK) not in names:
+            raise FeatureWorkspaceError("The checkout is missing map Data Agent provisioning.")
         # Check every pipeline reference before provisioning any items.
         notebook_ids = {s["logical_id"]: s["logical_id"] for s in specs if s["type"] == "Notebook"}
         for spec in specs:
@@ -340,10 +368,10 @@ class FeatureWorkspace:
             raise FeatureWorkspaceError(f"Expected one {item_type} named {name}, found {len(matches)}.")
         return matches[0]
 
-    def _run(self, name: str, item_type: str, body: dict[str, Any] | None = None) -> None:
+    def _run(self, name: str, item_type: str, body: dict[str, Any] | None = None) -> bool:
         item = self._item(name, item_type)
         request_digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-        digest = self.energy_digest if name in ENERGY_ITEMS else self.source_digest
+        digest = self.map_agent_digest if name == MAP_AGENT_NOTEBOOK else self.energy_digest if name in ENERGY_ITEMS else self.source_digest
         key = f"{item['id']}:{digest}:{request_digest}"
         status_url = self.state["jobs"].get(key)
         if status_url:
@@ -352,7 +380,7 @@ class FeatureWorkspace:
             state = response.json().get("status")
             if state == "Completed":
                 print(f"  {name} already completed for this bootstrap.", flush=True)
-                return
+                return False
             if state in {"Failed", "Cancelled", "Deduped"}:
                 print(f"  Retrying the previously {state} job {name}.", flush=True)
                 status_url = None
@@ -380,7 +408,7 @@ class FeatureWorkspace:
                 print(f"  {name}: {state}", flush=True)
                 previous = state
             if state == "Completed":
-                return
+                return True
             if state in {"Failed", "Cancelled", "Deduped"}:
                 reason = response.json().get("failureReason") or {}
                 raise FeatureWorkspaceError(f"{name} {state}: {reason.get('message', 'see Fabric job details')}")
@@ -493,25 +521,36 @@ class FeatureWorkspace:
         lakehouse = matches[0]
         self.state["energy_lakehouse_id"] = lakehouse["id"]
         self._save()
-        notebook = self._item(ENERGY_NOTEBOOK, "Notebook")
-        definition = notebook_definition(self.fabric, self.config.workspace_id, notebook["id"])
         target_lakehouse = {
             "default_lakehouse": lakehouse["id"], "default_lakehouse_name": name,
             "default_lakehouse_workspace_id": self.config.workspace_id,
             "known_lakehouses": [{"id": lakehouse["id"]}],
         }
-        if bind_notebook_definition(definition, target_lakehouse, {}):
-            response = self.fabric.request("POST",
-                f"{self.base}/notebooks/{notebook['id']}/updateDefinition?updateMetadata=true",
-                json={"definition": definition},
-            )
-            check_response(response, "Bind energy map notebook", {200, 202})
-            self.fabric.poll_lro(response)
-        self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
+        notebook_names = [ENERGY_NOTEBOOK] + ([MAP_AGENT_NOTEBOOK] if self.config.enable_map_chat else [])
+        for notebook_name in notebook_names:
+            notebook = self._item(notebook_name, "Notebook")
+            definition = notebook_definition(self.fabric, self.config.workspace_id, notebook["id"])
+            if bind_notebook_definition(definition, target_lakehouse, {}):
+                response = self.fabric.request("POST",
+                    f"{self.base}/notebooks/{notebook['id']}/updateDefinition?updateMetadata=true",
+                    json={"definition": definition},
+                )
+                check_response(response, f"Bind {notebook_name}", {200, 202})
+                self.fabric.poll_lro(response)
+        source_ran = self._run(ENERGY_PIPELINE, "DataPipeline", {"executionData": {"parameters": {
             "workspace_id": self.config.workspace_id, "env_suffix": self.config.env_suffix,
             "refresh_mode": "all", "force_refresh": False,
         }}})
         self._publish_energy_read_models(lakehouse["id"])
+        if self.config.enable_map_chat and not source_ran:
+            self._run(MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+                {"name": "workspace_id", "value": self.config.workspace_id, "type": "Text"},
+                {"name": "env_suffix", "value": self.config.env_suffix, "type": "Text"},
+            ]})
+        if self.config.enable_map_chat:
+            agent = self._item(f"Hydro_Map_Agent_{self.config.env_suffix}", "DataAgent")
+            self.state["map_agent_id"] = agent["id"]
+            self._save()
 
     def _publish_energy_read_models(self, lakehouse_id: str) -> None:
         database = f"RTI_Demo_Eventhouse_{self.config.env_suffix}"
@@ -619,6 +658,8 @@ class FeatureWorkspace:
             "RAYFIN_PUBLIC_LAKEHOUSE_NAME": f"Energy_IQ_LakehouseRTI_{self.config.env_suffix}",
             "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME": f"RTI_Demo_OPCUA_TelemetryStats_{self.config.env_suffix}",
         }
+        if self.config.enable_map_chat:
+            values["RAYFIN_PUBLIC_MAP_DATA_AGENT_NAME"] = f"Hydro_Map_Agent_{self.config.env_suffix}"
         content = env_path.read_text(encoding="utf-8")
         for key, value in values.items():
             pattern = rf"(?m)^{re.escape(key)}=.*$"

@@ -47,6 +47,45 @@
             }
           }
         }
+      },
+      {
+        "name": "Geo_002_publish_map_agent",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "Geo_001_ingest_energy_context",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.00:30:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "typeProperties": {
+          "notebookId": "b3236e30-dd23-4331-a1fc-f3cb977b2506",
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "workspace_id": {
+              "value": {
+                "value": "@pipeline().parameters.workspace_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "env_suffix": {
+              "value": {
+                "value": "@pipeline().parameters.env_suffix",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
       }
     ],
     "parameters": {

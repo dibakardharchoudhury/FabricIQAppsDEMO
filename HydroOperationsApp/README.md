@@ -116,6 +116,36 @@ High is >=65, medium >=35, otherwise low. Missing evidence or inactive notices
 are unranked. Overlapping units/intervals are not summed into a fictitious system
 impact, and capacities are not extracted from prose.
 
+### Map chat and navigation
+
+**Map chat** opens a right-side drawer in either layout. It uses the dedicated
+`Hydro_Map_Agent_<suffix>` Fabric Data Agent, separately from Hydro Intelligence
+and its conversation. No Foundry endpoint or Azure model resource is required.
+Provision it with `enable_map_chat: true` alongside `enable_energy_map: true`.
+
+The question includes a bounded snapshot of the viewport, enabled layers,
+property/area filters, selected asset, visible capacity and source freshness.
+The assistant distinguishes that visible, possibly capped subset from the whole
+imported dataset. Frequency questions obtain a fresh reading through Fabric;
+the agent never presents its stored frequency row as live.
+
+Requests such as **Show me Adamselv** resolve named places against Fabric. The
+client independently verifies returned identifiers and geographic bounds before
+zooming, enabling the target layer and opening its details. Ambiguous names show
+candidate choices, and records without verified coordinates cannot be zoomed to.
+Only explicit navigation requests can move the map; ordinary data questions do
+not. Conflicting property/area filters are cleared with a visible notice.
+Closing the drawer or pressing **Stop** cancels the active request. Chat history
+is bounded and held only in the current page session.
+
+`Geo_002_publish_map_agent` creates three ownership-tagged, typed Delta
+projections in GeoContext: `geo_map_agent_entities`, `geo_map_agent_links` and
+`geo_map_agent_state`. It binds them and `geo_source_status` to the dedicated
+agent, publishes it and verifies an actual grounding query. It does not modify
+the synthetic data agent or re-download source feeds. Future energy imports run
+this publisher after ingestion; projection readiness prevents partially refreshed
+data from being represented as complete.
+
 The browser queries only selected layers in the current viewport, with
 zoom thresholds for dense distribution/mast data and a visible 4,000-feature
 limit. It never downloads the full national network at startup. Layer filters sit

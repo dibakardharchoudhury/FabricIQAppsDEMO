@@ -46,6 +46,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 ("client_secret", "must-not-be-accepted"),
                 ("allow_public_api_group", "true"),
                 ("enable_energy_map", "true"),
+                ("enable_map_chat", "true"),
                 ("workspace_id", "not-a-guid"),
             ):
                 path.write_text(json.dumps({**raw, key: value}))
@@ -114,7 +115,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
         notebook = json.loads((ROOT / "Notebooks/Geo_001_ingest_energy_context.Notebook/.platform").read_text())
         properties = pipeline["properties"]
         self.assertEqual(properties["concurrency"], 1)
-        self.assertEqual(len(properties["activities"]), 1)
+        self.assertEqual(len(properties["activities"]), 2)
         activity = properties["activities"][0]
         self.assertEqual(activity["typeProperties"]["notebookId"], notebook["config"]["logicalId"])
         self.assertEqual(set(properties["parameters"]), {"workspace_id", "env_suffix", "refresh_mode", "force_refresh"})
@@ -122,12 +123,85 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertEqual(activity["typeProperties"]["parameters"][name]["value"]["value"], f"@pipeline().parameters.{name}")
         self.assertEqual(properties["parameters"]["force_refresh"]["defaultValue"], False)
         self.assertEqual(properties["parameters"]["refresh_mode"]["defaultValue"], "all")
+        chat_activity = properties["activities"][1]
+        self.assertEqual(chat_activity["name"], feature.MAP_AGENT_NOTEBOOK)
+        self.assertEqual(chat_activity["dependsOn"], [{
+            "activity": feature.ENERGY_NOTEBOOK, "dependencyConditions": ["Succeeded"],
+        }])
+        for name in ("workspace_id", "env_suffix"):
+            self.assertEqual(chat_activity["typeProperties"]["parameters"][name]["value"]["value"],
+                             f"@pipeline().parameters.{name}")
         rebound = feature.rebind_pipeline(
-            pipeline, {notebook["config"]["logicalId"]: "target-notebook"}, WORKSPACE,
+            pipeline, {notebook["config"]["logicalId"]: "target-notebook",
+                       chat_activity["typeProperties"]["notebookId"]: "target-map-agent-notebook"}, WORKSPACE,
             {"workspace_id": WORKSPACE, "env_suffix": "V8"},
         )
         self.assertEqual(rebound["properties"]["activities"][0]["typeProperties"]["workspaceId"], WORKSPACE)
         self.assertEqual(rebound["properties"]["parameters"]["env_suffix"]["defaultValue"], "V8")
+        self.assertEqual(rebound["properties"]["activities"][1]["typeProperties"]["notebookId"], "target-map-agent-notebook")
+
+    def test_chat_opt_in_preserves_both_baseline_and_energy_job_digests(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
+            path = Path(directory) / "state.json"
+            energy = feature.FeatureWorkspace(
+                feature.FeatureConfig(**config_dict(), state_path=path, enable_energy_map=True), ROOT,
+            )
+            chat = feature.FeatureWorkspace(
+                feature.FeatureConfig(**config_dict(), state_path=path, enable_energy_map=True, enable_map_chat=True), ROOT,
+            )
+            self.assertEqual(chat.source_digest, energy.source_digest)
+            self.assertEqual(chat.energy_digest, energy.energy_digest)
+            self.assertEqual(len(chat.specs), len(energy.specs) + 1)
+            self.assertNotIn(feature.MAP_AGENT_NOTEBOOK, {spec["name"] for spec in energy.specs})
+            self.assertIn(feature.MAP_AGENT_NOTEBOOK, {spec["name"] for spec in chat.specs})
+            source_pipeline = next(spec for spec in energy.specs if spec["name"] == feature.ENERGY_PIPELINE)
+            chat_pipeline = next(spec for spec in chat.specs if spec["name"] == feature.ENERGY_PIPELINE)
+            self.assertEqual(len(json.loads(source_pipeline["files"]["pipeline-content.json"])["properties"]["activities"]), 1)
+            self.assertEqual(feature.energy_source_pipeline(chat_pipeline["files"]["pipeline-content.json"]),
+                             source_pipeline["files"]["pipeline-content.json"])
+            body = {"executionData": {"parameters": {"workspace_id": WORKSPACE}}}
+            request_digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+            chat.state["jobs"][f"energy-id:{energy.energy_digest}:{request_digest}"] = "completed-energy-url"
+            chat.fabric.request.return_value = Mock(status_code=200, json=lambda: {"status": "Completed"})
+            with patch.object(chat, "_item", return_value={"id": "energy-id"}):
+                self.assertFalse(chat._run(feature.ENERGY_PIPELINE, "DataPipeline", body))
+            chat.fabric.request.assert_called_once_with("GET", "completed-energy-url")
+
+    def test_chat_cannot_be_enabled_without_energy_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "feature.json"
+            path.write_text(json.dumps({**config_dict(), "enable_map_chat": True}))
+            with self.assertRaisesRegex(feature.FeatureWorkspaceError, "requires energy map"):
+                feature.FeatureConfig.load(path, TENANT, WORKSPACE)
+
+    def test_chat_publisher_runs_alone_only_when_ingestion_is_reused(self):
+        for source_ran in (True, False):
+            with (self.subTest(source_ran=source_ran), tempfile.TemporaryDirectory() as directory,
+                  patch.object(feature, "FeatureFabric")):
+                config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json",
+                                               enable_energy_map=True, enable_map_chat=True)
+                workspace = feature.FeatureWorkspace(config, ROOT)
+                lakehouse = {
+                    "id": SUBSCRIPTION, "type": "Lakehouse", "displayName": "Hydro_GeoContext_V6",
+                    "description": f"{workspace.marker}: energy context",
+                }
+                workspace.fabric.list_workspace_items.return_value = [lakehouse]
+                with (
+                    patch.object(workspace, "_item", side_effect=lambda name, kind: {"id": name}),
+                    patch.object(feature, "notebook_definition", return_value={}),
+                    patch.object(feature, "bind_notebook_definition", return_value=False) as bind,
+                    patch.object(workspace, "_publish_energy_read_models"),
+                    patch.object(workspace, "_run", return_value=source_ran) as run,
+                ):
+                    workspace._prepare_energy_map()
+                self.assertEqual(bind.call_count, 2)
+                self.assertEqual(run.call_count, 1 if source_ran else 2)
+                if not source_ran:
+                    run.assert_called_with(feature.MAP_AGENT_NOTEBOOK, "Notebook", {"parameters": [
+                        {"name": "workspace_id", "value": WORKSPACE, "type": "Text"},
+                        {"name": "env_suffix", "value": "V6", "type": "Text"},
+                    ]})
+                self.assertEqual(workspace.state["map_agent_id"], "Hydro_Map_Agent_V6")
 
     def test_energy_lakehouse_is_separate_owned_and_created_without_schemas(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):

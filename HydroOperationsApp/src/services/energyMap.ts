@@ -1,10 +1,11 @@
 import { runKustoQuery, type KustoResult } from './fabric'
 import {
   buildAssetMarketMessagesQuery, buildEnergyMapQuery, FEATURE_LIMIT, isEnergyLayer, parseEnergyFeature, parseSourceStatus,
-  type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
+  isReservoirAreaCode, type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../ui-shared/energyMapModel'
 import { ENERGY_PROPERTY_OPTIONS_QUERY, parseEnergyPropertyOptions, type EnergyPropertyFilters } from '../ui-shared/energyMapFilters'
 import { buildLiveFrequencyQuery, parseLiveFrequency, type LiveFrequencyReading } from '../ui-shared/liveFrequencyModel'
+import { buildMapPlaceQuery, buildMapPlaceResolveQuery, parseMapPlace, type MapPlaceReference } from '../ui-shared/mapChatModel'
 
 function rows(result: KustoResult): Record<string, unknown>[] {
   return result.rows.map(row => Object.fromEntries(result.columns.map((name, index) => [name, row[index]])))
@@ -74,4 +75,28 @@ export async function queryEnergyFeatureDetails(feature: EnergyFeature, signal: 
 
 export async function queryAssetMarketMessages(asset: EnergyFeature, signal: AbortSignal): Promise<EnergyFeature[]> {
   return rows(await runKustoQuery(buildAssetMarketMessagesQuery(asset), 101, signal)).map(parseEnergyFeature)
+}
+
+export async function searchMapPlaces(search: string, signal: AbortSignal, layer?: EnergyLayerId) {
+  const result = rows(await runKustoQuery(buildMapPlaceQuery(search, layer), 11, signal))
+  return { places: result.slice(0, 10).map(parseMapPlace), truncated: result.length > 10 }
+}
+
+export async function resolveMapPlace(reference: MapPlaceReference, signal: AbortSignal) {
+  const result = rows(await runKustoQuery(buildMapPlaceResolveQuery(reference), 2, signal))
+  if (result.length !== 1) throw new Error('The requested place was not found uniquely in the current map data.')
+  const place = parseMapPlace(result[0])
+  const feature = parseEnergyFeature(result[0])
+  if (!place.bounds || !feature.geometry) throw new Error(`${place.label} has no verified map location.`)
+  let areaCodes: string[] | undefined
+  if (['hydro-plants', 'transformers'].includes(feature.layerId) && feature.geometry.type === 'Point') {
+    const [longitude, latitude] = feature.geometry.coordinates
+    const matches = rows(await runKustoQuery(`external_table('HydroGeoReservoirAreas')
+| where geo_point_in_polygon(${longitude}, ${latitude}, parse_json(geometry_json))
+| project area_code=tostring(parse_json(properties_json).area_code)
+| take 10`, 10, signal))
+    if (matches.some(row => !isReservoirAreaCode(row.area_code))) throw new Error('Area membership could not be verified for navigation.')
+    areaCodes = matches.map(row => String(row.area_code))
+  }
+  return { place, feature, areaCodes }
 }

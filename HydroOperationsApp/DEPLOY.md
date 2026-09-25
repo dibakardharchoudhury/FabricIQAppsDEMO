@@ -42,6 +42,7 @@ deployment is unchanged.
   "location": "norwayeast",
   "env_suffix": "V6",
   "enable_energy_map": false,
+  "enable_map_chat": false,
   "allow_public_api_group": true
 }
 ```
@@ -106,6 +107,21 @@ The optional energy import also publishes `geo_reservoir_areas` and
 bootstrap verifies the nine expected area polygons and the link table before
 app publication. Linking preserves manual corrections and does not invent
 asset matches from price-area membership.
+
+Set `enable_map_chat: true` together with `enable_energy_map: true` to provision
+the dedicated `Hydro_Map_Agent_<suffix>`. The orchestrator binds and executes
+`Geo_002_publish_map_agent` against the existing GeoContext Lakehouse, retaining
+the successful baseline and ingestion job checkpoints. The pipeline includes
+Geo_002 after Geo_001 for subsequent refreshes; this step is omitted from imported
+definitions when chat is disabled. Agent-definition changes have their own digest.
+
+The publisher selects only governed map projections and source status, refuses
+unowned/name-colliding artifacts, and leaves `RTI_Demo_Agent_*` unchanged. Publication
+is complete only after published-definition readback and a live MCP grounding
+canary. It requires an authorized user execution identity, applicable Fabric
+Copilot/AI settings and a synchronized Lakehouse SQL endpoint; native service-
+principal notebook token scopes are not sufficient and cause an explicit stop.
+No new Azure model resource, secret, or broad tenant permission is provisioned.
 
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the

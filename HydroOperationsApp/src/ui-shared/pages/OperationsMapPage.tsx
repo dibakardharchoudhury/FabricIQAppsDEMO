@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Database, Layers, MapPin, MessageSquare, RefreshCw, Search, SlidersHorizontal, X, Zap } from 'lucide-react'
 import { beginInteractiveConnect, refreshEnergyMap } from '../../services/fabric'
 import {
   queryAssetMarketMessages, queryCountryPowerBalance, queryEnergyFeatureDetails, queryEnergyMap, queryEnergyPropertyOptions,
@@ -8,6 +8,9 @@ import {
 import { EnergyPropertyFiltersPanel } from '../components/energyMap/EnergyPropertyFilters'
 import { LiveGridFrequencyTile } from '../components/energyMap/LiveGridFrequencyTile'
 import { CountryPowerBalanceTile } from '../components/energyMap/CountryPowerBalanceTile'
+import { MapChatDrawer } from '../components/energyMap/MapChatDrawer'
+import type { ResolvedMapPlace } from '../../services/mapChat'
+import type { MapChatContext, MapFocusRequest } from '../mapChatModel'
 import {
   createEnergyPropertyFilters, matchesEnergyPropertyFilters, propertyFilterCount,
   type EnergyPropertyFilters, type EnergyPropertyOptions,
@@ -57,6 +60,11 @@ export function OperationsMapPage() {
   const [powerBalance, setPowerBalance] = useState<EnergyFeature | null>()
   const [powerBalanceError, setPowerBalanceError] = useState<string>()
   const [selected, setSelected] = useState<EnergyFeature>()
+  const [chatOpen, setChatOpen] = useState(false)
+  const [focusRequest, setFocusRequest] = useState<MapFocusRequest>()
+  const [navigationNotice, setNavigationNotice] = useState<string>()
+  const chatButton = useRef<HTMLButtonElement>(null)
+  const focusSequence = useRef(0)
   const [detailResult, setDetailResult] = useState<{ key: string; data?: EnergyFeature; error?: string }>()
   const [messageResult, setMessageResult] = useState<{ key: string; data?: EnergyFeature[]; error?: string }>()
   const [busy, setBusy] = useState(true)
@@ -248,12 +256,44 @@ export function OperationsMapPage() {
     || (isReservoirAreaCode(area.properties.area_code) && areaSelection.includes(area.properties.area_code))) : []
   const capacity = useMemo(() => visiblePlantCapacity(displayed), [displayed])
   const viewPending = busy || loadedQueryKey !== queryKey
+  const chatContext = useMemo<MapChatContext>(() => ({
+    viewport, layers, propertyFilters, areaSelection, selected, visibleFeatures: displayed,
+    statuses, pending: viewPending || Boolean(error), truncated,
+  }), [viewport, layers, propertyFilters, areaSelection, selected, displayed, statuses, viewPending, error, truncated])
+  const focusPlace = (target: ResolvedMapPlace): string => {
+    const changes: string[] = []
+    if (!layers.includes(target.feature.layerId)) {
+      setLayerEnabled(target.feature.layerId, true)
+      changes.push('enabled its layer')
+    }
+    if (!matchesEnergyPropertyFilters(target.feature, propertyFilters)) {
+      const defaults = createEnergyPropertyFilters()
+      setPropertyFilters(current => target.feature.layerId === 'hydro-plants'
+        ? { ...current, hydro: defaults.hydro } : { ...current, transformers: defaults.transformers })
+      changes.push('cleared conflicting property filters')
+    }
+    const outsideAreas = areaSelection !== null && (
+      target.feature.layerId === 'reservoirs'
+        ? !isReservoirAreaCode(target.feature.properties.area_code) || !areaSelection.includes(target.feature.properties.area_code)
+        : target.areaCodes !== undefined && !areaSelection.some(code => target.areaCodes?.includes(code)))
+    if (outsideAreas) {
+      setAreaSelection(null)
+      changes.push('cleared conflicting area filters')
+    }
+    if (search) { setSearch(''); changes.push('cleared the feature-list search') }
+    setSelected(target.feature)
+    setFocusRequest({ sequence: ++focusSequence.current, place: target.place, feature: target.feature })
+    const message = `Showing ${target.place.label}${changes.length ? `; ${changes.join(', ')}` : ''}.`
+    setNavigationNotice(message)
+    return message
+  }
 
   return <div className="energy-map-page">
     <header className="energy-map-heading">
       <div><span className="v2-eyebrow">Operations Map</span><h1>Norwegian energy context</h1>
         <p>Infrastructure, hydropower, reservoir areas, power exchange and market messages imported into Fabric.</p></div>
       <div className="energy-map-actions">
+        <button ref={chatButton} type="button" className="v2-primary-action" aria-expanded={chatOpen} onClick={() => setChatOpen(value => !value)}><MessageSquare size={15} />Map chat</button>
         <button type="button" className="v2-primary-action" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} />Reload map</button>
         <button type="button" className="v2-primary-action" disabled={importing} onClick={() => void importLatest()}><Database size={15} />{importing ? 'Importing...' : 'Import latest data'}</button>
       </div>
@@ -267,6 +307,7 @@ export function OperationsMapPage() {
     {(error || sourceError || areaError) && <div className="energy-map-notice error" role="alert"><AlertTriangle size={17} /><span>{[...new Set([error, sourceError, areaError].filter(Boolean))].join(' ')} {features.length > 0 && 'Previously loaded features are still shown.'}</span><button type="button" className="v2-primary-action" onClick={() => void connect()}>Connect Fabric data</button></div>}
     {importStatus && <div className="energy-map-notice" role="status">{importStatus} {importing && 'This runs a cloud pipeline; changing tabs does not cancel it.'}</div>}
     {truncated && <div className="energy-map-notice" role="status">This viewport exceeds {FEATURE_LIMIT.toLocaleString()} features. Only the first {FEATURE_LIMIT.toLocaleString()} are displayed; zoom in or turn off dense layers.</div>}
+    {navigationNotice && <div className="energy-map-notice" role="status"><MapPin size={16} /><span>{navigationNotice}</span><button type="button" aria-label="Dismiss map navigation notice" onClick={() => setNavigationNotice(undefined)}><X size={15} /></button></div>}
     <div className="energy-map-stat-tiles">
       <LiveGridFrequencyTile />
       <VisibleCapacityTile capacity={capacity} pending={viewPending} error={error} truncated={truncated} />
@@ -334,7 +375,7 @@ export function OperationsMapPage() {
       <section className="energy-map-main">
         <Suspense fallback={<div className="energy-map-loading">Loading map renderer...</div>}>
           <EnergyMapCanvas features={displayed} areas={areas} capacityMaximum={propertyOptions?.hydro.capacityMax}
-            showAreas={layers.includes('reservoirs')} areaSelection={areaSelection} onViewport={setViewport} onSelect={selectFeature} />
+            showAreas={layers.includes('reservoirs')} areaSelection={areaSelection} focusRequest={focusRequest} onViewport={setViewport} onSelect={selectFeature} />
         </Suspense>
         {viewPending && !error && <div className="energy-map-query-state" role="status">Updating the filtered map from Fabric...</div>}
         <p className="energy-map-disclaimer">Area colors identify regions, not reservoir filling levels. Foreign reservoir figures are unavailable. Boundaries are generalized. Plant marker area scales with installed MW; transformer capacity is unknown and markers are uniform. Power-flow lines are schematic.</p>
@@ -360,6 +401,8 @@ export function OperationsMapPage() {
         </div>
       </aside>
     </div>
+    <MapChatDrawer open={chatOpen} context={chatContext} onFocus={focusPlace}
+      onClose={() => { setChatOpen(false); chatButton.current?.focus() }} />
   </div>
 }
 

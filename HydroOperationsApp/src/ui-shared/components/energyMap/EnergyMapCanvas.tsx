@@ -6,26 +6,35 @@ import {
   asFeatureCollection, MAP_VISIBLE_LAYERS, renderLayerSignature,
   type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../../energyMapModel'
+import type { MapFocusRequest } from '../../mapChatModel'
 
 setWorkerUrl(workerUrl)
 
-export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, areaSelection, onViewport, onSelect }: {
+export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, areaSelection, focusRequest, onViewport, onSelect }: {
   features: EnergyFeature[]
   areas: EnergyFeature[]
   capacityMaximum?: number | null
   showAreas: boolean
   areaSelection: ReservoirAreaSelection
+  focusRequest?: MapFocusRequest
   onViewport: (viewport: MapViewport) => void
   onSelect: (feature: EnergyFeature) => void
 }) {
   const dataRef = useRef({ features, areas, capacityMaximum, showAreas, areaSelection })
   const callbacks = useRef({ onViewport, onSelect })
   const updateSources = useRef<(() => void) | null>(null)
+  const focusRef = useRef(focusRequest)
+  const applyFocus = useRef<(() => void) | null>(null)
+  const focusedSequence = useRef<number | undefined>(undefined)
   const camera = useRef<{ center: [number, number]; zoom: number }>({ center: [12.8, 64], zoom: 4 })
   const [mapError, setMapError] = useState<string>()
   const [generation, setGeneration] = useState(0)
 
   useEffect(() => { callbacks.current = { onViewport, onSelect } }, [onViewport, onSelect])
+  useEffect(() => {
+    focusRef.current = focusRequest
+    applyFocus.current?.()
+  }, [focusRequest])
   useEffect(() => {
     dataRef.current = { features, areas, capacityMaximum, showAreas, areaSelection }
     updateSources.current?.()
@@ -92,6 +101,26 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, a
       if (map.getLayer('reservoir-borders')) map.setFilter('reservoir-borders', areaFilter)
     }
     updateSources.current = applyData
+    const focusPlace = () => {
+      const request = focusRef.current
+      if (!alive || !request?.place.bounds || focusedSequence.current === request.sequence) return
+      container.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      if (!styleReady || !visible || container.clientWidth <= 0) return
+      const [west, south, east, north] = request.place.bounds
+      const point = west === east && south === north
+      const frame = container.getBoundingClientRect()
+      const drawer = document.querySelector<HTMLElement>('.energy-map-chat:not([hidden])')?.getBoundingClientRect()
+      const padding = Math.min(60, container.clientWidth / 5)
+      const right = drawer && drawer.left > frame.left && drawer.left < frame.right
+        && drawer.top < frame.bottom && drawer.bottom > frame.top
+        ? Math.min(container.clientWidth * 0.55, frame.right - drawer.left + 20) : padding
+      focusedSequence.current = request.sequence
+      map.fitBounds([[west, south], [east, north]], {
+        padding: { top: padding, bottom: padding, left: padding, right },
+        maxZoom: point ? 14 : 13, duration: 500,
+      })
+    }
+    applyFocus.current = focusPlace
     const updateViewport = () => {
       if (!alive || container.clientWidth <= 0 || container.clientHeight <= 0) return
       const bounds = map.getBounds()
@@ -112,6 +141,7 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, a
         if (!alive || !visible || container.clientWidth <= 0 || container.clientHeight <= 0) return
         map.resize()
         applyData()
+        focusPlace()
         map.triggerRepaint()
       })
     }
@@ -156,6 +186,7 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, a
       styleReady = true
       signatures.clear()
       applyData()
+      focusPlace()
       updateViewport()
     })
     map.on('moveend', updateViewport)
@@ -196,6 +227,7 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, a
     return () => {
       alive = false
       updateSources.current = null
+      applyFocus.current = null
       cancelAnimationFrame(resizeFrame)
       observer.disconnect()
       intersection.disconnect()

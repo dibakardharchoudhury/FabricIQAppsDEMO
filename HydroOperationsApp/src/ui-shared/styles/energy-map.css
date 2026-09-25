@@ -128,6 +128,33 @@
 .energy-map-asset-messages dd { margin: 3px 0; max-height: 120px; overflow: auto; overflow-wrap: anywhere; }
 .energy-map-unmapped { margin-top: 20px; font-size: 11px; }
 .energy-map-unmapped button { display: block; text-align: left; width: 100%; padding: 9px 0; border: 0; background: transparent; color: var(--cp-text); cursor: pointer; }
+.energy-map-chat { position: fixed; z-index: 50; top: 132px; right: 18px; bottom: 18px; width: min(420px, calc(100vw - 36px)); display: flex; flex-direction: column; border: 1px solid var(--cp-border); border-radius: 12px; background: var(--cp-surface); color: var(--cp-text); box-shadow: 0 12px 40px #0003; overflow: hidden; }
+.energy-map-chat[hidden] { display: none; }
+.energy-map-chat > header { display: flex; align-items: center; gap: 9px; padding: 13px 14px; border-bottom: 1px solid var(--cp-border); }
+.energy-map-chat > header > div { flex: 1; }
+.energy-map-chat h2 { margin: 0; font-size: 16px; }
+.energy-map-chat header small { color: var(--cp-text-muted); font-size: 10px; }
+.energy-map-chat header button { border: 0; background: transparent; color: var(--cp-text); padding: 6px; cursor: pointer; }
+.energy-map-chat-context { font-size: 10px; line-height: 1.5; color: var(--cp-text-muted); padding: 10px 14px; margin: 0; border-bottom: 1px solid var(--cp-border); }
+.energy-map-chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
+.energy-map-chat-message { font-size: 12px; line-height: 1.6; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; background: color-mix(in srgb, #0f766e 5%, var(--cp-surface)); overflow-wrap: anywhere; }
+.energy-map-chat-message.user { background: color-mix(in srgb, #0284c7 8%, var(--cp-surface)); }
+.energy-map-chat-message.error { border: 1px solid #d97706; }
+.energy-map-chat-message > strong { font-size: 10px; text-transform: uppercase; color: var(--cp-text-muted); }
+.energy-map-chat-message p { margin: 6px 0; }
+.energy-map-chat-message pre { overflow: auto; font-size: 10px; }
+.energy-map-chat-message table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.energy-map-chat-message th, .energy-map-chat-message td { padding: 5px; border: 1px solid var(--cp-border); }
+.energy-map-chat-navigation { display: flex; gap: 5px; align-items: flex-start; font-size: 11px; color: #0f766e; }
+.energy-map-chat-places { margin-top: 10px; }
+.energy-map-chat-places button, .energy-map-chat-suggestions button { display: block; width: 100%; text-align: left; padding: 9px; margin: 5px 0; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); cursor: pointer; font-size: 11px; }
+.energy-map-chat-places small { display: block; color: var(--cp-text-muted); font-size: 10px; margin-top: 4px; }
+.energy-map-chat button:disabled { cursor: default; opacity: 0.55; }
+.energy-map-chat-status { padding: 8px 14px; font-size: 11px; color: var(--cp-text-muted); display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--cp-border); }
+.energy-map-chat-status button { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--cp-text); cursor: pointer; }
+.energy-map-chat > form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--cp-border); }
+.energy-map-chat textarea { flex: 1; min-width: 0; min-height: 70px; max-height: 180px; resize: vertical; padding: 9px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--cp-surface); color: var(--cp-text); font: inherit; font-size: 12px; }
+.energy-map-chat form button { align-self: flex-end; padding: 10px; border: 0; border-radius: 7px; background: #0f766e; color: white; cursor: pointer; }
 @media (max-width: 1250px) {
   .energy-map-layout { grid-template-columns: minmax(0, 1fr); }
   .energy-map-details { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--cp-border); max-height: 350px; }
@@ -141,4 +168,5 @@
   .energy-map-notice { align-items: flex-start; flex-wrap: wrap; }
   .energy-map-property-grid { grid-template-columns: minmax(0, 1fr); }
   .energy-map-stat-tiles { grid-template-columns: minmax(0, 1fr); }
+  .energy-map-chat { top: auto; right: 10px; bottom: 10px; width: calc(100vw - 20px); height: min(72dvh, 680px); }
 }
