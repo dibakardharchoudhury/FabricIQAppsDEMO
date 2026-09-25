@@ -141,7 +141,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=args.client_id),
             patch.object(
                 DEPLOY,
@@ -566,7 +574,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=None),
             patch.object(DEPLOY, "write_rayfin_redirects") as write_redirects,
             patch.object(DEPLOY, "prepare_rayfin_env", prepare),
@@ -590,7 +606,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=client_id),
             patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
             patch.object(DEPLOY, "write_rayfin_redirects", return_value=["http://localhost:5173"]),
@@ -631,7 +655,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=args.client_id),
             patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[hosting_url]),
             patch.object(DEPLOY, "write_rayfin_redirects", side_effect=lambda redirects: redirects),
@@ -677,6 +709,33 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.REQUIRED_DELEGATED["00000009-0000-0000-c000-000000000000"],
         )
 
+    def test_rayfin_api_capacity_match_requires_current_capacity_in_both_urls(self):
+        capacity_id = "22222222-2222-2222-2222-222222222222"
+        api_url = (
+            "https://host.pbidedicated.windows.net/webapi/capacities/"
+            f"{capacity_id}/workloads/BaaS/"
+        )
+
+        self.assertTrue(
+            DEPLOY.rayfin_api_targets_capacity(
+                {"RAYFIN_PUBLIC_API_URL": api_url},
+                {"fabricApiUrl": api_url},
+                capacity_id,
+            )
+        )
+        self.assertFalse(
+            DEPLOY.rayfin_api_targets_capacity(
+                {"RAYFIN_PUBLIC_API_URL": api_url},
+                {
+                    "fabricApiUrl": (
+                        "https://old.pbidedicated.windows.net/webapi/capacities/"
+                        "33333333-3333-3333-3333-333333333333/workloads/BaaS/"
+                    )
+                },
+                capacity_id,
+            )
+        )
+
     def test_state_rotation_moves_only_known_files_to_temp_backup(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -710,6 +769,7 @@ class DeployOrderTests(unittest.TestCase):
                     "ad340c84-1886-4202-a483-2da2cb9168eb",
                     "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
                     "Demo Workspace",
+                    "33333333-3333-3333-3333-333333333333",
                     "22dedc54-8b7e-442c-929d-497c4df086e6",
                 )
 

@@ -512,11 +512,14 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
-def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
+def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
         item = fabric_get(f"workspaces/{workspace}", headers)
-        return workspace, str(item.get("displayName") or workspace)
+        capacity_id = str(item.get("capacityId") or "")
+        if not GUID_RE.fullmatch(capacity_id):
+            raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+        return workspace, str(item.get("displayName") or workspace), capacity_id
 
     matches: list[dict[str, Any]] = []
     url: str | None = f"{FABRIC_BASE}/workspaces"
@@ -536,7 +539,14 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
     if len(matches) > 1:
         ids = ", ".join(str(item.get("id")) for item in matches)
         raise DeployError(f"Multiple workspaces are named '{workspace}': {ids}. Use the workspace GUID.")
-    return str(matches[0]["id"]), str(matches[0]["displayName"])
+    workspace_id = str(matches[0]["id"])
+    capacity_id = str(matches[0].get("capacityId") or "")
+    if not GUID_RE.fullmatch(capacity_id):
+        item = fabric_get(f"workspaces/{workspace_id}", headers)
+        capacity_id = str(item.get("capacityId") or "")
+    if not GUID_RE.fullmatch(capacity_id):
+        raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+    return workspace_id, str(matches[0]["displayName"]), capacity_id
 
 
 def warn_live_auth(message: str) -> None:
@@ -726,11 +736,26 @@ def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     )
 
 
+def rayfin_api_targets_capacity(
+    values: dict[str, str], deployment: dict[str, Any], capacity_id: str
+) -> bool:
+    expected_path = f"/capacities/{capacity_id.casefold()}/"
+    urls = (
+        values.get("RAYFIN_PUBLIC_API_URL", ""),
+        str(deployment.get("fabricApiUrl") or ""),
+    )
+    return all(expected_path in url.casefold() for url in urls)
+
+
 def prepare_rayfin_env(
-    tenant: str, workspace_id: str, workspace_name: str, client_id: str | None
+    tenant: str,
+    workspace_id: str,
+    workspace_name: str,
+    capacity_id: str,
+    client_id: str | None,
 ) -> bool:
     values, deployment = current_rayfin_target()
-    target_matches = deployment and all(
+    same_target = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
             values.get("RAYFIN_PUBLIC_WORKSPACE_ID", "").casefold() == workspace_id.casefold(),
@@ -741,6 +766,15 @@ def prepare_rayfin_env(
             str(deployment.get("fabricTenantId") or "").casefold() == tenant.casefold(),
         )
     )
+    target_matches = bool(
+        same_target and rayfin_api_targets_capacity(values, deployment, capacity_id)
+    )
+    if same_target and not target_matches:
+        print(
+            "Saved Rayfin API URL targets a previous Fabric capacity; rotating state "
+            "before reprovisioning.",
+            flush=True,
+        )
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id, tenant):
@@ -1116,7 +1150,7 @@ def deploy(args: argparse.Namespace) -> None:
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name = resolve_workspace(args.workspace, args.tenant)
+    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
@@ -1151,7 +1185,9 @@ def deploy(args: argparse.Namespace) -> None:
     )
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
-    reuse_deployment = prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
+    reuse_deployment = prepare_rayfin_env(
+        args.tenant, workspace_id, workspace_name, capacity_id, client_id
+    )
     ensure_deploy_dependencies()
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)

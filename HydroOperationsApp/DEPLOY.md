@@ -393,6 +393,10 @@ Get-Item rayfin/.env, rayfin/.env.local, rayfin/.deployments.json -ErrorAction S
   place, `rayfin up` calls the **old** endpoint and fails with **404 "The provided workspace was not
   found."** Move it (and `.env.local`) into the temporary backup when switching tenants; do not
   delete either file.
+- A workspace capacity move also invalidates the capacity-specific `RAYFIN_PUBLIC_API_URL`, even
+  when the AppBackend item still exists. The one-shot orchestrator compares the saved API URL with
+  the workspace's current `capacityId`, backs up the three state files above, and performs a full
+  reprovision when they differ.
 - Recreate `rayfin/.env` from `.env.example` with the **new** `FABRIC_WORKSPACE_NAME`,
   `RAYFIN_PUBLIC_WORKSPACE_ID`, `RAYFIN_PUBLIC_TENANT_ID`, and the new tenant's SPA
   `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Run `npm run validate-env` before continuing. Resolve the workspace
