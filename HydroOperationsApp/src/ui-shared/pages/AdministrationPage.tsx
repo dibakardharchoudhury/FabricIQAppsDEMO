@@ -1,6 +1,8 @@
 import { AdministrationExperience, type AdministrationStep } from '../../components/AdministrationExperience'
 import { CopilotSettingsPanel } from '../../components/CopilotSettingsPanel'
+import { MapDataRefreshPanel } from '../../components/MapDataRefreshPanel'
 import { fmtElapsed, useHydroOperationsData } from '../hooks/useHydroOperationsData'
+import '../styles/map-data-refresh.css'
 
 export function AdministrationPage() {
   const data = useHydroOperationsData()
@@ -63,8 +65,11 @@ export function AdministrationPage() {
 
   return <>
     {data.notice && <div className="notice"><span>{data.notice}</span></div>}
-    {Object.entries(data.jobs).map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
+    {Object.entries(data.jobs).filter(([, job]) => job.kind !== 'map').map(([key, job]) => <div key={key} className="v2-progress"><div className="v2-progress-head"><span>{job.label}</span><em>{job.status} · {job.pct}% · {fmtElapsed((job.endedAt ?? data.now) - job.startedAt)}</em></div><div className="v2-progress-track"><div className="v2-progress-bar" style={{ width: `${job.pct}%` }} /></div></div>)}
     <AdministrationExperience steps={steps} />
+    <MapDataRefreshPanel state={data.mapRefreshState} status={data.jobs.map?.status}
+      message={data.mapRefreshMessage} elapsed={data.jobs.map ? fmtElapsed(data.now - data.jobs.map.startedAt) : undefined}
+      onStart={() => void data.actions.updateAllMapData()} />
     <CopilotSettingsPanel />
   </>
 }

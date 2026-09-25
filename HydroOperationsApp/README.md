@@ -46,6 +46,28 @@ balance/interconnector flows/frequency, and Nord Pool UMM. UMM importance is
 explicitly labeled rule-based application enrichment, not an official market or
 grid-safety rating. Aviation providers are not included.
 
+### Update all map data from Administration
+
+The **Administration → Update map data sources** section starts the existing
+`04_Pipe_EnergyMap` pipeline with `refresh_mode="all"` and `force_refresh=true`.
+This runs `Geo_001_ingest_energy_context` for all five providers, bypassing the
+24-hour reference-data cache. Reservoir-area overlays and message/asset links
+are refreshed too; the version-pinned country boundary dataset remains pinned.
+When chat is enabled, `Geo_002_publish_map_agent` runs afterward to refresh its
+typed projections and publish the ready map Data Agent.
+
+The section shows actual queued/running/completed or failure status and elapsed
+time, not an estimated completion percentage. Its progress survives tab changes
+and can resume after a page reload. A repeated start or a start from the Map tab
+joins the current run rather than submitting another one; if that existing run
+uses cached data, the Administration notice says so. Full refreshes may take tens
+of minutes and consume the existing Fabric capacity. Source failures retain
+last-good data and are not reported as a completed update.
+
+The Map tab's **Import latest data** retains its cache-aware behavior. Neither
+action resets synthetic demo assets, reseeds operational tables, starts the
+telemetry simulator, or enables a recurring schedule.
+
 **Reservoir overlay:** `geo_reservoir_areas` stores NVE NO1-NO5 price-area
 polygons and country backgrounds for Norway, Sweden, Finland and Denmark.
 Country coverage includes provider-supplied offshore territories. Geometry

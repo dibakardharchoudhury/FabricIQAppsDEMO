@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
 
 Updated: 2026-09-25
 
@@ -130,6 +130,21 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Administration full map update (2026-09-25T11:25Z)
+
+- 51 focused frontend/component tests, TypeScript, ESLint and Node 24 production
+  build passed.
+- Both-shell browser tests exercised the actual service with isolated Fabric
+  responses: the start body contains all/force parameters, reload resumes the
+  same run, Map-tab actions join the pending Administration run, an active run on
+  a later history page is found, and failed history reads never trigger a write.
+- Source failures are shown explicitly and the section reports indeterminate
+  progress, not a manufactured percentage. Completed actions can be repeated.
+- Live readback confirmed the existing pipeline's notebook IDs, concurrency=1,
+  sequential chat-refresh dependency and parameter forwarding. Only definition
+  reads were performed; no full source import was started during validation.
+- Same approved tenant/subscription, no infrastructure or permission changes.
 
 ### Dedicated map chat (2026-09-25T06:27Z)
 
@@ -752,3 +767,24 @@ with real Fabric identifier/bounds lookups and isolated browser interaction test
 Baseline setup/seed/stream and source imports remained reused. Existing STID still
 has 3 facilities, 15 equipment and 90 instruments; telemetry readback now contains
 27,000 rows from prior workspace activity, not a stream restarted by chat deployment.
+
+## 19. Administration full map-data update
+
+User requested a notebook/pipeline covering every map source and an Administration
+section to start it. Reuse the already deployed `Geo_001_ingest_energy_context`
+and `04_Pipe_EnergyMap` instead of duplicating ingestion; the pipeline already
+runs `Geo_002_publish_map_agent` after successful ingestion when chat is enabled.
+
+The new shared Administration section requests `refresh_mode="all"` and
+`force_refresh=true`, displays actual job states and elapsed time, and restores
+long-running map jobs after reload. It can run again after completion. Existing
+Map-tab imports remain cache-aware. Local callers share the same active request;
+cloud job-history checks fail closed and include pagination. Expired monitoring
+tokens are renewed silently; repeated read failures are surfaced rather than
+reported as success.
+
+Live definition readback confirmed both notebook IDs, serial dependencies,
+pipeline concurrency=1 and forwarding of both refresh parameters. No new
+notebook, pipeline, schedule, source write or infrastructure is needed for this
+UI-only change. Deployment must use the canonical app-only path. No full
+national refresh is started implicitly while adding this control.

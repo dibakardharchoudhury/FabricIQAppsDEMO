@@ -101,6 +101,14 @@ completed base setup/seed/telemetry checkpoints. Subsequent source refreshes can
 be triggered from the Map tab or its dedicated pipeline; no recurring map
 schedule is enabled by deployment.
 
+After provisioning, **Administration → Update map data sources → Update all map
+data** runs the same notebook pipeline with `refresh_mode="all"` and
+`force_refresh=true`, bypassing the normal source cache. This is a user-initiated
+data update, not another app deployment. The section monitors existing runs and
+resumes persisted progress after reload; it never starts a parallel duplicate
+when an active run is found. The separate Map-tab import keeps its cache-aware
+default. A failed source or chat-publication step surfaces as a failed update.
+
 The optional energy import also publishes `geo_reservoir_areas` and
 `geo_market_asset_links` in the existing GeoContext Lakehouse, served by
 `HydroGeoReservoirAreas` and `HydroGeoMarketAssetLinks`. The same canonical
