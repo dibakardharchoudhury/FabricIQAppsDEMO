@@ -242,15 +242,21 @@ tenant and workspace selected in the sidebar:
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   stop before changing Rayfin state and print an administrator handoff. A deployment never ships
   with an empty SPA client ID.
-3. Reuse matching active Rayfin state for idempotent redeploys; otherwise move only the three
-  Rayfin state files into a unique temporary backup, then generate and validate a fresh ignored
-  `rayfin/.env`. Existing state is not deleted.
+3. Reuse matching active Rayfin state only when its generated API URL targets the workspace's
+  current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
+  into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
+  Existing state is not deleted.
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
-   and deploy static hosting, and apply the generated hosting origin to backend auth.
+   and deploy static hosting, apply the generated hosting origin to backend auth, then always
+   reapply AppBackend runtime/CORS settings and the DAB/SQL configuration. This also runs for an
+   unchanged hosting origin so managed-service restarts cannot leave stale runtime settings.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
-  and consent, then verify the live app returns HTML over HTTP 200. The final check
-  also reads the AppBackend from Fabric and verifies the SPA redirect, every delegated
-  scope, and its consent grant from Microsoft Graph. Missing SPA access, redirects,
+  and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
+  the generated API URL targets the current capacity/workspace/AppBackend and send
+  browser-equivalent CORS preflights to `/graphql` and `/api/auth/v1/token`. Backend warm-up is
+  retried with bounded backoff; missing CORS headers or an unhealthy data plane fails deployment.
+  The final check also verifies the SPA redirect, every delegated scope, and its consent grant from
+  Microsoft Graph. Missing SPA access, redirects,
   permissions, or consent are reported as **degraded-success warnings and do not fail the Fabric
   app deployment**. Browser sign-in and live Fabric data remain unavailable until corrected.
 6. Leave generated hosting-origin changes local. The web UI never commits or pushes Git changes.

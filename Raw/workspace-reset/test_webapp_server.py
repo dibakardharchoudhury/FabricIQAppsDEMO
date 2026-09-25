@@ -91,6 +91,16 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertNotIn("--client-id", start.call_args.args[0])
 
+    def test_deploy_progress_exposes_backend_sync_and_cors_readiness(self):
+        self.assertIn("Syncing backend settings", SERVER.DEPLOY_PHASES)
+        self.assertIn("Checking endpoint and CORS readiness", SERVER.DEPLOY_PHASES)
+
+    def test_deploy_page_explains_portable_backend_readiness_contract(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertIn("Workspace or capacity changes are detected automatically", page)
+        self.assertIn("/graphql", page)
+        self.assertIn("/api/auth/v1/token", page)
+
     def test_cancel_all_jobs_terminates_only_running_jobs(self):
         running = SERVER.Job(["Queued", "Done"])
         finished = SERVER.Job(["Queued", "Done"])

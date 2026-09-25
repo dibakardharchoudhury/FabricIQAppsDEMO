@@ -10,6 +10,11 @@ INSTRUCTION_FILES = (
     REPO_ROOT / ".github" / "prompts" / "deploy-fresh-tenant.prompt.md",
     REPO_ROOT / "HydroOperationsApp" / "DEPLOY.md",
 )
+RUNTIME_READINESS_FILES = (
+    REPO_ROOT / "AGENTS.md",
+    REPO_ROOT / ".github" / "copilot-instructions.md",
+    REPO_ROOT / ".github" / "prompts" / "deploy-fresh-tenant.prompt.md",
+)
 
 
 class AgentDeploymentContractTests(unittest.TestCase):
@@ -31,6 +36,15 @@ class AgentDeploymentContractTests(unittest.TestCase):
                 self.assertNotIn("FabricOntologyHydro", content)
                 self.assertNotIn("Remove-Item", content)
                 self.assertNotIn("→ delete it", content)
+
+    def test_agent_guidance_requires_portable_endpoint_and_cors_validation(self):
+        for file in RUNTIME_READINESS_FILES:
+            with self.subTest(file=file.relative_to(REPO_ROOT)):
+                content = file.read_text(encoding="utf-8")
+                self.assertIn("pbidedicated.windows.net", content)
+                self.assertIn("/graphql", content)
+                self.assertIn("/api/auth/v1/token", content)
+                self.assertIn("CORS", content)
 
 
 if __name__ == "__main__":

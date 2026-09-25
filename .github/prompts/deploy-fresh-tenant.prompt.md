@@ -31,7 +31,8 @@ requires both `DEPLOYED_APP_URL=<url>` and `SUCCESS: Hydro Operations is live at
 - **Same tenant, new workspace or region** → run the one-shot command; it reuses the tenant SPA and
   safely rotates only mismatched local Rayfin state into a temporary backup.
 - **Same tenant, same workspace** → run the same one-shot command; it reuses the healthy backend and
-  performs a static-only update before revalidating auth and the hosted page.
+  updates static content, reapplies backend runtime/CORS and SQL settings, then revalidates the
+  endpoint, browser preflights, auth, and hosted page.
 
 ## Source of truth — READ THESE FIRST, then follow them
 - [HydroOperationsApp/DEPLOY.md](../../HydroOperationsApp/DEPLOY.md) — the 9-step guide + the
@@ -68,7 +69,8 @@ Rayfin CLI. Agents must not wrap, nest, or reconstruct its Node/npm/Rayfin comma
 
 ## Orchestrator-owned phases (do not run separately)
 
-1. **(Re-deploy only) Rotate local Rayfin state.** Move only `rayfin/.env`,
+1. **(Re-deploy only) Validate or rotate local Rayfin state.** Resolve the workspace's current
+   capacity and reject saved `pbidedicated.windows.net` URLs that target another capacity. Move only `rayfin/.env`,
    `rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely created temporary backup.
    Do not delete files or directories. A stale `active` pointer in `.deployments.json` makes
    `rayfin up` **404 "workspace not found"** against the old endpoint.
@@ -87,7 +89,8 @@ Rayfin CLI. Agents must not wrap, nest, or reconstruct its Node/npm/Rayfin comma
 
 5. **Provision non-interactively.** Pass the resolved workspace ID to Rayfin, apply the SQL schema,
   and deploy static hosting. For an unchanged healthy target, reuse the backend and update static
-  hosting only. The resulting `*.webapp.fabricapps.net` origin is recorded in `rayfin.yml`.
+  hosting, then always reapply AppBackend runtime/CORS settings and DAB/SQL configuration. The
+  resulting `*.webapp.fabricapps.net` origin is recorded in `rayfin.yml`.
 
 6. **Configure the SPA through the orchestrator, not by clicking:**
    It reads `RAYFIN_PUBLIC_AAD_CLIENT_ID` / `TENANT_ID` from `rayfin/.env` and the hosting
@@ -107,7 +110,13 @@ Rayfin CLI. Agents must not wrap, nest, or reconstruct its Node/npm/Rayfin comma
    **KQL Database Viewer** on the Eventhouse, and add the app origin to the Eventhouse cluster's
    **CORS** allow-list. These only matter once `01_Pipe_Setup` has created the Eventhouse.
 
-8. **Finish** with DEPLOY.md Steps 1 (`01_Pipe_Setup` in Fabric), 7 (seed SQL + wire GraphQL via
+8. **Validate the actual data plane.** Do not accept hosted HTML alone. Confirm the generated API
+   URL contains the current capacity, workspace, and AppBackend ids, then require successful
+   browser-equivalent CORS preflights for `/graphql` and `/api/auth/v1/token`. Allow the
+   orchestrator's bounded warm-up retries; if either endpoint still lacks
+   `Access-Control-Allow-Origin` or the required request headers, deployment failed.
+
+9. **Finish** with DEPLOY.md Steps 1 (`01_Pipe_Setup` in Fabric), 7 (seed SQL + wire GraphQL via
    `RTI_011`), 8 (already covered by `setup-live-auth`), 9 (start the OPC-UA stream). A brand-new
    workspace is EMPTY of RTI artifacts, so live telemetry/STID panels stay blank until
    `01_Pipe_Setup` and the stream run.

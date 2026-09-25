@@ -340,10 +340,13 @@
         <span class="ico" style="background:rgba(52,211,153,.14);color:#6ee7b7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg></span>
         <h2>Deploy Hydro Operations app</h2>
       </div>
-      <p class="hint">Restores the locked Node 24/Rayfin dependencies, then deploys the backend, database, and website. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
+      <p class="hint">Resolves the selected tenant, workspace, and current capacity; safely repairs stale Rayfin state; then deploys and verifies the backend, database, and website. A browser sign-in opens if Rayfin is not already using the target tenant.</p>
       <aside class="notice" aria-label="Browser sign-in setup">
-        <strong>Browser sign-in setup</strong>
+        <strong>Portable deployment and browser readiness</strong>
         <ul>
+          <li>Workspace or capacity changes are detected automatically; generated API URLs are never copied between targets.</li>
+          <li>Every deploy reapplies AppBackend runtime/CORS settings and the SQL data configuration, including same-workspace redeploys.</li>
+          <li>Success requires working CORS preflights for both <code>/graphql</code> and <code>/api/auth/v1/token</code>; backend warm-up is retried automatically.</li>
           <li>The deployer registers the current app URL and requests the permissions needed for live Fabric data.</li>
           <li>A tenant administrator may need to approve those permissions.</li>
           <li>If no usable SPA client ID can be resolved, deployment stops before changing local Rayfin state.</li>

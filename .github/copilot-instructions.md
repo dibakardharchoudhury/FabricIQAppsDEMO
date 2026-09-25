@@ -21,6 +21,13 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
   `RAYFIN_PUBLIC_AAD_CLIENT_ID`; stop before changing Rayfin state and request the tenant SPA id.
 - Never delete deployment state. When changing targets, move only `rayfin/.env`,
   `rayfin/.env.local`, and `rayfin/.deployments.json` into a uniquely created temporary backup.
+- Never reuse or hardcode a generated `pbidedicated.windows.net` endpoint across workspaces,
+  capacities, regions, or tenants. The orchestrator compares saved state with the target
+  workspace's current capacity and rotates stale state automatically.
+- A routine same-workspace deploy is not static-only: the orchestrator must reapply AppBackend
+  runtime/CORS settings and DAB/SQL configuration, then validate browser-equivalent preflights for
+  `/graphql` and `/api/auth/v1/token`. Missing CORS headers or a stale endpoint is a hard failure;
+  do not bypass it or report success from the hosted HTML page alone.
 - The only genuinely manual step is creating the SPA app registration (`az ad app create`), because
   an app registration is tenant-scoped.
 

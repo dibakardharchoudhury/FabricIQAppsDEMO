@@ -19,8 +19,10 @@ Add `--client-id <spa-app-guid>` only when SPA discovery is ambiguous or the use
 provides a specific registration. The script dynamically resolves the workspace and
 SPA, validates required configuration, restores Node 24 dependencies, reuses or
 provisions Rayfin state, deploys the app, runs live-auth setup, preserves Entra SPA
-redirects, verifies permissions/consent, validates the hosted page, and persists the
-current generated hosting origin.
+redirects, verifies permissions/consent, detects capacity drift, reapplies AppBackend
+runtime/CORS and SQL settings, validates the generated capacity/workspace/AppBackend
+URL, checks browser preflights for `/graphql` and `/api/auth/v1/token`, and persists
+the current generated hosting origin.
 
 Mandatory rules:
 
@@ -29,9 +31,13 @@ Mandatory rules:
 - Never delete, reset, or broadly clean repository files or directories.
 - Never hand-edit generated `.env.local`, `.deployments.json`, or Entra redirect URIs.
 - Do not replace or recreate a tenant SPA when a valid client ID can be reused.
+- Never copy or hardcode a `pbidedicated.windows.net` URL. It is capacity-specific and
+  must be generated for the selected workspace by the orchestrator.
+- Do not work around AppBackend CORS in application code or the portal. The orchestrator
+  reapplies runtime settings and treats missing CORS headers as a failed deployment.
 - Stop if the orchestrator reports an unresolved prerequisite or administrator action.
 - A deployment is complete only when the orchestrator prints `SUCCESS` and
-  `DEPLOYED_APP_URL`, and its post-deployment checks pass.
+  `DEPLOYED_APP_URL`, after its endpoint-contract and AppBackend CORS checks pass.
 
 For a fresh tenant, the orchestrator attempts to discover or create the configurable
 SPA display-name convention (`HYDRO_SPA_DISPLAY_NAME`, default
