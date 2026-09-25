@@ -412,6 +412,18 @@ class RestTests(HelpersTest):
 
 
 class InstructionsAndModelsTests(HelpersTest):
+    def test_navigation_lookup_includes_requested_asset_facts(self):
+        examples = self.ns["FEWSHOTS"]
+        navigation = next(query for question, query in examples if "Adamselv for navigation" in question)
+        self.assertIn("e.installed_capacity_mw", navigation)
+        self.assertIn("e.owner", navigation)
+        self.assertIn("e.price_area", navigation)
+        plant_count = next(query for question, query in examples if "complete imported dataset" in question)
+        self.assertIn("COUNT_BIG(*)", plant_count)
+        self.assertIn("e.layer_id='hydro-plants'", plant_count)
+        self.assertNotIn("has_geometry", plant_count)
+        self.assertIn("omitted column is not evidence", self.ns["AI_INSTRUCTIONS"])
+
     def test_grounding_freshness_viewport_and_untrusted_provider_constraints(self):
         instructions = self.ns["AI_INSTRUCTIONS"]
         for requirement in (

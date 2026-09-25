@@ -179,6 +179,8 @@ request its refresh; do not claim current numbers or emit navigation advice from
 a stale/incomplete projection. On missing tables, access errors, state='building',
 or unavailable source data, state the limitation. Never invent a successful query.
 Use returned facts and source/observation/ingestion times; cite your scope and as-of.
+If a lookup omitted a requested column, run a follow-up SELECT for that column.
+An omitted column is not evidence that its stored value is unavailable.
 No web search, outside sources, filesystem access, arbitrary URLs or generated writes.
 
 DATASET VERSUS CURRENT VIEW
@@ -198,8 +200,12 @@ reproduced filter, or only the supplied visible sample. If exact view reproducti
 is not possible, say so rather than inventing counts.
 
 MEANING AND UNITS
-record_kind='asset' identifies real network and hydro assets. Hydro installed MW,
-gross head in metres, operation flag/status and 1991-2020 mean annual GWh are
+record_kind='asset' identifies real network and hydro assets.
+Hydropower plants use layer_id='hydro-plants'; transformer substations use
+layer_id='transformers'. Both have record_kind='asset'. A complete hydropower
+count is COUNT_BIG(*) with those predicates and no geometry or viewport filter.
+The installed_capacity_mw column is selected and queryable for hydropower plants.
+Hydro installed MW, gross head in metres, operation flag/status and 1991-2020 mean annual GWh are
 registry attributes; mean annual production is NOT current generation.
 Transformer voltage_kv is voltage, NOT MW/MVA capacity. Actual transformer capacity
 is UNKNOWN; never infer it from kV, network level, labels, size or nearby assets.
@@ -269,7 +275,11 @@ FEWSHOTS = (
     ("How many imported assets are there in each layer, not just visible rows?",
      f"SELECT e.layer_id, COUNT_BIG(*) AS asset_count FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.record_kind='asset' GROUP BY e.layer_id;"),
     ("Find Adamselv for navigation without guessing an identifier.",
-     f"SELECT TOP (21) e.feature_id,e.layer_id,e.label,e.owner,e.price_area,e.is_navigable FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.record_kind='asset' AND LOWER(e.label)=LOWER(N'Adamselv') ORDER BY e.label,e.owner,e.feature_id;"),
+     f"SELECT TOP (21) e.feature_id,e.layer_id,e.label,e.owner,e.installed_capacity_mw,e.price_area,e.in_operation,e.plant_status,e.gross_head_m,e.voltage_kv,e.is_navigable FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.record_kind='asset' AND LOWER(e.label)=LOWER(N'Adamselv') ORDER BY e.label,e.owner,e.feature_id;"),
+    ("How many hydropower plants are in the complete imported dataset, including unmapped plants?",
+     f"SELECT COUNT_BIG(*) AS hydropower_plant_count FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.record_kind='asset' AND e.layer_id='hydro-plants';"),
+    ("What is the installed capacity in MW of the Adamselv hydropower plant?",
+     f"SELECT e.feature_id,e.label,e.owner,e.installed_capacity_mw,e.price_area,e.observed_at_utc FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.layer_id='hydro-plants' AND LOWER(e.label)=LOWER(N'Adamselv');"),
     ("Find the verified NO2 price-area target.",
      f"SELECT e.feature_id,e.layer_id,e.label,e.is_navigable FROM dbo.{ENTITY_TABLE} e JOIN dbo.{STATE_TABLE} s ON e.read_model_run_id=s.read_model_run_id AND s.state='ready' WHERE e.record_kind='reservoir_area' AND e.area_kind='price_area' AND e.area_code='NO2';"),
     ("Which reservoir areas have measurements from this source?",

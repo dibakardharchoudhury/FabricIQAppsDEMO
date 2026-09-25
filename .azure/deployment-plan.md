@@ -721,3 +721,15 @@ Feature API GETs now retry that same read up to twice; uncertain writes are neve
 retried. The durable job checkpoint is retained, and an unchanged failed map
 publisher cannot be silently resubmitted. Agent/bootstrap regression coverage
 includes these transport and failure-resume cases.
+
+The publisher then completed and the app was deployed as
+`deploy-20260925101127-1e991814`. SQL readback confirmed 831,258 typed entity
+records, 199 links and ready run `5bc2e725-341d-4772-b2ce-f4b91449036a`.
+Post-publication natural-language checks exposed a prompt/schema mismatch:
+the SQL-grounded agent was given KQL view text, and its navigation example
+omitted requested capacity columns. The client now provides concise typed SQL
+schema hints instead of KQL, and the publisher's examples include capacity and
+explicit full-dataset plant counts. An independent SQL query confirmed Adamselv
+is 50 MW and the projection contains 2,010 plant rows. Final natural-language
+verification is repeated after this correction, not inferred from deployment
+success or the state-table canary alone.
