@@ -315,8 +315,15 @@ npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploy
 
 The local **Deploy app** action uses this static-only command when its saved AppBackend still exists
 in the selected workspace. It runs full `rayfin up` for a fresh or changed target, and updates the
-backend after static deployment only when the generated hosting origin was not already registered.
-This preserves full new-workspace provisioning while keeping routine code redeploys short.
+backend after every static deployment, even when the generated hosting origin was already
+registered. This reapplies persisted runtime/CORS settings and the database configuration after a
+managed-service restart.
+
+The one-shot orchestrator does not report `SUCCESS` from the hosted HTML page alone. It also checks
+that the generated API URL contains the workspace's current capacity, workspace, and AppBackend
+ids, then sends browser-equivalent CORS preflights to both `/graphql` and
+`/api/auth/v1/token`. Transient backend warm-up responses are retried with bounded backoff; missing
+`Access-Control-Allow-Origin` or required headers remains a deployment failure.
 
 The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
 `services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run

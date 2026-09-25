@@ -17,9 +17,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, TypeVar
+from urllib.parse import urlparse
 
 import requests
 
@@ -39,6 +41,8 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
+APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token")
+APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": {"user_impersonation"},
     "00000009-0000-0000-c000-000000000000": {
@@ -747,6 +751,95 @@ def rayfin_api_targets_capacity(
     return all(expected_path in url.casefold() for url in urls)
 
 
+def validate_rayfin_endpoint_contract(
+    capacity_id: str, workspace_id: str, item_id: str
+) -> str:
+    values, deployment = current_rayfin_target()
+    env_url = values.get("RAYFIN_PUBLIC_API_URL", "").rstrip("/")
+    deployment_url = str((deployment or {}).get("fabricApiUrl") or "").rstrip("/")
+    if not env_url or env_url != deployment_url:
+        raise DeployError(
+            "Rayfin endpoint validation failed: rayfin/.env and deployment state do not "
+            "contain the same API URL."
+        )
+
+    parsed = urlparse(env_url)
+    expected_host = f"{capacity_id.replace('-', '').casefold()}.pbidedicated.windows.net"
+    expected_path = (
+        f"/webapi/capacities/{capacity_id.casefold()}/workloads/baas/baasservice/"
+        f"automatic/v1/workspaces/{workspace_id.casefold()}/appbackends/{item_id.casefold()}"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != expected_host
+        or parsed.path.rstrip("/").casefold() != expected_path
+    ):
+        raise DeployError(
+            "Rayfin endpoint validation failed: generated API URL does not target the current "
+            f"capacity/workspace/AppBackend ({capacity_id}/{workspace_id}/{item_id}). "
+            f"Found: {env_url or '(missing)'}"
+        )
+    print("Validated Rayfin endpoint against the current Fabric deployment.", flush=True)
+    return env_url
+
+
+def validate_appbackend_cors(api_url: str, hosting_url: str) -> None:
+    origin = urlparse(hosting_url).scheme + "://" + str(urlparse(hosting_url).netloc)
+    headers = {
+        "Origin": origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,x-publishable-key",
+    }
+    failures: list[str] = []
+    for path in APPBACKEND_CORS_PATHS:
+        last_failure = "no response"
+        for delay in APPBACKEND_READINESS_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                response = requests.options(
+                    f"{api_url}{path}",
+                    headers=headers,
+                    timeout=60,
+                )
+                allow_origin = response.headers.get("Access-Control-Allow-Origin", "")
+                allow_headers = {
+                    value.strip().casefold()
+                    for value in response.headers.get(
+                        "Access-Control-Allow-Headers", ""
+                    ).split(",")
+                    if value.strip()
+                }
+                required_headers = {"authorization", "content-type", "x-publishable-key"}
+                if (
+                    200 <= response.status_code < 300
+                    and allow_origin in {"*", origin}
+                    and required_headers.issubset(allow_headers)
+                ):
+                    print(
+                        f"Validated AppBackend CORS preflight: {path} "
+                        f"(HTTP {response.status_code}, origin {allow_origin}).",
+                        flush=True,
+                    )
+                    break
+                last_failure = (
+                    f"HTTP {response.status_code}; Access-Control-Allow-Origin="
+                    f"{allow_origin or '(missing)'}; Access-Control-Allow-Headers="
+                    f"{response.headers.get('Access-Control-Allow-Headers', '(missing)')}"
+                )
+            except requests.RequestException as exc:
+                last_failure = str(exc)
+        else:
+            failures.append(f"- {path}: {last_failure}")
+
+    if failures:
+        raise DeployError(
+            "AppBackend browser readiness failed after runtime settings were reapplied:\n"
+            + "\n".join(failures)
+            + "\nThe deployment is not healthy; do not treat the hosted HTML page as success."
+        )
+
+
 def prepare_rayfin_env(
     tenant: str,
     workspace_id: str,
@@ -1219,16 +1312,18 @@ def deploy(args: argparse.Namespace) -> None:
         f"Rayfin redirect configuration now contains {len(rayfin_redirects)} URI(s).",
         flush=True,
     )
-    if hosting_url not in original_entra_redirects:
-        run_stream(
-            rayfin24(
-                "up", "--workspace-id", workspace_id,
-                "--exclude-services", "staticHosting", "--yes",
-            ),
-            cwd=APP_DIR,
-        )
-    else:
-        print("Hosting origin is already configured; skipping backend reprovisioning.", flush=True)
+    print(
+        "Reapplying backend runtime settings and database configuration so managed-service "
+        "restarts cannot retain stale CORS state.",
+        flush=True,
+    )
+    run_stream(
+        rayfin24(
+            "up", "--workspace-id", workspace_id,
+            "--exclude-services", "staticHosting", "--yes",
+        ),
+        cwd=APP_DIR,
+    )
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
@@ -1256,7 +1351,9 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    validate_fabric_app(workspace_id, args.tenant)
+    item_id = validate_fabric_app(workspace_id, args.tenant)
+    api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
+    validate_appbackend_cors(api_url, hosting_url)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
