@@ -371,6 +371,45 @@ class RestTests(HelpersTest):
         self.assertTrue(api.session.request.call_args.args[1].endswith("/result"))
         self.assertTrue(all(call.args[0] == "GET" for call in api.session.request.call_args_list))
 
+    def test_lro_uses_operation_id_instead_of_the_backend_location(self):
+        api = self.api(Mock(request=Mock(side_effect=[
+            Response({"status": "Succeeded"}), Response({"definition": {"parts": []}}),
+        ])))
+        response = Response(status=202, headers={
+            "x-ms-operation-id": OPERATION,
+            "Location": f"https://wabi-regional-backend.analysis.windows.net/v1/operations/{OPERATION}",
+        })
+        api.wait_operation(response, result=True)
+        self.assertTrue(response.closed)
+        self.assertEqual([call.args[1] for call in api.session.request.call_args_list], [
+            f"{self.ns['FABRIC_BASE']}/v1/operations/{OPERATION}",
+            f"{self.ns['FABRIC_BASE']}/v1/operations/{OPERATION}/result",
+        ])
+        self.assertTrue(all(call.kwargs["headers"]["x-ms-fabric-skill"] == "spark-cli"
+                            for call in api.session.request.call_args_list))
+
+    def test_lro_supports_canonical_operation_location_header(self):
+        api = self.api(Mock(request=Mock(return_value=Response({"status": "Succeeded"}))))
+        api.wait_operation(Response(status=202, headers={"Operation-Location": f"/v1/operations/{OPERATION}"}))
+        self.assertEqual(api.session.request.call_args.args[1], f"{self.ns['FABRIC_BASE']}/v1/operations/{OPERATION}")
+
+    def test_lro_never_forwards_credentials_to_backend_without_operation_id(self):
+        api = self.api()
+        with self.assertRaisesRegex(self.error, "non-Fabric"):
+            api.wait_operation(Response(status=202, headers={
+                "Location": f"https://wabi-regional-backend.analysis.windows.net/v1/operations/{OPERATION}",
+            }))
+        api.session.request.assert_not_called()
+
+    def test_invalid_operation_id_never_falls_back_to_location(self):
+        api = self.api()
+        with self.assertRaisesRegex(self.error, "operation ID"):
+            api.wait_operation(Response(status=202, headers={
+                "x-ms-operation-id": "../other",
+                "Location": f"{self.ns['FABRIC_BASE']}/v1/operations/{OPERATION}",
+            }))
+        api.session.request.assert_not_called()
+
 
 class InstructionsAndModelsTests(HelpersTest):
     def test_grounding_freshness_viewport_and_untrusted_provider_constraints(self):

@@ -153,6 +153,14 @@ Service references:
   verification and actual grounding canary pass.
 - Same tenant/subscription, F4 Active; no overlapping map ingestion jobs.
   Azure resources, credentials, role assignments and Git isolation are unchanged.
+- Initial cloud execution created the owned draft agent but stopped at definition
+  polling: Fabric returned a backend `Location`, which the credential guard
+  correctly refused. The notebook now resolves `x-ms-operation-id` to the
+  canonical Fabric operation endpoint, matching repository prior art.
+- Revalidation on 2026-09-25: 64 agent/bootstrap tests passed, including backend
+  location rejection without an operation ID, canonical result polling and
+  malformed-ID refusal. A real read-only definition request successfully returned
+  the draft through the canonical `/v1/operations/{id}/result` endpoint.
 
 ### Country-balance tile (2026-09-24T14:21Z)
 
@@ -700,3 +708,9 @@ Fresh frequency is fetched on demand only for frequency questions.
 The existing Fabric Data Agent answered a live readiness question. The dedicated
 agent's publication and data-grounding canary remain live deployment gates.
 No new Azure resource, secret, role, capacity or Fabric Git connection is required.
+
+Initial Geo002 run `0817c5b5-572d-4da7-8408-3456d32b7f05` failed at LRO URL
+handling before projection writes or app publication. The owned draft agent is
+`edee345d-ed8d-4726-a22b-099e8f004cbc`; it will be reused, not replaced. The
+corrected notebook retains strict credential-destination checks. Chat is not yet
+declared deployed until the canonical retry and grounding checks succeed.

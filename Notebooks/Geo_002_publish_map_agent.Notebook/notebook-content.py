@@ -652,10 +652,19 @@ class FabricMapAgentAPI:
         raise ProvisioningError("Discovery page budget exceeded")
 
     def wait_operation(self, response, result=False):
-        operation = response.headers.get("Location")
+        operation_id = response.headers.get("x-ms-operation-id")
+        location = response.headers.get("Location") or response.headers.get("Operation-Location")
         response.close()
-        if not operation or not re.fullmatch(r"/v1/operations/[0-9a-fA-F-]{36}", urlsplit(self.checked_url(operation)).path):
-            raise ProvisioningError("202 response did not include a valid Fabric operation location")
+        if operation_id:
+            operation = f"{FABRIC_BASE}/v1/operations/{guid(operation_id, 'Fabric operation ID')}"
+        else:
+            if not location:
+                raise ProvisioningError("202 response did not include a valid Fabric operation location")
+            parsed = urlsplit(self.checked_url(location))
+            match = re.fullmatch(r"/v1/operations/([0-9a-fA-F-]{36})/?", parsed.path)
+            if not match or parsed.query:
+                raise ProvisioningError("202 response did not include a valid Fabric operation location")
+            operation = f"{FABRIC_BASE}/v1/operations/{guid(match[1], 'Fabric operation ID')}"
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             body = self.get(operation)
