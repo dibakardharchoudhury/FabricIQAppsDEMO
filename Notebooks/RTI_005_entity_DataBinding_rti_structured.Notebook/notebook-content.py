@@ -21,10 +21,6 @@
 # META   }
 # META }
 
-# V2-only: existing v1 items require a separate replacement; no in-place conversion.
-# Reruns retain identities, bindings and custom content. Conflicting structural/source
-# changes fail before update. Output parts are published only after service readback.
-
 # CELL ********************
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -71,6 +71,11 @@ Shared authoring helpers are maintained in
 [`ontology_notebook_support.py`](Raw/workspace-reset/ontology_notebook_support.py).
 After changing them, run `python Raw\workspace-reset\sync_ontology_notebooks.py --sync`
 from the repository root to refresh only the canonical 004/005/006 embedded copies and Raw mirrors.
+
+Keep notebook prose inside a `CELL` or `MARKDOWN` section. Fabric `METADATA` sections must
+contain only `# META`-prefixed JSON and blank lines until the next section marker; ordinary
+Python comments there cause Git sync `PyToIPynbFailure`, even when Python compilation passes.
+The ontology setup contract tests validate this boundary across all canonical notebooks.
 Run the same command with `--check` to verify distribution without writing files.
 
 ## One lever: `env_suffix`

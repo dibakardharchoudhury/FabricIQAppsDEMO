@@ -41,6 +41,31 @@ def code_cells(text):
 
 
 class OntologySetupContractTests(unittest.TestCase):
+    def test_fabric_metadata_sections_contain_only_meta_json(self):
+        notebooks = sorted((ROOT / "Notebooks").glob("*.Notebook/notebook-content.py"))
+        self.assertTrue(notebooks)
+        pattern = (
+            r"(?ms)^# METADATA \*+[^\S\n]*\n(.*?)"
+            r"(?=^# (?:METADATA|CELL|PARAMETERS CELL|MARKDOWN) \*+[^\S\n]*$|\Z)"
+        )
+        for path in notebooks:
+            text = path.read_text(encoding="utf-8")
+            sections = list(re.finditer(pattern, text))
+            with self.subTest(notebook=path.parent.name):
+                self.assertTrue(sections, "Missing Fabric metadata section")
+            for section in sections:
+                line_number = text.count("\n", 0, section.start()) + 1
+                with self.subTest(notebook=path.parent.name, metadata_line=line_number):
+                    lines = [line for line in section[1].splitlines() if line.strip()]
+                    self.assertTrue(lines, "Empty Fabric metadata section")
+                    invalid = [line for line in lines if not line.startswith("# META ")]
+                    self.assertEqual(
+                        invalid, [],
+                        "Fabric metadata accepts only # META JSON; put prose inside a cell",
+                    )
+                    metadata = json.loads("\n".join(line[len("# META "):] for line in lines))
+                    self.assertIsInstance(metadata, dict)
+
     def test_agent_stages_wait_for_complete_binding_not_each_other(self):
         tree = ast.parse(source(ORCHESTRATOR))
         assignment = next(
