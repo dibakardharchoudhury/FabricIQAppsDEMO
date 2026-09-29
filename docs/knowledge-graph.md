@@ -254,27 +254,55 @@ describes current entities, relationships, and optional observation snapshots.
    2,000-node/4,000-edge boundaries. Verify native canvas/tree/scopes work with GraphQL unavailable.
 
 Current live acceptance is restricted to **ws-vteam-demoV3** in tenant
-`ad340c84-1886-4202-a483-2da2cb9168eb`. At the September 30, 2026 checkpoint, 65 graph tests,
-app TypeScript checking, lint, environment validation, and the production build pass; the only
-build warning is the existing bundle exceeding 500 KB.
+`ad340c84-1886-4202-a483-2da2cb9168eb`, workspace `9c73201e-b2e5-48eb-81b9-3526d320faca`.
+At the September 30, 2026 checkpoint, **74 Python ontology tests and 65 app graph tests pass**,
+as do app typecheck, lint, environment validation, and the production build. The only build warning
+is the existing bundle exceeding 500 KB. Feature commit `befefab` was pushed; `main` was untouched.
 
-V3 live run `b6f0e647-fd13-4164-92bd-9ccbb60d05d2` in workspace
-`9c73201e-b2e5-48eb-81b9-3526d320faca` failed **after** creating a verified generation-2 ontology
+V3 live run `b6f0e647-fd13-4164-92bd-9ccbb60d05d2` failed **after** creating a verified generation-2 ontology
 and applying static/time-series bindings. NB10 failed with `DELTA_CONCURRENT_APPEND` in
 `persist_agent_status` while NB09 wrote the same `rti_demo_settings` table. The correction serializes
 the shared status writes as **NB06 → NB09 → NB10**. Exact live definition readback verified the DAG
-change while preserving all metadata; the existing full pipeline retry is still running.
+change while preserving all metadata.
 
-**Interim evidence, not a finalized live acceptance result:** the ontology-associated candidate
-GraphModel returned HTTP **204 No Content** from `getQueryableGraphType?beta=true`, confirming it
-was not query-ready at that read. The app reports this explicitly as a readiness error. No ownership
-metadata field has been verified, and the candidate's name is not proof of association.
-The Fabric browser session is authenticated and the real Manage graph workflow is under
-investigation. Local validation reports 74 passing Python ontology tests and 65 passing app graph
-tests, plus passing lint/typecheck/build. Await the pipeline rerun and native query results before
-finalizing acceptance. Native end-to-end behavior remains unverified; these checks, artifact
-observations, and historical screenshots do not certify live graph readiness. No app deployment
-is claimed.
+**Verified live subset:** the v2 ontology parsed as five entities and four semantic relationships.
+Second run `434a4d00-c22b-47ce-8a9f-330b97c12068` passed the complete notebook DAG,
+`_require_successful_dag`, and `_report_agent_capabilities`, including serialized NB09/NB10 status
+writes. Core ontology authoring, static/time-series bindings, and capability gates succeeded.
+This does not establish optional agent runtime readiness.
+
+**Full setup failed on a separate weather prerequisite:** the second run then failed in
+`_activate_weather_schedule` with `Expected one provisioned Weather schedule, found 0`. The imported
+workspace lacked the sync workflow's post-import weather bootstrap. The existing
+`configure_weather_schedule` helper restored exactly one schedule, verified **disabled**.
+The existing `configure_weather_assets` helper was also attempted, but stopped with HTTP 400
+`EnvironmentValidationFailed`: the Weather Environment was already publishing. Its observed
+`publishDetails.state` remained `Running` since `2026-09-29T22:25:54Z`, with `sparkLibraries`
+`Cancelled` and `sparkSettings` `Success`. The existing publish was not cancelled or reset,
+and the schedule was not enabled. **The full pipeline is not successful or certified.**
+
+**Native graph acceptance remains blocked:** a candidate GraphModel appeared, but
+`GET getQueryableGraphType?beta=true` returned HTTP **204 No Content**, confirming it was not
+query-ready at that read. No managed-graph binding or materialization has been verified; neither
+the candidate's name nor its appearance establishes ownership. The authenticated Fabric portal's
+ontology editor never loaded after retry. Ontology MCP tool discovery succeeded but exposed only
+`list_ontology_entities` and `list_ontology_rules`, not a graph materialization operation.
+No app deployment, hosted-app success, or native GQL success is claimed.
+
+Remaining acceptance actions:
+
+1. Resolve the Weather Environment publishing prerequisite through supported product/operator
+   workflows, then complete the existing weather bootstrap and rerun the full setup pipeline.
+   The disabled schedule and successful notebook DAG are not substitutes for a successful full run.
+2. Restore access to the selected ontology's editor and complete **Manage graph → select eligible
+   entities/relationships → Continue → Materialize**. No undocumented REST or MCP materialization
+   endpoint is assumed.
+3. Establish the explicit managed-graph binding through that selected-ontology workflow, validate
+   live queryable types/endpoints, and obtain complete native GQL results before certifying graph
+   behavior. Do not infer association from names or substitute STID/FK topology.
+4. Only after prerequisites are resolved and deployment is authorized, use the repository
+   orchestrator and its deployment checks; separately verify hosted native canvas/tree/scopes
+   and enrichment. Local tests and historical screenshots do not certify live end-to-end readiness.
 
 ## Key implementation files
 
