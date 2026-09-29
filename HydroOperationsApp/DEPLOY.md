@@ -74,6 +74,10 @@ validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA set
 preservation, permission/consent checks, hosted-page verification, and generated-origin persistence.
 The remaining numbered sections document those phases for operators and troubleshooting.
 
+The repository pins Rayfin CLI **1.36.0**. The current Fabric static-hosting service rejects the
+older 1.33.2 CLI with a runtime-settings HTTP 400 requiring at least 1.35.0-alpha.1413.
+Use the locked repository dependency through the orchestrator, not an older globally installed CLI.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform

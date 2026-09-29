@@ -48,7 +48,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@microsoft/rayfin-cli": "1.33.2",
+    "@microsoft/rayfin-cli": "1.36.0",
     "@microsoft/rayfin-core": "^1.33.2",
     "@types/node": "^24.13.2",
     "@types/papaparse": "^5.5.2",
