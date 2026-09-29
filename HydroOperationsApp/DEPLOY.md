@@ -21,7 +21,41 @@ the current v2 rollout, and Operations Agent automation is blocked pending a ver
 contract. Data Agent `enabled` attempts real configuration with source-identity/readback checks;
 Operations Agent `enabled` fails before writes. `disabled` skips the respective capability.
 See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
-The deployment orchestrator's `SUCCESS` verifies app deployment, not optional agent execution.
+The deployment orchestrator's `SUCCESS` verifies app deployment, not optional agent execution or
+native graph readiness.
+
+### Native graph prerequisite (manual portal operation)
+
+In the selected generation-2 ontology choose **Manage graph → select eligible entities and
+relationships → Continue → Materialize**. Graph sources require keys and Delta/mirrored bindings.
+Multi-backing-table `signal_master` may be ineligible; native instruments still receive KQL telemetry.
+No published ontology-owned projection/materialization REST endpoint is established, so the
+orchestrator does not promise fully unattended native graph deployment.
+
+Before building the app, configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` as JSON with
+`workspaceId`, `ontologyId`, and `graphModelId` for that managed graph. In `.env`, single-quote the
+complete JSON value:
+
+```dotenv
+RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<workspace-guid>","ontologyId":"<ontology-guid>","graphModelId":"<managed-graph-guid>"}'
+```
+
+Keep those outer single quotes when adding alias maps: an unquoted `#` starts a dotenv comment,
+including inside JSON double quotes, and can truncate exact ontology names containing `#`.
+The outer quotes are removed by dotenv and are not part of the JSON.
+Optional `nodeTypes` and
+`edgeTypes` maps resolve `getQueryableGraphType` aliases to exact ontology type names or IDs when
+projected labels differ. Do not guess a namespace-label delimiter. Public REST metadata does not
+expose the ownership association; graph names, sole-graph discovery, and structural similarity
+are not substitutes for an operator-confirmed binding through the selected ontology.
+
+The app validates live numeric generation `2`, TMDL, graph metadata, queryable types/endpoints, and
+native responses using GET `graphModels/{id}/getQueryableGraphType?beta=true` and POST
+`graphModels/{id}/executeQuery?beta=true` under the workspace REST path. It follows opaque string
+`result.nextPage` continuations and rejects warnings/errors, truncation, malformed/dangling results,
+or more than 2,000 nodes/4,000 edges. Native topology alone drives graph canvas/tree/scopes;
+KQL/SQL enrich actual native entities, with no GraphQL or STID/FK topology fallback.
+See [the graph contract and acceptance checks](../docs/knowledge-graph.md).
 
 ## Agent one-shot deployment
 
@@ -60,8 +94,9 @@ The remaining numbered sections document those phases for operators and troubles
 
 Find your row — it tells you exactly what to run. A workspace always belongs to one tenant, so
 “new tenant” means its workspaces are new to you as well. The only two things that change between
-scenarios are **whether the SPA app registration already exists** (app regs are tenant‑scoped) and
-**whether Rayfin's local state must be reset** (when the target workspace changes).
+hosting scenarios are **whether the SPA app registration already exists** (app regs are tenant‑scoped)
+and **whether Rayfin's local state must be reset** (when the target workspace changes). Separately,
+every target needs its own ontology-managed graph and matching explicit binding for graph features.
 
 | Your situation | SPA app registration | Local Rayfin state | Do this |
 |---|---|---|---|
@@ -341,10 +376,14 @@ backend warm-up and token HTTP 5xx responses are retried with bounded backoff; m
 `Access-Control-Allow-Origin`, required headers, GraphQL readiness, or persistent token 5xx remains
 a deployment failure.
 
-The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
-`services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run
-`npm run up` — both Rayfin sign‑in and Step 8 read the allowed origins from there. The app is now live
-with empty operational tables and no STID binding yet.
+The orchestrator records the generated **hosting URL** and runs the idempotent `setup-live-auth`
+workflow. It preserves every existing Entra SPA redirect registration and adds only the current
+hosting origin plus `localhost:5173`; never remove existing registrations or recreate historical
+origins merely because they remain in local configuration. Do not hand-edit `rayfin/rayfin.yml`
+`allowedRedirectUris` or run a separate `npm run up` to configure redirects. Manual portal changes
+are permitted only for the exact prerequisite action the script reports it lacks rights to perform.
+After successful deployment checks, a fresh app still needs operational seeding and STID binding
+through Step 7; hosting success does not establish native graph readiness.
 
 ## 7. Seed & provision (RTI_011)
 

@@ -66,7 +66,7 @@ class OntologySetupContractTests(unittest.TestCase):
                     metadata = json.loads("\n".join(line[len("# META "):] for line in lines))
                     self.assertIsInstance(metadata, dict)
 
-    def test_agent_stages_wait_for_complete_binding_not_each_other(self):
+    def test_agent_status_writes_are_serialized_after_complete_binding(self):
         tree = ast.parse(source(ORCHESTRATOR))
         assignment = next(
             node for node in tree.body if isinstance(node, ast.Assign)
@@ -75,9 +75,12 @@ class OntologySetupContractTests(unittest.TestCase):
         namespace = {"_lh": {"useRootDefaultLakehouse": True}, "per_notebook_timeout_secs": 3600}
         exec(compile(ast.Module(body=[assignment], type_ignores=[]), ORCHESTRATOR, "exec"), namespace)
         activities = {activity["name"]: activity for activity in namespace["setup_dag"]["activities"]}
+        self.assertEqual(activities["NB09_dataagent"]["dependencies"], ["NB06_tsbind"])
+        self.assertEqual(activities["NB10_opsagent"]["dependencies"], ["NB09_dataagent"])
         for name in ("NB09_dataagent", "NB10_opsagent"):
-            self.assertEqual(activities[name]["dependencies"], ["NB06_tsbind"])
             self.assertTrue(activities[name]["args"]["useRootDefaultLakehouse"])
+        self.assertEqual(activities["NBW01_weather"]["dependencies"], [])
+        self.assertGreater(namespace["setup_dag"]["concurrency"], 1)
 
     def test_rebinding_replaces_all_foreign_lakehouse_references(self):
         for name in SETUP_NAMES:

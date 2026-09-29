@@ -22,7 +22,18 @@ Report core setup, app hosting/auth, and optional agent readiness separately. Da
 reports the current v2 onboarding block; explicit enablement requires verified v2 source identities.
 Operations Agent automation is blocked until a verified v2 playbook contract is implemented and
 never reuses the old playbook. SQL/GraphQL can complete without either agent. The orchestrator's
-`SUCCESS` marker certifies its deployment checks, not ontology provisioning or agent execution.
+`SUCCESS` marker certifies its deployment checks, not ontology provisioning, native graph readiness,
+or agent execution.
+
+Native graph features require a manual prerequisite in the selected ontology: **Manage graph →
+select eligible entities/relationships → Continue → Materialize**. Configure
+`RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON with `workspaceId`, `ontologyId`, and `graphModelId`;
+optional `nodeTypes`/`edgeTypes` map queryable aliases to exact ontology type names/IDs.
+Public REST metadata does not expose ownership. Never infer it from names, a sole graph, or
+structural similarity; never guess a namespace-label delimiter. No published ontology-owned
+materialization REST endpoint is established, so do not promise fully unattended graph deployment.
+Native topology drives canvas/tree/scopes independently of GraphQL/STID; KQL/SQL only enrich actual
+native entities. See [the native graph contract](../../docs/knowledge-graph.md).
 
 ## Mandatory one-shot command
 

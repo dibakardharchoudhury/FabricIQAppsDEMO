@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract, type DefinitionPart } from '../src/services/ontologyContract.ts'
-import { selectOntology, V2_GRAPH_UNAVAILABLE } from '../src/services/ontologyArtifactDiscovery.ts'
+import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 import { createOntologyCache } from '../src/services/ontologyCache.ts'
 import { discoverOntology } from '../src/services/ontologyDiscovery.ts'
 import { buildKnowledgeGraph } from '../src/ui-shared/knowledgeGraphModel.ts'
@@ -242,7 +242,7 @@ entityRelationship unbound
 `)])
   assert.equal(contract.relationshipTypes.length, 2)
   assert.ok(contract.relationshipTypes.every(relationship => relationship.compatibilityUnsupported))
-  assert.match(contract.warnings!.join(' '), /not rendered/)
+  assert.match(contract.warnings!.join(' '), /Only materialized native graph instances/)
 })
 
 const graphInput = {
@@ -250,21 +250,31 @@ const graphInput = {
   systems: [{ system_id: 'S1', facility_id: 'F1' }],
   equipment: [], instruments: [], telemetry: [], workOrders: [], inspections: [], notifications: [], models: [],
 }
-test('v2 custom namespace joins Hydro backing tables; absent semantic edges and ambiguous roles do not invent topology', () => {
+test('v2 topology requires native results and does not reconstruct custom namespace edges from table joins', () => {
   const ontology = parse(hydro)
-  const graph = buildKnowledgeGraph({ ...graphInput, ontology })
+  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology }).nodes.length, 0)
+  const ontologyGraph = {
+    ontologyId: ontology.id, graphModelId: 'native', graphModelName: 'Verified v2 projection',
+    nodes: [
+      { oid: 'native-f', labels: ['actual-f-label'], entityTypeId: ontology.entityTypes[0].id, properties: { facility_id: 'F2', facility_name: 'Native station' } },
+      { oid: 'native-s', labels: ['actual-s-label'], entityTypeId: ontology.entityTypes[1].id, properties: { system_id: 'S2', facility_id: 'not-F2' } },
+    ],
+    edges: [{
+      oid: 'native-edge', labels: ['actual-edge-label'], relationshipTypeId: ontology.relationshipTypes[0].id,
+      sourceOid: 'native-s', targetOid: 'native-f', properties: {},
+    }],
+  }
+  const graph = buildKnowledgeGraph({ ...graphInput, ontology, ontologyGraph })
+  assert.equal(graph.nodes.length, 2)
   assert.equal(graph.edges.length, 1)
   assert.equal(graph.edges[0].ontologyRelationshipId, 'hydro#Systems in facilities')
-  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology: parse([facility, system, physical]) }).edges.length, 0)
-  const ambiguous = { ...ontology, entityTypes: [...ontology.entityTypes, { ...ontology.entityTypes[1], id: 'other', name: 'other#systems' }] }
-  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology: ambiguous }).edges.length, 0)
+  assert.ok(graph.nodes.every(node => !['F1', 'S1'].includes(node.entityId)))
   const wrongJoin = { ...ontology, relationshipTypes: ontology.relationshipTypes.map(item => ({ ...item, sourceKeys: ['system_id'] })) }
-  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology: wrongJoin }).edges.length, 0)
+  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology: wrongJoin, ontologyGraph }).edges.length, 1)
 })
 
 test('configured Ontology name cannot fall back to an unrelated item', () => {
   assert.equal(selectOntology([{ id: 'wrong', type: 'Ontology', displayName: 'Other' }], 'Requested'), undefined)
-  assert.match(V2_GRAPH_UNAVAILABLE, /unrelated workspace Graph Models will not be queried/)
 })
 
 const artifacts = [
@@ -281,7 +291,7 @@ test('discovery checks generation and v2 definition without querying an unrelate
   const result = await discoverOntology(artifacts, undefined, reader)
   assert.equal(result.ontologyGeneration, 2)
   assert.equal('graphModelId' in result, false)
-  assert.equal(result.graphUnavailableReason, V2_GRAPH_UNAVAILABLE)
+  assert.equal(result.ontologyError, undefined)
   assert.equal(sampled, false)
   const elided = await discoverOntology(artifacts, undefined, { ...reader, metadata: async () => ({}) })
   assert.match(elided.ontologyError!, /could not be verified/)

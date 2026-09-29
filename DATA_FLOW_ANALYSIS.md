@@ -4,7 +4,7 @@
 
 This document describes the implemented data flows in the Fabric IQ hydropower demo, from synthetic source data through Microsoft Fabric artifacts to the React application. It covers setup, runtime reads, user-triggered writes, agent interactions, identity boundaries, and failure behavior.
 
-The central design choice is that the application composes the live Ontology v2 TMDL semantic contract with external operational context in the browser. Lakehouse GraphQL provides instance rows, Eventhouse KQL provides telemetry, and Rayfin SQL provides operational records. Generation-1 ontologies are rejected. Native v2 GraphModel association is not yet verified, so the app explicitly reports native graph unavailability rather than selecting an unrelated graph. The detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
+The application composes native ontology-managed GraphModel topology, validated against the live Ontology v2 TMDL contract, with external operational context in the browser. Eventhouse KQL and Rayfin SQL enrich actual native entities. Lakehouse GraphQL still supplies STID rows to other pages, but is not a graph canvas/tree/scope dependency or fallback. Generation-1 ontologies are rejected. An explicit operator binding records the selected ontology's managed graph; names or structural similarity never prove ownership. The detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
 
 ## Architecture Summary
 
@@ -15,6 +15,7 @@ The central design choice is that the application composes the live Ontology v2 
 | Real-time storage | Fabric Eventhouse / KQL database | OPC UA signal events | KQL queries and time-series ontology binding |
 | Operational storage | Fabric SQL Database | Work orders, notifications, inspections, spare parts, 3D model metadata | Rayfin data client |
 | Semantic layer | Fabric IQ Ontology v2 | Entities, relationships, and static/time-series bindings | TMDL definition; Data Agent only when supported and enabled |
+| Native topology | Ontology-managed GraphModel | Materialized entity instances and relationships | Explicit graph binding, queryable-type metadata, native GQL |
 | Presentation | React SPA hosted as a Fabric App | Browser-side joins, health state, charts, maintenance workflows | GraphQL, KQL, Rayfin, Fabric REST, and MCP |
 
 ```mermaid
@@ -30,6 +31,7 @@ flowchart LR
         EH["Eventhouse\nOPCUAEvents"]
         SQL["Rayfin SQL\noperational tables"]
         ONT["Fabric IQ Ontology"]
+        GRAPH["Ontology-managed GraphModel"]
         GQL["GraphQL API"]
         AGENT["Data Agent"]
         DASH["Real-Time Dashboard"]
@@ -44,18 +46,20 @@ flowchart LR
     EH -->|RTI_006 time-series binding| ONT
     LH --> GQL
     ONT -.->|v2 support required| AGENT
+    ONT -->|Manage graph: manual materialization| GRAPH
+    GRAPH -->|Native GQL: graph topology| APP
     SQL -.->|eligible v2-backed agent only| AGENT
     EH --> DASH
-    GQL -->|GraphQL| APP
+    GQL -->|GraphQL: other pages| APP
     EH -->|KQL| APP
     SQL <-->|Rayfin CRUD| APP
     AGENT -->|MCP streaming| APP
 ```
 
-The Fabric IQ Ontology remains the governed semantic asset. The SPA currently reaches Lakehouse
-instances through the RTI_011 GraphQL item and Eventhouse observations through KQL, then
-`buildKnowledgeGraph()` materializes an application property graph from stable identifiers. Fabric
-Ontology `getDefinition` is a definition and binding surface, not a bulk instance-graph response.
+The Fabric IQ Ontology remains the governed semantic asset. Native GQL supplies graph topology;
+`buildKnowledgeGraph()` preserves those native entities/edges and adds KQL/SQL enrichment.
+The RTI_011 GraphQL item remains a separate STID path for other pages. Fabric Ontology
+`getDefinition` is a definition and binding surface, not a bulk instance-graph response.
 
 ## Source Data
 
@@ -97,8 +101,12 @@ The setup DAG is owned by [Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pip
 The pipeline passes workspace, Key Vault, environment suffix, Operations Agent destination,
 optional agent capability modes, and timeout parameters into the notebooks. Pipeline defaults
 are examples from the source environment and must be overridden for another tenant or workspace.
-Generation-2 agent limitations are explicit capability results, not a failure of core ontology
-or weather provisioning. See [ontology generation policies](README.md#ontology-generations-and-optional-agents).
+Generation-2 agent limitations are explicit capability results, not themselves a failure of core
+ontology or weather provisioning. Status persistence can still fail the run: NB09 and NB10 both
+`MERGE` two status rows into the shared `rti_demo_settings` Delta table. The required dependency
+order is **NB06 → NB09 → NB10**, serializing those writes while other independent branches remain
+parallel. Capability policies remain separately gated; that does not make their storage writes
+safe to execute concurrently. See [ontology generation policies](README.md#ontology-generations-and-optional-agents).
 
 ```mermaid
 flowchart TD
@@ -113,7 +121,7 @@ flowchart TD
     N2 --> N8["RTI_008\nKQL dashboard"]
     N3 --> N8
     N6 --> N9["RTI_009\nData Agent capability"]
-    N6 --> N10["RTI_010\nOperations Agent capability"]
+    N9 --> N10["RTI_010\nOperations Agent capability"]
 ```
 
 ### Notebook responsibilities
@@ -216,15 +224,15 @@ This design keeps ownership clear and avoids duplicating master or telemetry rec
 
 ### Knowledge Graph composition
 
-The Knowledge Graph adds a presentation projection over the same browser state:
+The Knowledge Graph renders native topology with browser-side enrichment:
 
 | Graph element | Current source |
 |---|---|
-| Facilities, systems, equipment, instruments, and signal nodes | Lakehouse GraphQL rows projected using the v2 contract |
-| Governed relationship edges | Supported v2 semantic relationships and their verified binding keys; not physical-only TOM joins |
+| Materialized facilities, systems, equipment, instruments, and eligible signal nodes | Native GQL results validated against live v2 entity types |
+| Governed relationship edges | Native graph edges validated against v2 semantic relationships and endpoints; never fabricated from FK joins |
 | Latest reading and signal/instrument health | Eventhouse latest reading joined by `opcua_node_id` |
 | Work order, inspection, notification, and model nodes | Rayfin SQL records joined by operational identifiers |
-| External overlay edges | Client-side links from Rayfin records to governed equipment/signal IDs |
+| External overlay edges | Client-side links from Rayfin records only to actual native entities |
 
 Selected-asset scope is the default to prevent an unreadable all-entity canvas. Facility and All
 scopes support broader impact analysis and semantic-model inspection. The asset tree and canvas
@@ -232,9 +240,17 @@ write through the shared facility/turbine selection, so navigation remains consi
 Overview, Telemetry, Digital Twin, Knowledge Graph, and Maintenance.
 
 The graph requires a live generation-2 Ontology and reads its TMDL contract with `getDefinition`.
-Graph materialization is optional, and no verified v2 GraphModel association contract is implemented.
-The current instance path is explicitly labeled GraphQL/STID compatibility data, not a native graph
-query. KQL provides fresh time-series enrichment while Rayfin SQL remains an operational overlay. See
+The selected ontology's **Manage graph → select eligible entities/relationships → Continue →
+Materialize** flow is a manual prerequisite. Configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON
+with `workspaceId`, `ontologyId`, and `graphModelId`; optional `nodeTypes`/`edgeTypes` map queryable
+aliases to exact ontology type names/IDs. No undocumented namespace-label delimiter is assumed.
+Published REST metadata does not expose graph ownership, so type/endpoint consistency is not proof
+of association. The app validates live metadata and native GQL responses and follows opaque string
+`result.nextPage` continuations. Errors, warnings, truncation, malformed/dangling results, or exceeding
+2,000 nodes/4,000 edges fail closed without partial topology or a GraphQL fallback.
+Keys and Delta/mirrored bindings determine graph eligibility; multi-backing-table `signal_master`
+may be ineligible while native instruments still receive KQL telemetry. No published ontology-owned
+materialization REST endpoint or fully unattended graph deployment is established. See
 [docs/knowledge-graph.md](docs/knowledge-graph.md) for scenarios, health semantics, provenance,
 RDF/OWL export, and validation.
 
@@ -300,7 +316,7 @@ The SPA requests resource-specific delegated tokens:
 - Fabric item discovery and execution: `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
 - Eventhouse: `<query-service-uri>/user_impersonation`.
 
-Artifact IDs and service URIs are discovered at runtime by display name or item type and cached for the browser session. Build-time environment values are last-known-good fallbacks for pipeline IDs, notebook IDs, Eventhouse details, and an optional GraphQL URL. Discovery cache is cleared after RTI_011 so newly created artifacts can be found.
+Most artifact IDs and service URIs are discovered at runtime by display name or item type and cached for the browser session. The native GraphModel is an exception: its ontology association requires the explicit operator binding, never name/type discovery. Build-time environment values are last-known-good fallbacks for pipeline IDs, notebook IDs, Eventhouse details, and an optional GraphQL URL. Discovery cache is cleared after RTI_011 so newly created artifacts can be found.
 
 ## Refresh, Caching, and Consistency
 
@@ -311,6 +327,7 @@ Artifact IDs and service URIs are discovered at runtime by display name or item 
 | Telemetry history | Signal/range selection in telemetry page | Queried on demand from Eventhouse |
 | Operational SQL | Initialization after Rayfin auth, explicit refresh, post-seed reload | Kept in React state; writes update state immediately |
 | Workspace artifact configuration | First request and after provisioning | In-memory single-flight discovery cache |
+| Native ontology graph | Graph page entry, visible refresh/focus | Live contract and complete validated native result required; failures clear graph state, never restore STID topology |
 | Running jobs | Every 4 seconds while active | Job metadata persisted locally for up to 30 minutes so reload can reattach |
 | Agent conversation | On-demand streaming | Browser memory only; explicit reset starts a new conversation |
 
@@ -321,6 +338,7 @@ There is no distributed transaction across the three stores. A work order can re
 | Flow | Nature | Fallback |
 |---|---|---|
 | STID master data | Synthetic seed persisted in Lakehouse | Last successful browser cache; otherwise disconnected state |
+| Native ontology graph | Materialized ontology-managed graph queried via GQL | Actionable failure; no GraphQL/STID/FK fabrication or partial graph |
 | OPC UA telemetry | Synthetic events persisted and queried live from Eventhouse | Last successful browser cache; no fabricated readings |
 | Operational records | Synthetic initial seed followed by real SQL CRUD | Client-side idempotent seed if RTI_011 is unavailable |
 | 3D assets | SQL metadata pointing to model URLs | UI thumbnail/model unavailable behavior |
@@ -336,13 +354,17 @@ There is no distributed transaction across the three stores. A work order can re
 5. **Cached data can outlive connectivity.** The UI preserves last-known STID and telemetry, but source timestamps drive freshness so dead streams become visibly stale.
 6. **Operational seeding has multiple maintained copies.** The SQL script, RTI_011 embedded SQL, and TypeScript fallback must remain synchronized.
 7. **Pipeline notebook references are GUID-based.** Moving pipelines between workspaces requires Git/Fabric synchronization to repoint item references correctly.
-8. **GraphQL endpoint construction is an implementation dependency.** Discovery finds the GraphQL item, then the app constructs the deterministic Fabric API endpoint because item metadata does not expose it directly.
+8. **GraphQL endpoint construction is a dependency for other STID-backed pages, not the Knowledge Graph.** Discovery finds the GraphQL item, then the app constructs the deterministic Fabric API endpoint because item metadata does not expose it directly.
 9. **Alerting is not provisioned.** A future/manual supported v2 flow would additionally need Outlook OAuth2 setup and token renewal; those prerequisites do not remove the current playbook block.
 10. **The browser is the operational integration layer.** This is appropriate for a demo, but production reporting or automation may need a governed server-side serving model, audit trail, and stronger consistency controls.
 
 ## Validation Checklist
 
 Use these checks to validate each boundary independently:
+
+Current live acceptance is restricted to **ws-vteam-demoV3**, tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`. Native live testing is in progress; no new live native result
+or app deployment is claimed here.
 
 1. Run `01_Pipe_Setup` in a fresh/compatible target and confirm core setup completes; inspect each optional capability status/reason separately.
 2. Query Lakehouse table counts for the expected silver tables and inspect `rti_demo_settings`.
@@ -365,6 +387,10 @@ Use these checks to validate each boundary independently:
 13. Validate Knowledge Graph Selected, Facility, and All scopes; shared turbine selection; search;
     provenance; critical/warning/no-data rendering; and cross-navigation to Telemetry, Digital Twin,
     and Maintenance.
+14. Materialize eligible types through the selected ontology's Manage graph flow, configure the
+    explicit binding, and verify native reads and tree/scopes without GraphQL. Exercise pagination,
+    alias mappings, missing prerequisites, invalid endpoints, malformed/dangling results, warnings,
+    truncation, and 2,000-node/4,000-edge limits; each invalid/incomplete result must fail closed.
 
 ## Key Implementation Files
 

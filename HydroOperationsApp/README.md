@@ -32,13 +32,13 @@ are copied into Rayfin SQL).
 
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
-Twin, and Maintenance. It requires a verified **generation-2 Ontology** and projects its supported
-semantic relationships onto Lakehouse entities in an explicitly labeled compatibility view.
-Signals are enriched with current Eventhouse KQL readings, and Rayfin SQL records remain external
-operational overlays. No legacy Ontology or implicitly associated Graph Model is queried.
+Twin, and Maintenance. It requires a verified **generation-2 Ontology** and an explicitly bound,
+ontology-managed native GraphModel. Native entities and relationships are the topology authority;
+Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
+No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
-scenarios, screenshots, freshness behavior, and native v2 GraphModel availability limits.
+scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
 
 ### Ontology v2 only
 
@@ -57,8 +57,9 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   scalar `keyProperty`, property types, optional lineage tags, and backing-table metadata.
   Quoted names, documentation comments, Unicode, tabs/spaces, and CRLF are supported.
   Namespaces stay distinct; display names and namespace are derived from the qualified name.
-- **Only `entityRelationships.tmdl` defines semantic edges.** `relationships.tmdl` is used
-  solely to resolve the referenced single-column physical joins, never to invent semantic edges.
+- **Only `entityRelationships.tmdl` defines semantic relationship types.** `relationships.tmdl`
+  resolves referenced single-column physical joins, never additional semantic edge types.
+  Actual instance edges must come from native graph query results, not browser-side FK joins.
 - Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
   retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
   Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
@@ -66,16 +67,26 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   reports these limitations. Composite keys, multiline expressions, unknown entity/property
   constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
-- A v2 materialized Graph Model is **optional**. The supported public item/definition API does
-  not expose a linked Graph Model identity. Until it does, the app never selects a workspace
-  graph by name, labels, or merely because it is the only graph. Legacy graph discovery and execution
-  have been removed.
-  The UI explicitly reports v2 graph unavailability and uses the Lakehouse compatibility view:
-  Hydro facilities/systems/equipment/instruments, unambiguous backing tables, and validated
-  direct FK relationships. This is not a full v2 graph query engine. Eventhouse readings and
-  Rayfin operational overlays retain their existing behavior.
+- A v2 materialized GraphModel is **required for this app's graph canvas, tree, and scopes**.
+  In the selected ontology use **Manage graph → select eligible entities/relationships → Continue
+  → Materialize**, then configure the `.env` binding with single-quoted JSON:
+  `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
+  Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
+  `#`, including inside JSON double quotes, so exact ontology names containing `#` require quoting.
+  Optional `nodeTypes`/`edgeTypes` maps resolve queryable graph aliases to exact ontology type
+  names or IDs when projected labels differ; no namespace-label delimiter is assumed.
+  Public REST metadata does not expose ownership: names, sole-graph discovery, and structural
+  similarity are not proof. The explicit operator binding records the association established in
+  the portal; live metadata/contract/type/endpoint checks establish consistency.
+  Graph sources require keys and Delta/mirrored bindings. Multi-backing-table `signal_master`
+  may be ineligible, but native instruments still receive KQL telemetry. No published ontology-owned
+  materialization endpoint is established, so this portal prerequisite is not automated.
+  Native GQL reads use GET `getQueryableGraphType?beta=true` and POST `executeQuery?beta=true`
+  on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
+  Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges
+  fail closed. GraphQL remains available to other pages, not as a graph dependency or fallback.
 - Failed refreshes clear semantic caches and graph timestamps. Definition errors hide governed
-  topology and offer retry; graph errors are visible above a labeled compatibility view.
+  topology and offer retry; native graph failures are actionable errors, not compatibility views.
   Ontology contracts are not restored from unscoped browser storage. Manual refresh rediscovers
   the workspace so a failed initial discovery or changed generation can recover.
 
@@ -189,14 +200,15 @@ HydroOperationsApp/
     ├── components/FacilityMap.tsx  # Multi‑facility Leaflet map
     ├── components/AssetModelViewer.tsx # Inline GLB digital‑twin viewer
     └── services/
-        ├── fabric.ts               # GraphQL (STID) + KQL (telemetry) + Data Agent
+        ├── fabric.ts               # Native graph + GraphQL (other pages) + KQL + Data Agent
+        ├── ontologyGraphQuery.ts   # Explicit graph binding, native GQL, type validation
         ├── rayfin.ts               # Rayfin data client + list/create/update/delete + self‑seeder
         └── seedData.ts             # Typed operational seed arrays
 ```
 
   Pages shared by the original and redesigned app layouts, including Knowledge Graph, Telemetry,
   Digital Twin, and Maintenance, live under
-  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` builds the current application graph and
+  `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` enriches native graph topology and
   `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
   entity inspector.
   Layout names such as V1/V2 do not enable Ontology v1; both layouts use the same v2-only services.

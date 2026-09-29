@@ -14,5 +14,3 @@ export function requireV2Generation(generation: unknown): asserts generation is 
   if (generation === 1) throw new Error(V2_REPLACEMENT_REQUIRED)
   if (generation !== 2) throw new Error('Ontology v2 generation could not be verified. The selected item must report numeric properties.generation = 2. Check Fabric item read access and refresh discovery.')
 }
-
-export const V2_GRAPH_UNAVAILABLE = 'Ontology v2 does not expose a linked materialized Graph Model through the supported Fabric API. Use the Lakehouse compatibility view when available, not a live v2 graph. Publish a supported linked graph when Fabric exposes that capability; unrelated workspace Graph Models will not be queried.'

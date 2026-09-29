@@ -6,7 +6,8 @@ import { createOntologyCache } from './ontologyCache'
 import { parseOntologyContract, type OntologyContract } from './ontologyContract'
 import { waitForDefinitionResult } from './ontologyDefinition'
 import type { OntologyGraph } from './ontologyGraph'
-import { V2_GRAPH_UNAVAILABLE } from './ontologyArtifactDiscovery'
+import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery'
+import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
@@ -491,8 +492,30 @@ export async function queryOntologyContract(force = false): Promise<OntologyCont
 
 export async function queryOntologyGraph(): Promise<OntologyGraph | null> {
   const config = await ensureConfig(false)
+  const revision = configRevision
   if (config?.ontologyError) throw new Error(config.ontologyError)
-  throw new Error(config?.graphUnavailableReason ?? V2_GRAPH_UNAVAILABLE)
+  if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')
+  const binding = parseGraphBinding(
+    import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined,
+    requireWorkspaceId(), config.ontologyId,
+  )
+  const token = await fabricToken(false)
+  if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
+  const request = (url: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers)
+    headers.set('Authorization', `Bearer ${token}`)
+    return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+  }
+  const metadataResponse = await request(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`)
+  if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
+  const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
+  requireV2Generation(metadata.properties?.generation)
+  const ontology = await queryOntologyContract(true)
+  if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
+  if (revision !== configRevision) throw new Error('Workspace discovery changed during graph loading. Refresh again.')
+  const graph = await queryBoundOntologyGraph(binding, ontology, request)
+  if (revision !== configRevision) throw new Error('Workspace discovery changed during graph loading. Refresh again.')
+  return graph
 }
 
 // Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are

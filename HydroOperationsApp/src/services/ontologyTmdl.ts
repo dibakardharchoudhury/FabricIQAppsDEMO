@@ -290,7 +290,7 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
     if (backingType === 'table' && (!namedField(backing!, 'table') || !namedField(backing!, 'fromRelationship') || !namedField(backing!, 'toRelationship') || backingRelationship)) {
       fail(node, 'table-backed relationships require table, fromRelationship and toRelationship, not relationship.')
     }
-    if (compatibilityUnsupported) warnings.add('Unbound or junction-table entity relationships are retained but not rendered as direct Lakehouse compatibility edges.')
+    if (compatibilityUnsupported) warnings.add('Unbound or junction-table relationship definitions are retained as metadata. Only materialized native graph instances supply rendered relationships.')
     if (backingRelationship && !binding) fail(node, `backing relationship ${backingRelationship} was not found in relationships.tmdl.`)
     if (binding) {
       const type = field(binding, 'type')

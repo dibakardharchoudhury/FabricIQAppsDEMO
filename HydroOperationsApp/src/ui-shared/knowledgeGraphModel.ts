@@ -12,13 +12,38 @@ export type KnowledgeNode = {
   status: TwinStatus
   facilityId?: string
   equipmentId?: string
+  nativeOid?: string
+  ontologyEntityTypeId?: string
   properties: Record<string, string | number | boolean | undefined>
   provenance: string
   reading?: TelemetryReading
 }
 export type KnowledgeEdgeType = 'contains' | 'has-instrument' | 'has-signal' | 'has-model' | 'affects' | 'documents' | 'reports'
-export type KnowledgeEdge = { id: string; source: string; target: string; type: KnowledgeEdgeType; label: string; ontologyRelationshipId?: string; ontologyRelationshipName?: string }
-export type KnowledgeGraph = { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] }
+export type KnowledgeEdge = {
+  id: string
+  source: string
+  target: string
+  type: KnowledgeEdgeType
+  label: string
+  nativeOid?: string
+  ontologyRelationshipId?: string
+  ontologyRelationshipName?: string
+  provenance?: string
+}
+export type KnowledgeGraph = { nodes: KnowledgeNode[]; edges: KnowledgeEdge[]; error?: string }
+
+/** The native query refreshes the contract cache; read that contract only after it succeeds. */
+export async function loadNativeGraphSnapshot(
+  queryGraph: () => Promise<OntologyGraph | null>,
+  readRefreshedContract: () => Promise<OntologyContract | null>,
+): Promise<{ ontologyGraph: OntologyGraph | null; ontology: OntologyContract | null }> {
+  const ontologyGraph = await queryGraph()
+  if (!ontologyGraph) return { ontologyGraph: null, ontology: null }
+  const ontology = await readRefreshedContract()
+  if (!ontology || ontology.generation !== 2) throw new Error('The native graph has no verified generation-2 Ontology contract. Refresh discovery and retry.')
+  if (ontologyGraph.ontologyId && ontologyGraph.ontologyId !== ontology.id) throw new Error('Ontology selection changed during graph loading. Refresh discovery and retry.')
+  return { ontologyGraph, ontology }
+}
 
 const normalizeSearch = (value: unknown) => String(value ?? '').trim().toLowerCase()
 
@@ -49,205 +74,178 @@ export type KnowledgeGraphInput = {
 }
 
 const nodeId = (type: KnowledgeNodeType, id: string) => `${type}:${id}`
-const edge = (source: string, target: string, type: KnowledgeEdgeType, label: string, ontology?: { id: string; name: string }): KnowledgeEdge => ({
-  id: `${source}|${type}|${target}`,
-  source,
-  target,
-  type,
-  label,
-  ontologyRelationshipId: ontology?.id,
-  ontologyRelationshipName: ontology?.name,
+const edge = (source: string, target: string, type: KnowledgeEdgeType, label: string): KnowledgeEdge => ({
+  id: `${source}|${type}|${target}`, source, target, type, label,
+  provenance: 'SQL operational overlay · matched native equipment entity',
 })
-
-const graphEntity = (label: string, properties: Record<string, unknown>): Facility | System | Equipment | Instrument | undefined => {
-  if (label === 'facilities') return properties as Facility
-  if (label === 'systems') return properties as System
-  if (label === 'equipment') return properties as Equipment
-  if (label === 'instruments') return properties as Instrument
-  return undefined
+const presentGraphProperties = (properties: Record<string, unknown>): KnowledgeNode['properties'] => Object.fromEntries(
+  Object.entries(properties).map(([key, value]) => [key, typeof value === 'object' && value !== null ? JSON.stringify(value) : value]),
+) as KnowledgeNode['properties']
+const text = (value: unknown) => value === undefined || value === null ? undefined : String(value)
+const roles: Record<string, { type: KnowledgeNodeType; key: string }> = {
+  facilities: { type: 'facility', key: 'facility_id' },
+  systems: { type: 'system', key: 'system_id' },
+  equipment: { type: 'equipment', key: 'equipment_id' },
+  instruments: { type: 'instrument', key: 'instrument_id' },
+  signal_master: { type: 'signal', key: 'opcua_node_id' },
 }
 
-const graphNodeId = (label: string, properties: Record<string, unknown>, oid?: string): string | undefined => {
-  if (label === 'facilities' && properties.facility_id) return nodeId('facility', String(properties.facility_id))
-  if (label === 'systems' && properties.system_id) return nodeId('system', String(properties.system_id))
-  if (label === 'equipment' && properties.equipment_id) return nodeId('equipment', String(properties.equipment_id))
-  if (label === 'instruments' && properties.instrument_id) return nodeId('instrument', String(properties.instrument_id))
-  if (label === 'signal_master' && properties.opcua_node_id) return nodeId('signal', String(properties.opcua_node_id))
-  return oid ? nodeId('ontology', oid) : undefined
+/** Native relationships, not foreign-key properties, determine presentation context. */
+function relatedNodes(node: KnowledgeNode, nodes: KnowledgeNode[], edges: KnowledgeEdge[], target: KnowledgeNodeType, through: KnowledgeNodeType[]): KnowledgeNode[] {
+  const byId = new Map(nodes.map(item => [item.id, item]))
+  const visited = new Set([node.id])
+  const queue = [node.id]
+  const found = new Map<string, KnowledgeNode>()
+  while (queue.length) {
+    const id = queue.shift()!
+    for (const relationship of edges) {
+      const otherId = relationship.source === id ? relationship.target : relationship.target === id ? relationship.source : undefined
+      if (!otherId || visited.has(otherId)) continue
+      visited.add(otherId)
+      const other = byId.get(otherId)
+      if (other?.type === target) found.set(other.id, other)
+      else if (other && through.includes(other.type)) queue.push(other.id)
+    }
+  }
+  return [...found.values()]
 }
 
-const displayProperty = (properties: Record<string, unknown>, suffix: string) => Object.entries(properties).find(([key]) => key.endsWith(suffix))?.[1]
-const presentGraphProperties = (properties: Record<string, unknown>): KnowledgeNode['properties'] => Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, typeof value === 'object' && value !== null ? JSON.stringify(value) : value])) as KnowledgeNode['properties']
+export function knowledgeGraphScope(graph: KnowledgeGraph, scope: 'asset' | 'facility' | 'all', selectedId?: string): Set<string> | undefined {
+  if (scope === 'all') return undefined
+  const selected = graph.nodes.find(node => node.id === selectedId)
+  if (!selected) return undefined
+  if (scope === 'facility') {
+    return selected.facilityId ? new Set(graph.nodes.filter(node => node.facilityId === selected.facilityId).map(node => node.id)) : new Set([selected.id])
+  }
+  const asset = graph.nodes.find(node => node.type === 'equipment' && node.entityId === selected.equipmentId) ?? selected
+  const visible = new Set([asset.id, selected.id])
+  for (const node of graph.nodes) if (asset.equipmentId && node.equipmentId === asset.equipmentId) visible.add(node.id)
+  for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'system', [])) visible.add(node.id)
+  for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'facility', ['system'])) visible.add(node.id)
+  return visible
+}
 
 export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph {
+  const unavailable = (error: string): KnowledgeGraph => ({ nodes: [], edges: [], error })
+  const contract = input.ontology
+  const native = input.ontologyGraph
+  if (!contract || contract.generation !== 2) return unavailable('A verified generation-2 Ontology contract is required. Refresh ontology discovery.')
+  if (!native) return unavailable('No verified native backing graph is loaded for the selected Ontology. Materialize it using Manage graph in the Ontology portal, then configure the verified workspace, Ontology, and graph mapping and retry. Lakehouse data cannot replace native topology.')
+  if (native.ontologyId && native.ontologyId !== contract.id) return unavailable('The native backing graph belongs to a different Ontology than the current contract. Refresh ontology discovery and retry.')
+  if (!native.graphModelId) return unavailable('The native graph result has no verified backing graph identity. Refresh ontology discovery and retry.')
+  if (!native.nodes.length) return unavailable('The selected Ontology backing graph contains no entities. Check Manage graph materialization and the verified workspace, Ontology, and graph mapping, then retry.')
   const nodes: KnowledgeNode[] = []
   const edges: KnowledgeEdge[] = []
   const readings = new Map(input.telemetry.map(item => [item.opcuaNodeId, item]))
-  const openNodeIds = new Set(input.workOrders.filter(item => !['completed', 'cancelled'].includes(item.status.toLowerCase())).map(item => item.opcuaNodeId).filter(Boolean))
-  const entityForRole = (role: string) => {
-    const matches = input.ontology?.entityTypes.filter(entity =>
-      entity.name === role || entity.sourceTable === role || entity.sourceTable === `silver_${role}`,
-    ) ?? []
-    return matches.length === 1 ? matches[0] : undefined
+  const byOid = new Map<string, KnowledgeNode>()
+  for (const raw of native.nodes) {
+    if (byOid.has(raw.oid)) return unavailable(`Native graph has duplicate entity OID ${raw.oid}.`)
+    const exact = contract.entityTypes.filter(entity => raw.entityTypeId
+      ? entity.id === raw.entityTypeId
+      : raw.labels.some(label => label === entity.id || label === entity.name))
+    if (raw.entityTypeId && exact.length !== 1) return unavailable(`Native entity ${raw.oid} has an entity type ID absent or ambiguous in the current Ontology contract.`)
+    const matches = exact.length ? exact : contract.entityTypes.filter(entity => raw.labels.some(label =>
+      label === entity.localName,
+    ))
+    if (matches.length > 1) return unavailable(`Native entity ${raw.oid} has ambiguous Ontology labels: ${raw.labels.join(', ')}.`)
+    const entity = matches[0]
+    const sourceRole = entity ? Object.keys(roles).find(name => entity.sourceTable === name || entity.sourceTable === `silver_${name}`) : undefined
+    const roleNames = entity ? [entity.localName, entity.name, sourceRole] : []
+    const role = roleNames.map(name => name ? roles[name] : undefined).find(Boolean)
+    const properties = raw.properties
+    const keyValues = entity?.entityIdParts.map(key => text(properties[key]))
+    const contractKey = keyValues?.length && keyValues.every(Boolean) ? keyValues.join('|') : undefined
+    const entityId = contractKey ?? (role ? text(properties[role.key]) : undefined)
+    const type = role?.type ?? 'ontology'
+    const id = entityId && role ? nodeId(type, entityId) : nodeId('ontology', raw.oid)
+    if (nodes.some(node => node.id === id)) return unavailable(`Native entities have an ambiguous ${type} identity ${entityId}; cannot safely join operational context.`)
+    const opcuaNodeId = (type === 'signal' || type === 'instrument') ? text(properties.opcua_node_id) : undefined
+    const reading = opcuaNodeId ? readings.get(opcuaNodeId) : undefined
+    const label = text(properties.tag ?? properties.facility_name ?? properties.system_name ?? properties.equipment_name
+      ?? Object.entries(properties).find(([key]) => key.endsWith('_name') || key === 'name')?.[1]) ?? entityId ?? raw.oid
+    const node: KnowledgeNode = {
+      id, entityId: entityId ?? raw.oid, type, label,
+      subtitle: reading ? `${reading.value.toLocaleString()} ${text(properties.unit) ?? ''}`.trim() : text(properties.equipment_type_name ?? properties.instrument_type) ?? entity?.name ?? raw.labels.join(', '),
+      status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
+      nativeOid: raw.oid, ontologyEntityTypeId: entity?.id,
+      facilityId: type === 'facility' ? entityId : undefined,
+      equipmentId: type === 'equipment' ? entityId : undefined,
+      properties: {
+        ...presentGraphProperties(properties), 'Native OID': raw.oid, 'Native labels': raw.labels.join(', '), 'Ontology entity': entity?.name ?? raw.labels.join(', '),
+        ...(opcuaNodeId ? { 'OPC UA node': opcuaNodeId, Unit: text(properties.unit), 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime } : {}),
+      },
+      reading,
+      provenance: `Fabric Ontology v2 · ${native.graphModelName} · native materialized graph node${entity ? ` · ${entity.name}` : ' · unrecognized entity type'}${reading ? ' · KQL Eventhouse time-series enrichment via opcua_node_id' : ''}`,
+    }
+    nodes.push(node)
+    byOid.set(raw.oid, node)
   }
-  const ontologyRelationship = (source: string, target: string) => {
-    const targetKey = ({ facilities: 'facility_id', systems: 'system_id', equipment: 'equipment_id' } as Record<string, string>)[target]
-    return input.ontology?.relationshipTypes.find(item =>
-      !item.compatibilityUnsupported && item.sourceEntityTypeId === entityForRole(source)?.id && item.targetEntityTypeId === entityForRole(target)?.id
-      && item.sourceKeys.length === 1 && item.sourceKeys[0] === targetKey && item.targetKeys.length === 1 && item.targetKeys[0] === targetKey,
-    )
-  }
-  const relationshipLabel = (relationship: { name: string; label?: string } | undefined, fallback: string) => (relationship?.label ?? relationship?.name)?.replaceAll('_', ' ').toUpperCase() ?? fallback
-  const graphNodes = input.ontologyGraph?.nodes ?? []
-  const graphEntities = (label: string) => graphNodes.filter(item => item.labels.includes(label)).map(item => graphEntity(label, item.properties)).filter(Boolean)
-  const facilities = input.ontologyGraph ? graphEntities('facilities') as Facility[] : input.facilities
-  const systems = input.ontologyGraph ? graphEntities('systems') as System[] : input.systems
-  const equipment = input.ontologyGraph ? graphEntities('equipment') as Equipment[] : input.equipment
-  const instruments = input.ontologyGraph ? graphEntities('instruments') as Instrument[] : input.instruments
 
-  for (const facility of facilities) {
-    nodes.push({
-      id: nodeId('facility', facility.facility_id), entityId: facility.facility_id, type: 'facility',
-      label: facility.facility_name, subtitle: facility.type ?? 'Facility', status: 'ok', facilityId: facility.facility_id,
-      properties: { Type: facility.type, Country: facility.country, Commissioned: facility.commissioned_date, Latitude: facility.lat, Longitude: facility.lon },
-      provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : 'Fabric Ontology compatibility mode · Lakehouse entity binding · silver_facilities',
+  for (const raw of native.edges) {
+    const source = byOid.get(raw.sourceOid)
+    const target = byOid.get(raw.targetOid)
+    if (!source || !target) return unavailable(`Native relationship ${raw.oid} references an entity missing from the graph result. Retry the complete graph query.`)
+    if (edges.some(item => item.nativeOid === raw.oid)) return unavailable(`Native graph has duplicate relationship OID ${raw.oid}.`)
+    const candidates = contract.relationshipTypes.filter(item => raw.relationshipTypeId
+      ? item.id === raw.relationshipTypeId
+      : raw.labels.includes(item.id) || raw.labels.includes(item.name))
+    if (raw.relationshipTypeId && candidates.length !== 1) return unavailable(`Native relationship ${raw.oid} has a relationship type ID absent or ambiguous in the current Ontology contract.`)
+    const matches = candidates.filter(item => item.sourceEntityTypeId === source.ontologyEntityTypeId && item.targetEntityTypeId === target.ontologyEntityTypeId)
+    if (candidates.length && matches.length !== 1) return unavailable(`Native relationship ${raw.oid} does not unambiguously match the Ontology contract's directed endpoints.`)
+    const relationship = matches[0]
+    const name = relationship?.name ?? raw.labels.join(', ') ?? 'RELATED TO'
+    const type = source.type === 'signal' || target.type === 'signal' ? 'has-signal' : source.type === 'instrument' || target.type === 'instrument' ? 'has-instrument' : 'contains'
+    edges.push({
+      id: `native-edge:${raw.oid}`, nativeOid: raw.oid, source: source.id, target: target.id, type,
+      label: (relationship?.label ?? (name || 'RELATED TO')).replaceAll('_', ' ').toUpperCase(),
+      ontologyRelationshipId: relationship?.id, ontologyRelationshipName: relationship?.name,
+      provenance: `Native relationship ${raw.oid} · labels: ${raw.labels.join(', ')}${relationship ? ` · Ontology ${relationship.name} (${relationship.id})` : ' · relationship type not identified in contract'}`,
     })
   }
 
-  const systemsInOntology = input.ontology?.entityTypes.some(entity => entity.name === 'systems') ?? false
-  for (const system of systems) {
-    const equipmentCount = equipment.filter(asset => asset.system_id === system.system_id).length
-    nodes.push({
-      id: nodeId('system', system.system_id), entityId: system.system_id, type: 'system', label: system.system_name ?? system.system_id, subtitle: `${equipmentCount} connected assets`,
-      status: 'ok', facilityId: system.facility_id, properties: { 'System ID': system.system_id, 'OAG RDS code': system.oag_rds_system_code, 'Equipment count': equipmentCount },
-      provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : `Fabric Ontology${systemsInOntology ? ` ${input.ontology?.displayName}` : ''} compatibility mode · Lakehouse entity binding · silver_systems`,
-    })
-    const relationship = ontologyRelationship('systems', 'facilities')
-    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('facility', system.facility_id), nodeId('system', system.system_id), 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
+  for (const node of nodes) {
+    if (node.type !== 'facility') {
+      const facilities = relatedNodes(node, nodes, edges, 'facility', ['system', ...(node.type === 'equipment' ? [] : ['equipment' as const, 'instrument' as const, 'signal' as const])])
+      if (facilities.length === 1) node.facilityId = facilities[0].entityId
+    }
+    if (!['equipment', 'facility', 'system'].includes(node.type)) {
+      const equipment = relatedNodes(node, nodes, edges, 'equipment', ['instrument', 'signal'])
+      if (equipment.length === 1) node.equipmentId = equipment[0].entityId
+    }
+  }
+  const equipment = new Map(nodes.filter(node => node.type === 'equipment' && node.equipmentId).map(node => [node.entityId, node]))
+  const orders = input.workOrders.filter(order => equipment.has(order.equipmentId))
+  const openNodeIds = new Set(orders.filter(order => !['completed', 'cancelled'].includes(order.status.toLowerCase())).map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
+  for (const node of nodes) {
+    const opcuaNodeId = node.properties['OPC UA node']
+    if (opcuaNodeId && node.equipmentId && openNodeIds.has(`${node.equipmentId}|${opcuaNodeId}`)) {
+      node.status = twinStatus({ id: node.id, label: node.label, nodeId: String(opcuaNodeId), value: node.reading?.value, quality: node.reading?.quality, hasOpenIssue: true })
+    }
+  }
+  for (const asset of equipment.values()) {
+    const statuses = nodes.filter(node => ['instrument', 'signal'].includes(node.type) && node.equipmentId === asset.entityId).map(node => node.status)
+    asset.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
   }
 
-  for (const asset of equipment) {
-    const id = nodeId('equipment', asset.equipment_id)
-    const assetInstruments = instruments.filter(item => item.equipment_id === asset.equipment_id)
-    const statuses = assetInstruments.map(instrument => {
-      const reading = readings.get(instrument.opcua_node_id)
-      return twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openNodeIds.has(instrument.opcua_node_id) })
-    })
-    const status: TwinStatus = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
-    nodes.push({
-      id, entityId: asset.equipment_id, type: 'equipment', label: asset.tag ?? asset.equipment_id,
-      subtitle: asset.equipment_type_name ?? asset.equipment_type_code ?? 'Equipment', status, facilityId: asset.facility_id, equipmentId: asset.equipment_id,
-      properties: { 'Equipment ID': asset.equipment_id, Type: asset.equipment_type_name, Manufacturer: asset.manufacturer, Model: asset.model, Criticality: asset.criticality, Status: asset.status, Installed: asset.install_date, Active: asset.is_active },
-      provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : 'Fabric Ontology compatibility mode · Lakehouse entity binding · silver_equipment',
-    })
-    const relationship = ontologyRelationship('equipment', 'systems')
-    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('system', asset.system_id), id, 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
+  for (const model of input.models.filter(item => equipment.has(item.equipmentId))) {
+    nodes.push({ id: nodeId('model', model.id), entityId: model.id, type: 'model', label: model.modelName, subtitle: `${model.format}${model.version ? ` · ${model.version}` : ''}`, status: 'ok', equipmentId: model.equipmentId, properties: { Format: model.format, Version: model.version, URL: model.modelUrl, 'File size MB': model.fileSizeMb }, provenance: 'SQL operational enrichment · Asset3DModel' })
+    edges.push(edge(equipment.get(model.equipmentId)!.id, nodeId('model', model.id), 'has-model', 'HAS MODEL'))
   }
-
-  for (const instrument of instruments) {
-    const reading = readings.get(instrument.opcua_node_id)
-    const id = nodeId('instrument', instrument.instrument_id)
-    nodes.push({
-      id, entityId: instrument.instrument_id, type: 'instrument', label: instrument.tag ?? instrument.instrument_id,
-      subtitle: reading ? `${reading.value.toLocaleString()} ${instrument.unit ?? ''}`.trim() : instrument.instrument_type ?? 'Instrument',
-      status: twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openNodeIds.has(instrument.opcua_node_id) }),
-      facilityId: instrument.facility_id, equipmentId: instrument.equipment_id, reading,
-      properties: { 'Instrument ID': instrument.instrument_id, Type: instrument.instrument_type, 'OPC UA node': instrument.opcua_node_id, Unit: instrument.unit, Active: instrument.is_active, 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime },
-      provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : 'Fabric Ontology compatibility mode · Lakehouse entity + Eventhouse time-series binding via opcua_node_id',
-    })
-    const relationship = ontologyRelationship('instruments', 'equipment')
-    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('equipment', instrument.equipment_id), id, 'has-instrument', relationshipLabel(relationship, 'HAS INSTRUMENT'), relationship))
-  }
-
-  if (input.ontologyGraph) {
-    const signalBindings = input.ontologyGraph.edges.filter(relationship => relationship.labels.includes('signals_from_instruments'))
-    const sourceBindingCounts = new Map<string, number>()
-    const targetBindingCounts = new Map<string, number>()
-    for (const binding of signalBindings) {
-      sourceBindingCounts.set(binding.sourceOid, (sourceBindingCounts.get(binding.sourceOid) ?? 0) + 1)
-      targetBindingCounts.set(binding.targetOid, (targetBindingCounts.get(binding.targetOid) ?? 0) + 1)
-    }
-    const collapsedSignalTargets = new Map(signalBindings
-      .filter(binding => sourceBindingCounts.get(binding.sourceOid) === 1 && targetBindingCounts.get(binding.targetOid) === 1)
-      .map(binding => [binding.sourceOid, binding.targetOid]))
-    const appIdsByOid = new Map(graphNodes.flatMap(item => {
-      const label = item.labels[0]
-      const id = graphNodeId(label, item.properties, item.oid)
-      return id ? [[item.oid, id] as const] : []
-    }))
-    for (const [signalOid, instrumentOid] of collapsedSignalTargets) {
-      const instrumentId = appIdsByOid.get(instrumentOid)
-      if (instrumentId) appIdsByOid.set(signalOid, instrumentId)
-    }
-    for (const signal of graphNodes.filter(item => item.labels.includes('signal_master'))) {
-      const properties = signal.properties
-      const opcuaNodeId = String(properties.opcua_node_id ?? '')
-      if (!opcuaNodeId) continue
-      const reading = readings.get(opcuaNodeId)
-      const signalId = String(properties.instrument_id ?? opcuaNodeId)
-      const collapsedInstrumentId = appIdsByOid.get(signal.oid)
-      if (collapsedSignalTargets.has(signal.oid) && collapsedInstrumentId) {
-        const instrumentNode = nodes.find(node => node.id === collapsedInstrumentId)
-        if (instrumentNode) {
-          instrumentNode.properties = { ...instrumentNode.properties, 'Signal entity': opcuaNodeId }
-          instrumentNode.provenance = `Fabric Ontology · ${input.ontologyGraph.graphModelName} · combined one-to-one instruments + signal_master node with Eventhouse time-series binding`
-          continue
-        }
-      }
-      const signalLabel = String(properties.tag ?? properties.signal_type ?? signalId)
-      nodes.push({
-        id: nodeId('signal', opcuaNodeId), entityId: opcuaNodeId, type: 'signal', label: `Signal · ${signalLabel}`,
-        subtitle: reading ? `${reading.value.toLocaleString()} ${String(properties.unit ?? '')}`.trim() : String(properties.signal_type ?? 'Time-series signal'),
-        status: twinStatus({ id: signalId, label: signalLabel, nodeId: opcuaNodeId, value: reading?.value, quality: reading?.quality, hasOpenIssue: openNodeIds.has(opcuaNodeId) }),
-        facilityId: String(properties.facility_id ?? '') || undefined, equipmentId: String(properties.equipment_id ?? '') || undefined, reading,
-        properties: { ...properties, 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime } as KnowledgeNode['properties'],
-        provenance: `Fabric Ontology · ${input.ontologyGraph.graphModelName} · signal_master node with Eventhouse time-series binding`,
-      })
-    }
-    const specializedLabels = new Set(['facilities', 'systems', 'equipment', 'instruments', 'signal_master'])
-    for (const graphNode of graphNodes.filter(item => !item.labels.some(label => specializedLabels.has(label)))) {
-      const label = graphNode.labels[0] ?? 'Ontology entity'
-      const entityId = String(displayProperty(graphNode.properties, '_id') ?? graphNode.oid)
-      nodes.push({
-        id: nodeId('ontology', graphNode.oid), entityId, type: 'ontology',
-        label: String(displayProperty(graphNode.properties, '_name') ?? displayProperty(graphNode.properties, 'name') ?? entityId),
-        subtitle: label.replaceAll('_', ' '), status: 'ok',
-        facilityId: typeof graphNode.properties.facility_id === 'string' ? graphNode.properties.facility_id : undefined,
-        equipmentId: typeof graphNode.properties.equipment_id === 'string' ? graphNode.properties.equipment_id : undefined,
-        properties: presentGraphProperties(graphNode.properties),
-        provenance: `Fabric Ontology · ${input.ontologyGraph.graphModelName} · ${label} materialized graph node`,
-      })
-    }
-    const relationshipByName = new Map(input.ontology?.relationshipTypes.map(item => [item.name, item]) ?? [])
-    for (const relationship of input.ontologyGraph.edges) {
-      const source = appIdsByOid.get(relationship.sourceOid)
-      const target = appIdsByOid.get(relationship.targetOid)
-      if (!source || !target || source === target) continue
-      const label = relationship.labels[0] ?? 'RELATED TO'
-      const contractRelationship = relationshipByName.get(label)
-      const type: KnowledgeEdgeType = label === 'instruments_on_equipment' ? 'has-instrument' : label === 'signals_from_instruments' ? 'has-signal' : 'contains'
-      edges.push(edge(source, target, type, label.replaceAll('_', ' ').toUpperCase(), contractRelationship ?? { id: relationship.oid, name: label }))
-    }
-  }
-
-  for (const model of input.models) {
-    nodes.push({ id: nodeId('model', model.id), entityId: model.id, type: 'model', label: model.modelName, subtitle: `${model.format}${model.version ? ` · ${model.version}` : ''}`, status: 'ok', equipmentId: model.equipmentId, properties: { Format: model.format, Version: model.version, URL: model.modelUrl, 'File size MB': model.fileSizeMb }, provenance: 'Rayfin operational database · Asset3DModel' })
-    edges.push(edge(nodeId('equipment', model.equipmentId), nodeId('model', model.id), 'has-model', 'HAS MODEL'))
-  }
-  for (const order of input.workOrders) {
+  for (const order of orders) {
     const closed = ['completed', 'cancelled'].includes(order.status.toLowerCase())
-    nodes.push({ id: nodeId('work-order', order.id), entityId: order.workOrderNumber, type: 'work-order', label: order.workOrderNumber, subtitle: order.title, status: closed ? 'ok' : order.priority.toLowerCase() === 'critical' ? 'crit' : 'warn', equipmentId: order.equipmentId, properties: { Title: order.title, Priority: order.priority, Status: order.status, Created: String(order.createdAt), Due: order.dueAt ? String(order.dueAt) : undefined }, provenance: 'Rayfin operational database · WorkOrder' })
-    edges.push(edge(nodeId('work-order', order.id), nodeId('equipment', order.equipmentId), 'affects', 'AFFECTS'))
+    nodes.push({ id: nodeId('work-order', order.id), entityId: order.workOrderNumber, type: 'work-order', label: order.workOrderNumber, subtitle: order.title, status: closed ? 'ok' : order.priority.toLowerCase() === 'critical' ? 'crit' : 'warn', equipmentId: order.equipmentId, properties: { Title: order.title, Priority: order.priority, Status: order.status, Created: String(order.createdAt), Due: order.dueAt ? String(order.dueAt) : undefined }, provenance: 'SQL operational enrichment · WorkOrder' })
+    edges.push(edge(nodeId('work-order', order.id), equipment.get(order.equipmentId)!.id, 'affects', 'AFFECTS'))
   }
-  for (const inspection of input.inspections) {
-    nodes.push({ id: nodeId('inspection', inspection.id), entityId: inspection.id, type: 'inspection', label: inspection.inspectionType, subtitle: inspection.result, status: /fail|issue|attention/i.test(inspection.result) ? 'warn' : 'ok', equipmentId: inspection.equipmentId, properties: { Result: inspection.result, Findings: inspection.findings, Inspected: String(inspection.inspectedAt), 'Next due': inspection.nextDueAt ? String(inspection.nextDueAt) : undefined }, provenance: 'Rayfin operational database · Inspection' })
-    edges.push(edge(nodeId('inspection', inspection.id), nodeId('equipment', inspection.equipmentId), 'documents', 'DOCUMENTS'))
+  for (const inspection of input.inspections.filter(item => equipment.has(item.equipmentId))) {
+    nodes.push({ id: nodeId('inspection', inspection.id), entityId: inspection.id, type: 'inspection', label: inspection.inspectionType, subtitle: inspection.result, status: /fail|issue|attention/i.test(inspection.result) ? 'warn' : 'ok', equipmentId: inspection.equipmentId, properties: { Result: inspection.result, Findings: inspection.findings, Inspected: String(inspection.inspectedAt), 'Next due': inspection.nextDueAt ? String(inspection.nextDueAt) : undefined }, provenance: 'SQL operational enrichment · Inspection' })
+    edges.push(edge(nodeId('inspection', inspection.id), equipment.get(inspection.equipmentId)!.id, 'documents', 'DOCUMENTS'))
   }
-  for (const notification of input.notifications) {
-    nodes.push({ id: nodeId('notification', notification.id), entityId: notification.id, type: 'notification', label: notification.summary, subtitle: `${notification.severity} · ${notification.status}`, status: /critical|high/i.test(notification.severity) ? 'crit' : 'warn', equipmentId: notification.equipmentId, properties: { Severity: notification.severity, Status: notification.status, Reported: String(notification.reportedAt), 'OPC UA node': notification.opcuaNodeId }, provenance: 'Rayfin operational database · MaintenanceNotification' })
-    edges.push(edge(nodeId('notification', notification.id), nodeId('equipment', notification.equipmentId), 'reports', 'REPORTS'))
+  for (const notification of input.notifications.filter(item => equipment.has(item.equipmentId))) {
+    nodes.push({ id: nodeId('notification', notification.id), entityId: notification.id, type: 'notification', label: notification.summary, subtitle: `${notification.severity} · ${notification.status}`, status: /critical|high/i.test(notification.severity) ? 'crit' : 'warn', equipmentId: notification.equipmentId, properties: { Severity: notification.severity, Status: notification.status, Reported: String(notification.reportedAt), 'OPC UA node': notification.opcuaNodeId }, provenance: 'SQL operational enrichment · MaintenanceNotification' })
+    edges.push(edge(nodeId('notification', notification.id), equipment.get(notification.equipmentId)!.id, 'reports', 'REPORTS'))
   }
-
-  const ids = new Set(nodes.map(item => item.id))
-  return { nodes, edges: edges.filter(item => ids.has(item.source) && ids.has(item.target)) }
+  for (const node of nodes) {
+    if (!node.nativeOid && node.equipmentId) node.facilityId = equipment.get(node.equipmentId)?.facilityId
+  }
+  return { nodes, edges }
 }

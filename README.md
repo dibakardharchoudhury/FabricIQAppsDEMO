@@ -26,8 +26,13 @@ Generation 2 uses TMDL entity definitions, Direct Lake backing tables, physical 
 and Eventhouse time-series backing configurations. Definition updates preserve unrelated live
 parts and existing bindings; incompatible changes must be resolved explicitly rather than silently
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
-Graph materialization is optional in generation 2, so missing graph data must not
-be confused with an empty, successfully queried ontology.
+Graph materialization is optional in the Fabric generation-2 experience but required for the app's
+native graph canvas, tree, and scopes. In the selected ontology choose **Manage graph → select eligible
+entities/relationships → Continue → Materialize**, then configure the explicit
+`RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
+No published ontology-owned materialization REST endpoint is established; this remains a manual
+portal prerequisite. Missing graph data is an error, not an empty successful query or a reason to
+fabricate STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).
 
 | V2 definition part | Purpose |
 | --- | --- |
@@ -64,7 +69,8 @@ wire them into the canonical rebinding list or setup DAG.
 
 For validation, run the ontology regression tests under [`Raw/workspace-reset/`](Raw/workspace-reset/)
 and the app's `test:knowledge-graph` suite. A live acceptance check should use a separately named
-test ontology in a DEV workspace, verify fresh authoring and a bound rerun, and remove only the
+test ontology in the currently authorized **ws-vteam-demoV3** workspace (tenant
+`ad340c84-1886-4202-a483-2da2cb9168eb`), verify fresh authoring and a bound rerun, and remove only the
 test artifacts. Never test preservation by rebuilding a user's existing ontology.
 
 Shared authoring helpers are maintained in
@@ -115,6 +121,12 @@ previous Operations Agent flow; the current v2-only setup does not create or wir
 | **RTI_010_build_operations_agent** | Reports the blocked/skipped v2 playbook capability. No agent, playbook, or alert pipeline is provisioned; explicit enablement fails before writes. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup, independent of agents. Extends SQL only on an eligible, verified v2-backed Data Agent. Run by **Seed & provision**. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
+
+NB09 and NB10 report separately gated agent capabilities but both persist status in the same
+`rti_demo_settings` Delta table. Their required execution order is **NB06 → NB09 → NB10**:
+serialize the two status `MERGE` operations to avoid `DELTA_CONCURRENT_APPEND`. Other independent
+setup branches remain parallel; a blocked optional capability is not itself an infrastructure
+failure, but an actual status-write failure still fails setup.
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).
@@ -234,10 +246,12 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
 GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
-Knowledge Graph provides selected-asset, facility, and all-entity views over that federated context;
-the live v2 TMDL contract governs supported relationships projected onto Lakehouse GraphQL rows,
-Eventhouse supplies fresh readings, and SQL contributes explicit external overlays. Native v2
-GraphModel association is unverified and explicitly unavailable; this view is not a native GQL
-result. See
+Knowledge Graph provides selected-asset, facility, and all-entity views over native ontology-managed
+GraphModel topology validated against the live v2 TMDL contract. Eventhouse supplies fresh readings,
+and SQL contributes explicit external overlays only on actual native entities. GraphQL is not a
+dependency or fallback for the graph canvas, tree, or scopes. Published REST metadata does not expose
+ontology ownership, so an explicit operator binding is required; names and structural similarity
+are not evidence. Native live testing is in progress; this correction claims no new live native
+graph evidence or app deployment. See
 [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).

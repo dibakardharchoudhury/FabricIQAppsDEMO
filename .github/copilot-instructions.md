@@ -9,8 +9,13 @@ and environment suffixes are not ontology generations.
 
 Core setup and hosted-page success do not prove optional capabilities: Data Agent onboarding is
 gated and requires matching published v2 source identity; Operations Agent automation remains
-blocked pending a verified v2 playbook contract. Keep SQL/GraphQL independent and document the
-app's contract-guided compatibility view rather than promising native v2 GraphModel queries.
+blocked pending a verified v2 playbook contract. Keep SQL/GraphQL independent. The app's native graph
+requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
+→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON. No ownership is inferred
+from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
+actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
+No published ontology-owned materialization REST endpoint is established; keep this portal
+prerequisite separate from automated deployment and optional agent readiness.
 
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:
@@ -43,8 +48,8 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
   report success from the hosted HTML page alone.
 - Treat an explicit `--client-id` that cannot be verified in the target tenant as a hard
   pre-deployment failure. Never publish a bundle with an unverified SPA GUID.
-- The only genuinely manual step is creating the SPA app registration (`az ad app create`), because
-  an app registration is tenant-scoped.
+- SPA app registration is tenant-scoped and may require administrator action. Ontology-managed
+  graph materialization is a separate manual portal prerequisite; do not promise unattended graph deployment.
 
 ## Node 24 wrapper (Windows)
 The one-shot Python orchestrator resolves/downloads Node 24 and invokes the repository-local Rayfin

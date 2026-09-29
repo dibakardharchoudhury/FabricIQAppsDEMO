@@ -5,6 +5,15 @@ Populate (or wipe-and-repopulate) a Microsoft Fabric workspace from this GitHub 
 Git-integration APIs the portal uses, so the result is identical to a manual sync —
 just scripted, repeatable, and safe to run from CI or a fresh machine.
 
+This automation does **not** replace the ontology-managed graph portal prerequisite: in the selected
+v2 ontology choose **Manage graph → select eligible entities/relationships → Continue → Materialize**.
+Set `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`) for that
+graph; optional `nodeTypes`/`edgeTypes` map queryable aliases to exact ontology type names/IDs.
+No published ontology-owned materialization REST endpoint or ownership metadata association is
+established. Do not infer ownership from names, a sole graph, or structure, or promise unattended
+graph deployment. The graph canvas/tree/scopes use native topology, not GraphQL/STID fabrication.
+See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
+
 Two ways to run everything:
 
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.

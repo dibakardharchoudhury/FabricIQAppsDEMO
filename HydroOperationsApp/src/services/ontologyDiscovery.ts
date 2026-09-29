@@ -1,4 +1,4 @@
-import { requireV2Generation, selectOntology, V2_GRAPH_UNAVAILABLE, type SemanticArtifact } from './ontologyArtifactDiscovery'
+import { requireV2Generation, selectOntology, type SemanticArtifact } from './ontologyArtifactDiscovery'
 import { parseOntologyContract, type OntologyDefinition } from './ontologyContract'
 
 export type OntologyDiscovery = {
@@ -6,7 +6,6 @@ export type OntologyDiscovery = {
   ontologyName?: string
   ontologyGeneration?: 2
   ontologyError?: string
-  graphUnavailableReason?: string
 }
 
 type Reader = {
@@ -30,7 +29,7 @@ export async function discoverOntology(
     const reported = item.properties?.generation
     requireV2Generation(reported)
     parseOntologyContract(ontology.id, ontology.displayName, await reader.definition(ontology.id), reported)
-    return { ...identity, ontologyGeneration: 2, graphUnavailableReason: V2_GRAPH_UNAVAILABLE }
+    return { ...identity, ontologyGeneration: 2 }
   } catch (error) {
     return { ...identity, ontologyError: error instanceof Error ? error.message : 'Ontology discovery failed. Refresh and check Fabric item read access.' }
   }

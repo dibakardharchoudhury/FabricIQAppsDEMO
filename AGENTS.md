@@ -12,8 +12,12 @@
 - Treat optional agent status separately from core setup: Data Agent `auto` reports the rollout
   block; `enabled` attempts matching v2 draft/published sources. Operations Agent automation is
   blocked pending a verified v2 playbook contract; `enabled` fails before writes.
-- SQL/GraphQL setup remains independent. The app uses a v2 contract-guided GraphQL/KQL/SQL view,
-  not an implicitly discovered native GraphModel. Do not claim agent or graph runtime readiness
+- SQL/GraphQL setup remains independent. The app requires an explicitly bound ontology-managed
+  native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
+  graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
+  ontology's Manage graph flow and configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`; never infer
+  ownership from names, a sole graph, or matching structure. Portal materialization is a manual
+  prerequisite, not an established public REST automation contract. Do not claim agent or graph runtime readiness
   from item creation, notebook completion, or successful app hosting.
 - Keep canonical notebook prose, Raw mirrors, and packaged workflow documents aligned with
   the [current policy](README.md#ontology-generations-and-optional-agents).

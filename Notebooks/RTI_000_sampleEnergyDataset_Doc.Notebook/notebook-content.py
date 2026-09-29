@@ -469,11 +469,15 @@
 # identities. It never silently extends an unrelated agent or proves runtime readiness.
 #
 # ### Application consumption and graph boundary
-# HydroOperationsApp reads v2 TMDL and combines **GraphQL rows + the semantic
-# contract**, Eventhouse KQL telemetry, and the operational SQL projection.
-# Native v2 graph association is unverified/unavailable in this deployment; no
-# native GQL query or ontology-backed graph runtime capability is promised.
-# GraphQL is a row-access API here, not evidence that native ontology GQL works.
+# HydroOperationsApp reads v2 TMDL and queries the ontology-managed GraphModel
+# using native GQL. Its native nodes and relationships define the Knowledge Graph;
+# Eventhouse KQL telemetry and operational SQL enrich those existing entities.
+# Materialize through the selected ontology's **Manage graph** workflow, then set
+# `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` to the verified workspace, ontology and
+# graph IDs. Ownership is not inferred from names or similar schemas.
+# These notebooks do not automate graph materialization. Missing setup or failed
+# native queries show an explicit error, never a GraphQL/Lakehouse topology fallback.
+# See [Knowledge Graph setup](../../docs/knowledge-graph.md) for alias mapping and limits.
 # 
 # ---
 # 

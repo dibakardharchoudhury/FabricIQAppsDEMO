@@ -44,8 +44,11 @@
 # blocked, `disabled` skips, and `enabled` fails before writes. No legacy playbook
 # or automatic `Pipe_SendEmailAlert` is provisioned.
 # NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
-# independent of Data Agent availability. The app uses v2 TMDL + GraphQL rows,
-# KQL, and SQL projection; native v2 graph association/GQL remains unverified.
+# independent of Data Agent availability. The Knowledge Graph uses native
+# ontology-managed graph instances, enriched by KQL and operational SQL.
+# Materialize through Manage graph and configure the verified graph binding.
+# NB09 and NB10 run sequentially because both MERGE capability status into the
+# same Delta settings table; unrelated setup branches remain parallel.
 
 # CELL ********************
 
@@ -109,7 +112,7 @@ setup_dag = {
         # NB08 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
