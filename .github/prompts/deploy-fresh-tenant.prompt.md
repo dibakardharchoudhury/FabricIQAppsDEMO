@@ -10,6 +10,20 @@ tenant, workspace, or region. This repo already automates almost everything. **F
 existing scripts and docs — do not reinvent the wheel or click through the Entra portal by
 hand when a script does it.**
 
+## Ontology v2 readiness boundary
+
+RTI setup is v2-only. Before relying on ontology-backed features, require the selected item's live
+`properties.generation` to be numeric `2`; an app redeploy does not migrate an existing v1 item.
+Use the [RTI setup workflow](../../README.md#deploy) with a fresh workspace or unused environment
+suffix when a replacement is needed. REST `/v1` and suffixes such as `V9` are unrelated to the
+ontology generation.
+
+Report core setup, app hosting/auth, and optional agent readiness separately. Data Agent `auto`
+reports the current v2 onboarding block; explicit enablement requires verified v2 source identities.
+Operations Agent automation is blocked until a verified v2 playbook contract is implemented and
+never reuses the old playbook. SQL/GraphQL can complete without either agent. The orchestrator's
+`SUCCESS` marker certifies its deployment checks, not ontology provisioning or agent execution.
+
 ## Mandatory one-shot command
 
 From the repository root, deploy through the orchestrator only:

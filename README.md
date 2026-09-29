@@ -1,14 +1,15 @@
-# Fabric IQ RTI Demo — Synthetic Energy Dataset, Ontology & Real‑Time Intelligence
+# Fabric IQ RTI Demo — Synthetic Energy Dataset, Ontology v2 & Real‑Time Intelligence
 
 An end‑to‑end **Microsoft Fabric** solution built on a **fully synthetic** hydropower dataset. One
 **Data Pipeline** stands up the whole environment: a medallion Lakehouse, an Eventhouse telemetry
-stream, a Fabric IQ ontology with live time‑series bindings, a Real‑Time Dashboard, a Data Agent,
-and an Operations Agent (Teams alerts). A companion React app ([`HydroOperationsApp/`](HydroOperationsApp/README.md))
-composes it all on one screen.
+stream, a Fabric IQ Ontology v2 with live time-series bindings, and a Real-Time Dashboard.
+Optional agent steps report supported, blocked, or skipped capabilities separately; they do not
+guarantee a Data Agent or Operations Agent exists. A companion React app
+([`HydroOperationsApp/`](HydroOperationsApp/README.md)) composes the data on one screen.
 
 > [!NOTE]
 > All data is synthetic — no real plant or customer data.
-> Agent availability depends on the ontology generation and Fabric product support; a successful
+> The project is v2-only. Agent availability depends on Fabric product support; a successful
 > core setup does not imply that optional agents are ready.
 
 ## Ontology generations and optional agents
@@ -27,6 +28,15 @@ parts and existing bindings; incompatible changes must be resolved explicitly ra
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
 Graph materialization is optional in generation 2, so missing graph data must not
 be confused with an empty, successfully queried ontology.
+
+| V2 definition part | Purpose |
+| --- | --- |
+| `database.tmdl` | Root with `compatibilityLevel: 1000000`. |
+| `model.tmdl`, `namespaces/default.tmdl` | Model and required default namespace; fresh creation submits both alongside the database root. |
+| `entities/*.tmdl` | Entity keys, scalar/time-series properties, and backing configurations. |
+| `tables/*.tmdl` | Lakehouse Direct Lake or Eventhouse backing-table/source metadata. |
+| `entityRelationships.tmdl` | Semantic entity relationships. |
+| `relationships.tmdl` | Physical table joins referenced by semantic relationships or time-series backing; not additional semantic edges. |
 
 Two optional `01_Pipe_Setup` parameters are persisted in `rti_demo_settings`:
 
@@ -75,11 +85,14 @@ writes the shared **`rti_demo_settings`** Delta table, and every other notebook 
 | Ontology | `RTI_Demo_Ontology_V6` |
 | Eventhouse / KQL DB | `RTI_Demo_Eventhouse_V6` (table `OPCUAEvents`) |
 | Eventstream | `RTI_Demo_Eventstream_V6` |
-| Data Agent | `RTI_Demo_Agent_V6` |
+| Data Agent (when supported and explicitly enabled) | `RTI_Demo_Agent_V6` |
 | Dashboard | `RTI_Demo_OPCUA_TelemetryStats_V6` |
-| Operations Agent | `RTI_Demo_OpsAgent_V6` |
+| Operations Agent (reserved name; automation blocked) | `RTI_Demo_OpsAgent_V6` |
 
-Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe_Stream`, `Pipe_SendEmailAlert`.
+`V6`, `V9`, and other environment suffixes distinguish demo instances; they do not select an
+ontology generation. Every supported ontology is generation 2.
+The setup/stream/weather pipelines are **not** versioned. `Pipe_SendEmailAlert` belongs to the
+previous Operations Agent flow; the current v2-only setup does not create or wire it.
 
 ## Notebooks
 
@@ -88,14 +101,14 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 | **RTI_001_create_lakehouse_SelfContained** | Foundation: creates the Lakehouse, seeds STID master data into `Files/bronze/stid/`, derives names, writes `rti_demo_settings`, exits the lakehouse name. | Stage 1 |
 | **RTI_002_Setup_Eventhouse_Only** | Eventhouse + KQL DB + `OPCUAEvents` + Eventstream (custom endpoint → Eventhouse). | ✅ |
 | **RTI_003_ingest_transform_medallion_SelfContained** | Bronze → Silver → Gold transforms; builds `silver_signal_master`. | ✅ |
-| **RTI_004_build_ontology_mapping_rti_structured** | Deploys the ontology (5 entities, 4 relationships) + time‑series properties. | ✅ |
-| **RTI_005_entity_DataBinding_rti_structured** | Static Lakehouse data bindings + relationship contextualizations. | ✅ |
+| **RTI_004_build_ontology_mapping_rti_structured** | Creates/verifies Ontology v2 TMDL (5 entities, 4 semantic relationships) + time‑series properties; preserves existing bindings on safe reruns. | ✅ |
+| **RTI_005_entity_DataBinding_rti_structured** | Direct Lake backing tables, scalar-property bindings, and physical joins referenced by semantic relationships. | ✅ |
 | **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
-| **RTI_009_build_data_agent** | Data Agent over the ontology. | ✅ |
-| **RTI_010_build_operations_agent** | Operations Agent + `Pipe_SendEmailAlert` for Teams/email alerts. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | On‑demand: seeds the app's SQL tables, creates + binds the STID GraphQL API, adds the SQL DB as a Data Agent source. Run by the app's **Seed & provision** button. | — |
+| **RTI_009_build_data_agent** | Reports the v2 Data Agent capability; explicit enablement attempts deployment with matching live v2 source and draft/published readback checks. Default `auto` is blocked. | ✅ |
+| **RTI_010_build_operations_agent** | Reports the blocked/skipped v2 playbook capability. No agent, playbook, or alert pipeline is provisioned; explicit enablement fails before writes. | ✅ |
+| **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup, independent of agents. Extends SQL only on an eligible, verified v2-backed Data Agent. Run by **Seed & provision**. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
 
 > [!NOTE]
@@ -119,13 +132,17 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 |:--:|---|---|
 | 1 | **Key Vault secrets** | SPN has **Key Vault Secrets User** — *Get* on `tenantid`, `clientid`, `clientsecret`. |
 | 2 | **Workspace access** | SPN has **Contributor** (or higher) on the Fabric workspace. |
-| 3 | **Tenant settings** *(Admin portal)* | **Service principals can use Fabric APIs** (SPN in the allowed security group) **+ Copilot / AI** on a supported capacity — required by `RTI_009` / `RTI_010`. |
+| 3 | **Tenant settings** *(Admin portal)* | **Service principals can use Fabric APIs** (SPN in the allowed security group); Copilot / AI settings are additional prerequisites for supported optional agent use, not a workaround for v2 service limitations. |
 | 4 | **Private endpoint to Key Vault** | Only if the vault blocks public access — add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault. |
 | 5 | **Tenant settings for the companion app** *(Admin portal)* | **Enable Fabric App Items (preview)** — without it `rayfin up` gets `403 FeatureNotAvailable`. Add **Users can sync workspace items with GitHub repositories** if you populate the workspace via Git; the generic Git switch alone is not enough. |
 | 6 | **Capacity region** | *Fabric App (preview)* is unavailable in some regions (West US 3, East US 2, UK South, North Europe, …) and a capacity's region is fixed at creation. Sweden Central covers Fabric App, Ontology, Digital twin builder and the Operations agent. See [region availability](https://learn.microsoft.com/fabric/admin/region-availability). |
 
 > [!IMPORTANT]
-> **7 · Email‑alert connection (OAuth2) — the one step you must do by hand.**
+> **Optional future/manual email-alert integration (OAuth2).**
+>
+> This is **not a prerequisite for the current v2 core setup**. `RTI_010` does not create an
+> Operations Agent or `Pipe_SendEmailAlert`. The following connection guidance applies only if
+> you separately implement and verify a supported v2 alert flow.
 >
 > The `Pipe_SendEmailAlert` pipeline sends mail via the **Office 365 Outlook “Send an email”** activity,
 > which posts **from a mailbox** and so needs an **OAuth2** connection. It **cannot** be created from a
@@ -138,10 +155,9 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > work/school account (prefer a **shared/service mailbox** for durability) → name it
 > **`RTI_Office365_EmailAlert`** → **Create**.*
 >
-> `RTI_010` then **auto‑detects and reuses** it (by that name, else any OAuth2 Outlook connection) and
-> wires it into the pipeline — unattended from then on. Pin a specific one with the
-> `alert_email_connection_id` setting. If a connection later shows *“Failed to load”*, its token
-> expired — open it and **Edit → Sign in** to refresh.
+> An Outlook connection alone does not provision or validate an Operations Agent or playbook.
+> A separately configured alert pipeline must explicitly use that connection. If a connection
+> later shows *“Failed to load”*, open it and **Edit → Sign in** to refresh expired consent.
 
 > [!NOTE]
 > The **Hydro Operations web app** signs users in with a **second, separate identity** — the
@@ -168,15 +184,17 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
    | `key_vault_tenant_id_secret_name` | `tenantid` | Secret **name**, not value. |
    | `key_vault_client_id_secret_name` | `clientid` | Secret **name**, not value. |
    | `key_vault_client_secret_name` | `clientsecret` | Secret **name**, not value. |
-   | `ops_agent_teams_team_id` | `c480320e-…` | Teams team for alerts. |
-   | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Teams channel for alerts. |
-   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Optional — blank ⇒ deploying user. |
+   | `ontology_data_agent_mode` | `auto` | `auto` reports the v2 rollout block; `enabled` attempts verified v2 configuration; `disabled` skips. |
+   | `ontology_operations_agent_mode` | `auto` | `auto` reports blocked; `disabled` skips; `enabled` fails before writes until a verified v2 playbook contract exists. |
+   | `ops_agent_teams_team_id` | `c480320e-…` | Retained configuration; not used by the blocked v2 Operations Agent flow. |
+   | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Retained configuration; does not enable Teams alerts. |
+   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Retained optional setting; does not start or configure an agent. |
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
    > [!IMPORTANT]
    > The pipeline ships with the author's **example defaults** — replace **every** value for a new tenant. Enter each **full** name (the UI truncates long names visually); the child notebooks' own parameter cells ship blank and fail fast if a required value is missing.
 
-2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning.
+2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Review optional capability statuses separately; core completion is not agent readiness.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.
 4. **`03_Pipe_Weather` runs automatically every six hours** (03:20/09:20/15:20/21:20 UTC, aligned to the 00/06/12/18 UTC model runs both vendors derive from). It refreshes Aurora, refreshes UKMet, then runs `Weather_020_area_calculations` to rebuild vendor- and forecast-type-specific area metrics, enforce retention, and refresh the wide serving tables the app reads. Workspace provisioning creates and enables the schedule.
 
@@ -196,7 +214,7 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 
 ## Customization
 
-- **Sensors/signals:** edit the STID source CSVs, re‑run `Pipe_Setup` (rebuilds silver + ontology), then `Pipe_Stream`.
+- **Sensors/signals:** edit the STID source CSVs, re-run `Pipe_Setup` (rebuilds silver and safely reconciles the v2 definition), then `Pipe_Stream`. Incompatible key/type/source changes fail explicitly instead of replacing populated bindings.
 - **Telemetry values:** edit the simulator in `RTI_007` (ranges, quality, drift/spikes).
 - **Signal schema:** keep `RTI_004` (ontology properties) ↔ `RTI_002` (`OPCUAEvents`) ↔ `RTI_007` (payload) ↔ `RTI_006` (binding) aligned.
 - **Dashboards:** edit in the Fabric UI, download the JSON over `Raw/RTI_Notebooks/dashboards/`, re‑run the generator — [`docs/dev-dashboards.md`](docs/dev-dashboards.md).
@@ -212,7 +230,9 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
 GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
 Knowledge Graph provides selected-asset, facility, and all-entity views over that federated context;
-the live Ontology child Graph Model supplies materialized nodes and relationships through GQL,
-Eventhouse supplies fresh readings, and SQL contributes explicit external overlays. See
+the live v2 TMDL contract governs supported relationships projected onto Lakehouse GraphQL rows,
+Eventhouse supplies fresh readings, and SQL contributes explicit external overlays. Native v2
+GraphModel association is unverified and explicitly unavailable; this view is not a native GQL
+result. See
 [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).

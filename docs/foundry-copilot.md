@@ -3,8 +3,17 @@
 How the **Foundry** Copilot engine authenticates, what happens during a single answer, and exactly
 which data each tool can reach.
 
-For the Fabric **Data Agent** engine (v1), there is nothing to document here: the app resolves the
-published agent's MCP endpoint and forwards the question. This doc covers v2 only.
+This document covers the **Foundry engine**, not a second ontology generation. The project supports
+**Ontology v2 only**. UI/engine labels such as V1/V2 are separate from `properties.generation`.
+Foundry queries its allowed Lakehouse, Eventhouse, and operational sources directly; it does not
+establish Data Agent onboarding or Operations Agent playbook readiness.
+
+For the separate Fabric **Data Agent** engine, the app requires a live generation-2 ontology and
+verifies that the candidate agent's **published** ontology datasource references that exact
+workspace/item before forwarding a question to MCP. Draft-only, missing, mismatched, or unreadable
+sources block invocation. Matching source identity is not runtime certification: product errors
+still propagate. See [the app's v2 contract](../HydroOperationsApp/README.md#ontology-v2-only)
+and [optional agent policies](../README.md#ontology-generations-and-optional-agents).
 
 ---
 
@@ -30,7 +39,7 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 ### The architecture, and why
 
 The app is a **static SPA** — `rayfin.yml` has `staticHosting` only and `functions: enabled: false`.
-There is no server-side code path, so there is nowhere to hide an API key. v2 therefore calls the
+There is no server-side code path, so there is nowhere to hide an API key. The Foundry engine therefore calls the
 Azure AI Foundry data plane **directly from the browser with a delegated Entra token**.
 
 That constraint produces the property that matters most:

@@ -1,5 +1,17 @@
 # Copilot instructions — FabricIQAppsDEMO
 
+## Ontology v2 only
+
+Use the [v2-only contract](../README.md#ontology-generations-and-optional-agents) for code and docs.
+Require live numeric generation 2, explicit TMDL authoring, safe binding preservation, and verified
+readback. Never restore legacy ontology/agent/playbook fallbacks. REST `/v1`, app layout names,
+and environment suffixes are not ontology generations.
+
+Core setup and hosted-page success do not prove optional capabilities: Data Agent onboarding is
+gated and requires matching published v2 source identity; Operations Agent automation remains
+blocked pending a verified v2 playbook contract. Keep SQL/GraphQL independent and document the
+app's contract-guided compatibility view rather than promising native v2 GraphModel queries.
+
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:
 - From the repository root, use this as the **only agent deployment command**:

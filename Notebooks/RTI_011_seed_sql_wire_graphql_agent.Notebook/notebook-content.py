@@ -34,19 +34,28 @@
 # are reported and raised, not converted to agent readiness. The optional SQL source step
 # honors `ontology_data_agent_mode` (auto/enabled/disabled) and the live ontology generation.
 # Agent integration is v2-only: both target ontology and existing agent ontology sources
-# must be live generation 2. Legacy sources are rejected, never silently reused or deleted.
+# must have live integer `properties.generation == 2`. Legacy sources are rejected,
+# never silently reused, migrated, or deleted.
 # Existing agent sources must also match the selected ontology id and workspace exactly;
 # selecting a separate v2 ontology never authorizes extension of an unrelated agent.
 # Draft readback must retain the ontology and exact submitted SQL source before publish.
 # Both published counterparts must then be verified before reporting SQL source success.
+# `auto` reports generation 2 Data Agent integration blocked; `disabled` skips it;
+# `enabled` explicitly attempts the real v2 source extension. These gates do not
+# disable SQL/GraphQL setup. Draft/published verification is not runtime readiness.
 # 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
 # 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse so the
 #    web app's STID panel has a programmatically provisioned endpoint.
-# 3. **Data Agent** — adds the `hydro-operations` SQL Database as a second data source on
-#    the published Data Agent (so the app's Copilot can answer operational questions) and
-#    **republishes** it. The ontology source built by RTI_009 is preserved.
+# 3. **Data Agent (enabled only)** — attempts to add the `hydro-operations` SQL Database
+#    as a second source and **republishes** the agent, retaining the exact v2 ontology
+#    source from RTI_009. Successful publication does not establish query readiness.
+#
+# The app reads v2 TMDL and uses GraphQL rows + the semantic contract, KQL telemetry,
+# and the SQL operational projection. Native v2 graph association is unverified/
+# unavailable; GraphQL setup does not promise native GQL. REST `/v1` and name
+# suffixes such as `_V9` are not ontology generation indicators.
 # 
 # Settings are read from / written back to `rti_demo_settings`.
 # 

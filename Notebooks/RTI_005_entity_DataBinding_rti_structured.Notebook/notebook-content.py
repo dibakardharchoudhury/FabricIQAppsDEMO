@@ -30,6 +30,13 @@
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIG — V2 structured ontology Lakehouse and relationship bindings
 # Reads shared values from rti_demo_settings
+# Requires live integer properties.generation == 2; existing v1 is rejected,
+# never migrated or deleted. RTI_004 must already have created the v2 structure.
+# Adds named TMDL data sources, entity dataBinding blocks, and relationship
+# contextualizations; no legacy EntityTypes/RelationshipTypes JSON is emitted.
+# Reruns merge into live TMDL and preserve Eventhouse bindings and custom parts.
+# Conflicts fail before writes; complete service readback verifies output parts.
+# Binding verification does not prove native graph association or agent readiness.
 # ══════════════════════════════════════════════════════════════════════════════
 
 from pyspark.sql import functions as F

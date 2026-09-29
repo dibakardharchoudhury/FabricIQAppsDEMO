@@ -126,9 +126,12 @@ Result: adding a facility or turbine to the STID CSVs makes it appear in the fil
 medallion run, with no dashboard edit.
 
 > [!WARNING]
-> The workspace contains **more than one lakehouse** — the ontology item creates its own
-> `…_lh_<guid>`. Never take the first `Lakehouse` item from the items list. Resolve by
-> `lakehouse_id` setting → `lakehouse_name` setting → first non-`_lh_` name.
+> A workspace can contain multiple Lakehouses, including artifacts left by older deployments.
+> Ontology v2 does **not** guarantee an auxiliary Lakehouse or materialized graph; do not infer
+> its generation or source identity from a name such as `…_lh_<guid>`. Prefer the configured
+> `lakehouse_id`, then `lakehouse_name`. The dashboard's existing non-`_lh_` discovery fallback is
+> not proof of ontology ownership; verify the selected source. See the
+> [v2-only setup contract](../README.md#ontology-generations-and-optional-agents).
 
 ---
 

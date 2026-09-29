@@ -123,11 +123,11 @@ flowchart TD
 | RTI_001 | STID CSVs, pipeline parameters, Key Vault coordinates | Creates Lakehouse, uploads bronze files, derives names | Bronze STID data and `rti_demo_settings` |
 | RTI_002 | Shared settings | Creates Eventhouse, KQL database, `OPCUAEvents`, Eventstream | Real-time ingestion path |
 | RTI_003 | Bronze STID files | Conforms data through bronze, silver, and gold layers | `silver_facilities`, `silver_systems`, `silver_equipment`, `silver_instruments`, `silver_signal_master`, gold metrics |
-| RTI_004 | Silver model and shared settings | Defines five entities, four relationships, time-series properties | Versioned Fabric IQ Ontology |
-| RTI_005 | Silver Delta tables and ontology | Creates static entity bindings and relationship contextualizations | Lakehouse-backed ontology entities |
+| RTI_004 | Silver model and shared settings | Creates explicit v2 TMDL roots; safely reconciles five entities, four semantic relationships, time-series properties; verifies readback | Generation-2 ontology plus verified TMDL/audit outputs |
+| RTI_005 | Silver Delta tables and v2 ontology | Binds Direct Lake tables, scalar properties, and physical joins referenced by semantic relationships | Lakehouse-backed v2 entities |
 | RTI_006 | `OPCUAEvents` and signal master | Maps node, timestamp, value, and quality columns | Eventhouse-backed ontology time series |
 | RTI_008 | `OPCUAEvents` | Builds KQL visual queries and parses turbine tags from node IDs | Real-Time Dashboard |
-| RTI_009 | Fully bound ontology and capability policy | Creates/publishes an agent when supported, otherwise reports blocked/disabled | Analytical endpoint or explicit capability status |
+| RTI_009 | Fully bound v2 ontology and capability policy | Explicit enablement attempts matching draft/published source configuration; otherwise reports blocked/skipped | Published-source evidence or explicit capability status, not runtime certification |
 | RTI_010 | Fully bound v2 ontology, capability policy | Reports blocked/skipped; explicit enablement fails before writes until a verified v2 playbook contract exists | Explicit capability status, no legacy playbook |
 | RTI_011 | Rayfin SQL item, Lakehouse, optional Data Agent | Seeds SQL, creates/binds GraphQL API; extends an eligible agent separately | Operational/GraphQL paths plus independent agent-source status |
 
@@ -189,7 +189,11 @@ Rayfin provisions the Fabric SQL Database and exposes typed Data API Builder ope
 | Spare part | Ordered by part number | Seeded; read-only in current app service | `equipmentType` |
 | Asset 3D model | Ordered by update time | Seeded and refreshed when model URL changes | `equipmentId` |
 
-The normal Seed & provision path triggers RTI_011 as a Fabric notebook job. Its SQL `MERGE` operations are idempotent, after which it publishes the GraphQL API and adds SQL as a Data Agent source. If the post-seed notebook is not configured, the browser falls back to `seedOperationalDataIfEmpty()` through the authenticated Rayfin client.
+The normal Seed & provision path triggers RTI_011 as a Fabric notebook job. Its SQL `MERGE` operations
+are idempotent, after which it configures the GraphQL API independently of agents. SQL source extension
+is attempted only for an eligible agent with the selected live v2 ontology; draft and published
+ontology/SQL identities must survive readback. If the post-seed notebook is not configured, the
+browser falls back to `seedOperationalDataIfEmpty()` through the authenticated Rayfin client.
 
 User work-order mutations are real SQL writes. The UI inserts newly created rows into local state and uses optimistic state updates for status changes and deletes, reverting state when the backend call fails.
 
@@ -285,10 +289,10 @@ ontology and agent are healthy.
 
 | Identity | Credential model | Used by | Data/actions |
 |---|---|---|---|
-| Setup service principal | Client credentials, secret names resolved from Azure Key Vault | Pipelines and notebooks | Create/configure Fabric artifacts, seed SQL, publish agents |
+| Setup service principal | Client credentials, secret names resolved from Azure Key Vault | Pipelines and notebooks | Create/configure Fabric artifacts, seed SQL, publish a Data Agent only when policy and platform support permit |
 | Signed-in SPA user | MSAL delegated tokens, browser `localStorage` cache | GraphQL, Eventhouse, Fabric REST, Data Agent | Read STID/telemetry, discover items, execute notebook/pipeline jobs, ask agent |
 | Rayfin embedded user session | Fabric embedded authentication | Rayfin data client | Read and mutate operational SQL records |
-| Outlook connection user | Fabric-managed OAuth2 connection | Alert pipeline | Send email from a mailbox |
+| Outlook connection user (future/manual alert integration) | Fabric-managed OAuth2 connection | Independently configured alert pipeline; not provisioned by current v2 setup | Send email from a mailbox |
 
 The SPA requests resource-specific delegated tokens:
 
@@ -321,41 +325,43 @@ There is no distributed transaction across the three stores. A work order can re
 | Operational records | Synthetic initial seed followed by real SQL CRUD | Client-side idempotent seed if RTI_011 is unavailable |
 | 3D assets | SQL metadata pointing to model URLs | UI thumbnail/model unavailable behavior |
 | Data Agent answers | Live invocation over published Fabric sources | Error surfaced to chat; no locally generated answer |
-| Alert delivery | Live Outlook pipeline action | No automatic alternate delivery channel |
+| Alert delivery | Not provisioned by current v2-only Operations Agent notebook | Explicit blocked/skipped capability; no legacy playbook or automatic alternate delivery |
 
 ## Risks and Operational Observations
 
 1. **Cross-store referential integrity is conventional.** Fabric SQL does not enforce foreign keys to Lakehouse or Eventhouse. Seed scripts and stable IDs keep references aligned.
-2. **Partial readiness is expected.** RTI_011 performs SQL seed, GraphQL publication, and agent republish sequentially. SQL may be ready before the other endpoints.
+2. **Partial readiness is expected.** RTI_011 performs SQL seed, GraphQL configuration, and an independently gated agent extension. SQL/GraphQL can be ready while agent capability is blocked/skipped.
 3. **Runtime discovery depends on permissions.** Missing `Item.Read.All` can allow workspace listing but prevent resolution of the Eventhouse query URI.
 4. **Eventhouse access is resource-specific.** A user needs both an Eventhouse token and sufficient KQL database permissions; Fabric workspace access alone may not be enough.
 5. **Cached data can outlive connectivity.** The UI preserves last-known STID and telemetry, but source timestamps drive freshness so dead streams become visibly stale.
 6. **Operational seeding has multiple maintained copies.** The SQL script, RTI_011 embedded SQL, and TypeScript fallback must remain synchronized.
 7. **Pipeline notebook references are GUID-based.** Moving pipelines between workspaces requires Git/Fabric synchronization to repoint item references correctly.
 8. **GraphQL endpoint construction is an implementation dependency.** Discovery finds the GraphQL item, then the app constructs the deterministic Fabric API endpoint because item metadata does not expose it directly.
-9. **Alerting has a manual identity dependency.** Outlook OAuth2 setup and token renewal cannot be completed by the notebook service principal.
+9. **Alerting is not provisioned.** A future/manual supported v2 flow would additionally need Outlook OAuth2 setup and token renewal; those prerequisites do not remove the current playbook block.
 10. **The browser is the operational integration layer.** This is appropriate for a demo, but production reporting or automation may need a governed server-side serving model, audit trail, and stronger consistency controls.
 
 ## Validation Checklist
 
 Use these checks to validate each boundary independently:
 
-1. Run `01_Pipe_Setup` and confirm all setup notebooks complete.
+1. Run `01_Pipe_Setup` in a fresh/compatible target and confirm core setup completes; inspect each optional capability status/reason separately.
 2. Query Lakehouse table counts for the expected silver tables and inspect `rti_demo_settings`.
 3. Query `OPCUAEvents | summarize rows=count(), latest=max(event_time) by quality` in the KQL database.
 4. Run `02_Pipe_Stream` and confirm `latest` advances rather than only the row count changing.
-5. List workspace items and confirm the Lakehouse, Eventhouse, Ontology, GraphQL API, dashboard,
-   and pipelines exist with the expected suffix. Check agent status/reason separately; a blocked
-   or disabled capability need not have an agent item.
+5. Confirm the Lakehouse, Eventhouse, v2 ontology, dashboard, and setup/stream/weather pipelines
+   exist. Read ontology metadata and require numeric generation 2; inspect TMDL and bound reruns.
+   The GraphQL API is created by RTI_011 in the next step, not core setup. A blocked or skipped
+   agent capability need not have an agent item.
 6. Run RTI_011 from Seed & provision, then validate row counts with [HydroOperationsApp/sql/validate-seed.sql](HydroOperationsApp/sql/validate-seed.sql).
 7. Query the GraphQL API for facilities, equipment, and instruments as the signed-in SPA user.
 8. Verify one `opcua_node_id` resolves to the same instrument in Lakehouse and latest event in Eventhouse.
 9. Create, change, and delete a work order in the app, then verify the corresponding SQL row.
 10. When Data Agent support is enabled and available, ask one ontology question and one work-order
     question to verify both sources survived republishing.
-11. When a validated playbook is available, trigger a test alert and verify the Outlook connection
-    and destination independently of agent creation.
-12. Build and statically validate the app from `HydroOperationsApp` with `npm run typecheck`, `npm run lint`, and `npm run build` using the repository's Node 24 wrapper guidance.
+11. Confirm RTI_010 reports its v2 automation block and never deploys a legacy playbook. Only after
+    a supported v2 flow is separately implemented and validated should an alert test be attempted.
+12. Validate the app on Node 24 with `npm run test:knowledge-graph`, the published-source tests,
+    `npm run typecheck`, `npm run lint`, `npm run validate-env`, and `npm run build`.
 13. Validate Knowledge Graph Selected, Facility, and All scopes; shared turbine selection; search;
     provenance; critical/warning/no-data rendering; and cross-navigation to Telemetry, Digital Twin,
     and Maintenance.

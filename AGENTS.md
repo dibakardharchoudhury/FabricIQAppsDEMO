@@ -1,5 +1,23 @@
 # Agent instructions
 
+## Ontology v2 documentation and implementation contract
+
+- This project is v2-only: require live `properties.generation == 2`; never restore v1
+  authoring, parsing, agent sources, or embedded playbooks. Existing v1 items need a separately
+  planned replacement, not silent reuse or destructive migration.
+- Fresh ontology creation uses TMDL database/model/default-namespace parts. Preserve existing
+  bindings and unknown parts on reruns, and verify readback before publication.
+- REST `/v1`, definition schema versions, and `env_suffix` values such as `V9` are not
+  ontology generations. Do not globally rename them to `v2`.
+- Treat optional agent status separately from core setup: Data Agent `auto` reports the rollout
+  block; `enabled` attempts matching v2 draft/published sources. Operations Agent automation is
+  blocked pending a verified v2 playbook contract; `enabled` fails before writes.
+- SQL/GraphQL setup remains independent. The app uses a v2 contract-guided GraphQL/KQL/SQL view,
+  not an implicitly discovered native GraphModel. Do not claim agent or graph runtime readiness
+  from item creation, notebook completion, or successful app hosting.
+- Keep canonical notebook prose, Raw mirrors, and packaged workflow documents aligned with
+  the [current policy](README.md#ontology-generations-and-optional-agents).
+
 ## Hydro Operations deployment
 
 For any request to deploy, redeploy, change tenant/workspace/region, or publish

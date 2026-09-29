@@ -23,20 +23,21 @@
 
 # MARKDOWN ********************
 
-# # 09 — Build & Deploy the Data Agent (NL Q&A over the RTI Ontology)
+# # 09 — Capability-gated Data Agent integration over Ontology v2
 # 
-# Creates a Fabric **Data Agent** that answers natural-language questions over the
-# `RTI_Demo_Ontology_V3` ontology. Because the ontology's `signal_master` entity is
-# bound to **both** sources, the agent can join across them with **no schema change**:
+# With explicit enablement, attempts to create/publish a Fabric **Data Agent** with
+# the configured live v2 ontology as its real source. The ontology's `signal_master`
+# TMDL bindings describe both sources; publication does not prove query execution:
 # 
-# - **Real-time (KQL)** — `OPCUAEvents` in `RTI_Demo_Eventhouse_V3` provides the
+# - **Real-time (KQL)** — `OPCUAEvents` in the configured Eventhouse provides the
 #   time-series `event_time` / `value` / `quality`.
 # - **Static (Lakehouse)** — `silver_signal_master` (and the `equipment`,
 #   `facilities`, `systems`, `instruments` entities) provide `equipment_id`,
 #   `facility_id`, `system_id`, `unit`, `tag`, ... keyed on `opcua_node_id`.
 # 
-# The agent's data source is the **ontology item** (`type = ontology`), so the
-# real-time↔lakehouse join is handled by the ontology bindings themselves.
+# The submitted data source is the **ontology item** (`type = ontology`), not a
+# substitute Lakehouse/KQL source. Whether the agent runtime can query or join
+# the bound data must be validated separately; native v2 graph/GQL is not promised.
 # 
 # ## This notebook
 # 
@@ -51,8 +52,9 @@
 # `disabled`. This deployment is v2-only: generation 1 is rejected in every mode.
 # Auto conservatively blocks generation 2 onboarding for the user-reported rollout
 # limitation pending the product fix. Existing legacy sources are never reused or deleted.
-# Enabled is an explicit opt-in, not a readiness guarantee.
-# Generation is read from the live Ontology REST resource, never a name or setting.
+# Enabled attempts the real v2 source; disabled skips integration. Neither is a
+# readiness guarantee. Generation must be integer `properties.generation == 2`
+# on the live Ontology resource, never inferred from a name, `_V9`, or REST `/v1`.
 # Every preserved/submitted ontology source must match the selected item id and workspace.
 # Draft readback verifies identity before publish; published-stage evidence is mandatory
 # before recording published status. Only an explicitly empty definition from a newly
@@ -734,7 +736,7 @@ try:
     verify_agent_source_readback(data_agent_item_id, ontology_id)
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
 
-    # 4) PUBLISH — lock Preview Runtime into the published agent and promote staging.
+    # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
     enable_preview_runtime(data_agent_item_id)
     publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
     verify_agent_source_readback(data_agent_item_id, ontology_id, published=True)

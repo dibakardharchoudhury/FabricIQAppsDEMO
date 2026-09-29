@@ -28,7 +28,7 @@ provenance.
 | Shift handover | Share a compact facility or selected-asset context with health and provenance visible in one view. |
 | Data-quality investigation | Distinguish critical operating state from uncertain quality, stale readings, and missing data. |
 | Engineering impact analysis | Inspect which operational records and signals are connected before changing an asset, system, or instrumentation model. |
-| AI grounding and audit | Use the same stable IDs and semantic relationships that ground the Fabric Data Agent, while retaining the source of each visual node and edge. |
+| AI grounding and audit | Preserve stable IDs and semantic provenance that a supported, enabled v2 Data Agent can also use; current agent availability is independently gated. |
 
 ## What exists in Fabric
 
@@ -96,13 +96,14 @@ polls preserve the current viewport, selection, and dragged node positions inste
 the graph. A layout is rerun only on initial load or when the operator selects a different layout.
 
 Latest Eventhouse readings enrich the measurement point by `opcua_node_id`; this preserves telemetry
-freshness independently of the Graph Model ingestion schedule. When one `signal_master` node has a
+freshness independently of Lakehouse instance visibility. When one `signal_master` node has a
 one-to-one `signals_from_instruments` binding, the UI combines it with that instrument into one
 visual node and retains both entities in the inspector provenance. This removes duplicate labels
-without changing the governed Graph Model. Unbound and non-one-to-one signals remain explicit nodes.
+without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
 Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
 `instrumentId`, or `opcuaNodeId` as explicit external overlays. Existing GraphQL/STID reads remain a
-compatibility path for other app pages and for graph fallback only when direct GQL is unavailable.
+compatibility path for the Knowledge Graph and other app pages; they are not a fallback behind a
+working native GQL path in the current implementation.
 
 The application does not execute GraphModel queries without a verified v2 association.
 REST `/v1` does not mean Ontology generation 1.
@@ -174,9 +175,11 @@ or operational record, source timestamp, quality, and provenance.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
 
-## RDF and OWL export
+## RDF and OWL export (design guidance)
 
-Export should be generated from the Ontology contract plus resolved instances, never from canvas
+This is an interoperability design direction, not an implemented export feature or a promise that
+all advanced v2 constructs are evaluated. An exporter should use the v2 TMDL contract plus resolved
+instances, never canvas
 position or transient filter state:
 
 | Fabric concept | RDF/OWL representation |
@@ -207,7 +210,8 @@ describes current entities, relationships, and optional observation snapshots.
    and dark themes at desktop and mobile widths.
 6. Verify a `BAD` reading is critical, `UNCERTAIN` is warning, missing telemetry is no-data, and the
    inspector shows the evidence.
-7. Run `npm run test:knowledge-graph`, `npm run typecheck`, `npm run lint`, and `npm run build`.
+7. Run `npm run test:knowledge-graph`, `node --import tsx --test scripts/artifact-discovery.test.mjs`,
+   `npm run typecheck`, `npm run lint`, `npm run validate-env`, and `npm run build`.
 
 ## Key implementation files
 

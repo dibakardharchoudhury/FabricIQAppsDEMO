@@ -23,13 +23,13 @@
 
 # MARKDOWN ********************
 
-# # 07 — Bind Eventhouse RTI Stream to `signal_master`
+# # 06 — Bind Eventhouse RTI Stream to the v2 `signal_master`
 #
-# This notebook adds the direct Eventhouse TimeSeries DataBinding to the Fabric Ontology.
+# This notebook adds the Eventhouse time-series binding to the live v2 TMDL definition.
 #
 # Clean model:
 #
-# - Structured/static data stays in Lakehouse and is already bound by notebook 04.
+# - RTI_004 creates structure; RTI_005 binds the static Lakehouse data.
 # - RTI data stays in Eventhouse.
 # - `signal_master` is the semantic bridge.
 # - `opcua_node_id` links Eventhouse telemetry to the structured signal metadata.
@@ -37,9 +37,14 @@
 # - No `rti_measurements` ontology entity.
 
 
-# V2-only: existing v1 items require a separate replacement; no in-place conversion.
-# Reruns retain identities, bindings and custom content. Conflicting structural/source
-# changes fail before update. Output parts are published only after service readback.
+# Requires live integer `properties.generation == 2`; v1 is rejected, not migrated
+# or deleted. REST `/v1` and name suffixes such as `_V9` do not identify generation.
+# Reruns retain live TMDL identities, Lakehouse bindings, contextualizations, and
+# custom parts. Conflicting structural/source changes fail before update.
+# Complete service readback must verify the definition before output parts persist.
+# Query/ingest endpoints are validated separately. RTI_007 generates telemetry
+# on demand through `Pipe_Stream`; this setup step does not start streaming.
+# Binding success does not prove native v2 graph association or agent runtime readiness.
 
 # CELL ********************
 
@@ -1161,7 +1166,7 @@ def get_kusto_token(cluster_url: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Resolve ontology_id for downstream 007 cells
+# Resolve ontology_id for downstream 006 binding cells
 # ══════════════════════════════════════════════════════════════════════════════
 
 ontology = find_ontology_by_name(

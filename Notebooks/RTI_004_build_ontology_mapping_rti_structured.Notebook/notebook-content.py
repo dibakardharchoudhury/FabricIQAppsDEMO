@@ -23,21 +23,27 @@
 
 # MARKDOWN ********************
 
-# # 04 – Build Ontology for Structured Data + Direct Eventhouse RTI Binding
+# # 04 – Build Ontology v2 TMDL for Structured Data and RTI
 #
-# This notebook builds `OntologyTestRTI` for the clean Fabric ontology pattern:
+# This notebook builds the configured `ontology_name` as a generation 2 item:
 #
 # - static/structured entities are sourced from Lakehouse tables
 # - RTI telemetry stays in Eventhouse
 # - `signal_master` is the semantic bridge between structured metadata and RTI
 # - `event_time`, `value`, and `quality` are defined as time-series properties on `signal_master`
 #
-# This notebook does not create a Lakehouse copy of RTI telemetry.
-
-
-# V2-only: existing v1 items require a separate replacement; no in-place conversion.
-# Reruns retain identities, bindings and custom content. Conflicting structural/source
-# changes fail before update. Output parts are published only after service readback.
+# Fresh creation explicitly supplies `database.tmdl`, `model.tmdl`, and
+# `namespaces/default.tmdl`; entities and relationships are emitted as TMDL.
+# The live resource must report integer `properties.generation == 2`. Existing v1
+# items are rejected, not migrated or deleted; use a separate v2 target.
+# REST `/v1` and deployment suffixes such as `_V9` are not ontology generation.
+#
+# Reruns retain live TMDL identities, bindings, and custom parts. Conflicting
+# structural/source changes fail before update. Output parts are persisted only
+# after service readback verifies the complete definition.
+# RTI_005 adds Lakehouse bindings; RTI_006 adds Eventhouse time-series bindings.
+# This notebook creates neither a Lakehouse telemetry copy nor native graph
+# association. Verified TMDL does not establish Data Agent or Operations Agent readiness.
 
 # CELL ********************
 

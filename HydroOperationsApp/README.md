@@ -38,7 +38,7 @@ Signals are enriched with current Eventhouse KQL readings, and Rayfin SQL record
 operational overlays. No legacy Ontology or implicitly associated Graph Model is queried.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
-scenarios, screenshots, freshness behavior, and direct Graph Model architecture.
+scenarios, screenshots, freshness behavior, and native v2 GraphModel availability limits.
 
 ### Ontology v2 only
 
@@ -47,7 +47,9 @@ is not Ontology generation). The live item's read-only `properties.generation` m
 Generation `1`, missing/unknown generation, legacy JSON, and mixed definitions are rejected.
 Replace a legacy Ontology using the project's v2 setup workflow, update dependent agents to its
 new identity, configure the desired Ontology name when ambiguous, and refresh discovery.
-The browser does not migrate or write Fabric items. Model `ref` statements are not required for parsing.
+The browser's ontology reader does not migrate items or write ontology definitions. Model `ref`
+statements are not required for parsing; fresh authoring still supplies the default namespace and
+its model reference, as required by Fabric creation validation.
 Definition reads handle synchronous responses and long-running operations, preserving operation
 URL query parameters when fetching the result and surfacing request/poll/result failures.
 
@@ -122,9 +124,10 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
-- **Operations Agent email alerts** are not verified by this app. The v2 playbook capability may
-  remain product-blocked; review `ops_agent_deployment_status` and its reason before attempting
-  alerts. An Outlook connection alone does not establish v2 agent readiness.
+- **Operations Agent automation is blocked** in the current implementation pending a verified v2
+  playbook contract. `RTI_010` creates neither an agent nor an alert pipeline. Review
+  `ops_agent_deployment_status` and its reason; an Outlook connection or completed setup job alone
+  does not establish agent readiness.
 
 ## Rayfin SQL data model
 
@@ -160,11 +163,15 @@ prefix any command with `npx -y -p node@24 -c "…"`.
 npm install       # also installs the pinned Rayfin CLI locally
 npm run typecheck # tsc --noEmit
 npm run lint      # eslint
+npm run test:knowledge-graph # v2 contract, projection, discovery, cache and LRO regressions
+npm run validate-env # required before a build
 npm run build     # production build (rayfin env auto‑injected via prebuild)
 npm run dev       # dev server
 ```
 
 Without Fabric environment values the app shows explicit disconnected states — it never fabricates data.
+Published Data Agent source/invocation guards have separate coverage:
+`node --import tsx --test scripts/artifact-discovery.test.mjs`.
 
 ## Project layout
 
@@ -187,7 +194,9 @@ HydroOperationsApp/
         └── seedData.ts             # Typed operational seed arrays
 ```
 
-  Shared V1/V2 pages, including Knowledge Graph, Telemetry, Digital Twin, and Maintenance, live under
+  Pages shared by the original and redesigned app layouts, including Knowledge Graph, Telemetry,
+  Digital Twin, and Maintenance, live under
   `src/ui-shared/`. `src/ui-shared/knowledgeGraphModel.ts` builds the current application graph and
   `src/ui-shared/pages/KnowledgeGraphPage.tsx` owns scope, filtering, shared asset selection, and the
   entity inspector.
+  Layout names such as V1/V2 do not enable Ontology v1; both layouts use the same v2-only services.

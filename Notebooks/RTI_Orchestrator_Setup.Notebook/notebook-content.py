@@ -31,6 +31,21 @@
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
+#
+# **Ontology v2 only:** NB04 creates explicit TMDL database/model/default namespace;
+# NB04–NB06 require live integer `properties.generation == 2`. Existing v1 is
+# rejected, not migrated or deleted. Binding reruns preserve live TMDL/custom parts
+# and verify service readback. REST `/v1` and suffixes such as `_V9` are not generations.
+#
+# Agent notebook completion is not readiness: NB09 `auto` reports v2 onboarding
+# blocked, `disabled` skips, and `enabled` attempts a real v2 source with strict
+# draft/published identity verification (not runtime query verification). Both agent
+# flows reject v1. NB10 has no verified v2 automation/playbook contract: `auto` is
+# blocked, `disabled` skips, and `enabled` fails before writes. No legacy playbook
+# or automatic `Pipe_SendEmailAlert` is provisioned.
+# NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
+# independent of Data Agent availability. The app uses v2 TMDL + GraphQL rows,
+# KQL, and SQL projection; native v2 graph association/GQL remains unverified.
 
 # CELL ********************
 

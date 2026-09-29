@@ -8,6 +8,21 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
+## Ontology v2 prerequisite and capability boundaries
+
+The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
+An existing v1 item is rejected, not converted by an app redeploy. Provision a fresh workspace or
+an unused `env_suffix` through the RTI setup workflow, then resolve the new ontology and dependent
+sources. REST `/v1` URLs and environment suffixes such as `V9` are not ontology generations.
+
+Core ontology, SQL/GraphQL, dashboard, weather, and app-hosting completion do not establish agent
+readiness. The default agent modes are `auto`: Data Agent onboarding is reported as blocked for
+the current v2 rollout, and Operations Agent automation is blocked pending a verified v2 playbook
+contract. Data Agent `enabled` attempts real configuration with source-identity/readback checks;
+Operations Agent `enabled` fails before writes. `disabled` skips the respective capability.
+See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
+The deployment orchestrator's `SUCCESS` verifies app deployment, not optional agent execution.
+
 ## Agent one-shot deployment
 
 GitHub Copilot and other same-machine agents must run the repository orchestrator from the repository
@@ -79,7 +94,7 @@ scenarios are **whether the SPA app registration already exists** (app regs are 
   [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
-- **Email‑alert connection (OAuth2, one‑time, portal)** — the `Pipe_SendEmailAlert` pipeline (Operations Agent alerts, `RTI_010`) uses the **Office 365 Outlook “Send an email”** activity, which sends **from a mailbox** and therefore needs an **OAuth2** connection. It **can’t** be created from a notebook or from a Service Principal (an SP connection tests as *Online* but the activity fails with “Failed to load the connection”). Create it **once** in the portal — see [root README → Prerequisites](../README.md) item 5. `RTI_010` then auto‑detects and reuses it.
+- **Optional manual/future email alerts:** an independently configured Outlook email activity needs a mailbox-backed OAuth2 connection, not a notebook service-principal connection. This is not required for current core setup: `RTI_010` does not create or wire an Operations Agent, playbook, or `Pipe_SendEmailAlert`. See the prerequisite notes in the [root README](../README.md).
 
 ## Identities and permissions
 
@@ -199,16 +214,13 @@ Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner
 ## 1. Build the RTI Fabric environment (in Fabric)
 
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
-run it. This creates the Lakehouse, Eventhouse, ontology, dashboard, and agents. It does **not**
+run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and reports optional
+agent capability statuses separately. It does **not**
 create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
 
-> **Email alerts (one‑time):** for the Operations Agent’s email alerts to send, create an **OAuth2
-> Office 365 Outlook** connection once in the portal — *Settings → Manage connections and gateways →
-> Connections → **+ New** → type **Office 365 Outlook** → auth **OAuth 2.0** → **Sign in** with a
-> mailbox‑enabled **shared/service** account → name it **`RTI_Office365_EmailAlert`** → Create.*
-> `RTI_010` reuses it automatically (by that name, else any OAuth2 Outlook connection); a **Service
-> Principal** connection won’t work (“Failed to load the connection”). Full steps and rationale:
-> [root README → Prerequisites](../README.md).
+> **Operations Agent is not provisioned by this flow.** An Outlook connection or successful
+> `RTI_010` capability report is not proof of a runnable v2 playbook. Do not attempt to restore the
+> removed legacy playbook as a workaround. Check `ops_agent_deployment_status` and its reason.
 
 ## 2. Clone and install
 
@@ -250,10 +262,12 @@ Most artifact ids/URIs are **discovered at runtime** by workspace display name; 
 `AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
 (the build writes `VITE_RAYFIN_*` into it automatically).
 
-### Optional: the Azure AI Foundry copilot (v2)
+### Optional: the Azure AI Foundry copilot
 
-The Copilot page ships two engines. **Data Agent** (the published Fabric Data Agent) needs no extra
-configuration. **Foundry** runs an Azure AI Foundry model in the browser with tools scoped to the
+The Copilot page ships two engines, not two ontology generations. **Data Agent** requires supported
+v2 onboarding and a published source matching the selected live v2 ontology/workspace; the app
+verifies this before invoking MCP and propagates runtime failures. **Foundry** is a separate engine
+that runs an Azure AI Foundry model in the browser with tools scoped to the
 Lakehouse `silver_*` tables, the Eventhouse and the app database. Add these to `rayfin/.env` to
 enable it — the engine toggle only appears when both are set:
 
@@ -340,7 +354,10 @@ with empty operational tables and no STID binding yet.
 2. Click **"Seed & provision"** in the header.
 
 It runs `RTI_011` in your workspace, which upserts the operational tables, creates + **auto‑binds**
-the STID **GraphQL API** to the Lakehouse SQL endpoint, and adds the SQL DB as a Data Agent source.
+the STID **GraphQL API** to the Lakehouse SQL endpoint. These stages do not require a Data Agent.
+It adds SQL only to an eligible agent whose ontology source matches the selected live v2 item,
+and verifies retained draft and published ontology/SQL sources. Check the notebook's independent
+capability result; successful SQL/GraphQL setup does not mean an agent was published or is runnable.
 The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
 
 > **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric

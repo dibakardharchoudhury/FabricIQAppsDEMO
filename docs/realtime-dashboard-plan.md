@@ -163,9 +163,11 @@ launch.py → sync_workspace_from_git.py → run_pipeline.py (01_Pipe_Setup)
   discovery, resolved the right lakehouse by name, bootstrapped from the embedded seed, redeployed the
   dashboard, and rewrote `Files/dashboards/…json` (17,350 bytes). Job Completed.
 
-> The lakehouse lookup deliberately does not take the first `Lakehouse` item: the workspace also
-> contains the ontology's own `…_lh_…` lakehouse. Resolution order is `lakehouse_id` setting →
-> `lakehouse_name` setting → first non-`_lh_` lakehouse.
+> The validation above is a historical dashboard result, not an Ontology v2 acceptance result.
+> Current setup requires v2, whose auxiliary graph/storage items are optional; an `…_lh_…` name is
+> not an ontology ownership contract. Dashboard resolution still prefers `lakehouse_id`, then
+> `lakehouse_name`, with the existing non-`_lh_` fallback. Verify the configured source and see the
+> [current v2-only policy](../README.md#ontology-generations-and-optional-agents).
 
 ## Phase 4 — Embed into the Rayfin UI (next session)
 

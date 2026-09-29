@@ -26,7 +26,7 @@
 # # 10 - Ontology v2 Operations Agent capability check
 #
 # This notebook is **v2-only**. It reads the live Ontology resource and requires
-# `properties.generation == 2`. Existing generation 1 ontologies or agent sources
+# integer `properties.generation == 2`. Existing generation 1 ontologies or agent sources
 # must be replaced through an explicit migration; this notebook does not mutate them.
 #
 # `ontology_operations_agent_mode` accepts `auto` (default), `enabled`, or `disabled`.
@@ -35,7 +35,8 @@
 # with an actionable error. Fabric known issue 1970 tracks new-experience playbook generation
 # timeout, not permanent lack of product support.
 #
-# No agent, connection, email pipeline, definition, or playbook is created or configured.
+# No agent, connection, email pipeline (including `Pipe_SendEmailAlert`), definition,
+# or playbook is created or configured. REST `/v1` and `_V9` are not ontology generations.
 # No legacy playbook is embedded. Existing artifacts are left untouched. The shared
 # `ops_agent_deployment_status` and `ops_agent_deployment_reason` replace any stale success
 # indication. A structured notebook exit reports capability, status, reason, mode, and

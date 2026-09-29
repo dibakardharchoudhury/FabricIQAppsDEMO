@@ -27,25 +27,40 @@
 # # Fabric IQ –  Mock Dataset
 # 
 # ## Purpose
-# This documentation describes a **fully synthetic energy dataset** and the **end‑to‑end Fabric pipeline** that takes it from raw files and seeded telemetry all the way to a **live ontology bound to Eventhouse RTI streams**.
+# This documentation describes a **fully synthetic energy dataset** and the **end‑to‑end Fabric pipeline** that takes it from raw files and seeded telemetry to a **generation 2 ontology with verified TMDL bindings to Lakehouse and Eventhouse data**.
 # 
-# The scenario is implemented across these notebooks (RTI_000–RTI_007):
+# The scenario is implemented across these canonical notebooks (names remain unchanged):
 # - `RTI_000_sampleEnergyDataset_Doc` (this document)
 # - `RTI_001_create_lakehouse_shortcut`
-# - `RTI_002_Setup_And_Structured_Data`
+# - `RTI_001_create_lakehouse_SelfContained` (local seed alternative)
+# - `RTI_002_Setup_Eventhouse_Only`
 # - `RTI_003_ingest_transform_medallion`
+# - `RTI_003_ingest_transform_medallion_SelfContained` (local seed alternative)
 # - `RTI_004_build_ontology_mapping_rti_structured`
 # - `RTI_005_entity_DataBinding_rti_structured`
-# - `RTI_006_generate_and_ingest_OPCUA_Stream`
-# - `RTI_007_TimeSeriesBinding_RTI_signal`
+# - `RTI_006_TimeSeriesBinding_RTI_signal`
+# - `RTI_007_generate_and_ingest_OPCUA_Stream`
+# - `RTI_008_build_realtime_dashboard`
+# - `RTI_009_build_data_agent`
+# - `RTI_010_build_operations_agent`
+# - `RTI_011_seed_sql_wire_graphql_agent` (on demand after app/SQL provisioning)
+# - `RTI_Orchestrator_Setup` (Stage 2 setup DAG)
 # 
 # The dataset and notebooks together are used to test **Microsoft Fabric** and **Fabric IQ** end‑to‑end capabilities:
 # - Lakehouse (Bronze/Silver/Gold)
 # - Streaming (Eventstream with OPC UA–like telemetry)
 # - Eventhouse & KQL DB
-# - Ontology (entity types, relationships, data bindings)
-# - Graph (asset topology & relationships)
-# - Data Agent & Operations Agent
+# - Ontology v2 (TMDL entities, relationships, and data bindings)
+# - Application asset topology from GraphQL rows plus the v2 semantic contract
+# - Capability-gated Data Agent integration; blocked Operations Agent automation
+#
+# **V2-only contract:** every selected live ontology must report integer
+# `properties.generation == 2`. Names such as `*_V9`, Fabric REST `/v1`, and ADLS Gen2
+# do not identify ontology generation. Existing v1 items are rejected, not migrated or
+# deleted; provision a separate v2 target rather than converting the old item.
+# Fresh v2 creation explicitly supplies `database.tmdl`, `model.tmdl`, and
+# `namespaces/default.tmdl`. Reruns preserve live TMDL, identities, bindings, and
+# custom parts and verify service readback before publishing local output parts.
 # 
 # All data is **fully synthetic** and mirrors common **industrial data landscapes** (engineering, operations, maintenance, documents) while containing **no real plant or customer data**.
 # 
@@ -125,14 +140,19 @@
 # - The Lakehouse `Energy_IQ_LakehouseRTI` exists.
 # - `Files/bronze` points to the raw dataset in ADLS.
 # - `rti_demo_settings` is the single source of truth for IDs and names.
+# - In `Pipe_Setup`, RTI_001 runs as Stage 1 and rebinds child notebooks before
+#   `RTI_Orchestrator_Setup` starts Stage 2. Its `%%configure` default Lakehouse and
+#   `useRootDefaultLakehouse` arguments make all children inherit the root session.
 # 
 # ---
 # 
-# ### 2. RTI_002 – Eventhouse, KQL DB, Eventstream & Signal Seeding
+# ### 2. RTI_002 – Eventhouse & KQL DB
 # 
-# **Notebook:** `RTI_002_Setup_And_Structured_Data`
+# **Notebook:** `RTI_002_Setup_Eventhouse_Only`
 # 
-# **Goal:** Create / reuse the streaming backbone (Eventhouse + KQL DB + Eventstream) and seed a tall/slim signal metadata model that drives simulation and ontology.
+# **Goal:** Create / reuse Eventhouse and KQL DB resources and publish their identifiers.
+# RTI_003 prepares the structured signal metadata; RTI_007 configures Eventstream
+# and generates live telemetry. These are separate setup/streaming responsibilities.
 # 
 # **Key steps**
 # 
@@ -150,27 +170,9 @@
 #      - `value` (real)
 #      - `quality` (string)
 # 
-# 3. **Eventstream & Custom Endpoint**
-#    - Creates or reuses an **Eventstream** `RTI_Demo_Eventstream`.
-#    - Uses Eventstream `getDefinition`/`updateDefinition` to:
-#      - Add a `CustomEndpoint` source (`OPCUA_CustomEndpoint`).
-#      - Add a `DefaultStream` wired to that source.
-#      - Add an **Eventhouse destination** targeting the `OPCUAEvents` table.
-#    - Retrieves the **Custom Endpoint connection** (Service Bus namespace, Event Hub name, connection string) used later for sending OPC UA–like telemetry.
-# 
-# 4. **Seed signal metadata into Silver**
-#    - Uses a `SIM_CONFIG` definition to generate synthetic signal metadata:
-#      - Devices `T001–T005`, sensors (temperature, power, speed, inlet pressure, vibration, etc.).
-#      - Anomaly patterns (ramping vibration, spikes, etc.).
-#    - Writes:
-#      - `silver_instruments`: tall/slim instrument metadata (one row per OPC UA node).
-#      - `silver_signal_master`: normalized signal master table derived from `silver_instruments` with:
-#        - `opcua_node_id`, `tag`, `instrument_id`, `equipment_id`, `system_id`, `facility_id`, `unit`, `is_active`, `signal_type`.
-# 
 # After RTI_002:
-# - Eventhouse + KQL DB + table `OPCUAEvents` exist and are ready for streaming.
-# - Eventstream is wired from Custom Endpoint to Eventhouse.
-# - A **signal master** model (`silver_signal_master`) is available for ontology and simulation.
+# - Eventhouse and KQL DB are available for the downstream binding and streaming steps.
+# - Completing this notebook alone does not establish live ingestion or agent readiness.
 # 
 # ---
 # 
@@ -233,7 +235,8 @@
 # 
 # **Notebook:** `RTI_004_build_ontology_mapping_rti_structured`
 # 
-# **Goal:** Automatically generate and deploy a **Fabric Ontology** (`RTI_Demo_Ontology`) that models structured entities and their relationships, and prepares the entity model for RTI binding.
+# **Goal:** Build the configured **Fabric Ontology v2** with structured entities,
+# semantic relationships, and time-series properties ready for subsequent bindings.
 # 
 # **Key steps**
 # 
@@ -254,17 +257,16 @@
 #      - `equipment` → `equipment_id`
 #      - `instruments` → `instrument_id`
 #      - `signal_master` → `opcua_node_id` (override)
-#    - Sets `entityIdParts = [own PK]` (no composite identity keys).
+#    - Sets the TMDL `keyProperty` to the entity's own primary key.
 # 
 # 3. **Entity type generation**
-#    - For each table, creates an **EntityType** with:
-#      - `properties` – one ontology property per Lakehouse column (typed via Spark schema).
-#      - `entityIdParts` – property IDs corresponding to the PK.
-#      - `displayNamePropertyId` – typically the PK.
-#    - For `signal_master`, adds **Eventhouse RTI `timeseriesProperties`**:
-#      - `event_time` (DateTime)
-#      - `value` (Double)
-#      - `quality` (String)
+#    - For each table, creates an `entities/<name>.tmdl` entity with:
+#      - typed `property` declarations inferred from the entity's Spark schema.
+#      - `keyProperty` and stable `lineageTag` identities.
+#    - For `signal_master`, adds **Eventhouse RTI time-series properties**:
+#      - `event_time` (`TimeSeries<dateTime>`)
+#      - `value` (`TimeSeries<double>`)
+#      - `quality` (`TimeSeries<string>`)
 #    - RTI telemetry **remains in Eventhouse**; there is **no copied “measurement” entity** in Lakehouse.
 # 
 # 4. **Relationship type generation**
@@ -278,59 +280,61 @@
 #    - Writes **`ontology_relationship_audit`** documenting effective join keys.
 # 
 # 5. **Persist ontology parts to Lakehouse**
-#    - Writes `ontology_parts_latest` (one row per ontology part) with:
-#      - `.platform`, `definition.json` root parts
-#      - EntityType definitions
-#      - RelationshipType definitions
+#    - Writes `ontology_parts_latest` only after verified service readback, with:
+#      - `.platform`, `database.tmdl`, `model.tmdl`, `namespaces/default.tmdl`
+#      - `entities/<name>.tmdl`
+#      - `entityRelationships.tmdl`
 #    - Writes `ontology_entity_audit` (entity → PK, ID parts, FK columns).
 # 
 # 6. **Deploy ontology via Fabric REST**
-#    - Uses helper functions to:
-#      - Ensure ontology item `RTI_Demo_Ontology` exists **in the target folder**.
-#      - Push definition in **two stages**:
-#        1. Root + EntityTypes
-#        2. Root + EntityTypes + RelationshipTypes
-#    - Verifies via `getDefinition` that the final ontology has:
+#    - Creates a fresh v2 item with explicit TMDL database/model/default namespace,
+#      or resolves the existing item **in the target folder**.
+#    - Requires live integer `properties.generation == 2`; v1 is rejected without
+#      conversion or deletion. Missing/ambiguous generation fails closed.
+#    - Merges generated structure into the live definition, retaining identities,
+#      bindings, custom TMDL, and custom parts. Conflicts fail before update.
+#    - Verifies the complete definition readback before persisting output parts:
 #      - 5 entity types (facilities, systems, equipment, instruments, signal_master).
 #      - 4 relationship types (forming the full chain signal → instrument → equipment → system → facility).
 # 
 # After RTI_004:
-# - A clean **structured ontology** exists, with `signal_master` prepared to hold RTI `timeseriesProperties` and to connect to the rest of the asset hierarchy.
+# - A **v2 TMDL structured ontology** exists, with `signal_master` time-series
+#   properties and semantic relationships. RTI_005/006 perform the data bindings.
 # 
 # ---
 # 
-# ### 5. RTI_005 – Static Lakehouse DataBindings & Relationship Contextualizations
+# ### 5. RTI_005 – V2 Lakehouse Bindings & Relationship Contextualizations
 # 
 # **Notebook:** `RTI_005_entity_DataBinding_rti_structured`
 # 
-# **Goal:** Bind structured Lakehouse tables to ontology entities and create relationship contextualizations based on existing identity keys.
+# **Goal:** Add TMDL Lakehouse bindings and relationship contextualizations to the
+# live v2 definition, without replacing its custom content or time-series bindings.
 # 
 # **Key steps**
 # 
 # 1. **Load settings & ontology**
 #    - Reads `rti_demo_settings` for Lakehouse & table names.
-#    - Resolves ontology `RTI_Demo_Ontology` and its ID.
+#    - Resolves the configured ontology and requires live integer generation 2.
 #    - Reads `ontology_entity_audit` and `ontology_relationship_audit`.
 # 
 # 2. **Static DataBindings (Lakehouse tables)**
 #    - For each entity in `{facilities, systems, equipment, instruments, signal_master}`:
 #      - Confirms the corresponding silver table exists and has the required columns.
-#      - Creates a `NonTimeSeries` **DataBinding** from the Lakehouse table to entity properties, mapping:
-#        - `sourceColumnName` → `targetPropertyId` (for all static columns).
-#      - Writes one DataBinding per entity under:
-#        - `EntityTypes/{entityId}/DataBindings/<guid>.json`
+#      - Adds a TMDL `dataBinding` to `entities/<name>.tmdl`, referencing the
+#        Lakehouse data source and mapping source columns to named properties.
+#      - Retains existing property identities and unrelated binding blocks.
 # 
 # 3. **Relationship Contextualizations**
 #    - For each relationship in the ontology (from `ontology_relationship_audit`):
 #      - Calculates **join keys** between source and target tables (shared ID columns).
-#      - Generates a **Contextualization** that describes how to join the source entity to the target entity using Lakehouse tables and key bindings.
-#    - Writes one Contextualization per relationship under:
-#      - `RelationshipTypes/{relationshipId}/Contextualizations/<guid>.json`
+#      - Adds TMDL **contextualization** blocks describing the join to
+#        `entityRelationships.tmdl`; no legacy `RelationshipTypes/**` JSON is emitted.
 # 
 # 4. **Push updated ontology definition**
-#    - Merges new DataBinding and Contextualization parts with the existing ontology parts.
+#    - Reads and merges the live TMDL data sources, bindings, and contextualizations,
+#      preserving custom parts and existing Eventhouse time-series content on rerun.
 #    - Pushes updated definition via `updateDefinition` (with LRO support).
-#    - Verifies that the ontology now contains:
+#    - Verifies service readback matches the intended complete definition, including:
 #      - Entity definitions
 #      - Relationship definitions
 #      - 5 static DataBindings
@@ -342,9 +346,12 @@
 # 
 # ---
 # 
-# ### 6. RTI_006 – Generate & Ingest Live OPC UA–Like Stream
+# ### Streaming companion: RTI_007 – Generate & Ingest Live OPC UA–Like Stream
 # 
-# **Notebook:** `RTI_006_generate_and_ingest_OPCUA_Stream`
+# **Notebook:** `RTI_007_generate_and_ingest_OPCUA_Stream`
+#
+# Run on demand after setup using `Pipe_Stream`; it is described here for telemetry
+# context, but RTI_006 binding below runs first in the setup DAG.
 # 
 # **Goal:** Generate live OPC UA–like telemetry for the signals defined in `silver_signal_master` and stream it into the **Eventhouse** via the Eventstream Custom Endpoint.
 # 
@@ -383,73 +390,90 @@
 #      - First and last `event_time`
 #      - Latest `ingestion_time`
 # 
-# After RTI_006:
+# After RTI_007:
 # - Live OPC UA–like events are streaming into `OPCUAEvents` in Eventhouse.
 # - Each event includes `opcua_node_id` that matches a row in `silver_signal_master`, enabling semantic linking.
 # 
 # ---
 # 
-# ### 7. RTI_007 – Bind Eventhouse RTI Stream to `signal_master`
+# ### 6. RTI_006 – Bind Eventhouse RTI Stream to `signal_master`
 # 
-# **Notebook:** `RTI_007_TimeSeriesBinding_RTI_signal`
+# **Notebook:** `RTI_006_TimeSeriesBinding_RTI_signal`
 # 
-# **Goal:** Add a **TimeSeries DataBinding** from the Eventhouse table `OPCUAEvents` to `signal_master` in the ontology, using `opcua_node_id` as the semantic key.
+# **Goal:** Add a **v2 TMDL time-series binding** from Eventhouse `OPCUAEvents` to
+# `signal_master`, using `opcua_node_id` as the semantic key. RTI_006 runs during
+# setup before the on-demand RTI_007 stream described above.
 # 
 # **Key steps**
 # 
 # 1. **Configuration & helpers**
 #    - Reads `rti_demo_settings` for ontology name, Eventhouse, KQL DB, and table names.
 #    - Resolves:
-#      - Ontology `RTI_Demo_Ontology` and `ontology_id`.
+#      - Configured ontology name and `ontology_id`, requiring live integer generation 2.
 #      - Eventhouse item and KQL DB item, ensuring they are in the target folder.
 #      - Eventhouse **query URI**.
 #    - Confirms the slim `OPCUAEvents` schema via Kusto (`event_time`, `opcua_node_id`, `value`, `quality`).
 # 
 # 2. **Validate ontology entity `signal_master`**
 #    - Fetches live ontology definition via `getDefinition`.
-#    - Locates `signal_master` EntityType and checks:
+#    - Locates the `signal_master` TMDL entity and checks:
 #      - Static key property `opcua_node_id` exists.
-#      - `entityIdParts` contain the `opcua_node_id` property ID.
-#      - `timeseriesProperties` include `event_time`, `value`, `quality`.
-#    - Builds property maps for use in DataBinding:
-#      - Static: `opcua_node_id` → property ID
-#      - Time‑series: `event_time`, `value`, `quality` → property IDs
+#      - `keyProperty` is `opcua_node_id`.
+#      - `TimeSeries<...>` properties include `event_time`, `value`, `quality`.
+#    - Uses named TMDL properties and preserves live identities for the binding.
 # 
 # 3. **Build and push Eventhouse TimeSeries DataBinding**
-#    - Removes any existing Eventhouse TimeSeries DataBindings for `signal_master` (if `REPLACE_EXISTING_TIMESERIES_BINDING = True`).
-#    - Constructs a new **TimeSeries DataBinding**:
-#      - `dataBindingType = TimeSeries`
-#      - `timestampColumnName = event_time`
-#      - `sourceTableProperties`:
-#        - `sourceType = KustoTable`
-#        - `workspaceId = <workspace>`
-#        - `itemId = <Eventhouse ID>`
-#        - `clusterUri = <Eventhouse query URI>`
-#        - `databaseName = RTI_Demo_Eventhouse`
-#        - `sourceTableName = OPCUAEvents`
-#      - `propertyBindings`:
-#        - `opcua_node_id` (Eventhouse column) → static property `signal_master.opcua_node_id`
-#        - `event_time` → timeseries property `signal_master.event_time`
-#        - `value` → timeseries property `signal_master.value`
-#        - `quality` → timeseries property `signal_master.quality`
-#    - Adds the binding part under:
-#      - `EntityTypes/{signal_entity_id}/DataBindings/<guid>.json`
-#    - Pushes updated definition via `updateDefinition`.
+#    - Merges the Eventhouse `dataSource` and `dataBinding` into the live TMDL,
+#      retaining static bindings, contextualizations, and all unrelated/custom parts.
+#    - Maps `opcua_node_id`, `event_time`, `value`, and `quality` to their named
+#      properties and sets the `event_time` timestamp contract.
+#    - Validates Kusto query/ingest endpoints separately; one is not inferred from the other.
+#    - Rejects incompatible existing source/binding changes before `updateDefinition`.
 # 
 # 4. **Verification**
-#    - Re‑reads `getDefinition` and inspects all TimeSeries DataBindings under `signal_master`.
-#    - Confirms **exact contract**:
-#      - SourceType = `KustoTable`, `workspaceId` = workspace, `itemId` = Eventhouse ID.
-#      - `clusterUri`, `databaseName`, `sourceTableName` match `OPCUAEvents`.
-#      - `timestampColumnName = event_time`.
-#      - Exactly four property bindings matching the mapping above.
+#    - Re‑reads `getDefinition` and verifies the entire submitted v2 definition,
+#      including source identity, property mappings, timestamp, and preserved parts.
+#    - Persists verified output parts only after successful readback.
 # 
-# After RTI_007:
+# After RTI_006:
 # - `signal_master` has a **live TimeSeries DataBinding** to the Eventhouse `OPCUAEvents` table.
 # - Every RTI event (`opcua_node_id`, `event_time`, `value`, `quality`) is semantically bound to:
 #   - The structured signal (`signal_master` row)
 #   - Its instrument, equipment, system, and facility (through ontology relationships)
-#   - Downstream analytics and Agents can reason over **both structure and live telemetry**.
+#   - The semantic contract describes both structure and telemetry; this does not
+#     establish native graph association, agent query readiness, or automation support.
+#
+# ### 8. RTI_008 – Dashboard
+# Builds the realtime dashboard using KQL/Eventhouse resources independently of
+# agent availability. Streaming is started separately through `Pipe_Stream`.
+#
+# ### 9. RTI_009 – Capability-gated Data Agent
+# Requires the selected live ontology and every retained ontology source to report
+# integer `properties.generation == 2`. Both item ID and workspace must match.
+# `ontology_data_agent_mode=auto` records generation 2 onboarding as blocked;
+# `disabled` skips integration. `enabled` explicitly attempts the real v2 source.
+# Draft identity is read back before publish and published-stage identity must also
+# be verified before success is recorded. Publication is **not runtime query readiness**.
+# Existing v1 sources are rejected, never reused, migrated, or deleted.
+#
+# ### 10. RTI_010 – Blocked Operations Agent automation
+# No verified v2 automation/playbook contract is implemented. `auto` records blocked;
+# `disabled` skips; `enabled` fails before agent/playbook writes. No old playbook,
+# agent, connection, or automatic `Pipe_SendEmailAlert` provisioning is performed.
+# Existing resources remain untouched. Completion does not mean an agent is ready.
+#
+# ### 11. RTI_011 – SQL seed, GraphQL, and optional SQL Data Agent source
+# SQL seeding and GraphQL setup run independently of Data Agent availability.
+# The optional agent extension follows the same auto/enabled/disabled v2 policy
+# as RTI_009, rejects v1, and verifies exact draft/published ontology and SQL-source
+# identities. It never silently extends an unrelated agent or proves runtime readiness.
+#
+# ### Application consumption and graph boundary
+# HydroOperationsApp reads v2 TMDL and combines **GraphQL rows + the semantic
+# contract**, Eventhouse KQL telemetry, and the operational SQL projection.
+# Native v2 graph association is unverified/unavailable in this deployment; no
+# native GQL query or ontology-backed graph runtime capability is promised.
+# GraphQL is a row-access API here, not evidence that native ontology GQL works.
 # 
 # ---
 # 
@@ -515,7 +539,7 @@
 # This data is suitable for:
 # - Eventstream/Eventhouse validation
 # - Near‑real‑time monitoring examples
-# - Operations Agent reasoning
+# - Potential future Operations Agent reasoning (v2 automation currently blocked)
 # 
 # ---
 # 
@@ -532,9 +556,9 @@
 # - Defines tag naming rules using regex‑like patterns
 # 
 # **Usage in Fabric IQ**
-# - Ontology constraints
+# - Potential modeling constraints (not automatically provisioned by the five-entity model)
 # - Data quality validation
-# - Agent reasoning (e.g., “Which tags violate standards?”)
+# - Candidate agent questions (query support/readiness must be verified separately)
 # 
 # ---
 # 
@@ -550,7 +574,7 @@
 # 
 # **Typical use cases**
 # - Alarm threshold comparison
-# - Operations Agent decisions
+# - Potential future Operations Agent decisions (no verified v2 playbook contract)
 # - Engineering context in analytics
 # 
 # ---
@@ -572,7 +596,8 @@
 # - Elements: equipment & instruments found in diagram
 # - Connections: process‑flow relationships between equipment
 # 
-# Used to build **graph topology** in Fabric IQ.
+# Provides source data for potential asset-topology modeling; native ontology v2
+# graph association/GQL is not verified or provisioned by these notebooks.
 # 
 # ---
 # 
@@ -613,6 +638,11 @@
 # ---
 # 
 # ## Fabric IQ Modeling Blueprint
+#
+# The deployed v2 model contains the five structured entities and four relationships
+# described in RTI_004; telemetry is time-series properties, not a Measurement entity.
+# The extended blueprint below includes **candidate** WorkOrder, Document, and P&ID
+# relationships, not a claim that RTI_004 creates them or that native GQL is available.
 # 
 # ### Entity Types
 # - Facility
@@ -638,6 +668,10 @@
 # ---
 # 
 # ## Example Validation Scenarios
+#
+# These are candidate application/query scenarios, not verified agent capabilities.
+# Use GraphQL rows + the v2 semantic contract, KQL, and SQL projection where supported;
+# agent publication and successful setup alone do not prove these queries can execute.
 # 
 # - Which equipment shows abnormal vibration and has open work orders?
 # - Which pumps exceed 90% of design pressure?
@@ -664,4 +698,3 @@
 # ---
 # 
 # **End of document**
-
