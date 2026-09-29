@@ -1184,7 +1184,10 @@ def persist_generated_origin(workspace_name: str) -> None:
         raise DeployError(f"{upstream} changed during deployment. Merge it, then rerun deploy.")
     run_stream(command_argv("git", "add", relative), cwd=REPO_ROOT)
     run_stream(
-        command_argv("git", "commit", "-m", f"deploy: register {workspace_name} app origin"),
+        command_argv(
+            "git", "commit", "-m", f"deploy: register {workspace_name} app origin",
+            "-m", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+        ),
         cwd=REPO_ROOT,
     )
     run_stream(command_argv("git", "push", "origin", branch), cwd=REPO_ROOT)
