@@ -440,6 +440,12 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "ops_agent_run_as_user", "type": "string", "default": "admin@mngenvmcap218279.onmicrosoft.com",
      "label": "Agent run-as user",
      "help": "UPN the operations agent runs as when sending Teams messages."},
+    {"name": "ontology_data_agent_mode", "type": "string", "default": "auto",
+     "label": "Ontology Data Agent mode",
+     "help": "auto: skip blocked Ontology v2 integration; enabled: opt in after product support is verified; disabled: do not configure the agent."},
+    {"name": "ontology_operations_agent_mode", "type": "string", "default": "auto",
+     "label": "Ontology Operations Agent mode",
+     "help": "auto: skip blocked v2 playbooks; enabled: explicit opt-in (not proof of readiness); disabled: do not configure the agent."},
     {"name": "per_notebook_timeout_secs", "type": "int", "default": "3600",
      "label": "Per-notebook timeout (secs)",
      "help": "Seconds the orchestrator waits for each notebook before giving up (e.g. 3600)."},
@@ -485,6 +491,9 @@ def api_run_pipeline():
                 return jsonify(error=f"{spec['label']} must be a whole number."), 400
         else:
             params[name] = str(value).strip()
+        if name in {"ontology_data_agent_mode", "ontology_operations_agent_mode"}:
+            if params[name] not in {"auto", "enabled", "disabled"}:
+                return jsonify(error=f"{spec['label']} must be auto, enabled, or disabled."), 400
 
     # run_pipeline.py resolves the target workspace and replaces this value with
     # its canonical GUID. Keep the display value here only for transparent input.

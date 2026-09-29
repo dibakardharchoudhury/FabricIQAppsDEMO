@@ -118,6 +118,8 @@ ops_agent_teams_team_id = ""
 ops_agent_teams_channel_id = ""
 # Whether to copy the playbook (STATIC, NOT injected).
 ops_agent_copy_playbook = "true"
+ontology_data_agent_mode = "auto"
+ontology_operations_agent_mode = "auto"
 
 # Structured table names used by the ontology.
 silver_facilities_table = "silver_facilities"
@@ -179,6 +181,13 @@ if _missing:
         ". These are injected by the Pipe_Setup pipeline (orchestrator nb01_args). "
         "Run via Pipe_Setup, or fill them in the parameters cell for a standalone run."
     )
+
+for name, mode in (
+    ("ontology_data_agent_mode", ontology_data_agent_mode),
+    ("ontology_operations_agent_mode", ontology_operations_agent_mode),
+):
+    if mode not in {"auto", "enabled", "disabled"}:
+        raise ValueError(f"{name} must be auto, enabled, or disabled; got {mode!r}")
 
 lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
 workspace_folder_path = f"RTI_DEMO_{env_suffix}"  # Fabric workspace folder, not a Lakehouse path
@@ -245,6 +254,8 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "ops_agent_teams_team_id": ops_agent_teams_team_id,
         "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
         "ops_agent_copy_playbook": ops_agent_copy_playbook,
+        "ontology_data_agent_mode": ontology_data_agent_mode,
+        "ontology_operations_agent_mode": ontology_operations_agent_mode,
 
         "silver_facilities_table": silver_facilities_table,
         "silver_systems_table": silver_systems_table,
@@ -1028,11 +1039,10 @@ with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
         else:
             print(f"⚠️  Could not rebind '{nb_name}': {detail}")
             binding_failures.append((nb_name, detail))
-weather_binding_failures = [failure for failure in binding_failures if failure[0].startswith("Weather_")]
-if weather_binding_failures:
+if binding_failures:
     raise RuntimeError(
-        "Required weather notebook binding failed: "
-        + "; ".join(f"{name}: {detail}" for name, detail in weather_binding_failures)
+        "Required downstream notebook binding failed: "
+        + "; ".join(f"{name}: {detail}" for name, detail in binding_failures)
     )
 
 print(

@@ -3,25 +3,16 @@ export type SemanticArtifact = { id: string; type: string; displayName: string }
 export function selectOntology(items: SemanticArtifact[], configuredName?: string): SemanticArtifact | undefined {
   const ontologies = items.filter(item => item.type === 'Ontology')
   if (configuredName) {
-    const configured = ontologies.find(item => item.displayName === configuredName)
-    if (configured) return configured
+    return ontologies.find(item => item.displayName === configuredName)
   }
   return ontologies.length === 1 ? ontologies[0] : undefined
 }
 
-export function selectGraphModel(
-  items: SemanticArtifact[],
-  ontologyEntityNames: string[],
-  labelsByGraphModelId: ReadonlyMap<string, ReadonlySet<string>>,
-): SemanticArtifact | undefined {
-  const graphModels = items.filter(item => item.type === 'GraphModel')
-  if (graphModels.length === 1) return graphModels[0]
+export const V2_REPLACEMENT_REQUIRED = 'This app requires Ontology v2. Replace the existing v1 Ontology with a generation-2 TMDL Ontology, update dependent agents and refresh discovery. Legacy Ontologies and their Graph Models will not be reused.'
 
-  const entityNames = new Set(ontologyEntityNames.filter(Boolean))
-  const scored = graphModels.map(item => ({
-    item,
-    score: [...(labelsByGraphModelId.get(item.id) ?? [])].filter(label => entityNames.has(label)).length,
-  })).sort((left, right) => right.score - left.score)
-
-  return scored[0]?.score > 0 && scored[0].score > (scored[1]?.score ?? 0) ? scored[0].item : undefined
+export function requireV2Generation(generation: unknown): asserts generation is 2 {
+  if (generation === 1) throw new Error(V2_REPLACEMENT_REQUIRED)
+  if (generation !== 2) throw new Error('Ontology v2 generation could not be verified. The selected item must report numeric properties.generation = 2. Check Fabric item read access and refresh discovery.')
 }
+
+export const V2_GRAPH_UNAVAILABLE = 'Ontology v2 does not expose a linked materialized Graph Model through the supported Fabric API. Use the Lakehouse compatibility view when available, not a live v2 graph. Publish a supported linked graph when Fabric exposes that capability; unrelated workspace Graph Models will not be queried.'

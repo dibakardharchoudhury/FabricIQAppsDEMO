@@ -8,6 +8,60 @@ composes it all on one screen.
 
 > [!NOTE]
 > All data is synthetic — no real plant or customer data.
+> Agent availability depends on the ontology generation and Fabric product support; a successful
+> core setup does not imply that optional agents are ready.
+
+## Ontology generations and optional agents
+
+The canonical `RTI_004`, `RTI_005`, and `RTI_006` notebook names remain unchanged, including their
+readable mirrors in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/). This project supports **Ontology v2
+only**. Authoring, binding, application discovery, and agent configuration require the live item's
+`properties.generation` to be `2`. Existing generation-1 items are rejected with a replacement-required
+error, not reused or updated through a legacy path. Use a fresh workspace or an unused environment
+suffix to provision v2 without destroying an existing deployment. This is not an in-place migration.
+Fabric REST URLs still use `/v1`; the REST API version is not the ontology generation.
+
+Generation 2 uses TMDL entity definitions, Direct Lake backing tables, physical relationships,
+and Eventhouse time-series backing configurations. Definition updates preserve unrelated live
+parts and existing bindings; incompatible changes must be resolved explicitly rather than silently
+rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
+Graph materialization is optional in generation 2, so missing graph data must not
+be confused with an empty, successfully queried ontology.
+
+Two optional `01_Pipe_Setup` parameters are persisted in `rti_demo_settings`:
+
+| Parameter | Default | Policy |
+| --- | --- | --- |
+| `ontology_data_agent_mode` | `auto` | Report v2 ontology-source integration as blocked until product support is verified; never fall back to a v1 source. |
+| `ontology_operations_agent_mode` | `auto` | Report v2 playbook integration as blocked; never create a legacy playbook. |
+
+Both accept `auto`, `enabled`, or `disabled`. `enabled` is an explicit opt-in, **not** a workaround
+for a product defect or proof of agent readiness. Data Agent enablement attempts the v2 ontology
+source and propagates service failures. Operations Agent enablement fails before writes until a
+verified v2 playbook automation contract is available. `disabled` avoids configuring that agent. Agent notebooks
+report capability status and reason separately from core setup completion, and
+`RTI_011_seed_sql_wire_graphql_agent` can seed SQL and provision GraphQL without a Data Agent.
+
+As of September 29, 2026, generation-2 Data Agent onboarding is blocked in the reported rollout,
+and [Fabric known issue 1970](https://support.fabric.microsoft.com/known-issues/) covers Operations
+Agent playbook-generation timeouts with the new ontology experience. Check product support in the
+target tenant before opting in; do not infer support from an estimated fix date.
+
+`RTI_001` remaps downstream notebook attachments, and the orchestrator passes
+`useRootDefaultLakehouse: True`. Rebinding failures now stop setup. Standalone notebook sessions
+must be restarted after attachment changes. Importing separate `_gen2`-suffixed notebooks does not
+wire them into the canonical rebinding list or setup DAG.
+
+For validation, run the ontology regression tests under [`Raw/workspace-reset/`](Raw/workspace-reset/)
+and the app's `test:knowledge-graph` suite. A live acceptance check should use a separately named
+test ontology in a DEV workspace, verify fresh authoring and a bound rerun, and remove only the
+test artifacts. Never test preservation by rebuilding a user's existing ontology.
+
+Shared authoring helpers are maintained in
+[`ontology_notebook_support.py`](Raw/workspace-reset/ontology_notebook_support.py).
+After changing them, run `python Raw\workspace-reset\sync_ontology_notebooks.py --sync`
+from the repository root to refresh only the canonical 004/005/006 embedded copies and Raw mirrors.
+Run the same command with `--check` to verify distribution without writing files.
 
 ## One lever: `env_suffix`
 

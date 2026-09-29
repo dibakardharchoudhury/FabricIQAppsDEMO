@@ -101,6 +101,8 @@ ops_agent_teams_team_id = ""
 ops_agent_teams_channel_id = ""
 # Whether to copy the playbook (STATIC, NOT injected).
 ops_agent_copy_playbook = "true"
+ontology_data_agent_mode = "auto"
+ontology_operations_agent_mode = "auto"
 
 # Structured table names used by the ontology.
 silver_facilities_table = "silver_facilities"
@@ -165,6 +167,13 @@ if _missing:
         ". These are injected by the Pipe_Setup pipeline (orchestrator nb01_args). "
         "Run via Pipe_Setup, or fill them in the parameters cell for a standalone run."
     )
+
+for name, mode in (
+    ("ontology_data_agent_mode", ontology_data_agent_mode),
+    ("ontology_operations_agent_mode", ontology_operations_agent_mode),
+):
+    if mode not in {"auto", "enabled", "disabled"}:
+        raise ValueError(f"{name} must be auto, enabled, or disabled; got {mode!r}")
 
 lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
 workspace_folder_path = f"RTI_DEMO_{env_suffix}"  # Fabric workspace folder, not a Lakehouse path
@@ -236,6 +245,8 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "ops_agent_teams_team_id": ops_agent_teams_team_id,
         "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
         "ops_agent_copy_playbook": ops_agent_copy_playbook,
+        "ontology_data_agent_mode": ontology_data_agent_mode,
+        "ontology_operations_agent_mode": ontology_operations_agent_mode,
 
         "silver_facilities_table": silver_facilities_table,
         "silver_systems_table": silver_systems_table,
@@ -1069,6 +1080,7 @@ def _rebind_lakehouse(nb_name: str) -> tuple:
 # Run concurrently — each notebook's get/update pair is independent I/O, so a
 # small thread pool cuts total wall time to roughly one notebook's round-trip
 # instead of the sum of all of them.
+binding_failures = []
 with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
     futures = [pool.submit(_rebind_lakehouse, nb) for nb in chain_notebooks]
     for future in as_completed(futures):
@@ -1077,6 +1089,13 @@ with ThreadPoolExecutor(max_workers=len(chain_notebooks)) as pool:
             print(f"✅ '{nb_name}': {detail}")
         else:
             print(f"⚠️  Could not rebind '{nb_name}': {detail}")
+            binding_failures.append((nb_name, detail))
+
+if binding_failures:
+    raise RuntimeError(
+        "Required downstream notebook binding failed: "
+        + "; ".join(f"{name}: {detail}" for name, detail in binding_failures)
+    )
 
 print(
     f"\nℹ️  All downstream notebooks now reference the lakehouse "
@@ -1104,4 +1123,3 @@ notebookutils.notebook.exit(lakehouse_name)
 # 3. Move to the next Notebook.
 # 
 # 
-

@@ -84,8 +84,20 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const edges: KnowledgeEdge[] = []
   const readings = new Map(input.telemetry.map(item => [item.opcuaNodeId, item]))
   const openNodeIds = new Set(input.workOrders.filter(item => !['completed', 'cancelled'].includes(item.status.toLowerCase())).map(item => item.opcuaNodeId).filter(Boolean))
-  const ontologyRelationship = (source: string, target: string) => input.ontology?.relationshipTypes.find(item => item.sourceEntityName === source && item.targetEntityName === target)
-  const relationshipLabel = (relationship: { name: string } | undefined, fallback: string) => relationship?.name.replaceAll('_', ' ').toUpperCase() ?? fallback
+  const entityForRole = (role: string) => {
+    const matches = input.ontology?.entityTypes.filter(entity =>
+      entity.name === role || entity.sourceTable === role || entity.sourceTable === `silver_${role}`,
+    ) ?? []
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const ontologyRelationship = (source: string, target: string) => {
+    const targetKey = ({ facilities: 'facility_id', systems: 'system_id', equipment: 'equipment_id' } as Record<string, string>)[target]
+    return input.ontology?.relationshipTypes.find(item =>
+      !item.compatibilityUnsupported && item.sourceEntityTypeId === entityForRole(source)?.id && item.targetEntityTypeId === entityForRole(target)?.id
+      && item.sourceKeys.length === 1 && item.sourceKeys[0] === targetKey && item.targetKeys.length === 1 && item.targetKeys[0] === targetKey,
+    )
+  }
+  const relationshipLabel = (relationship: { name: string; label?: string } | undefined, fallback: string) => (relationship?.label ?? relationship?.name)?.replaceAll('_', ' ').toUpperCase() ?? fallback
   const graphNodes = input.ontologyGraph?.nodes ?? []
   const graphEntities = (label: string) => graphNodes.filter(item => item.labels.includes(label)).map(item => graphEntity(label, item.properties)).filter(Boolean)
   const facilities = input.ontologyGraph ? graphEntities('facilities') as Facility[] : input.facilities
@@ -111,7 +123,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : `Fabric Ontology${systemsInOntology ? ` ${input.ontology?.displayName}` : ''} compatibility mode · Lakehouse entity binding · silver_systems`,
     })
     const relationship = ontologyRelationship('systems', 'facilities')
-    if (!input.ontologyGraph && (!input.ontology || relationship)) edges.push(edge(nodeId('facility', system.facility_id), nodeId('system', system.system_id), 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
+    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('facility', system.facility_id), nodeId('system', system.system_id), 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
   }
 
   for (const asset of equipment) {
@@ -129,7 +141,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : 'Fabric Ontology compatibility mode · Lakehouse entity binding · silver_equipment',
     })
     const relationship = ontologyRelationship('equipment', 'systems')
-    if (!input.ontologyGraph && (!input.ontology || relationship)) edges.push(edge(nodeId('system', asset.system_id), id, 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
+    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('system', asset.system_id), id, 'contains', relationshipLabel(relationship, 'CONTAINS'), relationship))
   }
 
   for (const instrument of instruments) {
@@ -144,7 +156,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
       provenance: input.ontologyGraph ? `Fabric Ontology · ${input.ontologyGraph.graphModelName} · materialized graph node` : 'Fabric Ontology compatibility mode · Lakehouse entity + Eventhouse time-series binding via opcua_node_id',
     })
     const relationship = ontologyRelationship('instruments', 'equipment')
-    if (!input.ontologyGraph && (!input.ontology || relationship)) edges.push(edge(nodeId('equipment', instrument.equipment_id), id, 'has-instrument', relationshipLabel(relationship, 'HAS INSTRUMENT'), relationship))
+    if (!input.ontologyGraph && relationship) edges.push(edge(nodeId('equipment', instrument.equipment_id), id, 'has-instrument', relationshipLabel(relationship, 'HAS INSTRUMENT'), relationship))
   }
 
   if (input.ontologyGraph) {

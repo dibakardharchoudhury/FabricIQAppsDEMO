@@ -3,20 +3,48 @@ import test from 'node:test'
 import { parseOntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph } from '../src/services/ontologyGraph.ts'
 import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, matchesKnowledgeNodeQuery } from '../src/ui-shared/knowledgeGraphModel.ts'
-import { selectGraphModel, selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
+import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 
-const part = (path: string, payload: object) => ({ path, payload: Buffer.from(JSON.stringify(payload)).toString('base64'), payloadType: 'InlineBase64' })
+const part = (path: string, text: string) => ({ path, payload: Buffer.from(text).toString('base64'), payloadType: 'InlineBase64' })
+const entity = (name: string, key: string, foreignKey?: string) => part(`entities/${name}.tmdl`, `entity ${name}
+    backingTable: ${name}
+    keyProperty: ${key}_id
+    property ${key}_id
+        dataType: string
+        lineageTag: ${key}-id
+${foreignKey ? `    property ${foreignKey}_id\n        dataType: string\n` : ''}`)
 
 const ontology = parseOntologyContract('ontology-1', 'Hydro Ontology', { definition: { parts: [
-  part('EntityTypes/facilities/definition.json', { id: 'facilities', name: 'facilities', entityIdParts: ['facility-id'], properties: [{ id: 'facility-id', name: 'facility_id' }] }),
-  part('EntityTypes/systems/definition.json', { id: 'systems', name: 'systems', entityIdParts: ['system-id'], properties: [{ id: 'system-id', name: 'system_id' }] }),
-  part('EntityTypes/equipment/definition.json', { id: 'equipment', name: 'equipment', entityIdParts: ['equipment-id'], properties: [{ id: 'equipment-id', name: 'equipment_id' }] }),
-  part('EntityTypes/instruments/definition.json', { id: 'instruments', name: 'instruments', entityIdParts: ['instrument-id'], properties: [{ id: 'instrument-id', name: 'instrument_id' }] }),
-  part('RelationshipTypes/system-facility/definition.json', { id: 'system-facility', name: 'systems_in_facilities', source: { entityTypeId: 'systems' }, target: { entityTypeId: 'facilities' } }),
-  part('RelationshipTypes/system-facility/Contextualizations/context.json', { sourceKeyRefBindings: [{ sourceColumnName: 'system_id' }], targetKeyRefBindings: [{ sourceColumnName: 'facility_id' }] }),
-  part('RelationshipTypes/equipment-system/definition.json', { id: 'equipment-system', name: 'equipment_in_systems', source: { entityTypeId: 'equipment' }, target: { entityTypeId: 'systems' } }),
-  part('RelationshipTypes/instrument-equipment/definition.json', { id: 'instrument-equipment', name: 'instruments_on_equipment', source: { entityTypeId: 'instruments' }, target: { entityTypeId: 'equipment' } }),
-] } })
+  entity('facilities', 'facility'), entity('systems', 'system', 'facility'),
+  entity('equipment', 'equipment', 'system'), entity('instruments', 'instrument', 'equipment'),
+  part('relationships.tmdl', `relationship system_facility
+    fromColumn: systems.facility_id
+    toColumn: facilities.facility_id
+relationship equipment_system
+    fromColumn: equipment.system_id
+    toColumn: systems.system_id
+relationship instrument_equipment
+    fromColumn: instruments.equipment_id
+    toColumn: equipment.equipment_id`),
+  part('entityRelationships.tmdl', `entityRelationship systems_in_facilities
+    lineageTag: system-facility
+    fromEntity: systems
+    toEntity: facilities
+    backingConfiguration
+        relationship: system_facility
+entityRelationship equipment_in_systems
+    lineageTag: equipment-system
+    fromEntity: equipment
+    toEntity: systems
+    backingConfiguration
+        relationship: equipment_system
+entityRelationship instruments_on_equipment
+    lineageTag: instrument-equipment
+    fromEntity: instruments
+    toEntity: equipment
+    backingConfiguration
+        relationship: instrument_equipment`),
+] } }, 2)
 
 test('builds a connected semantic graph and enriches instruments with bound readings', () => {
   const graph = buildKnowledgeGraph({
@@ -29,6 +57,7 @@ test('builds a connected semantic graph and enriches instruments with bound read
     inspections: [],
     notifications: [],
     models: [],
+    ontology,
   })
 
   assert.equal(graph.nodes.length, 5)
@@ -60,7 +89,7 @@ test('uses the decoded Ontology relationship contract for core topology', () => 
     telemetry: [], workOrders: [], inspections: [], notifications: [], models: [], ontology,
   })
 
-  assert.equal(ontology.relationshipTypes[0]?.sourceKeys[0], 'system_id')
+  assert.equal(ontology.relationshipTypes[0]?.sourceKeys[0], 'facility_id')
   assert.equal(ontology.relationshipTypes[0]?.targetKeys[0], 'facility_id')
   assert.ok(graph.edges.some(item => item.ontologyRelationshipId === 'system-facility' && item.label === 'SYSTEMS IN FACILITIES'))
   assert.ok(graph.edges.some(item => item.ontologyRelationshipId === 'equipment-system'))
@@ -114,20 +143,14 @@ test('uses materialized Ontology topology and combines a one-to-one bound signal
   assert.match(graph.nodes.find(item => item.id === 'equipment:E1')?.provenance ?? '', /materialized graph node/i)
 })
 
-test('discovers renamed Ontology and Graph Model artifacts without version or generated-name assumptions', () => {
+test('discovers renamed Ontology without selecting a Graph Model', () => {
   const items = [
     { id: 'ontology-deployment-b', type: 'Ontology', displayName: 'Plant semantics release 2031' },
     { id: 'unrelated-graph', type: 'GraphModel', displayName: 'Supply chain' },
     { id: 'materialized-graph', type: 'GraphModel', displayName: 'Opaque generated title' },
   ]
   const ontology = selectOntology(items)
-  const graph = selectGraphModel(items, ['facilities', 'equipment'], new Map([
-    ['unrelated-graph', new Set(['supplier', 'purchase_order'])],
-    ['materialized-graph', new Set(['facilities', 'equipment'])],
-  ]))
-
   assert.equal(ontology?.id, 'ontology-deployment-b')
-  assert.equal(graph?.id, 'materialized-graph')
 })
 
 test('finds an asset globally by tag or entity id regardless of selected graph scope', () => {

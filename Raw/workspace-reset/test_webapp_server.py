@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -46,6 +47,33 @@ class WorkspaceActionTests(unittest.TestCase):
         for endpoint, payload in actions:
             with self.subTest(endpoint=endpoint):
                 self.assert_exclusive_action(endpoint, payload)
+
+    def test_pipeline_forwards_ontology_capability_modes(self):
+        parameters = {
+            "key_vault_uri": "https://vault.vault.azure.net/",
+            "ontology_data_agent_mode": "disabled",
+            "ontology_operations_agent_mode": "auto",
+        }
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post("/api/run-pipeline", json={
+                "tenant": "tenant.example", "workspace": "DEV", "parameters": parameters,
+            })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        forwarded = json.loads(start.call_args.args[1]["FABRIC_PIPELINE_PARAMS"])
+        for name in ("ontology_data_agent_mode", "ontology_operations_agent_mode"):
+            self.assertEqual(forwarded[name], parameters[name])
+
+    def test_pipeline_rejects_invalid_ontology_capability_mode(self):
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/run-pipeline", json={
+                "tenant": "tenant.example", "workspace": "DEV",
+                "parameters": {
+                    "key_vault_uri": "https://vault.vault.azure.net/",
+                    "ontology_data_agent_mode": "force",
+                },
+            })
+        self.assertEqual(response.status_code, 400)
+        start.assert_not_called()
 
     def test_background_jobs_are_exclusive_by_default(self):
         with patch.object(SERVER.threading, "Thread"):

@@ -44,9 +44,19 @@
 # 2. Resolves the live `ontology_id` by name in the target folder.
 # 3. Builds the Data Agent item definition (`.platform` + `Files/Config/**`).
 # 4. Deploys it as a Fabric **DataAgent** item via REST, then **publishes** it
-#    (staging → published) so its agent + MCP endpoints go live (best-effort,
-#    with a manual-import fallback).
+#    (staging → published) only with explicit enablement and live generation 2.
 # 5. Persists `data_agent_name` / `data_agent_id` back to `rti_demo_settings`.
+#
+# Capability policy: `ontology_data_agent_mode` is `auto` (default), `enabled`, or
+# `disabled`. This deployment is v2-only: generation 1 is rejected in every mode.
+# Auto conservatively blocks generation 2 onboarding for the user-reported rollout
+# limitation pending the product fix. Existing legacy sources are never reused or deleted.
+# Enabled is an explicit opt-in, not a readiness guarantee.
+# Generation is read from the live Ontology REST resource, never a name or setting.
+# Every preserved/submitted ontology source must match the selected item id and workspace.
+# Draft readback verifies identity before publish; published-stage evidence is mandatory
+# before recording published status. Only an explicitly empty definition from a newly
+# created agent is a valid empty baseline; unreadable/existing empty definitions fail closed.
 
 
 # CELL ********************
@@ -245,11 +255,32 @@ def encode_payload(obj: dict) -> str:
 
 
 def decode_payload(payload: str) -> dict:
-    try:
-        padded = payload + "=" * (-len(payload) % 4)
-        return json.loads(base64.b64decode(padded).decode("utf-8"))
-    except Exception:
-        return {}
+    value = json.loads(base64.b64decode(payload, validate=True).decode("utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError("Definition JSON payload must be an object; refusing an unreadable baseline.")
+    return value
+
+
+def definition_parts(envelope: dict, allow_empty: bool = False) -> list:
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("definition"), dict):
+        raise RuntimeError("Invalid getDefinition envelope; expected a definition object.")
+    parts = envelope["definition"].get("parts")
+    if not isinstance(parts, list):
+        raise RuntimeError("Invalid getDefinition parts; expected an explicit list.")
+    if not parts and not allow_empty:
+        raise RuntimeError("Empty existing agent definition cannot be safely replaced or verified.")
+    paths = set()
+    for part in parts:
+        if not isinstance(part, dict) or not isinstance(part.get("path"), str) or not part["path"]:
+            raise RuntimeError("Invalid definition part; expected an object with a non-empty path.")
+        if part["path"] in paths:
+            raise RuntimeError(f"Duplicate definition part path: {part['path']!r}.")
+        paths.add(part["path"])
+        if (part.get("payloadType") != "InlineBase64"
+                or not isinstance(part.get("payload"), str) or not part["payload"]):
+            raise RuntimeError(f"Unreadable definition part {part['path']!r}; expected InlineBase64 payload.")
+        base64.b64decode(part["payload"], validate=True)
+    return parts
 
 
 # -------------------------------------------------------------------------
@@ -259,12 +290,8 @@ def find_item_by_name(display_name: str, item_type: Optional[str] = None) -> Opt
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
     params = {"type": item_type} if item_type else None
     response = api_request("GET", url, params=params)
-    if response.status_code != 200:
-        return None
-    try:
-        data = response.json()
-    except ValueError:
-        return None
+    response.raise_for_status()
+    data = response.json()
     for item in (data or {}).get("value", []) or []:
         if item.get("displayName") == display_name:
             return item
@@ -274,16 +301,166 @@ def find_item_by_name(display_name: str, item_type: Optional[str] = None) -> Opt
 def resolve_ontology_id() -> str:
     """Return the id of the ontology item named `ontology_name` in the target folder."""
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
-    response = api_request("GET", url)
-    response.raise_for_status()
-    matches = [
-        it for it in response.json().get("value", [])
-        if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
-    ]
+    matches = []
+    while url:
+        response = api_request("GET", url)
+        response.raise_for_status()
+        body = response.json()
+        matches.extend(
+            it for it in body.get("value", [])
+            if it.get("displayName") == ontology_name and it.get("type", "").lower() == "ontology"
+        )
+        url = body.get("continuationUri")
     if not matches:
         raise RuntimeError(f"Ontology '{ontology_name}' not found. Run 004–006 first.")
     in_folder = [it for it in matches if it.get("folderId") == target_folder_id]
-    return (in_folder or matches)[0]["id"]
+    candidates = in_folder if target_folder_id else matches
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Expected exactly one Ontology {ontology_name!r} in configured target folder "
+            f"{target_folder_id!r}; found {len(candidates)}."
+        )
+    return candidates[0]["id"]
+
+
+def validate_agent_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    if mode not in ("auto", "enabled", "disabled"):
+        raise ValueError(f"Invalid ontology_data_agent_mode {value!r}; use auto, enabled, or disabled.")
+    return mode
+
+
+def get_ontology_generation(ontology_id: str) -> int:
+    response = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}"
+    )
+    response.raise_for_status()
+    generation = (response.json().get("properties") or {}).get("generation")
+    if type(generation) is int and generation in (1, 2):
+        return generation
+    raise RuntimeError(
+        f"Unknown live Ontology properties.generation {generation!r}. "
+        "Verify the Ontology API response and update generation support before deploying agents."
+    )
+
+
+def agent_capability_policy(generation: int, mode: str) -> dict:
+    mode = validate_agent_mode(mode)
+    if type(generation) is not int or generation not in (1, 2):
+        raise ValueError(f"Unsupported live ontology generation: {generation!r}")
+    if generation != 2:
+        return {
+            "status": "blocked",
+            "reason": "This deployment is v2-only. Replace the generation 1 ontology and agent sources "
+                      "through an explicit migration before retrying; no legacy agent writes are allowed.",
+        }
+    if mode == "disabled":
+        return {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
+    if mode == "auto":
+        return {
+            "status": "blocked",
+            "reason": "Auto policy blocks Ontology generation 2 Data Agent onboarding for the "
+                      "user-reported rollout limitation; product fix pending. "
+                      "Set ontology_data_agent_mode=enabled only after verifying product support.",
+        }
+    return {"status": "allowed", "reason": ""}
+
+
+def persist_agent_status(status: str, reason: str) -> None:
+    global agent_deployment_result
+    from delta.tables import DeltaTable
+
+    values = {"data_agent_deployment_status": status, "data_agent_deployment_reason": reason}
+    source = spark.createDataFrame(
+        [{"setting_name": k, "setting_value": v} for k, v in values.items()]
+    ).withColumn("updated_utc", F.current_timestamp())
+    (DeltaTable.forName(spark, settings_table_name).alias("target")
+     .merge(source.alias("source"), "target.setting_name = source.setting_name")
+     .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+    agent_deployment_result = {"status": status, "reason": reason}
+
+
+def check_agent_capability() -> tuple:
+    persist_agent_status("checking", "Checking v2-only Data Agent capability; no readiness established.")
+    try:
+        mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="auto"))
+        ontology_id = resolve_ontology_id()
+        generation = get_ontology_generation(ontology_id)
+        policy = agent_capability_policy(generation, mode)
+    except Exception as exc:
+        persist_agent_status("failed", str(exc))
+        raise
+    if policy["status"] != "allowed":
+        persist_agent_status(policy["status"], policy["reason"])
+        if generation != 2:
+            raise RuntimeError(policy["reason"])
+        notebookutils.notebook.exit(json.dumps({
+            "capability": "data_agent", "agent": "data_agent",
+            "generation": generation, "mode": mode, **policy,
+            "data_agent_deployment_status": policy["status"],
+            "data_agent_deployment_reason": policy["reason"],
+        }))
+        raise RuntimeError("Notebook exit unexpectedly returned; refusing agent writes.")
+    return ontology_id, generation
+
+
+def require_v2_ontology(ontology_id: str) -> None:
+    if get_ontology_generation(ontology_id) != 2:
+        raise RuntimeError(
+            f"Ontology {ontology_id!r} is not generation 2. This deployment is v2-only; "
+            "migrate the legacy source explicitly before configuring or publishing agents."
+        )
+
+
+def validate_agent_ontology_sources(
+    parts: list, expected_ontology_id: str,
+    require_draft: bool = False, require_published: bool = False,
+) -> None:
+    """Require every ontology source to reference the selected live v2 item, without removing parts."""
+    if not expected_ontology_id:
+        raise RuntimeError("A selected live v2 ontology id is required before verifying agent sources.")
+    found_draft = False
+    found_published = False
+    for part in parts:
+        path = part.get("path", "")
+        if not path.endswith("/datasource.json"):
+            continue
+        if part.get("payloadType") != "InlineBase64":
+            raise RuntimeError(f"Cannot verify agent data source {path!r}: expected InlineBase64.")
+        ds = json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
+        if not isinstance(ds, dict):
+            raise RuntimeError(f"Cannot verify agent data source {path!r}: expected a JSON object.")
+        if not isinstance(ds.get("type"), str) or not ds["type"].strip():
+            raise RuntimeError(f"Cannot verify agent data source {path!r}: missing source type.")
+        if ds["type"].lower() != "ontology":
+            if "/ontology-" in path:
+                raise RuntimeError(f"Malformed ontology data source {path!r}; no agent writes are allowed.")
+            continue
+        if not ds.get("artifactId") or ds.get("workspaceId") != workspace_id:
+            raise RuntimeError(
+                f"Ontology source {path!r} lacks a verifiable id in the target workspace; "
+                "migrate it explicitly before configuring this v2-only agent."
+            )
+        if ds["artifactId"] != expected_ontology_id:
+            raise RuntimeError(
+                f"Agent ontology source {ds['artifactId']!r} does not match selected ontology "
+                f"{expected_ontology_id!r}. Unrelated or legacy agent sources must be migrated explicitly."
+            )
+        require_v2_ontology(ds["artifactId"])
+        found_draft = found_draft or path.startswith("Files/Config/draft/")
+        found_published = found_published or path.startswith("Files/Config/published/")
+    if require_draft and not found_draft:
+        raise RuntimeError("No verified draft v2 ontology source exists. Run RTI_009 with verified product support first.")
+    if require_published and not found_published:
+        raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
+
+
+def verify_agent_source_readback(agent_id: str, ontology_id: str, published: bool = False) -> None:
+    definition = get_item_definition(agent_id)
+    parts = definition_parts(definition)
+    validate_agent_ontology_sources(
+        parts, ontology_id, require_draft=not published, require_published=published,
+    )
 
 
 def create_data_agent(display_name: str, description: str = "") -> dict:
@@ -291,7 +468,7 @@ def create_data_agent(display_name: str, description: str = "") -> dict:
     existing = find_item_by_name(display_name, item_type=DATA_AGENT_ITEM_TYPE)
     if existing:
         print(f"✅ Reusing existing Data Agent: {display_name} (id={existing.get('id')})")
-        return existing
+        return {**existing, "_created_this_run": False}
 
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
     body = {"displayName": display_name, "description": description, "type": DATA_AGENT_ITEM_TYPE}
@@ -302,15 +479,19 @@ def create_data_agent(display_name: str, description: str = "") -> dict:
     if response.status_code in (200, 201):
         created = response.json() if response.content else {}
         print(f"✅ Created Data Agent: {display_name} (id={created.get('id')})")
-        return created
+        return {**created, "_created_this_run": True}
     if response.status_code == 202:
         operation_url = response.headers.get("Location")
         if not operation_url:
             raise RuntimeError("Create Data Agent returned 202 without Location header.")
         wait_for_lro(operation_url)
-        created = find_item_by_name(display_name, item_type=DATA_AGENT_ITEM_TYPE) or {}
+        result_response = api_request("GET", f"{operation_url}/result", timeout=120)
+        result_response.raise_for_status()
+        created = result_response.json()
+        if not isinstance(created, dict) or not created.get("id"):
+            raise RuntimeError("Create Data Agent LRO result has no item id; new-agent provenance is unverified.")
         print(f"✅ Created Data Agent (via LRO): {display_name} (id={created.get('id')})")
-        return created
+        return {**created, "_created_this_run": True}
     raise RuntimeError(f"Failed to create Data Agent: {response.status_code} {response.text}")
 
 
@@ -319,7 +500,9 @@ def get_item_definition(item_id: str) -> dict:
     url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items/{item_id}/getDefinition"
     response = api_request("POST", url, timeout=120)
     if response.status_code == 200:
-        return response.json() if response.content else {}
+        envelope = response.json()
+        definition_parts(envelope, allow_empty=True)
+        return envelope
     if response.status_code == 202:
         operation_url = response.headers.get("Location")
         if not operation_url:
@@ -327,7 +510,9 @@ def get_item_definition(item_id: str) -> dict:
         wait_for_lro(operation_url)
         result_response = api_request("GET", f"{operation_url}/result", timeout=120)
         if result_response.status_code == 200:
-            return result_response.json() if result_response.content else {}
+            envelope = result_response.json()
+            definition_parts(envelope, allow_empty=True)
+            return envelope
         raise RuntimeError(f"getDefinition result failed: {result_response.status_code} {result_response.text}")
     raise RuntimeError(f"Failed to get item definition: {response.status_code} {response.text}")
 
@@ -361,8 +546,9 @@ def publish_data_agent(item_id: str, published_description: str = "") -> None:
         return
     if response.status_code == 202:
         operation_url = response.headers.get("Location")
-        if operation_url:
-            wait_for_lro(operation_url)
+        if not operation_url:
+            raise RuntimeError("Publish returned 202 without a Location; completion is unverified.")
+        wait_for_lro(operation_url)
         print("✅ Data Agent published via LRO (staging → published).")
         return
     raise RuntimeError(f"Failed to publish Data Agent: {response.status_code} {response.text}")
@@ -474,6 +660,7 @@ def build_stage_obj(existing: dict) -> dict:
 
 def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
     """Ontology data source in the Fabric Data Agent shape (entity `elements`)."""
+    require_v2_ontology(ontology_id)
     ds = dict(existing)
     ds["$schema"] = DATASOURCE_SCHEMA_URL
     ds["artifactId"] = ontology_id
@@ -499,23 +686,27 @@ def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
 
 
 # -------------------------------------------------------------------------
-# Deploy: create (empty) -> discover -> patch draft parts. Best-effort.
+# V2-only deployment: explicit opt-in, no legacy fallback, errors always propagate.
 # -------------------------------------------------------------------------
 data_agent_item_id = None
+ontology_id, ontology_generation = check_agent_capability()
+persist_agent_status("deploying", "Data Agent configuration/publishing is in progress.")
 try:
     get_spn_access_token_for_fabric()
     print("✅ Got Fabric access token (SPN).")
 
-    ontology_id = resolve_ontology_id()
     print("✅ Resolved ontology ID:", ontology_id)
 
     # 1) Create (or reuse) the Data Agent item — empty, no definition.
     data_agent_item = create_data_agent(data_agent_name, DATA_AGENT_DESCRIPTION)
     data_agent_item_id = data_agent_item.get("id")
+    if not data_agent_item_id:
+        raise RuntimeError("Data Agent create returned no id.")
 
     # 2) DISCOVERY — read the live definition Fabric generated.
     definition = get_item_definition(data_agent_item_id)
-    parts = definition.get("definition", {}).get("parts", []) or []
+    parts = definition_parts(definition, allow_empty=data_agent_item.get("_created_this_run") is True)
+    validate_agent_ontology_sources(parts, ontology_id)
     print(f"🔎 Live definition has {len(parts)} part(s):")
     for part in parts:
         print("   •", part.get("path", ""))
@@ -532,6 +723,7 @@ try:
         {},
     )
     parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
+    validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
@@ -539,32 +731,27 @@ try:
     print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
+    verify_agent_source_readback(data_agent_item_id, ontology_id)
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
 
     # 4) PUBLISH — lock Preview Runtime into the published agent and promote staging.
-    try:
-        enable_preview_runtime(data_agent_item_id)
-        publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-        mcp_endpoint = (
-            f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}"
-            f"/dataagents/{data_agent_item_id}/agent"
-        )
-        print("🌐 Published — consumption endpoint:")
-        print(f"   • MCP: {mcp_endpoint}")
-    except Exception as pub_exc:  # noqa: BLE001 - publish is best-effort; config already landed
-        print("⚠️ Data Agent configured but publish did not complete:")
-        print("   ", pub_exc)
-        print("   Open the Data Agent in Fabric and click Publish to finish going live.")
-except Exception as exc:  # noqa: BLE001 - best-effort deploy with manual fallback
-    print("⚠️ Automated Data Agent deployment did not complete:")
-    print("   ", exc)
-    print()
-    print("Manual fallback:")
-    print("   1. In your Fabric workspace: New → Data agent.")
-    print(f"   2. Name it '{data_agent_name}'.")
-    print(f"   3. Add data source → Ontology → '{ontology_name}'.")
-    print("   4. Select entities: signal_master, equipment, facilities, systems, instruments.")
-    print("   5. Paste the AI instructions from AI_INSTRUCTIONS above, then publish.")
+    enable_preview_runtime(data_agent_item_id)
+    publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
+    verify_agent_source_readback(data_agent_item_id, ontology_id, published=True)
+    persist_agent_status(
+        "published",
+        "REST publish completed and selected live generation 2 source identity verified by readback; "
+        "runtime answers are not verified.",
+    )
+    mcp_endpoint = (
+        f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}"
+        f"/dataagents/{data_agent_item_id}/agent"
+    )
+    print("🌐 Published — consumption endpoint:")
+    print(f"   • MCP: {mcp_endpoint}")
+except Exception as exc:
+    persist_agent_status("failed", str(exc))
+    raise
 
 
 if data_agent_item_id:
@@ -591,6 +778,15 @@ if data_agent_item_id:
     )
     print("✅ Persisted Data Agent settings:", persist)
     display(spark.read.table(settings_table_name).orderBy("setting_name"))
+
+notebookutils.notebook.exit(json.dumps({
+    "capability": "data_agent",
+    "generation": ontology_generation,
+    "mode": validate_agent_mode(first_setting("ontology_data_agent_mode", default="auto")),
+    **agent_deployment_result,
+    "data_agent_deployment_status": agent_deployment_result["status"],
+    "data_agent_deployment_reason": agent_deployment_result["reason"],
+}))
 
 # METADATA ********************
 

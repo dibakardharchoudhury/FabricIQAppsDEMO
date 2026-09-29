@@ -24,11 +24,11 @@
 # MARKDOWN ********************
 
 # # 07 — Bind Eventhouse RTI Stream to `signal_master`
-# 
+#
 # This notebook adds the direct Eventhouse TimeSeries DataBinding to the Fabric Ontology.
-# 
+#
 # Clean model:
-# 
+#
 # - Structured/static data stays in Lakehouse and is already bound by notebook 04.
 # - RTI data stays in Eventhouse.
 # - `signal_master` is the semantic bridge.
@@ -36,6 +36,10 @@
 # - No copied RTI Lakehouse table.
 # - No `rti_measurements` ontology entity.
 
+
+# V2-only: existing v1 items require a separate replacement; no in-place conversion.
+# Reruns retain identities, bindings and custom content. Conflicting structural/source
+# changes fail before update. Output parts are published only after service readback.
 
 # CELL ********************
 
@@ -143,14 +147,7 @@ KEY_COLUMN_NAME = settings.get("timeseries_key_column", "opcua_node_id")
 VALUE_COLUMN_NAME = settings.get("timeseries_value_column", "value")
 QUALITY_COLUMN_NAME = settings.get("timeseries_quality_column", "quality")
 
-# --------------------------------------------
-# REPLACE OLD/BAD RTI BINDINGS
-# Keep this True while cleaning up stale opcua_stream / wide-schema attempts.
-# --------------------------------------------
-
-REPLACE_EXISTING_TIMESERIES_BINDING = True
-
-print("✅ Loaded 007 configuration from shared settings.")
+print("✅ Loaded 006 v2 configuration from shared settings.")
 print("✅ Workspace ID:", WORKSPACE_ID)
 print("✅ Workspace folder path:", workspace_folder_path)
 print("✅ Target folder ID:", target_folder_id)
@@ -167,8 +164,610 @@ print("✅ Timestamp column:", TIMESTAMP_COLUMN_NAME)
 print("✅ Key column:", KEY_COLUMN_NAME)
 print("✅ Value column:", VALUE_COLUMN_NAME)
 print("✅ Quality column:", QUALITY_COLUMN_NAME)
-print("✅ Replace existing time-series binding:", REPLACE_EXISTING_TIMESERIES_BINDING)
 
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+"""Pure support source embedded in 004/005/006; notebooks need no local imports.
+
+The supported mutation scope is default-namespace entities. Unknown objects and
+parts are retained, not interpreted or regenerated. Ambiguous edits fail closed.
+"""
+import base64
+import json
+import re
+from collections import Counter
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+
+
+def _normal_text(text):
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _decode_part(part):
+    return _normal_text(base64.b64decode(part["payload"]).decode("utf-8"))
+
+
+def _encode_part(path, text):
+    return {"path": path, "payload": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+            "payloadType": "InlineBase64"}
+
+
+def _parts_by_path(parts):
+    result = {part["path"]: part for part in parts}
+    if len(result) != len(parts):
+        raise RuntimeError("Duplicate ontology definition part paths")
+    return result
+
+
+def _identifier_parts(value):
+    tokens = re.findall(r"'(?:[^']|'')*'|[^.\s]+", value.strip())
+    if ".".join(tokens) != value.strip():
+        raise RuntimeError(f"Unsupported or ambiguous TMDL reference: {value!r}")
+    return [token[1:-1].replace("''", "'") if token.startswith("'") else token
+            for token in tokens]
+
+
+def _local_name(value):
+    names = _identifier_parts(value)
+    if len(names) == 2 and names[0] == "default":
+        return names[1]
+    if len(names) != 1:
+        raise RuntimeError(f"Only the default namespace is managed: {value!r}")
+    return names[0]
+
+
+def _quote_name(name):
+    if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name):
+        return name
+    return "'" + name.replace("'", "''") + "'"
+
+
+def _object_spans(text, kind, depth=None):
+    """Locate named objects, stopping at *any* same/outer-indent sibling."""
+    text = _normal_text(text)
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    result = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^([ \t]*)" + re.escape(kind) + r" (.+?)\s*$", line)
+        if not match:
+            continue
+        indentation = len(match[1].expandtabs(4))
+        if depth is not None and indentation != depth:
+            continue
+        # '=' introduces expression/partition content, outside the identifier.
+        raw_name = re.split(r"\s+=\s*|\s*=$", match[2], maxsplit=1)[0]
+        name = _local_name(raw_name)
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if candidate.strip() and not candidate.lstrip().startswith("//"):
+                size = len(candidate) - len(candidate.lstrip(" \t"))
+                if len(candidate[:size].expandtabs(4)) <= indentation:
+                    break
+            end += 1
+        result.append((name, offsets[index], offsets[end], text[offsets[index]:offsets[end]]))
+    names = [item[0] for item in result]
+    if len(names) != len(set(names)):
+        raise RuntimeError(f"Duplicate {kind} object names")
+    return result
+
+
+def _object_block(text, kind, name, depth=None):
+    return next((block for actual, _, _, block in _object_spans(text, kind, depth)
+                 if actual == name), None)
+
+
+def _replace_object(text, kind, name, replacement, depth=None):
+    text = _normal_text(text)
+    matches = [item for item in _object_spans(text, kind, depth) if item[0] == name]
+    if len(matches) != 1:
+        raise RuntimeError(f"Cannot uniquely find {kind} {name!r}")
+    _, start, end, _ = matches[0]
+    return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
+
+
+def _direct_setting(text, key):
+    """Read a direct child setting, never one belonging to another object."""
+    lines = _normal_text(text).splitlines()
+    if not lines:
+        return None
+    root = len(lines[0]) - len(lines[0].lstrip(" \t"))
+    root_depth = len(lines[0][:root].expandtabs(4))
+    candidates = []
+    for line in lines[1:]:
+        if not line.strip() or line.lstrip().startswith("//"):
+            continue
+        prefix = line[:len(line) - len(line.lstrip(" \t"))]
+        depth = len(prefix.expandtabs(4))
+        if depth <= root_depth:
+            break
+        candidates.append((depth, line.strip()))
+    if not candidates:
+        return None
+    child_depth = min(depth for depth, _ in candidates)
+    values = [line.split(":", 1)[1].strip() for depth, line in candidates
+              if depth == child_depth and line.startswith(key + ":")]
+    if len(values) > 1:
+        raise RuntimeError(f"Duplicate setting {key!r}")
+    return values[0] if values else None
+
+
+def _property_objects(text):
+    return {name: (_direct_setting(block, "dataType"), block)
+            for name, _, _, block in _object_spans(text, "property", 4)}
+
+
+def _require_v2_ontology(item):
+    generation = (item.get("properties") or {}).get("generation")
+    if type(generation) is int and generation == 1:
+        raise RuntimeError("Ontology v1 is not supported. Replacement required: create a separate v2 ontology; this notebook will not delete or migrate the existing item.")
+    if type(generation) is not int or generation != 2:
+        raise RuntimeError(f"A live ontology with properties.generation == 2 is required; received {generation!r}")
+    return 2
+
+
+def _resolve_ontology_generation(item, parts):
+    generation = _require_v2_ontology(item)
+    paths = set(_parts_by_path(parts))
+    if ("database.tmdl" not in paths or "definition.json" in paths
+            or any(path.startswith(("EntityTypes/", "RelationshipTypes/")) for path in paths)):
+        raise RuntimeError("A verified v2 TMDL definition is required; replacement is required for legacy definitions")
+    return generation
+
+
+def _list_fabric_values(url):
+    initial = url
+    seen = set()
+    values = []
+    while url:
+        if (url in seen or urlsplit(url).netloc != urlsplit(initial).netloc
+                or urlsplit(url).scheme != urlsplit(initial).scheme):
+            raise RuntimeError("Invalid or repeated Fabric pagination URL")
+        seen.add(url)
+        response = api_request("GET", url)
+        if response.status_code != 200:
+            raise RuntimeError(f"Fabric listing failed: {response.status_code}")
+        body = response.json()
+        values.extend(body.get("value", []))
+        next_url = body.get("continuationUri") or body.get("@odata.nextLink")
+        if next_url:
+            url = urljoin(initial, next_url)
+        elif body.get("continuationToken"):
+            split = urlsplit(initial)
+            query = dict(parse_qsl(split.query))
+            query["continuationToken"] = body["continuationToken"]
+            url = urlunsplit(split._replace(query=urlencode(query)))
+        else:
+            url = None
+    return values
+
+
+def _created_item_result(operation_url):
+    wait_for_lro(operation_url)
+    response = api_request("GET", _fabric_result_url(operation_url))
+    if response.status_code != 200:
+        raise RuntimeError(f"Created ontology LRO result failed: {response.status_code}")
+    item = response.json()
+    if not item.get("id") or not item.get("displayName"):
+        raise RuntimeError("Created ontology operation result is not an item")
+    return item
+
+
+def _fabric_operation_url(response, api_root):
+    headers = {name.lower(): value for name, value in response.headers.items()}
+    operation_id = headers.get("x-ms-operation-id")
+    if operation_id:
+        if not re.fullmatch(r"[A-Za-z0-9-]+", operation_id):
+            raise RuntimeError("Invalid Fabric operation ID")
+        return api_root.rstrip("/") + "/operations/" + operation_id
+    location = headers.get("operation-location") or headers.get("location")
+    if not location:
+        raise RuntimeError("Fabric LRO has neither an operation ID nor a Location header")
+    url = urljoin(api_root.rstrip("/") + "/", location)
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    trusted = any(host == domain or host.endswith("." + domain)
+                  for domain in ("fabric.microsoft.com", "analysis.windows.net", "api.powerbi.com"))
+    if parsed.scheme != "https" or not trusted or parsed.username or parsed.password or parsed.port not in (None, 443):
+        raise RuntimeError("Fabric LRO Location is not a trusted HTTPS Fabric endpoint")
+    return url
+
+
+def _fabric_result_url(operation_url):
+    parsed = urlsplit(operation_url)
+    return urlunsplit(parsed._replace(path=parsed.path.rstrip("/") + "/result"))
+
+
+def _validated_definition_response(response, operation):
+    if response.status_code != 200:
+        raise RuntimeError(f"{operation} failed: HTTP {response.status_code}")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"{operation} returned invalid or empty JSON") from exc
+    definition = body.get("definition") if isinstance(body, dict) else None
+    parts = definition.get("parts") if isinstance(definition, dict) else None
+    if not isinstance(parts, list) or not parts:
+        raise RuntimeError(f"{operation} must return a nonempty definition.parts array; refusing a destructive empty baseline")
+    for part in parts:
+        if (not isinstance(part, dict) or not isinstance(part.get("path"), str)
+                or not part["path"].strip() or part.get("payloadType") != "InlineBase64"
+                or not isinstance(part.get("payload"), str)):
+            raise RuntimeError(f"{operation} returned a malformed definition part")
+        try:
+            decoded = base64.b64decode(part["payload"], validate=True).decode("utf-8")
+            if part["path"].endswith(".json") or part["path"] == ".platform":
+                json.loads(decoded)
+        except ValueError as exc:
+            raise RuntimeError(f"{operation} returned invalid payload for {part['path']}") from exc
+    paths = set(_parts_by_path(parts))
+    if ".platform" not in paths or "database.tmdl" not in paths or "definition.json" in paths:
+        raise RuntimeError(f"{operation} must return v2 TMDL root parts; legacy items require replacement")
+    return body
+
+
+def _get_fabric_ontology_definition(api_root, workspace_id, ontology_id):
+    response = api_request(
+        "POST", f"{api_root.rstrip('/')}/workspaces/{workspace_id}/ontologies/{ontology_id}/getDefinition")
+    if response.status_code == 202:
+        operation_url = _fabric_operation_url(response, api_root)
+        wait_for_lro(operation_url)
+        response = api_request("GET", _fabric_result_url(operation_url), timeout=120)
+        return _validated_definition_response(response, "Ontology getDefinition LRO result")
+    return _validated_definition_response(response, "Ontology getDefinition")
+
+
+def _structural_lines(text):
+    """An object-scoped readback contract: mappings cannot migrate to siblings."""
+    stack = []
+    result = Counter()
+    for line in _normal_text(text).splitlines():
+        if not line.strip() or line.lstrip().startswith("//"):
+            continue
+        prefix = line[:len(line) - len(line.lstrip(" \t"))]
+        depth = len(prefix.expandtabs(4))
+        statement = line.strip()
+        match = re.match(r"(ref (?:entity|table|namespace)|entity|table|column|property|entityRelationship|relationship) (.+)$", statement)
+        if match:
+            statement = match[1] + " " + ".".join(_identifier_parts(match[2]))
+        else:
+            match = re.match(r"(keyProperty|backingTable|fromEntity|toEntity|valueColumn|orderingColumn|fromColumn|toColumn|table|relationship):\s*(.+)$", statement)
+            if match:
+                names = _identifier_parts(match[2])
+                if len(names) > 1 and names[0] == "default":
+                    names = names[1:]
+                statement = match[1] + ": " + ".".join(names)
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        stack.append((depth, statement))
+        result[tuple(value for _, value in stack)] += 1
+    return result
+
+
+def _json_contains(expected, actual):
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _json_contains(value, actual[key]) for key, value in expected.items())
+    if isinstance(expected, list):
+        return isinstance(actual, list) and all(
+            any(_json_contains(value, candidate) for candidate in actual) for value in expected)
+    return expected == actual
+
+
+def _verify_definition(expected, actual):
+    wanted = _parts_by_path(expected)
+    retained = _parts_by_path(actual)
+    for path, part in wanted.items():
+        if path not in retained:
+            raise RuntimeError(f"Fabric did not retain definition part {path}")
+        before, after = _decode_part(part), _decode_part(retained[path])
+        if path.endswith(".tmdl"):
+            missing = _structural_lines(before) - _structural_lines(after)
+            if missing:
+                raise RuntimeError(f"Fabric did not retain submitted objects/settings in {path}: {list(missing)[:3]}")
+        elif path.endswith(".json") or path == ".platform":
+            if not _json_contains(json.loads(before), json.loads(after)):
+                raise RuntimeError(f"Fabric did not retain submitted JSON in {path}")
+        elif before != after:
+            raise RuntimeError(f"Fabric changed unmanaged part {path}")
+
+
+def _merge_gen2_structure(live_parts, desired_parts):
+    result = _parts_by_path(live_parts)
+    for path, desired in _parts_by_path(desired_parts).items():
+        if path not in result:
+            result[path] = desired
+            continue
+        if not path.startswith("entities/") and path not in {"entityRelationships.tmdl", "model.tmdl"}:
+            continue
+        live, wanted = _decode_part(result[path]), _decode_part(desired)
+        if path.startswith("entities/"):
+            live_entities = _object_spans(live, "entity", 0)
+            wanted_entities = _object_spans(wanted, "entity", 0)
+            if len(live_entities) != 1 or len(wanted_entities) != 1 or live_entities[0][0] != wanted_entities[0][0]:
+                raise RuntimeError(f"Incompatible entity identity in {path}")
+            if _local_name(_direct_setting(live, "keyProperty") or "") != _local_name(_direct_setting(wanted, "keyProperty") or ""):
+                raise RuntimeError(f"Incompatible entity key in {path}; existing bindings were not changed")
+            properties = _property_objects(live)
+            for name, (dtype, block) in _property_objects(wanted).items():
+                if name in properties:
+                    if (properties[name][0] or "").casefold() != (dtype or "").casefold():
+                        raise RuntimeError(f"Incompatible property type for {path}:{name}")
+                elif _direct_setting(live, "backingTable"):
+                    raise RuntimeError(f"Cannot add {name!r} to bound {path} without an explicit schema migration")
+                else:
+                    live = live.rstrip() + "\n\n" + block
+        elif path == "entityRelationships.tmdl":
+            existing = {name: block for name, _, _, block in _object_spans(live, "entityRelationship", 0)}
+            for name, _, _, block in _object_spans(wanted, "entityRelationship", 0):
+                pair = tuple(_local_name(_direct_setting(block, field) or "") for field in ("fromEntity", "toEntity"))
+                if name in existing:
+                    old_pair = tuple(_local_name(_direct_setting(existing[name], field) or "") for field in ("fromEntity", "toEntity"))
+                    if old_pair != pair:
+                        raise RuntimeError(f"Incompatible relationship endpoints for {name}")
+                else:
+                    same_endpoints = []
+                    for old_name, old_block in existing.items():
+                        try:
+                            old_pair = tuple(_local_name(_direct_setting(old_block, field) or "")
+                                             for field in ("fromEntity", "toEntity"))
+                        except RuntimeError:
+                            continue
+                        if old_pair == pair:
+                            same_endpoints.append(old_name)
+                    if len(same_endpoints) > 1:
+                        raise RuntimeError(f"Ambiguous existing relationship identity for {pair}")
+                    if not same_endpoints:
+                        live = live.rstrip() + "\n\n" + block
+        else:
+            for line in wanted.splitlines():
+                if line.startswith("ref ") and line not in live.splitlines():
+                    live = live.rstrip() + "\n" + line + "\n"
+        if live != _decode_part(result[path]):
+            result[path] = _encode_part(path, live)
+    return list(result.values())
+
+
+
+
+
+def _spark_api_type(data_type):
+    name = str(data_type)
+    mapping = {"StringType()": "String", "IntegerType()": "BigInt", "LongType()": "BigInt",
+               "ShortType()": "BigInt", "ByteType()": "BigInt", "DoubleType()": "Double",
+               "FloatType()": "Double", "BooleanType()": "Boolean",
+               "TimestampType()": "DateTime", "DateType()": "DateTime"}
+    if name not in mapping:
+        raise ValueError(f"Unsupported ontology Spark type {name}; Decimal requires an explicit precision-preserving projection")
+    return mapping[name]
+
+
+def _resolve_own_key(entity, columns, overrides, fallback_candidates):
+    if entity in overrides:
+        key = overrides[entity]
+        if key not in columns:
+            raise RuntimeError(f"Explicit key {key!r} is missing from {entity}")
+        return key
+    return next((key for key in fallback_candidates if key in columns), None)
+
+
+def _require_setting(block, key, expected, reference=False):
+    actual = _direct_setting(block, key)
+    if reference:
+        def reference_parts(value):
+            names = _identifier_parts(value)
+            return names[1:] if len(names) > 1 and names[0] == "default" else names
+        valid = actual is not None and reference_parts(actual) == reference_parts(expected)
+    else:
+        valid = actual == expected
+    if not valid:
+        raise RuntimeError(f"Incompatible {key}: expected {expected!r}, found {actual!r}")
+
+
+def _append_model_ref(model, kind, name):
+    for line in model.splitlines():
+        match = re.fullmatch(r"ref " + re.escape(kind) + r" (.+)", line)
+        if match and _local_name(match[1]) == name:
+            return model
+    return model.rstrip() + f"\nref {kind} {_quote_name(name)}\n"
+
+
+def _unnamed_blocks(text, kind, depth):
+    lines = _normal_text(text).splitlines(keepends=True)
+    blocks = []
+    for index, line in enumerate(lines):
+        prefix = line[:len(line) - len(line.lstrip(" \t"))]
+        if line.strip() != kind or len(prefix.expandtabs(4)) != depth:
+            continue
+        owned = [line]
+        for following in lines[index + 1:]:
+            indent = following[:len(following) - len(following.lstrip(" \t"))]
+            if following.strip() and len(indent.expandtabs(4)) <= depth:
+                break
+            owned.append(following)
+        blocks.append("".join(owned))
+    return blocks
+
+
+def _ensure_additional_backing(entity, table, relationship):
+    for block in _unnamed_blocks(entity, "additionalBackingTable", 4):
+        actual_table = _local_name(_direct_setting(block, "table") or "")
+        actual_relationship = _local_name(_direct_setting(block, "relationship") or "")
+        if actual_table == table:
+            if actual_relationship != relationship:
+                raise RuntimeError("Existing additional table has a different relationship")
+            return entity
+        if actual_relationship == relationship:
+            raise RuntimeError("Existing additional relationship has a different table")
+    return (entity.rstrip() + "\n\n\tadditionalBackingTable\n"
+            f"\t\ttable: {_quote_name(table)}\n\t\trelationship: {_quote_name(relationship)}\n")
+
+
+
+
+
+def _binding_block(block, desired, settings):
+    # backingConfiguration has no name; its indentation must be one level below
+    # the owning property/relationship, not under a resourceLink sibling.
+    match = re.search(r"(?m)^([ \t]*)backingConfiguration\s*$", block)
+    if match:
+        indent = len(match[1].expandtabs(4))
+        lines = block[match.start():].splitlines(keepends=True)
+        owned = [lines[0]]
+        for line in lines[1:]:
+            prefix = line[:len(line) - len(line.lstrip(" \t"))]
+            if line.strip() and len(prefix.expandtabs(4)) <= indent:
+                break
+            owned.append(line)
+        existing = "".join(owned)
+        for key, expected in settings.items():
+            _require_setting(existing, key, expected, reference=key != "type")
+        return block
+    return block.rstrip() + "\n\n" + desired.rstrip() + "\n"
+
+
+def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_id,
+                              lakehouse_id, lakehouse_name, tag):
+    result = _parts_by_path(parts)
+    for entity in entity_to_table:
+        if f"entities/{entity}.tmdl" not in result:
+            raise RuntimeError(f"Missing managed entity {entity!r}; run 004 first")
+    expression_name = f"DirectLake - {lakehouse_name}"
+    expression_path = "expressions.tmdl"
+    expressions = _decode_part(result[expression_path]) if expression_path in result else ""
+    expression = _object_block(expressions, "expression", expression_name, 0)
+    source_url = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{lakehouse_id}"
+    if expression:
+        sources = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', expression)
+        if len(sources) != 1 or sources[0].rstrip("/").casefold() != source_url.casefold():
+            raise RuntimeError("Existing OneLake source mismatch; explicitly migrate bindings before retargeting")
+    else:
+        expression = (
+            f"expression {_quote_name(expression_name)} =\n\t\tlet\n"
+            f'\t\t    Source = AzureStorage.DataLake("{source_url}", [HierarchicalNavigation=true])\n'
+            f"\t\tin\n\t\t    Source\n\tlineageTag: {tag('expression', lakehouse_id)}\n")
+        expressions = expressions.rstrip() + "\n\n" + expression
+        result[expression_path] = _encode_part(expression_path, expressions.lstrip("\n"))
+
+    model = _decode_part(result["model.tmdl"])
+    for name, source_table in entity_to_table.items():
+        path = f"entities/{name}.tmdl"
+        text = _decode_part(result[path])
+        key = _local_name(_direct_setting(text, "keyProperty") or "")
+        properties = _property_objects(text)
+        actual_columns = table_columns.get(source_table, set())
+        if key not in properties or key not in actual_columns:
+            raise RuntimeError(f"Missing property/source key {name}.{key}")
+        static = {prop: dtype for prop, (dtype, _) in properties.items()
+                  if dtype and not dtype.casefold().startswith("timeseries<")}
+        missing = set(static) - set(actual_columns)
+        if missing:
+            raise RuntimeError(f"Source table {source_table} lacks properties: {sorted(missing)}")
+        table_path = f"tables/{name}.tmdl"
+        if table_path in result:
+            table = _decode_part(result[table_path])
+            partitions = _object_spans(table, "partition", 4)
+            if len(partitions) != 1:
+                raise RuntimeError(f"Expected exactly one Direct Lake partition in {table_path}")
+            partition = partitions[0][3]
+            _require_setting(partition, "mode", "directLake")
+            checks = {"entityName": _quote_name(source_table), "expressionSource": _quote_name(expression_name)}
+            for field, expected in checks.items():
+                matches = re.findall(r"(?m)^[ \t]+" + field + r":\s*(.+?)\s*$", partition)
+                if len(matches) != 1 or _identifier_parts(matches[0]) != _identifier_parts(expected):
+                    raise RuntimeError(f"Existing {table_path} has a different {field}")
+            for annotation, value in (("ONT_WorkspaceId", workspace_id), ("ONT_ItemId", lakehouse_id),
+                                      ("ONT_ItemKind", "Lakehouse")):
+                matches = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", partition)
+                if len(matches) != 1 or matches[0].casefold() != value.casefold():
+                    raise RuntimeError(f"Existing {table_path} source mismatch: {annotation}")
+            for prop, dtype in static.items():
+                column = _object_block(table, "column", prop, 4)
+                if not column:
+                    raise RuntimeError(f"Existing {table_path} lacks column {prop}")
+                _require_setting(column, "dataType", dtype)
+                _require_setting(column, "sourceColumn", _quote_name(prop), reference=True)
+        else:
+            columns = "\n".join(
+                f"\tcolumn {_quote_name(prop)}\n\t\tdataType: {dtype}\n"
+                f"\t\tlineageTag: {tag('property', name, prop)}\n"
+                f"\t\tsourceColumn: {_quote_name(prop)}\n" for prop, dtype in static.items())
+            table = (
+                f"table {_quote_name(name)}\n\tlineageTag: {tag('table', name)}\n\n{columns}\n"
+                f"\tpartition {_quote_name(name)} = entity\n\t\tmode: directLake\n"
+                f"\t\tsource\n\t\t\tentityName: {_quote_name(source_table)}\n"
+                f"\t\t\texpressionSource: {_quote_name(expression_name)}\n\n"
+                f"\t\tannotation ONT_WorkspaceId = {workspace_id}\n"
+                f"\t\tannotation ONT_ItemId = {lakehouse_id}\n"
+                f"\t\tannotation ONT_ItemKind = Lakehouse\n"
+                f"\t\tannotation ONT_ItemName = {lakehouse_name}\n")
+            result[table_path] = _encode_part(table_path, table)
+        backing = _direct_setting(text, "backingTable")
+        if backing and _local_name(backing) != name:
+            raise RuntimeError(f"Existing {name} has a different backing table")
+        if not backing:
+            first_line, rest = text.split("\n", 1)
+            text = first_line + f"\n\tbackingTable: {_quote_name(name)}\n" + rest
+        for prop in static:
+            block = _property_objects(text)[prop][1]
+            column_ref = f"{_quote_name(name)}.{_quote_name(prop)}"
+            desired = f"\t\tbackingConfiguration\n\t\t\tvalueColumn: {column_ref}\n"
+            bound = _binding_block(block, desired, {"valueColumn": column_ref})
+            if bound != block:
+                text = _replace_object(text, "property", prop, bound, 4)
+        if text != _decode_part(result[path]):
+            result[path] = _encode_part(path, text)
+        model = _append_model_ref(model, "table", name)
+
+    rel_path = "entityRelationships.tmdl"
+    relationships = _decode_part(result[rel_path]) if rel_path in result else ""
+    physical_path = "relationships.tmdl"
+    physical = _decode_part(result[physical_path]) if physical_path in result else ""
+    managed_relationships = 0
+    for rel_name, _, _, block in _object_spans(relationships, "entityRelationship", 0):
+        source_ref, target_ref = (_direct_setting(block, field) for field in ("fromEntity", "toEntity"))
+        try:
+            source, target = _local_name(source_ref or ""), _local_name(target_ref or "")
+        except RuntimeError:
+            continue
+        if source not in entity_to_table or target not in entity_to_table:
+            continue
+        key = _local_name(_direct_setting(_decode_part(result[f"entities/{target}.tmdl"]), "keyProperty") or "")
+        if key not in table_columns[entity_to_table[source]]:
+            raise RuntimeError(f"Missing relationship source column {source}.{key}")
+        backing_name = f"{source}_{target}"
+        expected = {"fromColumn": f"{_quote_name(source)}.{_quote_name(key)}",
+                    "toColumn": f"{_quote_name(target)}.{_quote_name(key)}"}
+        existing = _object_block(physical, "relationship", backing_name, 0)
+        if existing:
+            for field, value in expected.items():
+                _require_setting(existing, field, value, reference=True)
+        else:
+            physical = physical.rstrip() + f"\n\nrelationship {_quote_name(backing_name)}\n" + "".join(
+                f"\t{field}: {value}\n" for field, value in expected.items())
+        bound = _binding_block(
+            block, f"\tbackingConfiguration\n\t\trelationship: {_quote_name(backing_name)}\n",
+            {"relationship": _quote_name(backing_name)})
+        if bound != block:
+            relationships = _replace_object(relationships, "entityRelationship", rel_name, bound, 0)
+        managed_relationships += 1
+    if rel_path in result and relationships != _decode_part(result[rel_path]):
+        result[rel_path] = _encode_part(rel_path, relationships)
+    if physical.strip() and (physical_path not in result or physical != _decode_part(result[physical_path])):
+        result[physical_path] = _encode_part(physical_path, physical.lstrip("\n"))
+    if model != _decode_part(result["model.tmdl"]):
+        result["model.tmdl"] = _encode_part("model.tmdl", model)
+    return list(result.values()), len(entity_to_table), managed_relationships
 
 # METADATA ********************
 
@@ -199,18 +798,10 @@ def md(text):
     display(Markdown(text))
 
 
-def encode(obj: dict) -> str:
-    return base64.b64encode(
-        json.dumps(obj, separators=(",", ":")).encode("utf-8")
-    ).decode("utf-8")
 
 
-def decode(payload: str) -> dict:
-    try:
-        padded = payload + "=" * (-len(payload) % 4)
-        return json.loads(base64.b64decode(padded).decode("utf-8"))
-    except Exception:
-        return {}
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -436,31 +1027,14 @@ def wait_for_lro(operation_url: str) -> dict:
 # Workspace / ontology helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def list_workspace_items(item_type: str | None = None) -> list:
-    url = f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/items"
-
-    response = api_request("GET", url)
-    response.raise_for_status()
-
-    items = response.json().get("value", [])
-
-    if item_type:
-        return [
-            item
-            for item in items
-            if item.get("type", "").lower() == item_type.lower()
-        ]
-
-    return items
+    items = _list_fabric_values(f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/items")
+    return [item for item in items if not item_type or item.get("type", "").lower() == item_type.lower()]
 
 
 def list_ontologies() -> list:
-    url = f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/ontologies"
-
-    response = api_request("GET", url)
-    response.raise_for_status()
-
-    return response.json().get("value", [])
+    return _list_fabric_values(f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/ontologies")
 
 
 def find_ontology_by_name(
@@ -512,56 +1086,7 @@ def find_ontology_by_name(
 
 
 def get_ontology_definition(ontology_id: str) -> dict:
-    """
-    Get Fabric ontology definition.
-
-    Handles:
-    - 200 direct response
-    - 202 LRO + /result response
-    """
-
-    url = (
-        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}"
-        f"/ontologies/{ontology_id}/getDefinition"
-    )
-
-    response = api_request("POST", url)
-
-    if response.status_code == 200:
-        if not response.text or not response.text.strip():
-            return {}
-
-        return response.json()
-
-    if response.status_code == 202:
-        operation_url = (
-            response.headers.get("Location")
-            or response.headers.get("Operation-Location")
-            or response.headers.get("operation-location")
-        )
-
-        if not operation_url:
-            raise RuntimeError("Missing Location header for getDefinition LRO.")
-
-        wait_for_lro(operation_url)
-
-        result_url = operation_url.rstrip("/") + "/result"
-
-        result_response = api_request(
-            "GET",
-            result_url,
-            timeout=120,
-        )
-
-        result_response.raise_for_status()
-
-        if not result_response.text or not result_response.text.strip():
-            return {}
-
-        return result_response.json()
-
-    print(response.text[:3000])
-    raise RuntimeError(f"Failed to get ontology definition: {response.status_code}")
+    return _get_fabric_ontology_definition(FABRIC_BASE_URL, WORKSPACE_ID, ontology_id)
 
 
 def update_ontology_definition(
@@ -603,11 +1128,7 @@ def update_ontology_definition(
             return {}
 
     if response.status_code == 202:
-        operation_url = (
-            response.headers.get("Location")
-            or response.headers.get("Operation-Location")
-            or response.headers.get("operation-location")
-        )
+        operation_url = _fabric_operation_url(response, FABRIC_BASE_URL)
 
         if not operation_url:
             raise RuntimeError("Missing Location header for updateDefinition LRO.")
@@ -944,6 +1465,25 @@ print("✅ KQL table:", KQL_TABLE_NAME)
 
 # CELL ********************
 
+_item_response = api_request("GET", f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/ontologies/{ontology_id}")
+if _item_response.status_code != 200:
+    raise RuntimeError("Cannot inspect ontology generation")
+ontology_details = _item_response.json()
+_require_v2_ontology(ontology_details)
+live_parts = get_ontology_definition(ontology_id).get("definition", {}).get("parts", [])
+ONTOLOGY_GENERATION = _resolve_ontology_generation(
+    ontology_details, live_parts)
+print("Verified live ontology generation 2")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 #  CELL 4 — Verify Eventhouse slim RTI table schema
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -1244,542 +1784,102 @@ print("✅ Expected slim columns:", sorted(expected_kql_cols))
 
 # CELL ********************
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-#  CELL 5 — Fetch ontology definition and validate signal_master
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# CELL 5 — Read and validate the Generation 2 ontology
+import re
+from datetime import datetime, timezone
 
-md("## 🧠 Fetching ontology definition and validating signal_master")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate required globals
-# ══════════════════════════════════════════════════════════════════════════════
-
-required_entity_globals = [
-    "ontology_id",
-    "STATIC_ENTITY_NAME",
-    "KEY_COLUMN_NAME",
-    "TIMESTAMP_COLUMN_NAME",
-    "VALUE_COLUMN_NAME",
-    "QUALITY_COLUMN_NAME",
-    "get_ontology_definition",
-    "decode",
-]
-
-missing_entity_globals = [
-    name
-    for name in required_entity_globals
-    if name not in globals() or globals().get(name) in (None, "")
-]
-
-if missing_entity_globals:
-    raise RuntimeError(
-        "Missing required values. Run 007 Cells 1-4 first. "
-        f"Missing: {missing_entity_globals}"
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Fetch live ontology definition
-# ══════════════════════════════════════════════════════════════════════════════
-
-live_def = get_ontology_definition(ontology_id)
-live_parts = live_def.get("definition", {}).get("parts", [])
-
-if not live_parts:
-    raise RuntimeError("Live ontology definition contains no parts.")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Extract EntityType definitions
-# ══════════════════════════════════════════════════════════════════════════════
-
-entity_defs = {}
-
-for part in live_parts:
-    path = part.get("path", "")
-    segments = path.split("/")
-
-    if (
-        len(segments) >= 3
-        and segments[0] == "EntityTypes"
-        and segments[-1] == "definition.json"
-    ):
-        obj = decode(part.get("payload", ""))
-        entity_id = obj.get("id", segments[1])
-
-        if not entity_id:
-            raise RuntimeError(
-                f"Entity definition part has no entity ID. Path: {path}"
-            )
-
-        entity_defs[entity_id] = obj
-
-if not entity_defs:
-    raise RuntimeError("No EntityTypes found in live ontology definition.")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Resolve signal_master entity
-# ══════════════════════════════════════════════════════════════════════════════
-
-entity_name_counts = {}
-
-for entity_id, obj in entity_defs.items():
-    entity_name = obj.get("name")
-
-    if entity_name:
-        entity_name_counts[entity_name] = entity_name_counts.get(entity_name, 0) + 1
-
-duplicate_entity_names = sorted([
-    entity_name
-    for entity_name, count in entity_name_counts.items()
-    if count > 1
-])
-
-if duplicate_entity_names:
-    raise RuntimeError(
-        f"Duplicate entity names found in ontology definition: {duplicate_entity_names}"
-    )
-
-entity_name_to_id = {
-    obj.get("name"): entity_id
-    for entity_id, obj in entity_defs.items()
-    if obj.get("name")
-}
-
-signal_entity_id = entity_name_to_id.get(STATIC_ENTITY_NAME)
-
-if not signal_entity_id:
-    raise RuntimeError(
-        f"Entity '{STATIC_ENTITY_NAME}' not found in ontology. "
-        f"Available entities: {sorted(entity_name_to_id.keys())}"
-    )
-
-signal_entity_def = entity_defs[signal_entity_id]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Extract static and time-series properties
-# ══════════════════════════════════════════════════════════════════════════════
-
-static_props = {
-    prop["name"]: prop["id"]
-    for prop in signal_entity_def.get("properties", [])
-    if prop.get("name") and prop.get("id")
-}
-
-timeseries_props = {
-    prop["name"]: prop["id"]
-    for prop in signal_entity_def.get("timeseriesProperties", [])
-    if prop.get("name") and prop.get("id")
-}
-
-if not static_props:
-    raise RuntimeError(
-        f"Entity '{STATIC_ENTITY_NAME}' has no static properties."
-    )
-
-if not timeseries_props:
-    raise RuntimeError(
-        f"Entity '{STATIC_ENTITY_NAME}' has no timeseriesProperties. "
-        "Rerun 004 with the corrected ontology generation cell that writes "
-        "Eventhouse RTI fields to timeseriesProperties on signal_master."
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate identity key
-# ══════════════════════════════════════════════════════════════════════════════
-
-if KEY_COLUMN_NAME not in static_props:
-    raise RuntimeError(
-        f"Entity '{STATIC_ENTITY_NAME}' is missing static key property "
-        f"'{KEY_COLUMN_NAME}'. Available static properties: {sorted(static_props.keys())}"
-    )
-
-entity_id_part_property_ids = set(signal_entity_def.get("entityIdParts", []))
-key_property_id = static_props[KEY_COLUMN_NAME]
-
-if key_property_id not in entity_id_part_property_ids:
-    raise RuntimeError(
-        f"'{KEY_COLUMN_NAME}' exists on '{STATIC_ENTITY_NAME}', but is not part "
-        "of entityIdParts. The ontology generation step should identify "
-        "signal_master by opcua_node_id."
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate Eventhouse RTI time-series properties
-# ══════════════════════════════════════════════════════════════════════════════
-
-required_ts_props = {
-    TIMESTAMP_COLUMN_NAME,
-    VALUE_COLUMN_NAME,
-    QUALITY_COLUMN_NAME,
-}
-
-missing_ts_props = sorted(required_ts_props - set(timeseries_props))
-
-if missing_ts_props:
-    raise RuntimeError(
-        f"Entity '{STATIC_ENTITY_NAME}' is missing required timeseriesProperties: "
-        f"{missing_ts_props}. Available timeseriesProperties: {sorted(timeseries_props.keys())}\n\n"
-        "Rerun 004 with the corrected ontology generation cell that writes "
-        "event_time, value, and quality to timeseriesProperties on signal_master."
-    )
-
-unexpected_static_ts_overlap = sorted(
-    set(static_props).intersection(set(timeseries_props))
-)
-
-if unexpected_static_ts_overlap:
-    raise RuntimeError(
-        f"These properties exist both as static properties and timeseriesProperties "
-        f"on '{STATIC_ENTITY_NAME}': {unexpected_static_ts_overlap}. "
-        "Each property should be in only one place."
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Build target property lookup for downstream binding cell
-# ══════════════════════════════════════════════════════════════════════════════
-
-all_target_props = {}
-all_target_props.update(static_props)
-all_target_props.update(timeseries_props)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Display validation summary
-# ══════════════════════════════════════════════════════════════════════════════
-
-md(f"✅ Entity `{STATIC_ENTITY_NAME}` found: `{signal_entity_id}`")
-md(f"✅ Static key property `{KEY_COLUMN_NAME}` is present and is the entity identity key.")
-md("✅ Eventhouse RTI fields are present as `timeseriesProperties` on `signal_master`.")
-
-display(
-    spark.createDataFrame(
-        [
-            {
-                "property_group": "static",
-                "property_name": property_name,
-                "property_id": property_id,
-                "is_entity_id_part": property_id in entity_id_part_property_ids,
-            }
-            for property_name, property_id in static_props.items()
-        ]
-        +
-        [
-            {
-                "property_group": "timeseries",
-                "property_name": property_name,
-                "property_id": property_id,
-                "is_entity_id_part": False,
-            }
-            for property_name, property_id in timeseries_props.items()
-        ]
-    ).orderBy("property_group", "property_name")
-)
-
-print("✅ signal_master ontology validation complete.")
-print("✅ signal_master entity ID:", signal_entity_id)
-print("✅ Static properties:", sorted(static_props.keys()))
-print("✅ Time-series properties:", sorted(timeseries_props.keys()))
-print("✅ Entity ID part property IDs:", sorted(entity_id_part_property_ids))
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-# ╔══════════════════════════════════════════════════════════════════════════╗
-#  CELL 6 — Build and push Eventhouse TimeSeries DataBinding
-# ╚══════════════════════════════════════════════════════════════════════════╝
-
-md("## 🚀 Building and pushing Eventhouse TimeSeries DataBinding")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate required globals
-# ══════════════════════════════════════════════════════════════════════════════
-
-required_binding_globals = [
-    "ontology_id",
-    "live_parts",
-    "signal_entity_id",
-    "STATIC_ENTITY_NAME",
-    "WORKSPACE_ID",
-    "EVENTHOUSE_ID",
-    "CLUSTER_QUERY_URI",
-    "KQL_DB_NAME",
-    "KQL_TABLE_NAME",
-    "KEY_COLUMN_NAME",
-    "TIMESTAMP_COLUMN_NAME",
-    "VALUE_COLUMN_NAME",
-    "QUALITY_COLUMN_NAME",
-    "static_props",
-    "timeseries_props",
-    "REPLACE_EXISTING_TIMESERIES_BINDING",
-    "encode",
-    "decode",
-    "update_ontology_definition",
-]
-
-missing_binding_globals = [
-    name
-    for name in required_binding_globals
-    if name not in globals() or globals().get(name) in (None, "")
-]
-
-if missing_binding_globals:
-    raise RuntimeError(
-        "Missing required values. Run 007 Cells 1-5 first. "
-        f"Missing: {missing_binding_globals}"
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate source and target properties
-# ══════════════════════════════════════════════════════════════════════════════
-
-DATABINDING_SCHEMA = (
-    "https://developer.microsoft.com/json-schemas/fabric/item/ontology/"
-    "dataBinding/1.0.0/schema.json"
-)
-
-required_static_props = {
-    KEY_COLUMN_NAME,
-}
-
-required_timeseries_props = {
-    TIMESTAMP_COLUMN_NAME,
-    VALUE_COLUMN_NAME,
-    QUALITY_COLUMN_NAME,
-}
-
-missing_static_props = sorted(required_static_props - set(static_props))
-missing_timeseries_props = sorted(required_timeseries_props - set(timeseries_props))
-
-if missing_static_props:
-    raise RuntimeError(
-        f"`{STATIC_ENTITY_NAME}` is missing required static properties: {missing_static_props}"
-    )
-
-if missing_timeseries_props:
-    raise RuntimeError(
-        f"`{STATIC_ENTITY_NAME}` is missing required time-series properties: "
-        f"{missing_timeseries_props}"
-    )
-
-# Cell 4 should already have kql_col_names, but keep this optional check safe.
-if "kql_col_names" in globals():
-    required_source_cols = {
-        KEY_COLUMN_NAME,
-        TIMESTAMP_COLUMN_NAME,
-        VALUE_COLUMN_NAME,
-        QUALITY_COLUMN_NAME,
-    }
-
-    missing_source_cols = sorted(required_source_cols - set(kql_col_names))
-
-    if missing_source_cols:
-        raise RuntimeError(
-            f"KQL table `{KQL_TABLE_NAME}` is missing columns required for "
-            f"the time-series binding: {missing_source_cols}"
-        )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Identify existing Eventhouse/Kusto TimeSeries bindings on signal_master
-# ══════════════════════════════════════════════════════════════════════════════
-
-data_binding_prefix = f"EntityTypes/{signal_entity_id}/DataBindings/"
-
-
-def is_eventhouse_timeseries_binding(part: dict) -> bool:
-    path = part.get("path", "")
-
-    if not path.startswith(data_binding_prefix):
-        return False
-
-    obj = decode(part.get("payload", ""))
-    cfg = obj.get("dataBindingConfiguration", {}) or {}
-    src = cfg.get("sourceTableProperties", {}) or {}
-
+def _tmdl_content(part):
+    # Fabric may return TMDL with Windows line endings.
     return (
-        cfg.get("dataBindingType") == "TimeSeries"
-        and src.get("sourceType") == "KustoTable"
+        base64.b64decode(part["payload"])
+        .decode("utf-8")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
     )
 
 
-existing_eventhouse_timeseries_bindings = [
-    part
-    for part in live_parts
-    if is_eventhouse_timeseries_binding(part)
-]
-
-if existing_eventhouse_timeseries_bindings:
-    existing_binding_summary = []
-
-    for part in existing_eventhouse_timeseries_bindings:
-        obj = decode(part.get("payload", ""))
-        cfg = obj.get("dataBindingConfiguration", {}) or {}
-        src = cfg.get("sourceTableProperties", {}) or {}
-
-        existing_binding_summary.append({
-            "path": part.get("path"),
-            "databaseName": src.get("databaseName"),
-            "sourceTableName": src.get("sourceTableName"),
-            "itemId": src.get("itemId"),
-            "clusterUri": src.get("clusterUri"),
-        })
-
-    md("### Existing Eventhouse/Kusto TimeSeries binding(s) found")
-
-    display(spark.createDataFrame(existing_binding_summary))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Build corrected Eventhouse TimeSeries DataBinding
-# ══════════════════════════════════════════════════════════════════════════════
-
-if existing_eventhouse_timeseries_bindings and not REPLACE_EXISTING_TIMESERIES_BINDING:
-    md(
-        f"⏭️ `{STATIC_ENTITY_NAME}` already has Eventhouse TimeSeries DataBinding(s). "
-        "`REPLACE_EXISTING_TIMESERIES_BINDING` is False, so no update was pushed."
-    )
-
-    updated_parts = live_parts
-
-else:
-    if existing_eventhouse_timeseries_bindings:
-        md(
-            f"♻️ Removing {len(existing_eventhouse_timeseries_bindings)} existing "
-            f"Eventhouse/Kusto TimeSeries DataBinding(s) for `{STATIC_ENTITY_NAME}`."
-        )
-
-    parts_to_keep = [
-        part
-        for part in live_parts
-        if not is_eventhouse_timeseries_binding(part)
-    ]
-
-    binding_id = str(uuid.uuid4())
-
-    property_bindings = [
-        {
-            "sourceColumnName": KEY_COLUMN_NAME,
-            "targetPropertyId": str(static_props[KEY_COLUMN_NAME]),
-        },
-        {
-            "sourceColumnName": TIMESTAMP_COLUMN_NAME,
-            "targetPropertyId": str(timeseries_props[TIMESTAMP_COLUMN_NAME]),
-        },
-        {
-            "sourceColumnName": VALUE_COLUMN_NAME,
-            "targetPropertyId": str(timeseries_props[VALUE_COLUMN_NAME]),
-        },
-        {
-            "sourceColumnName": QUALITY_COLUMN_NAME,
-            "targetPropertyId": str(timeseries_props[QUALITY_COLUMN_NAME]),
-        },
-    ]
-
-    timeseries_binding = {
-        "$schema": DATABINDING_SCHEMA,
-        "id": binding_id,
-        "dataBindingConfiguration": {
-            "dataBindingType": "TimeSeries",
-            "timestampColumnName": TIMESTAMP_COLUMN_NAME,
-            "propertyBindings": property_bindings,
-            "sourceTableProperties": {
-                "sourceType": "KustoTable",
-                "workspaceId": WORKSPACE_ID,
-                "itemId": EVENTHOUSE_ID,
-                "clusterUri": CLUSTER_QUERY_URI,
-                "databaseName": KQL_DB_NAME,
-                "sourceTableName": KQL_TABLE_NAME,
-            },
-        },
-    }
-
-    new_part = {
-        "path": f"{data_binding_prefix}{binding_id}.json",
-        "payload": encode(timeseries_binding),
+def _tmdl_part(path, content):
+    return {
+        "path": path,
+        "payload": base64.b64encode(content.encode("utf-8")).decode("ascii"),
         "payloadType": "InlineBase64",
     }
 
-    updated_parts = parts_to_keep + [new_part]
 
-    # Guard against duplicate part paths before updateDefinition.
-    updated_paths = [
-        part.get("path", "")
-        for part in updated_parts
-    ]
+def _tmdl_tag(*values):
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "fabric-ontology-gen2/" + "/".join(map(str, values)),
+        )
+    )
 
-    duplicate_paths = sorted({
-        path
-        for path in updated_paths
-        if updated_paths.count(path) > 1
-    })
 
-    if duplicate_paths:
+def _tmdl_setting(block, name):
+    return _direct_setting(block, name)
+
+
+def _property_block(text, name):
+    return _object_block(text, 'property', name, 4)
+
+
+
+def _replace_property(text, name, replacement):
+    return _replace_object(text, "property", name, replacement, 4)
+
+
+live_parts = (
+    get_ontology_definition(ontology_id)
+    .get("definition", {})
+    .get("parts", [])
+)
+live_by_path = {
+    part["path"]: _tmdl_content(part) for part in live_parts
+}
+
+if len(live_by_path) != len(live_parts):
+    raise RuntimeError("Duplicate definition part paths")
+
+entity_path = f"entities/{STATIC_ENTITY_NAME}.tmdl"
+entity_text = live_by_path.get(entity_path, "")
+
+if (
+    not entity_text
+    or _local_name(_tmdl_setting(entity_text, "keyProperty") or "") != KEY_COLUMN_NAME
+):
+    raise RuntimeError(
+        f"Generation 2 entity {STATIC_ENTITY_NAME!r} with key "
+        f"{KEY_COLUMN_NAME!r} not found. Run 004 and 005 first."
+    )
+
+static_table = _local_name(_tmdl_setting(entity_text, "backingTable") or "")
+if not static_table or f"tables/{static_table}.tmdl" not in live_by_path:
+    raise RuntimeError(
+        "Static Lakehouse binding is missing. Run 005 first."
+    )
+
+for name in (VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
+    block = _property_block(entity_text, name)
+    if not block:
         raise RuntimeError(
-            f"Duplicate ontology definition paths detected before push: {duplicate_paths}"
+            f"Property {STATIC_ENTITY_NAME}.{name} is missing "
+            "from the Gen2 entity definition"
         )
 
-    md(
-        f"⚡ Adding Eventhouse TimeSeries DataBinding for `{STATIC_ENTITY_NAME}` "
-        f"from `{KQL_DB_NAME}.{KQL_TABLE_NAME}`."
-    )
-
-    display(
-        spark.createDataFrame(
-            [
-                {
-                    "source_column": binding["sourceColumnName"],
-                    "target_property_id": binding["targetPropertyId"],
-                    "target_group": (
-                        "static"
-                        if binding["sourceColumnName"] == KEY_COLUMN_NAME
-                        else "timeseries"
-                    ),
-                }
-                for binding in property_bindings
-            ]
+    actual_type = _tmdl_setting(block, "dataType")
+    if not actual_type or not actual_type.casefold().startswith(
+        "timeseries<"
+    ):
+        raise RuntimeError(
+            f"{STATIC_ENTITY_NAME}.{name} must be a time-series "
+            f"property; Fabric returned dataType={actual_type!r}"
         )
-    )
 
-    update_ontology_definition(
-        ontology_id,
-        {
-            "definition": {
-                "parts": updated_parts,
-            }
-        },
-    )
-
-    # Keep downstream cells in sync.
-    live_parts = updated_parts
-
-    md("✅ Corrected Eventhouse TimeSeries DataBinding pushed.")
-
-
-print("✅ Cell 6 complete.")
-print("✅ Entity:", STATIC_ENTITY_NAME)
-print("✅ Entity ID:", signal_entity_id)
-print("✅ Eventhouse ID:", EVENTHOUSE_ID)
-print("✅ KQL database:", KQL_DB_NAME)
-print("✅ KQL table:", KQL_TABLE_NAME)
-print("✅ Timestamp column:", TIMESTAMP_COLUMN_NAME)
-print("✅ Key column:", KEY_COLUMN_NAME)
-print("✅ Value column:", VALUE_COLUMN_NAME)
-print("✅ Quality column:", QUALITY_COLUMN_NAME)
+print(
+    f"Validated Gen2 entity {STATIC_ENTITY_NAME}, "
+    f"static table {static_table}, and time-series properties"
+)
 
 # METADATA ********************
 
@@ -1790,241 +1890,126 @@ print("✅ Quality column:", QUALITY_COLUMN_NAME)
 
 # CELL ********************
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-#  CELL 7 — Verify Eventhouse TimeSeries DataBinding
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# CELL 6 — Bind Eventhouse telemetry to the Generation 2 entity
+# Build the same TMDL parts emitted by Fabric's binding UI, preserving other parts.
 
-md("## 🔍 Verifying Eventhouse TimeSeries DataBinding")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Validate required globals
-# ══════════════════════════════════════════════════════════════════════════════
-
-required_verify_globals = [
-    "ontology_id",
-    "signal_entity_id",
-    "STATIC_ENTITY_NAME",
-    "WORKSPACE_ID",
-    "EVENTHOUSE_ID",
-    "CLUSTER_QUERY_URI",
-    "KQL_DB_NAME",
-    "KQL_TABLE_NAME",
-    "KEY_COLUMN_NAME",
-    "TIMESTAMP_COLUMN_NAME",
-    "VALUE_COLUMN_NAME",
-    "QUALITY_COLUMN_NAME",
-    "static_props",
-    "timeseries_props",
-    "get_ontology_definition",
-    "decode",
-]
-
-missing_verify_globals = [
-    name
-    for name in required_verify_globals
-    if name not in globals() or globals().get(name) in (None, "")
-]
-
-if missing_verify_globals:
-    raise RuntimeError(
-        "Missing required values. Run 007 Cells 1-6 first. "
-        f"Missing: {missing_verify_globals}"
-    )
+def _append_unique_block(text, heading, block):
+    if re.search(r"(?m)^" + re.escape(heading) + r"$", text):
+        return text
+    return text.rstrip() + "\n\n" + block.rstrip() + "\n"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Fetch latest ontology definition
-# ══════════════════════════════════════════════════════════════════════════════
+def _bind_eventhouse_parts(parts):
+    original = {path: _tmdl_content(p) for path, p in _parts_by_path(parts).items()}
+    result = dict(original)
+    entity = result[entity_path]
+    event_table = KQL_TABLE_NAME
+    relationship = f"{STATIC_ENTITY_NAME}_{event_table}"
+    event_path = f"tables/{event_table}.tmdl"
+    if event_table == static_table:
+        raise RuntimeError("Eventhouse table name conflicts with the static backing table")
+    for identifier in (event_table, STATIC_ENTITY_NAME, KEY_COLUMN_NAME, TIMESTAMP_COLUMN_NAME,
+                       VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", identifier):
+            raise RuntimeError(f"Unsupported TMDL identifier: {identifier!r}")
+    if '"' in CLUSTER_QUERY_URI or '"' in KQL_DB_NAME:
+        raise RuntimeError("Source URI or KQL database name contains an unsupported quote")
 
-verify_def = get_ontology_definition(ontology_id)
-verify_parts = verify_def.get("definition", {}).get("parts", [])
+    # An existing UI binding is left intact when it already points to this source.
+    if event_path in result:
+        table_text = result[event_path]
+        checks = ['mode: directQuery',
+                  f'AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")',
+                  f'annotation ONT_ItemId = {KQL_DB_ID}', f'annotation ONT_WorkspaceId = {WORKSPACE_ID}', 'annotation ONT_ItemKind = KQLDatabase']
+        if not all(check in table_text for check in checks):
+            raise RuntimeError(f"Existing {event_path} points to another Eventhouse source; inspect it before replacing")
+    else:
+        columns = [(TIMESTAMP_COLUMN_NAME, "dateTime"), (KEY_COLUMN_NAME, "string"),
+                   (VALUE_COLUMN_NAME, "double"), (QUALITY_COLUMN_NAME, "string")]
+        column_text = "\n".join(
+            f"\tcolumn {name}\n\t\tdataType: {dtype}\n"
+            f"\t\tlineageTag: {_tmdl_tag('event-column', KQL_DB_ID, event_table, name)}\n"
+            f"\t\tsourceColumn: {name}\n" for name, dtype in columns)
+        pinned = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        result[event_path] = (
+            f"table {event_table}\n\tlineageTag: {_tmdl_tag('event-table', KQL_DB_ID, event_table)}\n\n"
+            + column_text + "\n"
+            + f"\tpartition {event_table} = m\n\t\tmode: directQuery\n"
+              f"\t\tsource =\n\t\t\t\tlet\n"
+              f'\t\t\t\t  Source = AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")\n'
+              f"\t\t\t\tin\n\t\t\t\t  Source\n\n"
+              f"\t\tannotation ONT_WorkspaceId = {WORKSPACE_ID}\n"
+              f"\t\tannotation ONT_ItemId = {KQL_DB_ID}\n"
+              f"\t\tannotation ONT_ItemKind = KQLDatabase\n"
+              f"\t\tannotation ONT_ItemName = {KQL_DB_NAME}\n"
+              f"\t\tannotation ONT_PinnedAtUtc = {pinned}\n")
 
-if not verify_parts:
-    raise RuntimeError("Live ontology definition contains no parts during verification.")
+    physical = result.get("relationships.tmdl", "")
+    heading = f"relationship {relationship}"
+    desired = (f"{heading}\n\tfromColumn: {event_table}.{KEY_COLUMN_NAME}\n"
+               f"\ttoColumn: {static_table}.{KEY_COLUMN_NAME}\n")
 
-data_binding_prefix = f"EntityTypes/{signal_entity_id}/DataBindings/"
+    existing_relationship = _object_block(physical, "relationship", relationship, 0)
+    if existing_relationship:
+        _require_setting(existing_relationship, "fromColumn", f"{event_table}.{KEY_COLUMN_NAME}", reference=True)
+        _require_setting(existing_relationship, "toColumn", f"{static_table}.{KEY_COLUMN_NAME}", reference=True)
+    else:
+        result["relationships.tmdl"] = _append_unique_block(physical, heading, desired)
 
+    model = result.get("model.tmdl", "")
+    if not model.startswith("model "):
+        raise RuntimeError("Generation 2 model.tmdl is missing")
+    result["model.tmdl"] = _append_model_ref(model, "table", event_table)
+    for prop in (VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
+        block = _property_block(entity, prop)
+        expected = (f"\t\tbackingConfiguration\n\t\t\ttype: timeSeries\n"
+                    f"\t\t\tvalueColumn: {event_table}.{prop}\n"
+                    f"\t\t\torderingColumn: {event_table}.{TIMESTAMP_COLUMN_NAME}\n")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Expected binding contract
-# ══════════════════════════════════════════════════════════════════════════════
+        if not block:
+            raise RuntimeError(f"Missing time-series property {prop}")
+        bound = _binding_block(block, expected, {
+            "type": "timeSeries", "valueColumn": f"{event_table}.{prop}",
+            "orderingColumn": f"{event_table}.{TIMESTAMP_COLUMN_NAME}"})
+        if bound != block:
+            entity = _replace_property(entity, prop, bound)
+    entity = _ensure_additional_backing(entity, event_table, relationship)
+    result[entity_path] = entity
+    # Mark the join key as such, as Fabric does when the binding is made in the UI.
+    static_path = f"tables/{static_table}.tmdl"
+    static_text = result[static_path]
 
-expected_source_to_target = {
-    KEY_COLUMN_NAME: str(static_props[KEY_COLUMN_NAME]),
-    TIMESTAMP_COLUMN_NAME: str(timeseries_props[TIMESTAMP_COLUMN_NAME]),
-    VALUE_COLUMN_NAME: str(timeseries_props[VALUE_COLUMN_NAME]),
-    QUALITY_COLUMN_NAME: str(timeseries_props[QUALITY_COLUMN_NAME]),
-}
-
-expected_source_columns = set(expected_source_to_target)
-
-expected_cluster_uri = CLUSTER_QUERY_URI.rstrip("/")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Inspect all TimeSeries DataBindings on signal_master
-# ══════════════════════════════════════════════════════════════════════════════
-
-matching_bindings = []
-
-for part in verify_parts:
-    path = part.get("path", "")
-
-    if not path.startswith(data_binding_prefix):
-        continue
-
-    obj = decode(part.get("payload", ""))
-    cfg = obj.get("dataBindingConfiguration", {}) or {}
-    src = cfg.get("sourceTableProperties", {}) or {}
-
-    if cfg.get("dataBindingType") != "TimeSeries":
-        continue
-
-    property_bindings = cfg.get("propertyBindings", []) or []
-
-    source_to_target = {
-        binding.get("sourceColumnName"): str(binding.get("targetPropertyId"))
-        for binding in property_bindings
-        if binding.get("sourceColumnName")
-    }
-
-    source_columns = set(source_to_target)
-
-    missing_source_columns = sorted(expected_source_columns - source_columns)
-    extra_source_columns = sorted(source_columns - expected_source_columns)
-
-    incorrect_mappings = []
-
-    for source_column, expected_target_property_id in expected_source_to_target.items():
-        actual_target_property_id = source_to_target.get(source_column)
-
-        if actual_target_property_id != expected_target_property_id:
-            incorrect_mappings.append({
-                "source_column": source_column,
-                "expected_target_property_id": expected_target_property_id,
-                "actual_target_property_id": actual_target_property_id,
-            })
-
-    source_cluster_uri = (src.get("clusterUri") or "").rstrip("/")
-
-    is_valid = (
-        src.get("sourceType") == "KustoTable"
-        and src.get("workspaceId") == WORKSPACE_ID
-        and src.get("itemId") == EVENTHOUSE_ID
-        and source_cluster_uri == expected_cluster_uri
-        and src.get("databaseName") == KQL_DB_NAME
-        and src.get("sourceTableName") == KQL_TABLE_NAME
-        and cfg.get("timestampColumnName") == TIMESTAMP_COLUMN_NAME
-        and len(property_bindings) == 4
-        and not missing_source_columns
-        and not extra_source_columns
-        and not incorrect_mappings
-    )
-
-    matching_bindings.append({
-        "path": path,
-        "binding_id": obj.get("id"),
-        "source_type": src.get("sourceType"),
-        "workspace_id": src.get("workspaceId"),
-        "eventhouse_item_id": src.get("itemId"),
-        "cluster_uri": src.get("clusterUri"),
-        "database_name": src.get("databaseName"),
-        "table_name": src.get("sourceTableName"),
-        "timestamp_column": cfg.get("timestampColumnName"),
-        "property_binding_count": len(property_bindings),
-        "missing_source_columns": ", ".join(missing_source_columns),
-        "extra_source_columns": ", ".join(extra_source_columns),
-        "incorrect_mapping_count": len(incorrect_mappings),
-        "is_valid": is_valid,
-    })
+    key_block = _object_block(static_text, "column", KEY_COLUMN_NAME, 4)
+    if not key_block:
+        raise RuntimeError(f"{static_path} has no {KEY_COLUMN_NAME} column")
+    if not re.search(r"(?m)^[ \t]+isKey$", key_block):
+        first, remainder = key_block.split("\n", 1)
+        replacement = first + "\n\t\tisKey\n" + remainder
+        result[static_path] = _replace_object(static_text, "column", KEY_COLUMN_NAME, replacement, 4)
+    changed = {path for path, content in result.items() if original.get(path) != content}
+    return [_tmdl_part(path, result[path]) if path in changed else part for part in parts
+            for path in [part["path"]]] + [_tmdl_part(path, result[path]) for path in result if path not in original], changed
 
 
-if not matching_bindings:
-    raise RuntimeError(
-        f"No TimeSeries DataBinding found on `{STATIC_ENTITY_NAME}`."
-    )
+updated_parts, changed_paths = _bind_eventhouse_parts(live_parts)
+if changed_paths:
+    print("Updating Gen2 Eventhouse binding:", sorted(changed_paths))
+    update_ontology_definition(ontology_id, {"definition": {"parts": updated_parts}})
+else:
+    print("Eventhouse binding already matches the configured source")
 
+# METADATA ********************
 
-result_df = spark.createDataFrame(matching_bindings)
-display(result_df)
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
 
+# CELL ********************
 
-valid_bindings = [
-    binding
-    for binding in matching_bindings
-    if binding["is_valid"]
-]
-
-if not valid_bindings:
-    decoded_details = []
-
-    for part in verify_parts:
-        path = part.get("path", "")
-
-        if not path.startswith(data_binding_prefix):
-            continue
-
-        obj = decode(part.get("payload", ""))
-        cfg = obj.get("dataBindingConfiguration", {}) or {}
-
-        if cfg.get("dataBindingType") != "TimeSeries":
-            continue
-
-        decoded_details.append({
-            "path": path,
-            "decoded_binding": json.dumps(obj, indent=2),
-        })
-
-    if decoded_details:
-        display(spark.createDataFrame(decoded_details))
-
-    raise RuntimeError(
-        f"No fully valid Eventhouse TimeSeries DataBinding found for "
-        f"`{KQL_DB_NAME}.{KQL_TABLE_NAME}`.\n\n"
-        "Expected source table properties:\n"
-        f"- sourceType: KustoTable\n"
-        f"- workspaceId: {WORKSPACE_ID}\n"
-        f"- itemId: {EVENTHOUSE_ID}\n"
-        f"- clusterUri: {CLUSTER_QUERY_URI}\n"
-        f"- databaseName: {KQL_DB_NAME}\n"
-        f"- sourceTableName: {KQL_TABLE_NAME}\n\n"
-        "Expected exact property bindings:\n"
-        f"- {KEY_COLUMN_NAME} -> {expected_source_to_target[KEY_COLUMN_NAME]}\n"
-        f"- {TIMESTAMP_COLUMN_NAME} -> {expected_source_to_target[TIMESTAMP_COLUMN_NAME]}\n"
-        f"- {VALUE_COLUMN_NAME} -> {expected_source_to_target[VALUE_COLUMN_NAME]}\n"
-        f"- {QUALITY_COLUMN_NAME} -> {expected_source_to_target[QUALITY_COLUMN_NAME]}"
-    )
-
-
-if len(valid_bindings) > 1:
-    raise RuntimeError(
-        f"Found {len(valid_bindings)} valid Eventhouse TimeSeries DataBindings "
-        f"on `{STATIC_ENTITY_NAME}`. Expected exactly one. "
-        "Rerun Cell 6 with REPLACE_EXISTING_TIMESERIES_BINDING = True."
-    )
-
-
-# Keep downstream state in sync with the verified definition.
-live_parts = verify_parts
-
-valid_binding = valid_bindings[0]
-
-md(
-    f"✅ Verified Eventhouse TimeSeries DataBinding: "
-    f"`{KQL_DB_NAME}.{KQL_TABLE_NAME}` → `{STATIC_ENTITY_NAME}` via `{KEY_COLUMN_NAME}`."
-)
-
-print("✅ Cell 7 complete.")
-print("✅ Valid binding path:", valid_binding["path"])
-print("✅ Binding ID:", valid_binding["binding_id"])
-print("✅ Eventhouse ID:", EVENTHOUSE_ID)
-print("✅ KQL database:", KQL_DB_NAME)
-print("✅ KQL table:", KQL_TABLE_NAME)
-print("✅ Timestamp column:", TIMESTAMP_COLUMN_NAME)
-print("✅ Key column:", KEY_COLUMN_NAME)
-print("✅ Value column:", VALUE_COLUMN_NAME)
-print("✅ Quality column:", QUALITY_COLUMN_NAME)
+verified_parts = get_ontology_definition(ontology_id).get("definition", {}).get("parts", [])
+_verify_definition(updated_parts, verified_parts)
+print("Verified Eventhouse time-series binding and all preserved ontology content")
 
 # METADATA ********************
 

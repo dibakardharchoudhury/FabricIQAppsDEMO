@@ -1,9 +1,12 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
-import { selectDataAgent } from './artifactDiscovery'
-import { selectGraphModel, selectOntology } from './ontologyArtifactDiscovery'
-import { parseOntologyContract, type OntologyContract, type OntologyDefinition } from './ontologyContract'
-import { parseOntologyGraph, type OntologyGraph } from './ontologyGraph'
+import { invokeVerifiedDataAgent, requireDataAgentEndpoint, selectDataAgent } from './artifactDiscovery'
+import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
+import { createOntologyCache } from './ontologyCache'
+import { parseOntologyContract, type OntologyContract } from './ontologyContract'
+import { waitForDefinitionResult } from './ontologyDefinition'
+import type { OntologyGraph } from './ontologyGraph'
+import { V2_GRAPH_UNAVAILABLE } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
@@ -102,9 +105,10 @@ async function fabricToken(interactive: boolean): Promise<string | null> {
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
 type WorkspaceItem = { id: string; type: string; displayName: string; folderId?: string }
-type ResolvedConfig = { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; kqlDashboardId?: string; ontologyId?: string; ontologyName?: string; graphModelId?: string; graphModelName?: string }
+type ResolvedConfig = OntologyDiscovery & { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; dataAgentId?: string; kqlDashboardId?: string }
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
+let configRevision = 0
 
 function requireWorkspaceId(): string {
   if (!workspaceId) throw new Error('Fabric workspace configuration is missing. Rebuild the app with Rayfin environment injection.')
@@ -143,20 +147,20 @@ async function listItems(token: string): Promise<WorkspaceItem[]> {
  *  Discovered values are cached for the session so no id can go stale. */
 async function ensureConfig(interactive: boolean, forceRefresh = false): Promise<ResolvedConfig | null> {
   if (forceRefresh) {
-    configCache = null
-    configPromise = undefined
+    clearWorkspaceConfigCache()
   }
   if (configCache) return configCache
   if (configPromise) return configPromise
-  configPromise = discoverConfig(interactive)
+  const promise = discoverConfig(interactive, configRevision)
+  configPromise = promise
   try {
-    return await configPromise
+    return await promise
   } finally {
-    configPromise = undefined
+    if (configPromise === promise) configPromise = undefined
   }
 }
 
-async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | null> {
+async function discoverConfig(interactive: boolean, revision: number): Promise<ResolvedConfig | null> {
   const env = envConfig()
   const token = await fabricToken(interactive)
   if (!token) {
@@ -191,35 +195,25 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       : undefined
     // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
     // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
-    const da = selectDataAgent(items)
+    const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
+    const semantic = await discoverOntology(items, configuredOntologyName, {
+      metadata: async id => {
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!response.ok) throw new Error(`Ontology metadata request failed (${response.status}). Check Fabric item read access and refresh.`)
+        return response.json() as Promise<{ properties?: { generation?: number } }>
+      },
+      definition: async id => {
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}/getDefinition`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        })
+        return waitForDefinitionResult(response, token)
+      },
+    })
+    const da = semantic.ontologyGeneration === 2 && !semantic.ontologyError ? selectDataAgent(items) : undefined
     const dataAgentUrl = da
       ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
-    const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
-    const ontology = selectOntology(items, configuredOntologyName)
-    let graphModel = selectGraphModel(items, [], new Map())
-    if (ontology && !graphModel) {
-      const definitionResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${ontology.id}/getDefinition`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const definition = await waitForDefinitionResult(definitionResponse, token)
-      const contract = parseOntologyContract(ontology.id, ontology.displayName, definition)
-      const graphModels = items.filter(item => item.type === 'GraphModel')
-      const labelsByGraphModelId = new Map<string, Set<string>>()
-      await Promise.all(graphModels.map(async candidate => {
-        try {
-          const rows = await executeGraphQuery(candidate.id, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 100')
-          const sample = parseOntologyGraph(candidate.id, candidate.displayName, rows, [])
-          labelsByGraphModelId.set(candidate.id, new Set(sample.nodes.flatMap(node => node.labels)))
-        } catch (error) {
-          console.warn(`Graph Model ${candidate.displayName} could not be sampled during discovery.`, error)
-        }
-      }))
-      graphModel = selectGraphModel(items, contract.entityTypes.map(entity => entity.name), labelsByGraphModelId)
-    }
-    if (!ontology && items.some(item => item.type === 'Ontology')) console.warn('Ontology discovery is ambiguous. Configure an exact VITE_RAYFIN_ONTOLOGY_NAME or keep one Ontology in the app workspace.')
-    if (ontology && !graphModel && items.some(item => item.type === 'GraphModel')) console.warn(`No unique Graph Model structurally matches Ontology ${ontology.displayName}.`)
+    if (revision !== configRevision) throw new Error('Workspace discovery changed during refresh. Refresh again.')
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
@@ -227,16 +221,14 @@ async function discoverConfig(interactive: boolean): Promise<ResolvedConfig | nu
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
       graphqlUrl: graphqlUrl ?? env.graphqlUrl,
       dataAgentUrl,
+      dataAgentId: da?.id,
       kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
-      ontologyId: ontology?.id,
-      ontologyName: ontology?.displayName,
-      graphModelId: graphModel?.id,
-      graphModelName: graphModel?.displayName,
+      ...semantic,
     }
     return configCache
   } catch (error) {
     console.warn('Workspace discovery failed; using configured fallback values.', error)
-    return env
+    return { ...env, ontologyError: error instanceof Error ? error.message : 'Workspace discovery failed. Sign in and refresh.' }
   }
 }
 
@@ -281,8 +273,10 @@ export async function foundryToken(interactive: boolean): Promise<string | null>
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
 export function clearWorkspaceConfigCache() {
+  configRevision++
   configCache = null
   configPromise = undefined
+  ontologyContractCache.clear()
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -473,89 +467,32 @@ export type System = {
 }
 
 const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
-let ontologyContractCache: { ontologyId: string; expiresAt: number; value: OntologyContract } | null = null
-let ontologyContractPromise: Promise<OntologyContract | null> | undefined
-let ontologyGraphCache: { graphModelId: string; expiresAt: number; value: OntologyGraph } | null = null
-let ontologyGraphPromise: Promise<OntologyGraph | null> | undefined
-
-async function waitForDefinitionResult(response: Response, token: string): Promise<OntologyDefinition> {
-  if (response.status === 200) return await response.json() as OntologyDefinition
-  if (response.status !== 202) throw new Error(`Ontology definition request failed (${response.status}).`)
-  const operationUrl = response.headers.get('Location') ?? response.headers.get('Operation-Location')
-  if (!operationUrl) throw new Error('Ontology definition operation did not return a location.')
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const statusResponse = await fetch(operationUrl, { headers: { Authorization: `Bearer ${token}` } })
-    if (!statusResponse.ok) throw new Error(`Ontology definition operation failed (${statusResponse.status}).`)
-    const status = await statusResponse.json() as { status?: string }
-    if (/failed|cancelled/i.test(status.status ?? '')) throw new Error(`Ontology definition operation ${status.status}.`)
-    if (/succeeded|completed/i.test(status.status ?? '')) {
-      const resultResponse = await fetch(`${operationUrl.replace(/\/$/, '')}/result`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!resultResponse.ok) throw new Error(`Ontology definition result failed (${resultResponse.status}).`)
-      return await resultResponse.json() as OntologyDefinition
-    }
-    await new Promise(resolve => setTimeout(resolve, 500))
-  }
-  throw new Error('Ontology definition operation timed out.')
-}
+const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
 
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
   const config = await ensureConfig(false)
-  if (!config?.ontologyId) return null
-  if (!force && ontologyContractCache?.ontologyId === config.ontologyId && ontologyContractCache.expiresAt > Date.now()) {
-    return ontologyContractCache.value
+  if (config?.ontologyError) {
+    ontologyContractCache.clear()
+    configCache = null
+    throw new Error(config.ontologyError)
   }
-  if (ontologyContractPromise) return ontologyContractPromise
-  ontologyContractPromise = (async () => {
+  if (!config?.ontologyId) { ontologyContractCache.clear(); throw new Error('Sign in and select a verified Ontology v2 before loading governed topology.') }
+  return ontologyContractCache.read(config.ontologyId, force, async () => {
     const token = await fabricToken(false)
-    if (!token) return null
+    if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
     const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     })
     const definition = await waitForDefinitionResult(response, token)
-    const contract = parseOntologyContract(config.ontologyId, config.ontologyName ?? 'Fabric Ontology', definition)
-    ontologyContractCache = { ontologyId: config.ontologyId, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: contract }
-    return contract
-  })()
-  try { return await ontologyContractPromise }
-  finally { ontologyContractPromise = undefined }
-}
-
-type GraphQueryResponse = {
-  status?: { code?: string; description?: string }
-  result?: { kind?: string; data?: Array<Record<string, unknown>> }
-}
-
-async function executeGraphQuery(graphModelId: string, token: string, query: string): Promise<Array<Record<string, unknown>>> {
-  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/GraphModels/${graphModelId}/executeQuery?preview=true`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query }),
+    return parseOntologyContract(config.ontologyId!, config.ontologyName ?? 'Fabric Ontology', definition, config.ontologyGeneration)
   })
-  if (!response.ok) throw new Error(`Ontology graph query failed (${response.status}).`)
-  const payload = await response.json() as GraphQueryResponse
-  if (payload.status?.code && !/^0[0-3]/.test(payload.status.code)) throw new Error(payload.status.description ?? `Ontology graph query failed (${payload.status.code}).`)
-  return payload.result?.kind === 'TABLE' ? payload.result.data ?? [] : []
 }
 
-export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
+export async function queryOntologyGraph(): Promise<OntologyGraph | null> {
   const config = await ensureConfig(false)
-  if (!config?.graphModelId) return null
-  if (!force && ontologyGraphCache?.graphModelId === config.graphModelId && ontologyGraphCache.expiresAt > Date.now()) return ontologyGraphCache.value
-  if (ontologyGraphPromise) return ontologyGraphPromise
-  ontologyGraphPromise = (async () => {
-    const token = await fabricToken(false)
-    if (!token) return null
-    const [nodeRows, edgeRows] = await Promise.all([
-      executeGraphQuery(config.graphModelId!, token, 'MATCH (n) RETURN to_json_string(n) AS `node` LIMIT 2000'),
-      executeGraphQuery(config.graphModelId!, token, 'MATCH (source)-[`relationship`]->(target) RETURN to_json_string(source) AS `source`, to_json_string(`relationship`) AS `relationship`, to_json_string(target) AS `target` LIMIT 4000'),
-    ])
-    const graph = parseOntologyGraph(config.graphModelId!, config.graphModelName ?? 'Ontology Graph Model', nodeRows, edgeRows)
-    ontologyGraphCache = { graphModelId: config.graphModelId!, expiresAt: Date.now() + ONTOLOGY_CONTRACT_TTL_MS, value: graph }
-    return graph
-  })()
-  try { return await ontologyGraphPromise }
-  finally { ontologyGraphPromise = undefined }
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  throw new Error(config?.graphUnavailableReason ?? V2_GRAPH_UNAVAILABLE)
 }
 
 // Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are
@@ -842,10 +779,24 @@ function dataAgentQuestion(question: string): string {
 
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
-  const endpoint = config?.dataAgentUrl
-  if (!endpoint) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  const endpoint = requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
+  if (!config?.ontologyId || !config.dataAgentId) throw new Error('Data Agent source identity is unavailable. Refresh Ontology v2 discovery before asking the agent.')
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
+  return invokeVerifiedDataAgent(
+    { generation: config.ontologyGeneration, workspaceId: requireWorkspaceId(), ontologyId: config.ontologyId },
+    async () => {
+      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/dataAgents/${config.dataAgentId}/getDefinition`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      })
+      return waitForDefinitionResult(response, token)
+    },
+    () => callDataAgentMcp(endpoint, token, question, onProgress),
+  )
+}
+
+async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
   const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/streamableHttp.js'),

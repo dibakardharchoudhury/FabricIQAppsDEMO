@@ -4,7 +4,7 @@
 
 This document describes the implemented data flows in the Fabric IQ hydropower demo, from synthetic source data through Microsoft Fabric artifacts to the React application. It covers setup, runtime reads, user-triggered writes, agent interactions, identity boundaries, and failure behavior.
 
-The central design choice is that the application composes governed semantic topology with external operational context in the browser. The Knowledge Graph reads bound instances and relationships directly from the live Ontology child Graph Model through GQL, enriches them with current Eventhouse telemetry through KQL, and joins only Rayfin SQL records that are outside the Ontology. Lakehouse GraphQL remains a compatibility transport for other app pages and graph fallback; the detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
+The central design choice is that the application composes the live Ontology v2 TMDL semantic contract with external operational context in the browser. Lakehouse GraphQL provides instance rows, Eventhouse KQL provides telemetry, and Rayfin SQL provides operational records. Generation-1 ontologies are rejected. Native v2 GraphModel association is not yet verified, so the app explicitly reports native graph unavailability rather than selecting an unrelated graph. The detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
 
 ## Architecture Summary
 
@@ -14,7 +14,7 @@ The central design choice is that the application composes governed semantic top
 | Analytical storage | Fabric Lakehouse | Bronze, silver, and gold engineering data | GraphQL API and ontology bindings |
 | Real-time storage | Fabric Eventhouse / KQL database | OPC UA signal events | KQL queries and time-series ontology binding |
 | Operational storage | Fabric SQL Database | Work orders, notifications, inspections, spare parts, 3D model metadata | Rayfin data client |
-| Semantic layer | Fabric IQ Ontology | Entities, relationships, and static/time-series bindings | Fabric Data Agent |
+| Semantic layer | Fabric IQ Ontology v2 | Entities, relationships, and static/time-series bindings | TMDL definition; Data Agent only when supported and enabled |
 | Presentation | React SPA hosted as a Fabric App | Browser-side joins, health state, charts, maintenance workflows | GraphQL, KQL, Rayfin, Fabric REST, and MCP |
 
 ```mermaid
@@ -43,8 +43,8 @@ flowchart LR
     LH -->|RTI_005 static bindings| ONT
     EH -->|RTI_006 time-series binding| ONT
     LH --> GQL
-    ONT --> AGENT
-    SQL --> AGENT
+    ONT -.->|v2 support required| AGENT
+    SQL -.->|eligible v2-backed agent only| AGENT
     EH --> DASH
     GQL -->|GraphQL| APP
     EH -->|KQL| APP
@@ -94,20 +94,26 @@ The setup DAG is owned by [Orchestrator_Pipelines/01_Pipe_Setup.DataPipeline/pip
 1. `RTI_001_create_lakehouse_SelfContained` creates or reuses the Lakehouse, uploads the STID files to the bronze area, derives versioned artifact names from `env_suffix`, and writes the shared `rti_demo_settings` Delta table.
 2. `RTI_Orchestrator_Setup` attaches the Lakehouse and runs notebooks RTI_002 through RTI_006 and RTI_008 through RTI_010 in dependency order within one Spark session.
 
-The pipeline passes workspace, Key Vault, environment suffix, Operations Agent destination, and timeout parameters into the notebooks. Pipeline defaults are examples from the source environment and must be overridden for another tenant or workspace.
+The pipeline passes workspace, Key Vault, environment suffix, Operations Agent destination,
+optional agent capability modes, and timeout parameters into the notebooks. Pipeline defaults
+are examples from the source environment and must be overridden for another tenant or workspace.
+Generation-2 agent limitations are explicit capability results, not a failure of core ontology
+or weather provisioning. See [ontology generation policies](README.md#ontology-generations-and-optional-agents).
 
 ```mermaid
 flowchart TD
     PIPE["01_Pipe_Setup"] --> N1["RTI_001\nLakehouse + bronze seed + settings"]
     N1 --> ORCH["RTI_Orchestrator_Setup"]
     ORCH --> N2["RTI_002\nEventhouse + Eventstream"]
-    N2 --> N3["RTI_003\nBronze to silver/gold"]
+    ORCH --> N3["RTI_003\nBronze to silver/gold"]
     N3 --> N4["RTI_004\nOntology model"]
     N4 --> N5["RTI_005\nStatic bindings"]
     N5 --> N6["RTI_006\nTime-series binding"]
-    N6 --> N8["RTI_008\nKQL dashboard"]
-    N8 --> N9["RTI_009\nData Agent"]
-    N9 --> N10["RTI_010\nOperations Agent + alert pipeline"]
+    N2 --> N6
+    N2 --> N8["RTI_008\nKQL dashboard"]
+    N3 --> N8
+    N6 --> N9["RTI_009\nData Agent capability"]
+    N6 --> N10["RTI_010\nOperations Agent capability"]
 ```
 
 ### Notebook responsibilities
@@ -121,9 +127,9 @@ flowchart TD
 | RTI_005 | Silver Delta tables and ontology | Creates static entity bindings and relationship contextualizations | Lakehouse-backed ontology entities |
 | RTI_006 | `OPCUAEvents` and signal master | Maps node, timestamp, value, and quality columns | Eventhouse-backed ontology time series |
 | RTI_008 | `OPCUAEvents` | Builds KQL visual queries and parses turbine tags from node IDs | Real-Time Dashboard |
-| RTI_009 | Ontology | Creates and publishes an ontology-backed Data Agent | Natural-language analytical endpoint |
-| RTI_010 | Ontology/agent settings and alert destination | Creates Operations Agent and alert pipeline | Teams/email operational action path |
-| RTI_011 | Rayfin SQL item, Lakehouse, existing Data Agent | Seeds SQL, creates/binds GraphQL API, adds SQL as agent source, republishes | App-ready operational, GraphQL, and agent paths |
+| RTI_009 | Fully bound ontology and capability policy | Creates/publishes an agent when supported, otherwise reports blocked/disabled | Analytical endpoint or explicit capability status |
+| RTI_010 | Fully bound v2 ontology, capability policy | Reports blocked/skipped; explicit enablement fails before writes until a verified v2 playbook contract exists | Explicit capability status, no legacy playbook |
+| RTI_011 | Rayfin SQL item, Lakehouse, optional Data Agent | Seeds SQL, creates/binds GraphQL API; extends an eligible agent separately | Operational/GraphQL paths plus independent agent-source status |
 
 RTI_007 and RTI_011 are intentionally outside the setup DAG. They are run on demand by the application.
 
@@ -210,8 +216,8 @@ The Knowledge Graph adds a presentation projection over the same browser state:
 
 | Graph element | Current source |
 |---|---|
-| Facilities, systems, equipment, instruments, and signal nodes | Materialized nodes queried from the Ontology child Graph Model with GQL |
-| Governed relationship edges | Materialized, directional Graph Model edges returned by GQL |
+| Facilities, systems, equipment, instruments, and signal nodes | Lakehouse GraphQL rows projected using the v2 contract |
+| Governed relationship edges | Supported v2 semantic relationships and their verified binding keys; not physical-only TOM joins |
 | Latest reading and signal/instrument health | Eventhouse latest reading joined by `opcua_node_id` |
 | Work order, inspection, notification, and model nodes | Rayfin SQL records joined by operational identifiers |
 | External overlay edges | Client-side links from Rayfin records to governed equipment/signal IDs |
@@ -221,11 +227,10 @@ scopes support broader impact analysis and semantic-model inspection. The asset 
 write through the shared facility/turbine selection, so navigation remains consistent across
 Overview, Telemetry, Digital Twin, Knowledge Graph, and Maintenance.
 
-The graph discovers the live Ontology and its associated Graph Model. It reads the semantic contract
-with `getDefinition`, and reads bound instances and relationships directly with GQL. KQL provides
-fresh time-series enrichment while Rayfin SQL remains an explicit operational overlay. The page
-requeries GQL on entry, every 30 seconds while visible, and on focus/refresh; upstream row changes
-still require Fabric's Graph Model ingestion to complete first. See
+The graph requires a live generation-2 Ontology and reads its TMDL contract with `getDefinition`.
+Graph materialization is optional, and no verified v2 GraphModel association contract is implemented.
+The current instance path is explicitly labeled GraphQL/STID compatibility data, not a native graph
+query. KQL provides fresh time-series enrichment while Rayfin SQL remains an operational overlay. See
 [docs/knowledge-graph.md](docs/knowledge-graph.md) for scenarios, health semantics, provenance,
 RDF/OWL export, and validation.
 
@@ -251,13 +256,30 @@ sequenceDiagram
     UI-->>User: Render accumulated answer
 ```
 
-`askDataAgent()` discovers the newest suitable Data Agent and invokes its MCP endpoint. The service parses streamed assistant content, artifacts, visualizations, and token usage. Conversation state is held in the browser and can be reset by the user.
+`askDataAgent()` discovers a candidate Data Agent, requires a live v2 ontology, and verifies that
+the agent's published ontology source references that exact workspace/item before invoking MCP.
+Draft-only, unrelated, malformed, or unreadable source definitions block invocation. Matching source
+identity is not proof of runtime support: real service failures still propagate. The service parses
+streamed assistant content, artifacts, visualizations, and token usage. Conversation state is held
+in the browser and can be reset by the user.
 
-RTI_009 initially publishes the ontology source. RTI_011 later preserves that source, adds the app SQL database, and republishes the agent. Consequently, the Data Agent can answer across semantic telemetry/master data and operational work records without the React app constructing that cross-source query itself.
+When supported and enabled, RTI_009 initially publishes the generation-2 ontology source. RTI_011 later
+preserves that source, adds the app SQL database, and republishes the agent. Consequently, the
+Data Agent can answer across semantic telemetry/master data and operational work records without
+the React app constructing that cross-source query itself. Under the default `auto` policy,
+generation-2 ontology-source onboarding is reported as blocked; SQL/GraphQL provisioning still
+runs without an agent. Authentication, schema, and unexpected service failures are not converted
+into successful capability skips.
 
 ### Operations Agent alert flow
 
-RTI_010 creates the Operations Agent and `Pipe_SendEmailAlert`. Alert delivery depends on a manually created Office 365 Outlook OAuth2 connection. This is separate from both the notebook service principal and browser SPA identity. Missing or expired mailbox consent breaks delivery even when the ontology and agent are healthy.
+RTI_010 requires Ontology v2 and reports playbook automation as blocked. Explicit enablement fails
+before provisioning: no verified v2 playbook automation contract is implemented, and the old embedded
+playbook is not a fallback. A future supported flow must verify generation and execution separately;
+an accepted item definition alone is not proof of either. Alert delivery would also depend on a manually created
+Office 365 Outlook OAuth2 connection. This is separate from both the notebook service principal
+and browser SPA identity. Missing or expired mailbox consent breaks delivery even when the
+ontology and agent are healthy.
 
 ## Identity and Authorization Boundaries
 
@@ -322,13 +344,17 @@ Use these checks to validate each boundary independently:
 2. Query Lakehouse table counts for the expected silver tables and inspect `rti_demo_settings`.
 3. Query `OPCUAEvents | summarize rows=count(), latest=max(event_time) by quality` in the KQL database.
 4. Run `02_Pipe_Stream` and confirm `latest` advances rather than only the row count changing.
-5. List workspace items and confirm the Lakehouse, Eventhouse, Ontology, GraphQL API, Data Agent, dashboard, and pipelines exist with the expected suffix.
+5. List workspace items and confirm the Lakehouse, Eventhouse, Ontology, GraphQL API, dashboard,
+   and pipelines exist with the expected suffix. Check agent status/reason separately; a blocked
+   or disabled capability need not have an agent item.
 6. Run RTI_011 from Seed & provision, then validate row counts with [HydroOperationsApp/sql/validate-seed.sql](HydroOperationsApp/sql/validate-seed.sql).
 7. Query the GraphQL API for facilities, equipment, and instruments as the signed-in SPA user.
 8. Verify one `opcua_node_id` resolves to the same instrument in Lakehouse and latest event in Eventhouse.
 9. Create, change, and delete a work order in the app, then verify the corresponding SQL row.
-10. Ask the Data Agent one ontology question and one work-order question to verify both sources survived republishing.
-11. Trigger a test alert and verify the Outlook connection and destination independently of agent creation.
+10. When Data Agent support is enabled and available, ask one ontology question and one work-order
+    question to verify both sources survived republishing.
+11. When a validated playbook is available, trigger a test alert and verify the Outlook connection
+    and destination independently of agent creation.
 12. Build and statically validate the app from `HydroOperationsApp` with `npm run typecheck`, `npm run lint`, and `npm run build` using the repository's Node 24 wrapper guidance.
 13. Validate Knowledge Graph Selected, Facility, and All scopes; shared turbine selection; search;
     provenance; critical/warning/no-data rendering; and cross-navigation to Telemetry, Digital Twin,

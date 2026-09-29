@@ -14,6 +14,7 @@ Two ways to run everything:
 ## Easiest start — just launch it (no commands to type)
 
 One-time setup on the machine: install **[Python](https://www.python.org/downloads/)**
+(3.11 or later; the local web UI uses `datetime.UTC`)
 (on Windows, tick *"Add python.exe to PATH"*), the
 **[Azure CLI](https://aka.ms/installazurecli)**, and **[Node.js](https://nodejs.org/)**
 (which includes npm and npx; needed only for **Deploy app**).
@@ -52,6 +53,15 @@ folders that already exist** — which also clears the "empty folder that won't 
 situation.
 
 ## Prerequisites
+
+The setup pipeline and **Run pipeline** form expose `ontology_data_agent_mode` and
+`ontology_operations_agent_mode` (`auto`, `enabled`, or `disabled`, default `auto`).
+The project requires Ontology v2; existing v1 items are rejected rather than reused.
+The automatic policy explicitly reports currently blocked v2 agent capabilities without
+preventing core ontology, SQL/GraphQL, or weather setup. No legacy agent source or playbook is used.
+Only opt in after verifying product support in the target tenant; Operations Agent automation
+remains blocked until a verified v2 playbook contract is implemented. See
+[ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
 
 - **`az login`** first (optionally `az login --tenant <tenant>`). Both scripts use
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as

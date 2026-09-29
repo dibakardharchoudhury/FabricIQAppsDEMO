@@ -1,4 +1,4 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
@@ -41,7 +41,7 @@ export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; 
 export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
-type CachedData = { stid?: StidData; telemetry?: TelemetryReading[]; ontology?: OntologyContract }
+type CachedData = { stid?: StidData; telemetry?: TelemetryReading[] }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
@@ -64,7 +64,6 @@ function readCachedData(): CachedData {
     return {
       stid: value.stid && Array.isArray(value.stid.facilities) && Array.isArray(value.stid.equipment) && Array.isArray(value.stid.instruments) ? { ...value.stid, systems: Array.isArray(value.stid.systems) ? value.stid.systems : [] } : undefined,
       telemetry: Array.isArray(value.telemetry) ? value.telemetry : undefined,
-      ontology: value.ontology && typeof value.ontology.id === 'string' && Array.isArray(value.ontology.entityTypes) && Array.isArray(value.ontology.relationshipTypes) ? value.ontology : undefined,
     }
   } catch { return {} }
 }
@@ -95,7 +94,10 @@ function useHydroOperationsDataController() {
   const cached = useMemo(() => readCachedData(), [])
   const [user, setUser] = useState<AppUser | null>(null)
   const [stid, setStid] = useState<StidData | null>(cached.stid ?? null)
-  const [ontology, setOntology] = useState<OntologyContract | null>(cached.ontology ?? null)
+  const [ontology, setOntology] = useState<OntologyContract | null>(null)
+  const [ontologyError, setOntologyError] = useState<string>()
+  const [ontologyLoading, setOntologyLoading] = useState(false)
+  const ontologyRefreshVersion = useRef(0)
   const [stidSyncedAt, setStidSyncedAt] = useState<number>()
   const [telemetry, setTelemetry] = useState<TelemetryReading[]>(cached.telemetry ?? [])
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
@@ -140,19 +142,30 @@ function useHydroOperationsDataController() {
   }, [])
 
   const refreshOntology = useCallback(async (force = false) => {
-    const contract = await queryOntologyContract(force).catch(() => null)
-    if (contract) {
-      setOntology(contract)
-      writeCachedData({ ontology: contract })
+    const version = ++ontologyRefreshVersion.current
+    setOntologyLoading(true)
+    try {
+      const contract = await queryOntologyContract(force)
+      if (version === ontologyRefreshVersion.current) {
+        setOntology(contract)
+        setOntologyError(undefined)
+      }
+      return contract
+    } catch (error) {
+      if (version === ontologyRefreshVersion.current) {
+        setOntology(null)
+        setOntologyError(error instanceof Error ? error.message : 'Ontology definition is unavailable. Refresh and check Fabric access.')
+      }
+      return null
+    } finally {
+      if (version === ontologyRefreshVersion.current) setOntologyLoading(false)
     }
-    return contract
   }, [])
 
   const refreshStid = useCallback(async (forceOntology = false) => {
     const contractRequest = refreshOntology(forceOntology)
-    const data = await queryStid()
+    const [data] = await Promise.all([queryStid(), contractRequest])
     if (data) applyStid(data)
-    void contractRequest
     return data
   }, [applyStid, refreshOntology])
 
@@ -297,7 +310,7 @@ function useHydroOperationsDataController() {
         setProvisionState('complete')
         writePersistedSetup({ provisioned: true })
         await loadOperationalData()
-        setNotice('Operational data re-seeded and Fabric provisioning complete. Checking STID publication...')
+        setNotice('SQL/GraphQL provisioning notebook completed. Checking STID publication; optional Data Agent and Operations Agent readiness is not verified.')
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
@@ -315,7 +328,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setProvisionState('idle'); setNotice('Sign in with Fabric to seed operational data.'); return }
       if (isPostSeedConfigured()) {
-        beginProgress('seed', 'Provisioning SQL, the STID GraphQL API and the Data Agent source (RTI_011)...', SEED_ETA_MS)
+        beginProgress('seed', 'Provisioning SQL and the STID GraphQL API; optional agent source setup is capability-gated (RTI_011)...', SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(status => updateJob('seed', humanStatus(status))))
       } else {
         const result = await seedOperationalDataIfEmpty(activeUser)
@@ -766,6 +779,8 @@ function useHydroOperationsDataController() {
     weatherState,
     stid,
     ontology,
+    ontologyError,
+    ontologyLoading,
     stidSyncedAt,
     telemetry,
     facilities,

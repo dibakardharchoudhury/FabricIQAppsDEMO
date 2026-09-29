@@ -58,7 +58,10 @@ class WeatherSourceContractTests(unittest.TestCase):
             self.assertIn("quote(body['continuationToken'], safe='')", source)
             self.assertIn("set(results_by_activity) != expected", source)
             self.assertIn('outcome.get("exception")', source)
-            self.assertIn('_require_successful_dag(results)\n_activate_weather_schedule()', source)
+            self.assertIn(
+                '_require_successful_dag(results)\n_report_agent_capabilities(results)\n_activate_weather_schedule()',
+                source,
+            )
             self.assertGreater(
                 source.rindex("_activate_weather_schedule()"),
                 source.index("notebookutils.notebook.runMultiple"),
@@ -124,7 +127,7 @@ class WeatherSourceContractTests(unittest.TestCase):
         canonical = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")
         raw = json.loads((ROOT / "Raw/RTI_Notebooks/RTI_001_create_lakehouse_SelfContained.ipynb").read_text(encoding="utf-8"))
         raw_source = "".join("".join(cell.get("source", [])) for cell in raw["cells"])
-        marker = "Required weather notebook binding failed"
+        marker = "Required downstream notebook binding failed"
         self.assertEqual(canonical.count(marker), 1)
         self.assertEqual(raw_source.count(marker), 1)
         self.assertEqual(canonical.count("quote(token, safe='')"), 1)

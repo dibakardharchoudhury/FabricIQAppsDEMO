@@ -34,15 +34,17 @@ provenance.
 
 The authoritative semantic asset is built before the app runs:
 
-1. `RTI_004_build_ontology_mapping_rti_structured` creates five Fabric IQ Ontology entity types,
+1. `RTI_004_build_ontology_mapping_rti_structured` creates five Fabric IQ Ontology v2 entity types,
    four relationship types, and time-series properties.
 2. `RTI_005_entity_DataBinding_rti_structured` adds static Lakehouse data bindings and relationship
    contextualizations.
 3. `RTI_006_TimeSeriesBinding_RTI_signal` binds Eventhouse `OPCUAEvents` observations to
    `signal_master`.
-4. `RTI_009_build_data_agent` publishes the Ontology as a Data Agent source.
+4. `RTI_009_build_data_agent` publishes only a verified v2 Ontology as a Data Agent source when
+   product support and the configured policy permit it; blocked onboarding is reported explicitly.
 5. `RTI_011_seed_sql_wire_graphql_agent` creates the app-facing GraphQL API and adds Rayfin SQL as
-   another Data Agent source.
+   another Data Agent source when an agent is available. SQL/GraphQL provisioning does not require
+   a Data Agent.
 
 The governed semantic path is:
 
@@ -50,43 +52,44 @@ The governed semantic path is:
 signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
-Fabric creates a child **Graph Model** for the Ontology. That materialized graph contains the bound
-entity instances, asserted/derived relationships, and source lineage. The app discovers workspace
-Ontologies and Graph Models at runtime. If multiple Graph Models exist, it samples their labels and
-selects the unique model matching the live Ontology entity contract; artifact names, version
-suffixes, and item IDs are never embedded in the application. It queries that graph directly with
-GQL and does not recreate the governed topology from Lakehouse rows.
+**This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
+a legacy parser or used as agent sources. Generation-2 graph materialization is optional, and the
+project does not yet have a verified v2 GraphModel association contract. Native graph access is
+therefore explicitly unavailable, even when a sole or similarly named Graph Model exists.
+The application uses GraphQL instance rows with the live v2 semantic contract instead. It does not
+claim that this compatibility projection is a native query of asserted or derived graph edges.
 
 ## Application implementation
 
-The SPA uses the live Fabric IQ Ontology definition and its associated Graph Model as the semantic
-and instance sources of truth:
+The SPA uses the live Fabric IQ Ontology v2 definition for semantic metadata and Lakehouse GraphQL
+for compatible instance data:
 
 ```mermaid
 flowchart LR
-   DEF["Fabric IQ Ontology\nlive entity and relationship contract"]
-   GRAPH["Ontology child Graph Model\nmaterialized nodes + edges"]
+   DEF["Fabric IQ Ontology v2\nTMDL semantic contract"]
+   LH["Lakehouse instance rows"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
-   GQL["Fabric GQL executeQuery API"]
+   GQL["GraphQL API\ncompatibility transport"]
     KQL["KQL latest readings"]
-   BUILD["buildKnowledgeGraph()\ngoverned graph + external overlays"]
+   BUILD["buildKnowledgeGraph()\ncontract-guided projection + overlays"]
     CY["Cytoscape canvas"]
 
    DEF -->|"getDefinition"| BUILD
-   DEF --> GRAPH --> GQL --> BUILD
+   LH --> GQL --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
     BUILD --> CY
 ```
 
-`queryOntologyContract()` reads `getDefinition` for semantic metadata. `queryOntologyGraph()`
-discovers the child Graph Model and executes bounded GQL queries for its materialized nodes and
-edges. `buildKnowledgeGraph()` preserves those nodes, edge directions, labels, and identifiers.
-Known Hydro entity classes receive tailored labels and health behavior; newly added Ontology labels
-render generically without requiring client join code.
+`queryOntologyContract()` requires generation 2 and reads TMDL entity/ontology-relationship parts.
+Physical TOM relationships in `relationships.tmdl` are not semantic ontology edges.
+`queryOntologyGraph()` reports the missing verified v2 graph association rather than guessing.
+`buildKnowledgeGraph()` projects compatible Hydro rows using the semantic relationships and binding
+keys in the contract. Unsupported joins must not be invented. Known Hydro entity classes receive
+tailored labels and health behavior; arbitrary new instance sources require compatible data access.
 
-For page-load performance, Cytoscape is route-lazy, GQL node/edge reads run in parallel, and
+For page-load performance, Cytoscape is route-lazy and
 single-flight requests prevent duplicate calls. The page defaults to a selected-asset projection;
 facility and all-graph views are opt-in. Cytoscape reconciles changed element data in place, so live
 polls preserve the current viewport, selection, and dragged node positions instead of rebuilding
@@ -101,21 +104,17 @@ Rayfin SQL work orders, inspections, notifications, and 3D models are joined by 
 `instrumentId`, or `opcuaNodeId` as explicit external overlays. Existing GraphQL/STID reads remain a
 compatibility path for other app pages and for graph fallback only when direct GQL is unavailable.
 
-The direct endpoint is `POST /v1/workspaces/{workspaceId}/GraphModels/{graphModelId}/executeQuery?preview=true`.
+The application does not execute GraphModel queries without a verified v2 association.
+REST `/v1` does not mean Ontology generation 1.
 Cytoscape is only the renderer; it is not the semantic or instance source of truth.
 
 ## Freshness contract
 
-The app forces a new GQL read when Knowledge Graph opens, every 30 seconds while the page is
-visible, when the browser tab regains focus, and when Refresh is selected. Therefore, after Fabric
-finishes ingesting a Graph Model update, the page observes it within **30 seconds** without a reload.
-
-Fabric owns the earlier ingestion interval. Ontology schema changes automatically trigger
-downstream Graph Model re-ingestion. Changes only to upstream Lakehouse rows are not visible in the
-Ontology graph until its child Graph Model refresh runs; configure its schedule or use **Refresh
-now** in Fabric. The app cannot make data visible before Fabric has materialized it. Eventhouse
-values are queried separately on their own 30-second cycle so operational readings do not wait for
-a full graph refresh.
+The page refreshes ontology state on entry, while visible, and on focus/refresh. A failed definition
+read invalidates cached semantic data rather than returning an old successful contract. No
+30-second native-graph freshness guarantee is made while v2 graph association is unavailable.
+Lakehouse GraphQL visibility depends on its source synchronization. Eventhouse values are queried
+separately on a 30-second cycle so operational readings do not wait for graph materialization.
 
 ## Interaction model
 
@@ -139,7 +138,7 @@ Maintenance.
 
 | Source | Graph content | Stable join |
 | --- | --- | --- |
-| Ontology child Graph Model | Bound facilities, systems, equipment, instruments, signals, and governed relationships | Native graph object/edge IDs plus Ontology properties |
+| Ontology v2 TMDL + Lakehouse GraphQL | Contract-guided Hydro entities and supported semantic relationships | Entity keys and declared relationship binding columns |
 | Fabric Eventhouse | Latest and historical telemetry enrichment | `opcua_node_id` |
 | Rayfin SQL | Work orders, notifications, inspections, 3D models | `equipmentId`, `instrumentId`, `opcuaNodeId` |
 
@@ -164,16 +163,16 @@ or operational record, source timestamp, quality, and provenance.
 
 ## Ontology-authoritative behavior
 
-1. Discover the configured/versioned Ontology item and read its live definition.
+1. Discover the configured/versioned Ontology item, require generation 2, and read its live definition.
 2. Parse entity types, properties, relationship types, bindings, and contextualizations into a
    versioned semantic contract.
-3. Query materialized bound instances and relationships directly from the Ontology child Graph Model with GQL.
-4. Preserve every returned core entity and relationship, including unknown future labels.
-5. Preserve Ontology entity and relationship identifiers on every graph element.
+3. Report native v2 graph unavailability until a verified association contract exists.
+4. Project compatible Lakehouse rows using only supported declared semantic relationships.
+5. Preserve semantic entity and relationship provenance on projected graph elements.
 6. Attach Rayfin records as an explicit `hydro-operations` overlay with source and join provenance.
-7. Use GraphQL/STID only as an explicit compatibility fallback if the direct Graph Model query is unavailable.
+7. Label GraphQL/STID as a compatibility projection, never as native graph results.
 
-This reuses both the deployed Ontology and the graph artifact Fabric materializes from its bindings.
+This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
 
 ## RDF and OWL export
 
@@ -196,7 +195,8 @@ describes current entities, relationships, and optional observation snapshots.
 
 ## Validation
 
-1. Query the Ontology child Graph Model and verify graph counts and representative paths against the Fabric graph experience.
+1. Verify a v1 item is rejected. For a v2 ontology, verify the TMDL contract and compatible entity
+   paths, explicit native-graph unavailability, and that no unrelated Graph Model is selected.
 2. Verify every edge references two existing nodes and every operational overlay record exposes its
    source join key.
 3. Compare representative relationship paths with the `ontology_relationship_audit` output from
@@ -212,9 +212,9 @@ describes current entities, relationships, and optional observation snapshots.
 ## Key implementation files
 
 - [`HydroOperationsApp/src/services/fabric.ts`](../HydroOperationsApp/src/services/fabric.ts):
-   Graph Model/GQL, GraphQL, KQL, workspace discovery, and Data Agent access.
+   v2 ontology discovery, GraphQL, KQL, Fabric jobs, and source-verified Data Agent access.
 - [`HydroOperationsApp/src/services/ontologyGraph.ts`](../HydroOperationsApp/src/services/ontologyGraph.ts):
-   typed decoding of GQL node and edge responses.
+   graph response types/decoding utilities; not proof of an available v2 native-query path.
 - [`HydroOperationsApp/src/services/rayfin.ts`](../HydroOperationsApp/src/services/rayfin.ts):
   operational SQL access.
 - [`HydroOperationsApp/src/ui-shared/knowledgeGraphModel.ts`](../HydroOperationsApp/src/ui-shared/knowledgeGraphModel.ts):

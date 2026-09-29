@@ -32,13 +32,77 @@ are copied into Rayfin SQL).
 
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
-Twin, and Maintenance. It discovers the live Ontology and its child Graph Model, queries
-materialized bound nodes and relationships directly with Fabric GQL, enriches signals with current
-Eventhouse KQL readings, and adds Rayfin SQL records as external operational overlays. It requeries
-GQL every 30 seconds while visible; Fabric must first finish the child Graph Model refresh for
-upstream Lakehouse changes. See the canonical
+Twin, and Maintenance. It requires a verified **generation-2 Ontology** and projects its supported
+semantic relationships onto Lakehouse entities in an explicitly labeled compatibility view.
+Signals are enriched with current Eventhouse KQL readings, and Rayfin SQL records remain external
+operational overlays. No legacy Ontology or implicitly associated Graph Model is queried.
+See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
 scenarios, screenshots, freshness behavior, and direct Graph Model architecture.
+
+### Ontology v2 only
+
+The app requires **v2 TMDL** definitions over the Fabric REST `/v1` endpoints (REST API version
+is not Ontology generation). The live item's read-only `properties.generation` must be numeric `2`.
+Generation `1`, missing/unknown generation, legacy JSON, and mixed definitions are rejected.
+Replace a legacy Ontology using the project's v2 setup workflow, update dependent agents to its
+new identity, configure the desired Ontology name when ambiguous, and refresh discovery.
+The browser does not migrate or write Fabric items. Model `ref` statements are not required for parsing.
+Definition reads handle synchronous responses and long-running operations, preserving operation
+URL query parameters when fetching the result and surfacing request/poll/result failures.
+
+- V2 `entities/{name}.tmdl` and `entities/{namespace}#{name}.tmdl` supply entity identity,
+  scalar `keyProperty`, property types, optional lineage tags, and backing-table metadata.
+  Quoted names, documentation comments, Unicode, tabs/spaces, and CRLF are supported.
+  Namespaces stay distinct; display names and namespace are derived from the qualified name.
+- **Only `entityRelationships.tmdl` defines semantic edges.** `relationships.tmdl` is used
+  solely to resolve the referenced single-column physical joins, never to invent semantic edges.
+- Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
+  retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
+  Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
+  Resource links, rules, metrics, and junction-table edges are not executed/rendered; the UI
+  reports these limitations. Composite keys, multiline expressions, unknown entity/property
+  constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
+  rather than a silently empty contract. The parser is bounded, not a general TOM engine.
+- A v2 materialized Graph Model is **optional**. The supported public item/definition API does
+  not expose a linked Graph Model identity. Until it does, the app never selects a workspace
+  graph by name, labels, or merely because it is the only graph. Legacy graph discovery and execution
+  have been removed.
+  The UI explicitly reports v2 graph unavailability and uses the Lakehouse compatibility view:
+  Hydro facilities/systems/equipment/instruments, unambiguous backing tables, and validated
+  direct FK relationships. This is not a full v2 graph query engine. Eventhouse readings and
+  Rayfin operational overlays retain their existing behavior.
+- Failed refreshes clear semantic caches and graph timestamps. Definition errors hide governed
+  topology and offer retry; graph errors are visible above a labeled compatibility view.
+  Ontology contracts are not restored from unscoped browser storage. Manual refresh rediscovers
+  the workspace so a failed initial discovery or changed generation can recover.
+
+These read capabilities do **not** imply Data Agent v2 source onboarding is available or that
+Operations Agent playbook generation succeeds (the reported issue1970 remains external).
+The app does not fabricate success for either service.
+Guided setup marks only SQL/GraphQL and app data connection steps complete. It does not read
+notebook capability statuses or treat a completed notebook as agent readiness: review
+`data_agent_deployment_status`/`data_agent_deployment_reason` and
+`ops_agent_deployment_status`/`ops_agent_deployment_reason` in the shared configuration.
+A missing published Data Agent raises an actionable error. Before every MCP invocation the app
+reads the candidate's real `getDefinition` response and verifies **published** ontology datasource
+`artifactId` and `workspaceId` against the selected, verified generation-2 Ontology. Draft sources,
+agent names, and notebook completion are insufficient. A different/legacy ontology source, an
+unreadable or malformed definition, or no matching published source blocks invocation explicitly.
+Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
+`type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
+Matching published identity plus the selected item's authoritative live generation `2` proves
+**configured source identity only**, not runtime readiness. It permits the real MCP attempt;
+backend/product failures propagate unchanged, and onboarding may still be unavailable.
+The public datasource schema's enum omission is not a permanent execution gate. No name/latest-version
+heuristic or generation-only check bypasses source verification. Reading the published definition
+requires appropriate Data Agent read permissions; read failures remain errors. The app does not
+invoke or certify an Operations Agent playbook.
+
+Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
+Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,
+and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`
+(published source verification and honest setup readiness).
 
 ## Architecture
 
@@ -46,11 +110,11 @@ scenarios, screenshots, freshness behavior, and direct Graph Model architecture.
               ┌────────────────────────┐
               │  Hydro Operations SPA  │  (React + Leaflet, hosted by Rayfin in Fabric)
               └──────┬─────────┬───────┬┘
-           GQL     │   KQL   │       │  Rayfin data client
+      TMDL/GraphQL │   KQL   │       │  Rayfin data client
                      ▼         ▼       ▼
       ┌────────────────┐ ┌──────────┐ ┌───────────────────────────┐
-      │Ontology Graph  │ │Eventhouse│ │  Rayfin SQL (operational) │
-      │nodes + edges   │ │OPCUAEvents│ │  WorkOrders, Inspections, │
+      │Ontology v2 +   │ │Eventhouse│ │  Rayfin SQL (operational) │
+      │Lakehouse rows  │ │OPCUAEvents│ │  WorkOrders, Inspections, │
       └────────────────┘ └──────────┘ │  SpareParts, Asset3DModels│
         built by RTI_001…010          │  MaintenanceNotifications │
         (see root README)             └───────────────────────────┘
@@ -58,7 +122,9 @@ scenarios, screenshots, freshness behavior, and direct Graph Model architecture.
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
-- **Operations Agent email alerts** (`RTI_010` / `Pipe_SendEmailAlert`) need a one‑time **OAuth2 Office 365 Outlook** connection created in the Fabric portal (a Service Principal connection can’t send mail) — see [root README → Prerequisites](../README.md) and [DEPLOY.md → Prerequisites](DEPLOY.md#prerequisites).
+- **Operations Agent email alerts** are not verified by this app. The v2 playbook capability may
+  remain product-blocked; review `ops_agent_deployment_status` and its reason before attempting
+  alerts. An Outlook connection alone does not establish v2 agent readiness.
 
 ## Rayfin SQL data model
 

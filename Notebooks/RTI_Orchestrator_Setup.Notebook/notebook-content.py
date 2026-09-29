@@ -74,6 +74,7 @@ key_vault_client_secret_name = "clientsecret"
 
 # CELL ********************
 
+import json
 import requests
 import notebookutils
 from urllib.parse import quote
@@ -92,8 +93,8 @@ setup_dag = {
         {"name": "NB06_tsbind",     "path": "RTI_006_TimeSeriesBinding_RTI_signal",          "dependencies": ["NB04_ontology", "NB05_entitybind", "NB02_eventhouse"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         # NB08 shortcuts the Lakehouse silver tables into the Eventhouse, so it needs NB03 as well as NB02.
         {"name": "NB08_dashboard",  "path": "RTI_008_build_realtime_dashboard",              "dependencies": ["NB02_eventhouse", "NB03_medallion"], "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB04_ontology"],                    "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
-        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB09_dataagent"],                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
@@ -185,9 +186,22 @@ def _activate_weather_schedule() -> None:
     update_response.raise_for_status()
 
 
+def _report_agent_capabilities(results_by_activity: dict) -> None:
+    for name in ("NB09_dataagent", "NB10_opsagent"):
+        exit_value = results_by_activity[name].get("exitVal")
+        if not exit_value:
+            print(f"{name}: completed; consult notebook output for agent readiness.")
+            continue
+        capability = json.loads(exit_value) if isinstance(exit_value, str) else exit_value
+        if not isinstance(capability, dict) or not capability.get("status"):
+            raise RuntimeError(f"{name} returned an invalid capability result: {capability!r}")
+        print(f"{name}: {capability['status']} - {capability.get('reason', '')}")
+
+
 _require_successful_dag(results)
+_report_agent_capabilities(results)
 _activate_weather_schedule()
-print("✅ Setup orchestration complete (NB02–06, 08–10, Weather_001); Weather schedule enabled.")
+print("✅ Core setup complete; Weather schedule enabled. Agent capability status is reported separately above.")
 results
 
 # METADATA ********************

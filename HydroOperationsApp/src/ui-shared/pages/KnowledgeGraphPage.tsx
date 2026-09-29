@@ -57,23 +57,39 @@ export function KnowledgeGraphPage() {
   const [ontologyGraph, setOntologyGraph] = useState<OntologyGraph | null>(null)
   const [graphLoading, setGraphLoading] = useState(true)
   const [graphQueriedAt, setGraphQueriedAt] = useState<number>()
+  const [graphError, setGraphError] = useState<string>()
+  const graphRefreshVersion = useRef(0)
 
-  const loadOntologyGraph = useCallback(async (force = false) => {
+  const loadOntologyGraph = useCallback(async () => {
+    const version = ++graphRefreshVersion.current
     setGraphLoading(true)
     try {
-      const next = await queryOntologyGraph(force)
+      const next = await queryOntologyGraph()
+      if (version !== graphRefreshVersion.current) return
       setOntologyGraph(current => graphVersion(current) === graphVersion(next) ? current : next)
-      if (next) setGraphQueriedAt(Date.now())
+      setGraphQueriedAt(next ? Date.now() : undefined)
+      setGraphError(next ? undefined : 'No linked Ontology Graph Model is available. Showing Lakehouse compatibility data, not materialized graph results.')
+    } catch (error) {
+      if (version !== graphRefreshVersion.current) return
+      setOntologyGraph(null)
+      setGraphQueriedAt(undefined)
+      setGraphError(error instanceof Error ? error.message : 'Ontology graph query failed. Refresh and check Fabric access.')
     }
-    finally { setGraphLoading(false) }
+    finally { if (version === graphRefreshVersion.current) setGraphLoading(false) }
   }, [])
+
+  const refreshAll = async () => {
+    data.actions.refreshDiscovery()
+    try { await Promise.all([data.actions.refreshStid(true), loadOntologyGraph()]) }
+    catch (error) { setGraphError(error instanceof Error ? error.message : 'Lakehouse refresh failed.') }
+  }
 
   useEffect(() => {
     let inFlight = false
     const refresh = async () => {
       if (inFlight || document.hidden) return
       inFlight = true
-      try { await loadOntologyGraph(true) }
+      try { await loadOntologyGraph() }
       finally { inFlight = false }
     }
     void refresh()
@@ -171,8 +187,9 @@ export function KnowledgeGraphPage() {
     navigateTo(tab)
   }
 
-  if (!ontologyGraph && graphLoading && data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
-  if (!ontologyGraph && data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy">Sign in with Fabric item read and execute access, then refresh the graph.</p><button type="button" onClick={() => void loadOntologyGraph(true)}>Retry graph query</button></section>
+  if (data.ontologyError) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology definition is unavailable</h1><div className="v2-notice" role="alert">{data.ontologyError}</div><p>Governed topology is hidden until the contract can be refreshed; a failed definition is not an empty ontology.</p><button type="button" onClick={() => void refreshAll()}>Retry ontology discovery</button></section>
+  if (!ontologyGraph && (data.ontologyLoading || (graphLoading && data.stidState !== 'connected'))) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Reading the Ontology contract and checking materialized graph availability.</p></section>
+  if (!ontologyGraph && data.stidState !== 'connected') return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><div className="v2-notice" role="alert">{graphError ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</div><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
@@ -180,8 +197,10 @@ export function KnowledgeGraphPage() {
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void Promise.all([data.actions.refreshStid(true), loadOntologyGraph(true)])} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state">{ontologyGraph && !graphLoading && <span className="kg-live-dot" />}<span>{graphLoading ? 'Refreshing Ontology graph availability' : ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : `Ontology${data.ontology?.generation ? ` v${data.ontology.generation}` : ''} · Lakehouse compatibility mode`}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
+    {graphError && <div className="v2-notice" role="alert">{graphError}</div>}
+    {data.ontology?.warnings?.map(warning => <div className="v2-notice" role="status" key={warning}>{warning}</div>)}
 
     <div className="kg-workspace">
       <aside className="kg-sidebar kg-filters">
