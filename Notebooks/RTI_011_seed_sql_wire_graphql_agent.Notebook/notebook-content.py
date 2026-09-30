@@ -46,15 +46,16 @@
 # 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
-# 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse so the
-#    web app's STID panel has a programmatically provisioned endpoint.
+# 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse,
+#    provisioning the web app's STID and Weather read endpoints.
 # 3. **Data Agent (enabled only)** — attempts to add the `hydro-operations` SQL Database
 #    as a second source and **republishes** the agent, retaining the exact v2 ontology
 #    source from RTI_009. Successful publication does not establish query readiness.
 #
-# The app reads v2 TMDL and uses GraphQL rows + the semantic contract, KQL telemetry,
-# and the SQL operational projection. Native v2 graph association is unverified/
-# unavailable; GraphQL setup does not promise native GQL. REST `/v1` and name
+# STID/Weather GraphQL provisioning is independent of native ontology-owned graph
+# topology. The app uses native graph entities and relationships; operational SQL
+# records and KQL telemetry enrich those native entities. GraphQL is not a graph
+# fallback and does not establish native graph readiness. REST `/v1` and name
 # suffixes such as `_V9` are not ontology generation indicators.
 # 
 # Settings are read from / written back to `rti_demo_settings`.

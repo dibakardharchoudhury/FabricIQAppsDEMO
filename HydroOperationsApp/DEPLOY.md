@@ -34,6 +34,14 @@ Multi-backing-table `signal_master` may be ineligible; native instruments still 
 No published ontology-owned projection/materialization REST endpoint is established, so the
 orchestrator does not promise fully unattended native graph deployment.
 
+**Verified product limitation (2026-09-30):** the full five-entity projection failed with HTTP 400
+`ModelValidationError` / `InvalidPropertyType`, reporting `INVALID` for the TimeSeries properties
+`event_time`, `value`, and `quality`. Selecting the native **facilities, systems, equipment, and
+instruments** subgraph plus its **three hierarchy relationships** in Manage graph successfully
+materialized **111 nodes / 108 edges**. Keep the original **five-entity / four-relationship ontology
+and its TimeSeries properties intact**; KQL enriches the actual native instrument nodes. This is
+a selected native projection—not a GraphQL topology fallback or deletion of ontology entities.
+
 Before building the app, configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` as JSON with
 `workspaceId`, `ontologyId`, and `graphModelId` for that managed graph. In `.env`, single-quote the
 complete JSON value:
@@ -311,6 +319,30 @@ npm run validate-env
 Most artifact ids/URIs are **discovered at runtime** by workspace display name; the
 `AUTO-DISCOVERED FALLBACKS` only need values if you want to pin something. Never edit `.env.local`
 (the build writes `VITE_RAYFIN_*` into it automatically).
+
+The canonical orchestrator refreshes these public data pointers from **the selected workspace's
+metadata before every build**, including when it reuses a healthy AppBackend. It never carries
+the template's V6 data names or a previous workspace's KQL/GraphQL endpoints into a V3 deployment.
+It updates only the source `rayfin/.env`; Rayfin remains responsible for generated `.env.local`
+and deployment state. Metadata-resolution failures stop before source writes or state rotation.
+
+- **Telemetry:** use a configured Eventhouse name only when it is found in the same configured
+  tenant/workspace; otherwise require a unique `RTI_Demo_Eventhouse` / `RTI_Demo_Eventhouse_V<n>`.
+  An ontology-managed Eventhouse is not a fallback. KQL database selection verifies the live
+  `properties.parentEventhouseItemId`, then uses that database's `displayName` and
+  `queryServiceUri`—not a same-named database belonging to another Eventhouse. Multiple eligible
+  databases require a unique configured `RAYFIN_PUBLIC_KQL_DATABASE` name within that parent.
+- **STID:** resolve the target's `Hydro_STID_API` (or a target-verified configured
+  `RAYFIN_PUBLIC_STID_GRAPHQL_NAME`). If it has not been created by RTI_011 yet, clear stale
+  GraphQL URL/ID overrides and let runtime discovery find the later-created API. The deployment
+  does not invent an API item or query an old endpoint.
+- Pipeline/notebook, Lakehouse, and dashboard pointers are similarly target-scoped. Missing
+  optional artifacts clear old IDs; unverified Lakehouse SQL endpoint overrides are cleared.
+  Ambiguous eligible names fail closed rather than selecting the first workspace item.
+- A supplied `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` remains **operator-verified**. The orchestrator
+  only checks its workspace and referenced Ontology/GraphModel item identities and preserves it;
+  a mismatched mapping blocks deployment. It neither guesses ownership nor materializes or
+  changes the graph. Clear a stale mapping or supply the correct verified mapping explicitly.
 
 ### Optional: the Azure AI Foundry copilot
 

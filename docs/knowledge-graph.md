@@ -255,54 +255,90 @@ describes current entities, relationships, and optional observation snapshots.
 
 Current live acceptance is restricted to **ws-vteam-demoV3** in tenant
 `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace `9c73201e-b2e5-48eb-81b9-3526d320faca`.
-At the September 30, 2026 checkpoint, **74 Python ontology tests and 65 app graph tests pass**,
-as do app typecheck, lint, environment validation, and the production build. The only build warning
-is the existing bundle exceeding 500 KB. Feature commit `befefab` was pushed; `main` was untouched.
+At the September 30, 2026 checkpoint, **74 Python ontology tests, 65 app graph tests, and
+70 deployment-orchestrator tests pass**. App typecheck, lint, environment validation, and the
+production build also passed; the existing bundle-size warning remains. Changes are published to
+`feat/dibakar`, not `main`.
 
-V3 live run `b6f0e647-fd13-4164-92bd-9ccbb60d05d2` failed **after** creating a verified generation-2 ontology
-and applying static/time-series bindings. NB10 failed with `DELTA_CONCURRENT_APPEND` in
-`persist_agent_status` while NB09 wrote the same `rti_demo_settings` table. The correction serializes
-the shared status writes as **NB06 → NB09 → NB10**. Exact live definition readback verified the DAG
-change while preserving all metadata.
+### Completed live execution
 
-**Verified live subset:** the v2 ontology parsed as five entities and four semantic relationships.
-Second run `434a4d00-c22b-47ce-8a9f-330b97c12068` passed the complete notebook DAG,
-`_require_successful_dag`, and `_report_agent_capabilities`, including serialized NB09/NB10 status
-writes. Core ontology authoring, static/time-series bindings, and capability gates succeeded.
-This does not establish optional agent runtime readiness.
+| Execution | Completed run ID | Verified result |
+| --- | --- | --- |
+| Setup pipeline | `5d8605e7-e149-4820-a0d2-696daca81993` | Complete notebook DAG and finalization; v2 authoring, static/time-series bindings, capability gates, and Weather schedule activation |
+| Weather pipeline | `d97896cb-aa76-438e-a6ea-c11ea9f61bab` | Published Environment and populated Weather serving tables |
+| Stream pipeline | `fa60a22b-7b44-4c92-b347-c98878077cfc` | Completed; live KQL readings cover all 90 instruments |
+| RTI011 | `59604761-8263-414a-b965-cc21e1dc8cdd` | Executed after streaming; operational SQL seed and STID/Weather GraphQL succeeded |
+| Native graph refresh | `8713d187-2d49-4804-a62f-8946e869c3c1` | Supported four-entity/three-relationship projection materialized and became queryable |
 
-**Full setup failed on a separate weather prerequisite:** the second run then failed in
-`_activate_weather_schedule` with `Expected one provisioned Weather schedule, found 0`. The imported
-workspace lacked the sync workflow's post-import weather bootstrap. The existing
-`configure_weather_schedule` helper restored exactly one schedule, verified **disabled**.
-The existing `configure_weather_assets` helper was also attempted, but stopped with HTTP 400
-`EnvironmentValidationFailed`: the Weather Environment was already publishing. Its observed
-`publishDetails.state` remained `Running` since `2026-09-29T22:25:54Z`, with `sparkLibraries`
-`Cancelled` and `sparkSettings` `Success`. The existing publish was not cancelled or reset,
-and the schedule was not enabled. **The full pipeline is not successful or certified.**
+The earlier concurrent Delta status writes were fixed by serializing **NB06 → NB09 → NB10**.
+The missing Weather bootstrap was restored through the existing helpers. After the previous
+Environment publication failed, supported republishing succeeded; exactly one six-hour schedule
+is now enabled. Those earlier failures are resolved, not current acceptance blockers.
+The scheduled capacity pause was also observed and the same capacity resumed without resizing.
 
-**Native graph acceptance remains blocked:** a candidate GraphModel appeared, but
-`GET getQueryableGraphType?beta=true` returned HTTP **204 No Content**, confirming it was not
-query-ready at that read. No managed-graph binding or materialization has been verified; neither
-the candidate's name nor its appearance establishes ownership. The authenticated Fabric portal's
-ontology editor never loaded after retry. Ontology MCP tool discovery succeeded but exposed only
-`list_ontology_entities` and `list_ontology_rules`, not a graph materialization operation.
-No app deployment, hosted-app success, or native GQL success is claimed.
+Operational SQL contains **12 WorkOrders, 30 Inspections, 6 Notifications, 12 SpareParts, and
+15 Asset3DModels**. The live STID GraphQL endpoint returned HTTP 200 without GraphQL errors:
+**3 facilities, 3 systems, 15 equipment, 90 instruments, 120 Weather forecasts, and 72 observations**.
+Optional agent extensions report their product capability blockers without preventing this core
+provisioning. This does not certify optional agent runtime readiness.
 
-Remaining acceptance actions:
+### Native graph and enrichment evidence
 
-1. Resolve the Weather Environment publishing prerequisite through supported product/operator
-   workflows, then complete the existing weather bootstrap and rerun the full setup pipeline.
-   The disabled schedule and successful notebook DAG are not substitutes for a successful full run.
-2. Restore access to the selected ontology's editor and complete **Manage graph → select eligible
-   entities/relationships → Continue → Materialize**. No undocumented REST or MCP materialization
-   endpoint is assumed.
-3. Establish the explicit managed-graph binding through that selected-ontology workflow, validate
-   live queryable types/endpoints, and obtain complete native GQL results before certifying graph
-   behavior. Do not infer association from names or substitute STID/FK topology.
-4. Only after prerequisites are resolved and deployment is authorized, use the repository
-   orchestrator and its deployment checks; separately verify hosted native canvas/tree/scopes
-   and enrichment. Local tests and historical screenshots do not certify live end-to-end readiness.
+Ownership was established through the selected ontology's actual **Manage graph** workflow:
+ontology `d0d041aa-13ea-4277-aa6e-1d3ab565a2d4` owns the verified projection
+`87bb9ac2-4599-44b9-8014-b45c696332bd`. Its queryable schema returns HTTP 200.
+The application's actual TypeScript contract parser and native GQL query client successfully read
+**111 native nodes and 108 native edges**, validating every entity/relationship type against the
+live v2 ontology.
+
+The actual application graph model was then executed with those native results, live KQL readings,
+and real SQL rows. It produced **174 nodes and 171 edges**, including:
+
+- 90 telemetry-enriched native instruments.
+- All 12 work orders, 30 inspections, 6 notifications, and 15 models joined to native equipment.
+- Three facility scopes of 58 nodes each and 15 verified asset scopes.
+
+STID topology input arrays were deliberately empty for this check: native identities and
+relationships, not GraphQL/FK reconstruction, supplied the topology. These are API/model-level
+acceptance results, not a claim that browser rendering and every UI interaction were tested.
+
+### Product limitation: full TimeSeries projection
+
+Materializing the entire five-entity ontology currently fails in this tenant with HTTP 400
+`ModelValidationError`: `event_time`, `value`, and `quality` project as property type `INVALID`.
+Diagnostic RootActivityId: `1049cf71-1c78-4391-b8c1-b1a4bc31d644`.
+The [documented native graph workflow](https://learn.microsoft.com/en-us/fabric/iq/ontology/how-to-use-ontology-graph)
+supports selecting a subgraph; its documented TimeSeries-to-base-type behavior did not work for
+this full projection.
+
+The verified supported workaround is to turn off **Use the entire Ontology** and explicitly select
+`facilities`, `systems`, `equipment`, `instruments`, and their three hierarchy relationships:
+`systems_in_facilities`, `equipment_in_systems`, and `instruments_on_equipment`.
+Only the projection excludes `signal_master` and its relationship. The original ontology still
+has **five entities, four relationships, and its valid TimeSeries declarations/bindings intact**.
+KQL enriches native instruments through `opcua_node_id`. No ontology content was deleted and no
+substitute graph was created. Full five-entity graph projection remains a product limitation.
+
+### Hosted application acceptance
+
+The canonical deployment orchestrator completed with `SUCCESS` and `DEPLOYED_APP_URL` at
+`https://maple-edge-ce46abd902-swedencentral.webapp.fabricapps.net`.
+Backend, GraphQL/CORS, delegated permissions, consent, and protected-hosting identity checks passed;
+all 31 existing Entra SPA redirects were preserved. Normal protected sign-in loaded the actual
+Hydro Operations application, and an authenticated application-backend WorkOrder read returned
+HTTP 200, 12 rows, and no GraphQL errors.
+
+The canonical configuration producer now resolves public artifact metadata against the deployment
+target, rather than carrying old V6 Eventhouse/KQL/GraphQL values into V3. An explicit, verified
+native graph binding is required; discovery does not infer ownership from a GraphModel name.
+
+**Remaining interactive acceptance:** the separate Fabric/MSAL popup is outside the integrated
+browser automation's accessible pages. Hosted Fabric Connect, graph canvas/tree/filter interactions,
+and operational create/update/delete have not yet been certified. The browser's authenticated
+request-context replay is also unsupported by this host (`Storage.getCookies` unavailable).
+These limitations were not bypassed by weakening authentication, injecting credentials, or using
+fake browser data. Complete the interactive checks above before describing the entire hosted UI
+as end-to-end certified.
 
 ## Key implementation files
 

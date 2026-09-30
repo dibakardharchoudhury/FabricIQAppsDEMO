@@ -1005,6 +1005,7 @@ class DeployOrderTests(unittest.TestCase):
                 patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir),
                 patch.object(DEPLOY.tempfile, "gettempdir", return_value=str(backup_root)),
                 patch.object(DEPLOY.Path, "unlink", side_effect=AssertionError("must not delete state")),
+                patch.object(DEPLOY, "resolve_public_artifact_config", return_value={}),
             ):
                 DEPLOY.prepare_rayfin_env(
                     "ad340c84-1886-4202-a483-2da2cb9168eb",
@@ -1068,6 +1069,208 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(merged, [current, "http://localhost:5173"])
         self.assertNotIn(stale, written)
         self.assertIn(f"      - {current}", written)
+
+
+class WorkspaceArtifactConfigTests(unittest.TestCase):
+    workspace = "9c73201e-b2e5-48eb-81b9-3526d320faca"
+    tenant = "ad340c84-1886-4202-a483-2da2cb9168eb"
+    eventhouse = "f2917154-6a4c-4930-bae3-e55e4daa9440"
+    database = "019bbbad-042c-4930-b818-799879aa98bc"
+    graphql = "a110f3b7-c446-4f2d-a998-6d792781b725"
+    cluster = "https://trd-pxczt6cwfz7z032cn8.z9.kusto.fabric.microsoft.com"
+
+    def setUp(self):
+        self.config = {
+            "FABRIC_WORKSPACE_NAME": "Target V3",
+            "RAYFIN_PUBLIC_WORKSPACE_ID": self.workspace,
+            "RAYFIN_PUBLIC_TENANT_ID": self.tenant,
+            "RAYFIN_PUBLIC_AAD_CLIENT_ID": "spa-id",
+            "RAYFIN_PUBLIC_EVENTHOUSE_NAME": "RTI_Demo_Eventhouse_V6",
+            "RAYFIN_PUBLIC_KQL_DATABASE": "RTI_Demo_Eventhouse_V6",
+            "RAYFIN_PUBLIC_KQL_CLUSTER_URI": "https://old.kusto.fabric.microsoft.com",
+            "RAYFIN_PUBLIC_STID_GRAPHQL_URL": "https://api.fabric.microsoft.com/v1/workspaces/old/graphqlapis/old/graphql",
+            "RAYFIN_PUBLIC_STID_GRAPHQL_ID": "old-id",
+            "RAYFIN_PUBLIC_STREAM_PIPELINE_ID": "old-pipeline",
+            "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": "old-notebook",
+            "RAYFIN_PUBLIC_LAKEHOUSE_NAME": "Energy_IQ_LakehouseRTI_V6",
+        }
+        self.items = [
+            {"id": self.eventhouse, "type": "Eventhouse", "displayName": "RTI_Demo_Eventhouse_V3"},
+            {"id": "managed-eventhouse", "type": "Eventhouse", "displayName": "Ontology managed Eventhouse"},
+            {"id": self.database, "type": "KQLDatabase", "displayName": "RTI_Demo_Eventhouse_V3"},
+            {"id": self.graphql, "type": "GraphQLApi", "displayName": "Hydro_STID_API"},
+            {"id": "lakehouse-v3", "type": "Lakehouse", "displayName": "Energy_IQ_LakehouseRTI_V3"},
+        ]
+        self.details = {
+            self.database: {
+                "id": self.database, "displayName": "RTI_Demo_Eventhouse_V3",
+                "properties": {"parentEventhouseItemId": self.eventhouse, "queryServiceUri": self.cluster},
+            }
+        }
+
+    def read_metadata(self, path, headers):
+        self.assertTrue(path.startswith(f"workspaces/{self.workspace}/"), path)
+        if path == f"workspaces/{self.workspace}/items":
+            return {"value": self.items}
+        return self.details[path.rsplit("/", 1)[-1]]
+
+    def resolve(self, configured=None):
+        with (
+            patch.object(DEPLOY, "fabric_headers", return_value={}),
+            patch.object(DEPLOY, "fabric_get", side_effect=self.read_metadata),
+        ):
+            return DEPLOY.resolve_public_artifact_config(
+                self.workspace, self.tenant, self.config if configured is None else configured
+            )
+
+    def test_reused_state_rebinds_stale_v6_public_config_before_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rayfin_dir = Path(directory)
+            (rayfin_dir / ".env").write_text("\n".join(f"{key}={value}" for key, value in self.config.items()), encoding="utf-8")
+            (rayfin_dir / ".env.local").write_text("CLI-owned generated output", encoding="utf-8")
+            deployment = {"fabricWorkspaceId": self.workspace, "fabricTenantId": self.tenant, "fabricItemId": "app-id"}
+            with (
+                patch.object(DEPLOY, "RAYFIN_DIR", rayfin_dir),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(self.config, deployment)),
+                patch.object(DEPLOY, "rayfin_api_targets_capacity", return_value=True),
+                patch.object(DEPLOY, "fabric_item_exists", return_value=True),
+                patch.object(DEPLOY, "fabric_headers", return_value={}),
+                patch.object(DEPLOY, "fabric_get", side_effect=self.read_metadata),
+            ):
+                self.assertTrue(DEPLOY.prepare_rayfin_env(self.tenant, self.workspace, "Target V3", "capacity-id", "spa-id"))
+            rebound = (rayfin_dir / ".env").read_text(encoding="utf-8")
+            self.assertNotIn("V6", rebound)
+            self.assertNotIn("workspaces/old", rebound)
+            self.assertIn("RTI_Demo_Eventhouse_V3", rebound)
+            self.assertIn(self.cluster, rebound)
+            self.assertIn(self.graphql, rebound)
+            self.assertEqual((rayfin_dir / ".env.local").read_text(encoding="utf-8"), "CLI-owned generated output")
+
+    def test_fresh_template_cannot_reintroduce_stale_defaults(self):
+        resolved = self.resolve({})
+        stale_template = "\n".join(f"{key}={value}" for key, value in self.config.items())
+        rebound = DEPLOY._rebind_public_env(stale_template, resolved)
+        self.assertNotIn("V6", rebound)
+        self.assertNotIn("workspaces/old", rebound)
+        self.assertIn("RAYFIN_PUBLIC_STID_GRAPHQL_URL=https://api.fabric.microsoft.com/v1/workspaces/" + self.workspace, rebound)
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], self.database)
+        self.assertEqual(resolved["RAYFIN_PUBLIC_EVENTHOUSE_ID"], self.eventhouse)
+
+    def test_before_seed_clears_missing_graphql_and_other_stale_ids(self):
+        self.items = [item for item in self.items if item["type"] != "GraphQLApi"]
+        resolved = self.resolve()
+        for key in [
+            "RAYFIN_PUBLIC_STID_GRAPHQL_URL", "RAYFIN_PUBLIC_STID_GRAPHQL_ID",
+            "RAYFIN_PUBLIC_STREAM_PIPELINE_ID", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID",
+            "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT",
+        ]:
+            self.assertEqual(resolved[key], "", key)
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE"], "RTI_Demo_Eventhouse_V3")
+
+    def test_does_not_select_ontology_managed_eventhouse_or_database_by_name(self):
+        self.items.append({"id": "unrelated-database", "type": "KQLDatabase", "displayName": "RTI_Demo_Eventhouse_V3"})
+        self.details["unrelated-database"] = {
+            "id": "unrelated-database", "displayName": "RTI_Demo_Eventhouse_V3",
+            "properties": {"parentEventhouseItemId": "managed-eventhouse", "queryServiceUri": "https://other.kusto.fabric.microsoft.com"},
+        }
+        resolved = self.resolve()
+        self.assertEqual(resolved["RAYFIN_PUBLIC_EVENTHOUSE_ID"], self.eventhouse)
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], self.database)
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_CLUSTER_URI"], self.cluster)
+
+    def test_multiple_rti_eventhouses_fail_without_a_target_verified_name(self):
+        self.items.append({"id": "other-rti", "type": "Eventhouse", "displayName": "RTI_Demo_Eventhouse_V4"})
+        with self.assertRaisesRegex(DEPLOY.DeployError, "Ambiguous target-workspace Eventhouse"):
+            self.resolve()
+        configured = {**self.config, "RAYFIN_PUBLIC_EVENTHOUSE_NAME": "RTI_Demo_Eventhouse_V3"}
+        self.assertEqual(self.resolve(configured)["RAYFIN_PUBLIC_EVENTHOUSE_ID"], self.eventhouse)
+        configured["RAYFIN_PUBLIC_WORKSPACE_ID"] = "old-workspace"
+        with self.assertRaisesRegex(DEPLOY.DeployError, "Ambiguous"):
+            self.resolve(configured)
+
+    def test_custom_eventhouse_name_requires_verification_in_current_scope(self):
+        self.items[0]["displayName"] = "Telemetry custom"
+        configured = {**self.config, "RAYFIN_PUBLIC_EVENTHOUSE_NAME": '"Telemetry custom"'}
+        self.assertEqual(self.resolve(configured)["RAYFIN_PUBLIC_EVENTHOUSE_NAME"], "Telemetry custom")
+        configured["RAYFIN_PUBLIC_TENANT_ID"] = "old-tenant"
+        with self.assertRaisesRegex(DEPLOY.DeployError, "No verified Eventhouse"):
+            self.resolve(configured)
+
+    def test_missing_or_multiple_associated_databases_fail_closed(self):
+        self.details[self.database]["properties"]["parentEventhouseItemId"] = "managed-eventhouse"
+        with self.assertRaisesRegex(DEPLOY.DeployError, "parentEventhouseItemId"):
+            self.resolve()
+        self.details[self.database]["properties"]["parentEventhouseItemId"] = self.eventhouse
+        self.items.append({"id": "second-database", "type": "KQLDatabase", "displayName": "Second database"})
+        self.details["second-database"] = {
+            "id": "second-database", "displayName": "Second database",
+            "properties": {"parentEventhouseItemId": self.eventhouse, "queryServiceUri": self.cluster},
+        }
+        with self.assertRaisesRegex(DEPLOY.DeployError, "parentEventhouseItemId"):
+            self.resolve()
+        resolved = self.resolve({**self.config, "RAYFIN_PUBLIC_KQL_DATABASE": "Second database"})
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], "second-database")
+
+    def test_duplicate_stid_candidates_fail_and_unrelated_graphql_is_not_selected(self):
+        self.items.append({"id": "other-graphql", "type": "GraphQLApi", "displayName": "Hydro_STID_API"})
+        with self.assertRaisesRegex(DEPLOY.DeployError, "Ambiguous target-workspace GraphQLApi"):
+            self.resolve()
+        self.items = [item for item in self.items if item["type"] != "GraphQLApi"]
+        self.items.append({"id": "other-graphql", "type": "GraphQLApi", "displayName": "Unrelated API"})
+        self.assertEqual(self.resolve()["RAYFIN_PUBLIC_STID_GRAPHQL_URL"], "")
+
+    def test_graph_binding_is_preserved_only_when_operator_mapping_is_target_scoped(self):
+        self.items.extend([
+            {"id": "ontology-id", "type": "Ontology", "displayName": "Hydro ontology"},
+            {"id": "graph-id", "type": "GraphModel", "displayName": "Operator verified graph"},
+        ])
+        binding = {
+            "workspaceId": self.workspace, "ontologyId": "ontology-id", "graphModelId": "graph-id",
+            "nodeTypes": {"opaque": "hydro#equipment"},
+        }
+        configured = {**self.config, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "'" + json.dumps(binding) + "'"}
+        resolved = self.resolve(configured)
+        self.assertEqual(json.loads(resolved["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"]), binding)
+        rendered = DEPLOY._rebind_public_env("", resolved)
+        roundtrip = dict(line.split("=", 1) for line in rendered.splitlines())
+        self.assertEqual(json.loads(DEPLOY._public_config_value(roundtrip, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")), binding)
+        for changed in [{"workspaceId": "old-workspace"}, {"ontologyId": "absent"}, {"graphModelId": "absent"}]:
+            with self.subTest(changed=changed), self.assertRaisesRegex(DEPLOY.DeployError, "operator-provided Ontology graph binding"):
+                self.resolve({**configured, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({**binding, **changed})})
+
+    def test_artifact_pagination_never_leaves_target_workspace(self):
+        initial = f"workspaces/{self.workspace}/items"
+        with (
+            patch.object(DEPLOY, "fabric_headers", return_value={}),
+            patch.object(DEPLOY, "fabric_get", return_value={
+                "value": [],
+                "continuationUri": "https://api.fabric.microsoft.com/v1/workspaces/old/items?continuationToken=next",
+            }) as get,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "outside the selected workspace"):
+                DEPLOY.resolve_public_artifact_config(self.workspace, self.tenant, self.config)
+            get.assert_called_once_with(initial, {})
+
+    def test_token_pagination_is_encoded_and_target_scoped(self):
+        initial = f"workspaces/{self.workspace}/items"
+        with patch.object(DEPLOY, "fabric_get", side_effect=[
+            {"value": self.items[:2], "continuationToken": "opaque +/&"},
+            {"value": self.items[2:]},
+        ]) as get:
+            self.assertEqual(DEPLOY._workspace_artifacts(self.workspace, {}), self.items)
+        self.assertEqual(get.call_args_list[1].args[0], initial + "?continuationToken=opaque%20%2B%2F%26")
+
+    def test_resolution_failure_precedes_env_mutation_or_state_rotation(self):
+        with (
+            patch.object(DEPLOY, "current_rayfin_target", return_value=(self.config, None)),
+            patch.object(DEPLOY, "resolve_public_artifact_config", side_effect=DEPLOY.DeployError("Ambiguous target artifacts")),
+            patch.object(DEPLOY.shutil, "move") as move,
+            patch.object(DEPLOY.Path, "write_text") as write,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Ambiguous"):
+                DEPLOY.prepare_rayfin_env(self.tenant, self.workspace, "Target V3", "capacity-id", "spa-id")
+            move.assert_not_called()
+            write.assert_not_called()
 
 
 class ProtectedHostingTests(unittest.TestCase):

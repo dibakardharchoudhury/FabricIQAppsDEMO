@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 
@@ -1022,6 +1022,188 @@ def validate_appbackend_cors(
         )
 
 
+def _public_config_value(values: dict[str, str], key: str) -> str:
+    value = values.get(key, "").strip()
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, str) else value
+        except ValueError:
+            return value[1:-1]
+    return value[1:-1] if value.startswith("'") and value.endswith("'") else value
+
+
+def _workspace_artifacts(workspace_id: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    path = f"workspaces/{workspace_id}/items"
+    next_path: str | None = path
+    seen_pages: set[str] = set()
+    items: list[dict[str, Any]] = []
+    while next_path:
+        if next_path in seen_pages or len(seen_pages) >= 100:
+            raise DeployError("Target-workspace artifact listing exceeded its pagination bound.")
+        seen_pages.add(next_path)
+        page = fabric_get(next_path, headers)
+        entries = page.get("value")
+        if not isinstance(entries, list) or any(
+            not isinstance(item, dict) or not item.get("id") or not item.get("type")
+            or not item.get("displayName")
+            or (item.get("workspaceId") and str(item["workspaceId"]).casefold() != workspace_id.casefold())
+            for item in entries
+        ):
+            raise DeployError("Target-workspace artifact listing is malformed or contains another workspace.")
+        items.extend(entries)
+        continuation = page.get("continuationUri")
+        token = page.get("continuationToken")
+        next_path = None
+        if continuation:
+            if not isinstance(continuation, str):
+                raise DeployError("Invalid Fabric artifact continuation URI.")
+            parsed = urlparse(continuation)
+            if (
+                parsed.scheme != "https" or parsed.netloc != "api.fabric.microsoft.com"
+                or parsed.path != f"/v1/{path}" or parsed.fragment
+            ):
+                raise DeployError("Refusing artifact continuation outside the selected workspace.")
+            next_path = path + (f"?{parsed.query}" if parsed.query else "")
+        elif token:
+            if not isinstance(token, str):
+                raise DeployError("Invalid Fabric artifact continuation token.")
+            next_path = f"{path}?continuationToken={quote(token, safe='')}"
+    if len({item["id"] for item in items}) != len(items):
+        raise DeployError("Target-workspace artifact listing contains duplicate identities.")
+    return items
+
+
+def resolve_public_artifact_config(
+    workspace_id: str, tenant: str, configured: dict[str, str]
+) -> dict[str, str]:
+    """Resolve public data pointers from target metadata only; never follow old env URLs."""
+    headers = fabric_headers(tenant)
+    items = _workspace_artifacts(workspace_id, headers)
+    same_scope = (
+        _public_config_value(configured, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace_id.casefold()
+        and _public_config_value(configured, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+    )
+    hints = configured if same_scope else {}
+
+    def select(kind: str, name_key: str, convention: str, *, required: bool = False) -> dict[str, Any] | None:
+        candidates = [item for item in items if item["type"] == kind]
+        name = _public_config_value(hints, name_key)
+        exact = [item for item in candidates if item["displayName"] == name] if name else []
+        matches = exact or [item for item in candidates if re.fullmatch(convention, str(item["displayName"]))]
+        if len(matches) > 1:
+            raise DeployError(
+                f"Ambiguous target-workspace {kind} candidates; set {name_key} to a unique "
+                "verified name in this workspace before deploying."
+            )
+        if not matches and required:
+            raise DeployError(
+                f"No verified {kind} matches {name_key} or the RTI naming convention in the target workspace."
+            )
+        return matches[0] if matches else None
+
+    eventhouse = select("Eventhouse", "RAYFIN_PUBLIC_EVENTHOUSE_NAME", r"RTI_Demo_Eventhouse(?:_V\d+)?", required=True)
+    assert eventhouse is not None
+    databases = []
+    for item in items:
+        if item["type"] != "KQLDatabase":
+            continue
+        detail = fabric_get(f"workspaces/{workspace_id}/kqlDatabases/{quote(str(item['id']), safe='')}", headers)
+        if (
+            detail.get("id") != item["id"]
+            or (detail.get("workspaceId") and str(detail["workspaceId"]).casefold() != workspace_id.casefold())
+            or not isinstance(detail.get("properties"), dict)
+        ):
+            raise DeployError("KQL database metadata does not match its target-workspace identity.")
+        if str(detail["properties"].get("parentEventhouseItemId", "")).casefold() == str(eventhouse["id"]).casefold():
+            databases.append(detail)
+    configured_database = _public_config_value(hints, "RAYFIN_PUBLIC_KQL_DATABASE")
+    named_databases = [item for item in databases if item.get("displayName") == configured_database]
+    matches = named_databases or databases
+    if len(matches) != 1:
+        raise DeployError(
+            "Expected one KQL database with a verified parentEventhouseItemId matching the selected "
+            "Eventhouse; if multiple exist, set RAYFIN_PUBLIC_KQL_DATABASE to a unique associated database name."
+        )
+    database = matches[0]
+    cluster_uri = str(database["properties"].get("queryServiceUri") or "")
+    uri = urlparse(cluster_uri)
+    if (
+        not database.get("displayName") or uri.scheme != "https" or not uri.hostname
+        or uri.username or uri.password or uri.query or uri.fragment or uri.path not in ("", "/")
+    ):
+        raise DeployError("The target Eventhouse's KQL database has no valid HTTPS queryServiceUri or display name.")
+
+    graphql = select("GraphQLApi", "RAYFIN_PUBLIC_STID_GRAPHQL_NAME", r"Hydro_STID_API")
+    pipeline = select("DataPipeline", "RAYFIN_PUBLIC_STREAM_PIPELINE_NAME", r"02_Pipe_Stream")
+    notebook = select("Notebook", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME", r"RTI_011_seed_sql_wire_graphql_agent")
+    lakehouse = select("Lakehouse", "RAYFIN_PUBLIC_LAKEHOUSE_NAME", r"Energy_IQ_LakehouseRTI(?:_V\d+)?")
+    dashboard = select("KQLDashboard", "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME", r"RTI_Demo_OPCUA_TelemetryStats(?:_V\d+)?")
+    values = {
+        "RAYFIN_PUBLIC_EVENTHOUSE_NAME": str(eventhouse["displayName"]),
+        "RAYFIN_PUBLIC_EVENTHOUSE_ID": str(eventhouse["id"]),
+        "RAYFIN_PUBLIC_KQL_DATABASE": str(database["displayName"]),
+        "RAYFIN_PUBLIC_KQL_DATABASE_ID": str(database["id"]),
+        "RAYFIN_PUBLIC_KQL_CLUSTER_URI": cluster_uri.rstrip("/"),
+        "RAYFIN_PUBLIC_STID_GRAPHQL_NAME": str(graphql["displayName"]) if graphql else "",
+        "RAYFIN_PUBLIC_STID_GRAPHQL_ID": str(graphql["id"]) if graphql else "",
+        "RAYFIN_PUBLIC_STID_GRAPHQL_URL": f"{FABRIC_BASE}/workspaces/{workspace_id}/graphqlapis/{graphql['id']}/graphql" if graphql else "",
+        "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
+        "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
+        "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
+    }
+    for prefix, item in [
+        ("STREAM_PIPELINE", pipeline), ("POSTSEED_NOTEBOOK", notebook),
+        ("LAKEHOUSE", lakehouse), ("KQL_DASHBOARD", dashboard),
+    ]:
+        values[f"RAYFIN_PUBLIC_{prefix}_NAME"] = str(item["displayName"]) if item else ""
+        values[f"RAYFIN_PUBLIC_{prefix}_ID"] = str(item["id"]) if item else ""
+
+    ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
+    if ontology_name:
+        ontologies = [item for item in items if item["type"] == "Ontology" and item["displayName"] == ontology_name]
+        if len(ontologies) > 1:
+            raise DeployError("The configured Ontology name is ambiguous in the target workspace.")
+        if ontologies:
+            values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = ontology_name
+    binding_text = _public_config_value(configured, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+    if binding_text:
+        try:
+            binding = json.loads(binding_text)
+        except ValueError as exc:
+            raise DeployError("The operator-provided Ontology graph binding is invalid JSON.") from exc
+        by_id = {str(item["id"]): item for item in items}
+        if (
+            not isinstance(binding, dict) or binding.get("workspaceId") != workspace_id
+            or by_id.get(str(binding.get("ontologyId")), {}).get("type") != "Ontology"
+            or by_id.get(str(binding.get("graphModelId")), {}).get("type") != "GraphModel"
+        ):
+            raise DeployError(
+                "The operator-provided Ontology graph binding does not match the target workspace's "
+                "Ontology/GraphModel identities. Clear it or provide a verified mapping; graph ownership is never guessed."
+            )
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = binding_text
+    return values
+
+
+def _rebind_public_env(text: str, values: dict[str, str]) -> str:
+    def line_for(key: str, value: str) -> str:
+        encoded = json.dumps(value, ensure_ascii=False) if re.search(r'''[\s#'"\\]''', value) else value
+        return f"{key}={encoded}"
+
+    remaining = dict(values)
+    lines = []
+    for line in text.splitlines():
+        key = line.split("=", 1)[0].strip()
+        if "=" in line and key in values:
+            line = line_for(key, values[key])
+            remaining.pop(key, None)
+        lines.append(line)
+    for key, value in remaining.items():
+        lines.append(line_for(key, value))
+    return "\n".join(lines) + "\n"
+
+
 def prepare_rayfin_env(
     tenant: str,
     workspace_id: str,
@@ -1030,6 +1212,7 @@ def prepare_rayfin_env(
     client_id: str | None,
 ) -> bool:
     values, deployment = current_rayfin_target()
+    public_artifacts = resolve_public_artifact_config(workspace_id, tenant, values)
     same_target = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
@@ -1053,6 +1236,12 @@ def prepare_rayfin_env(
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id, tenant):
+            env_path = RAYFIN_DIR / ".env"
+            env_path.write_text(
+                _rebind_public_env(env_path.read_text(encoding="utf-8"), public_artifacts),
+                encoding="utf-8", newline="\n",
+            )
+            print("Rebound public artifact configuration from verified target-workspace metadata.", flush=True)
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
@@ -1078,7 +1267,7 @@ def prepare_rayfin_env(
         if placeholder not in template:
             raise DeployError(f"Expected placeholder {placeholder!r} is missing from rayfin/.env.example.")
         template = template.replace(placeholder, value)
-    (RAYFIN_DIR / ".env").write_text(template, encoding="utf-8", newline="\n")
+    (RAYFIN_DIR / ".env").write_text(_rebind_public_env(template, public_artifacts), encoding="utf-8", newline="\n")
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
     return False
 
