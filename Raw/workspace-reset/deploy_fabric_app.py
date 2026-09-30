@@ -1119,6 +1119,58 @@ def _workspace_artifacts(workspace_id: str, headers: dict[str, str]) -> list[dic
     return items
 
 
+def _lineage_graph_binding(
+    workspace_id: str,
+    ontology: dict[str, Any],
+    items: list[dict[str, Any]],
+    headers: dict[str, str],
+) -> dict[str, str] | None:
+    ontology_id = str(ontology["id"])
+    metadata = fabric_get(
+        f"workspaces/{workspace_id}/ontologies/{quote(ontology_id, safe='')}", headers
+    )
+    if (
+        metadata.get("id") != ontology_id
+        or (metadata.get("workspaceId") and str(metadata["workspaceId"]).casefold() != workspace_id.casefold())
+        or not isinstance(metadata.get("properties"), dict)
+        or metadata["properties"].get("generation") != 2
+    ):
+        raise DeployError("The selected Ontology is not a verified generation-2 item in the target workspace.")
+
+    lineage = fabric_get(
+        f"workspaces/{workspace_id}/items/{quote(ontology_id, safe='')}/relations/downstream?beta=true",
+        headers,
+    )
+    related_items = lineage.get("items")
+    relations = lineage.get("relations")
+    if not isinstance(related_items, list) or not isinstance(relations, list):
+        raise DeployError("Ontology downstream lineage response is malformed.")
+    related_by_id = {
+        str(item["id"]): item for item in related_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    workspace_by_id = {str(item["id"]): item for item in items}
+    graph_ids = {
+        str(relation["itemId"])
+        for relation in relations
+        if isinstance(relation, dict)
+        and str(relation.get("dependentOnItemId", "")).casefold() == ontology_id.casefold()
+        and relation.get("relationType") == "CascadeDelete"
+        and related_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphIndex"
+        and str(related_by_id[str(relation["itemId"])].get("workspaceId", "")).casefold() == workspace_id.casefold()
+        and workspace_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphModel"
+    }
+    if len(graph_ids) > 1:
+        raise DeployError("Ontology lineage identifies multiple materialized GraphModels; graph ownership is ambiguous.")
+    if not graph_ids:
+        return None
+    return {
+        "workspaceId": workspace_id,
+        "ontologyId": ontology_id,
+        "graphModelId": next(iter(graph_ids)),
+    }
+
+
 def resolve_public_artifact_config(
     workspace_id: str, tenant: str, configured: dict[str, str]
 ) -> dict[str, str]:
@@ -1206,14 +1258,30 @@ def resolve_public_artifact_config(
         values[f"RAYFIN_PUBLIC_{prefix}_ID"] = str(item["id"]) if item else ""
 
     ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
-    if ontology_name:
-        ontologies = [item for item in items if item["type"] == "Ontology" and item["displayName"] == ontology_name]
-        if len(ontologies) > 1:
-            raise DeployError("The configured Ontology name is ambiguous in the target workspace.")
-        if ontologies:
-            values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = ontology_name
+    ontologies = [item for item in items if item["type"] == "Ontology"]
+    selected_ontologies = (
+        [item for item in ontologies if item["displayName"] == ontology_name]
+        if ontology_name else ontologies
+    )
+    if len(selected_ontologies) > 1:
+        raise DeployError(
+            "The target workspace contains multiple Ontologies; set RAYFIN_PUBLIC_ONTOLOGY_NAME "
+            "to the intended generation-2 item."
+        )
+    selected_ontology = selected_ontologies[0] if selected_ontologies else None
+    lineage_binding = (
+        _lineage_graph_binding(workspace_id, selected_ontology, items, headers)
+        if selected_ontology else None
+    )
+    if selected_ontology:
+        values["RAYFIN_PUBLIC_ONTOLOGY_NAME"] = str(selected_ontology["displayName"])
+    if lineage_binding:
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = json.dumps(
+            lineage_binding, separators=(",", ":")
+        )
+
     binding_text = _public_config_value(configured, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
-    if binding_text:
+    if binding_text and not lineage_binding:
         try:
             binding = json.loads(binding_text)
         except ValueError as exc:

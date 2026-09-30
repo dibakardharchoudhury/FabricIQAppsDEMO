@@ -73,9 +73,12 @@ materialized **111 nodes / 108 edges**. Keep the original **five-entity / four-r
 and its TimeSeries properties intact**; KQL enriches the actual native instrument nodes. This is
 a selected native projection—not a GraphQL topology fallback or deletion of ontology entities.
 
-Before building the app, configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` as JSON with
-`workspaceId`, `ontologyId`, and `graphModelId` for that managed graph. In `.env`, single-quote the
-complete JSON value:
+Before building the app, the canonical deployment orchestrator resolves the selected generation-2
+ontology's authoritative downstream `CascadeDelete` relation to its same-workspace `GraphIndex`,
+verifies the corresponding GraphModel item, and generates `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`
+with `workspaceId`, `ontologyId`, and `graphModelId`. This is lineage discovery, not inference by
+name, sole-graph presence, or sampled structure. If authoritative lineage is unavailable, an
+operator may supply the same verified JSON fallback. In `.env`, single-quote the complete value:
 
 ```dotenv
 RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<workspace-guid>","ontologyId":"<ontology-guid>","graphModelId":"<managed-graph-guid>"}'
@@ -382,10 +385,12 @@ and deployment state. Metadata-resolution failures stop before source writes or 
 - Pipeline/notebook, Lakehouse, and dashboard pointers are similarly target-scoped. Missing
   optional artifacts clear old IDs; unverified Lakehouse SQL endpoint overrides are cleared.
   Ambiguous eligible names fail closed rather than selecting the first workspace item.
-- A supplied `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` remains **operator-verified**. The orchestrator
-  only checks its workspace and referenced Ontology/GraphModel item identities and preserves it;
-  a mismatched mapping blocks deployment. It neither guesses ownership nor materializes or
-  changes the graph. Clear a stale mapping or supply the correct verified mapping explicitly.
+- The orchestrator generates `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from the selected generation-2
+  ontology's authoritative Fabric item lineage when exactly one same-workspace materialized
+  GraphModel is related. Multiple lineage matches fail closed. A supplied binding remains an
+  operator-verified fallback when lineage is unavailable; its workspace and referenced
+  Ontology/GraphModel identities must match. The orchestrator never selects a graph by name,
+  sole-graph presence, or sampled structure and never materializes or changes the graph.
 
 ### Optional: the Azure AI Foundry copilot
 

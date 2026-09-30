@@ -29,8 +29,11 @@ parts and existing bindings; incompatible changes must be resolved explicitly ra
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
 Graph materialization is optional in the Fabric generation-2 experience but required for the app's
 native graph canvas, tree, and scopes. In the selected ontology choose **Manage graph → select eligible
-entities/relationships → Continue → Materialize**, then configure the explicit
+entities/relationships → Continue → Materialize**. The canonical deployment orchestrator follows
+Fabric's authoritative Ontology-to-GraphIndex item lineage and generates the explicit
 `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
+An operator may supply the same verified binding as a fallback when lineage is unavailable.
+Ownership is never inferred from names, a sole graph, or sampled structure.
 No published ontology-owned materialization REST endpoint is established; this remains a manual
 portal prerequisite. Missing graph data is an error, not an empty successful query or a reason to
 fabricate STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).

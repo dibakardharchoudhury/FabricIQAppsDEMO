@@ -1306,6 +1306,10 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             {"id": "ontology-id", "type": "Ontology", "displayName": "Hydro ontology"},
             {"id": "graph-id", "type": "GraphModel", "displayName": "Operator verified graph"},
         ])
+        self.details["ontology-id"] = {
+            "id": "ontology-id", "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        self.details["downstream?beta=true"] = {"items": [], "relations": [], "workspaces": []}
         binding = {
             "workspaceId": self.workspace, "ontologyId": "ontology-id", "graphModelId": "graph-id",
             "nodeTypes": {"opaque": "hydro#equipment"},
@@ -1319,6 +1323,95 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
         for changed in [{"workspaceId": "old-workspace"}, {"ontologyId": "absent"}, {"graphModelId": "absent"}]:
             with self.subTest(changed=changed), self.assertRaisesRegex(DEPLOY.DeployError, "operator-provided Ontology graph binding"):
                 self.resolve({**configured, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({**binding, **changed})})
+
+    def test_graph_binding_is_discovered_from_authoritative_ontology_lineage(self):
+        ontology_id = "ontology-id"
+        graph_id = "graph-id"
+        self.items.extend([
+            {"id": ontology_id, "type": "Ontology", "displayName": "RTI_Demo_Ontology_V100"},
+            {"id": graph_id, "type": "GraphModel", "displayName": "opaque-generated-name"},
+        ])
+        self.details[ontology_id] = {
+            "id": ontology_id, "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        self.details["downstream?beta=true"] = {
+            "items": [
+                {"id": ontology_id, "type": "Ontology", "displayName": "RTI_Demo_Ontology_V100",
+                 "workspaceId": self.workspace},
+                {"id": graph_id, "type": "GraphIndex", "displayName": "opaque-generated-name",
+                 "workspaceId": self.workspace},
+            ],
+            "relations": [
+                {"itemId": graph_id, "dependentOnItemId": ontology_id, "relationType": "CascadeDelete"},
+            ],
+            "workspaces": [{"id": self.workspace, "displayName": "Target V100"}],
+        }
+
+        resolved = self.resolve()
+
+        self.assertEqual(resolved["RAYFIN_PUBLIC_ONTOLOGY_NAME"], "RTI_Demo_Ontology_V100")
+        self.assertEqual(json.loads(resolved["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"]), {
+            "workspaceId": self.workspace,
+            "ontologyId": ontology_id,
+            "graphModelId": graph_id,
+        })
+
+    def test_graph_binding_ignores_non_authoritative_and_cross_workspace_relations(self):
+        ontology = {"id": "ontology-id", "type": "Ontology", "displayName": "Hydro ontology"}
+        graph = {"id": "graph-id", "type": "GraphModel", "displayName": "Only graph"}
+        metadata = {
+            "id": ontology["id"], "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        false_relations = [
+            {
+                "items": [{"id": graph["id"], "type": "GraphIndex", "workspaceId": self.workspace}],
+                "relations": [{"itemId": graph["id"], "dependentOnItemId": ontology["id"],
+                               "relationType": "Reference"}],
+            },
+            {
+                "items": [{"id": graph["id"], "type": "GraphIndex", "workspaceId": self.workspace}],
+                "relations": [{"itemId": ontology["id"], "dependentOnItemId": graph["id"],
+                               "relationType": "CascadeDelete"}],
+            },
+            {
+                "items": [{"id": graph["id"], "type": "GraphIndex", "workspaceId": "other-workspace"}],
+                "relations": [{"itemId": graph["id"], "dependentOnItemId": ontology["id"],
+                               "relationType": "CascadeDelete"}],
+            },
+        ]
+        for lineage in false_relations:
+            with self.subTest(lineage=lineage), patch.object(
+                DEPLOY, "fabric_get", side_effect=[metadata, lineage]
+            ):
+                self.assertIsNone(
+                    DEPLOY._lineage_graph_binding(self.workspace, ontology, [ontology, graph], {})
+                )
+
+    def test_graph_binding_fails_closed_when_lineage_has_multiple_graphs(self):
+        ontology = {"id": "ontology-id", "type": "Ontology", "displayName": "Hydro ontology"}
+        graphs = [
+            {"id": "graph-one", "type": "GraphModel", "displayName": "Graph one"},
+            {"id": "graph-two", "type": "GraphModel", "displayName": "Graph two"},
+        ]
+        metadata = {
+            "id": ontology["id"], "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        lineage = {
+            "items": [
+                {"id": graph["id"], "type": "GraphIndex", "workspaceId": self.workspace}
+                for graph in graphs
+            ],
+            "relations": [
+                {"itemId": graph["id"], "dependentOnItemId": ontology["id"],
+                 "relationType": "CascadeDelete"}
+                for graph in graphs
+            ],
+        }
+        with (
+            patch.object(DEPLOY, "fabric_get", side_effect=[metadata, lineage]),
+            self.assertRaisesRegex(DEPLOY.DeployError, "multiple materialized GraphModels"),
+        ):
+            DEPLOY._lineage_graph_binding(self.workspace, ontology, [ontology, *graphs], {})
 
     def test_artifact_pagination_never_leaves_target_workspace(self):
         initial = f"workspaces/{self.workspace}/items"

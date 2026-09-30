@@ -27,7 +27,8 @@
   propagate agent-extension failures. The app requires an explicitly bound ontology-managed
   native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
   graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
-  ontology's Manage graph flow and configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`; never infer
+  ontology's Manage graph flow. Generate `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from authoritative
+  Ontology-to-GraphIndex item lineage, or use an operator-verified explicit fallback; never infer
   ownership from names, a sole graph, or matching structure. Portal materialization is a manual
   prerequisite, not an established public REST automation contract. Do not claim agent or graph runtime readiness
   from item creation, notebook completion, or successful app hosting.

@@ -19,8 +19,9 @@ certify SQL/combined-source answers. Actual failed/inconclusive results fail req
 SQL/GraphQL-only success requires explicit Data Agent disablement; configuration or hosted-page
 success does not certify agent execution or delivery. The app's native graph
 requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
-→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON. No ownership is inferred
-from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
+→ Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from
+authoritative Ontology-to-GraphIndex item lineage or supplied as an operator-verified fallback.
+No ownership is inferred from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
 actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
 No published ontology-owned materialization REST endpoint is established; keep this portal
 prerequisite separate from automated deployment and agent runtime readiness.
