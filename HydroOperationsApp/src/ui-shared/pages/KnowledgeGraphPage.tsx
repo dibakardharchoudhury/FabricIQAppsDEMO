@@ -1,5 +1,5 @@
 import type { Core } from 'cytoscape'
-import { Activity, Box, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
+import { Activity, Box, ChevronRight, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { queryOntologyContract, queryOntologyGraph, type OntologyContract, type OntologyGraph } from '../../services/fabric'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
@@ -192,6 +192,11 @@ export function KnowledgeGraphPage() {
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
+  const selectedProperties = selectedNode
+    ? Object.entries(selectedNode.properties).filter(([, value]) => value !== undefined && value !== '')
+    : []
+  const primaryProperties = selectedProperties.slice(0, 6)
+  const additionalProperties = selectedProperties.slice(6)
   const activeOntology = ontology ?? data.ontology
   const graphInstanceSummary = `${graph.nodes.length} materialized and operational instances · ${graph.edges.length} links`
 
@@ -220,12 +225,14 @@ export function KnowledgeGraphPage() {
 
       <aside className="kg-sidebar kg-inspector">
         {selectedNode ? <>
-          <div className="kg-selected-heading"><div className={`kg-selected-node type-${selectedNode.type} status-${selectedNode.status}`}><CircleDot size={20} /></div><div><span className="v2-eyebrow">{selectedNode.type.replace('-', ' ')}</span><h2>{selectedNode.label}</h2><small>{selectedNode.entityId}</small></div></div>
-          <div className={`kg-health-banner status-${selectedNode.status}`}><i />{STATUS_LABEL[selectedNode.status]}<span>{selectedNode.subtitle}</span></div>
-          {selectedNode.reading && <section className="kg-live-reading"><div><Radio size={15} /><span>Bound time series</span><small>{new Date(selectedNode.reading.eventTime).toLocaleString()}</small></div><strong>{selectedNode.reading.value.toLocaleString()} <small>{String(selectedNode.properties.Unit ?? '')}</small></strong><p>Quality: {selectedNode.reading.quality}</p></section>}
-          <section><div className="kg-section-title"><span>Properties</span></div><dl>{Object.entries(selectedNode.properties).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></section>
-          <section><div className="kg-section-title"><span>Connected context</span><small>{connectedEdges.length}</small></div><div className="kg-connections">{connectedEdges.slice(0, 10).map(item => { const otherId = item.source === selectedNode.id ? item.target : item.source; const other = graph.nodes.find(node => node.id === otherId); return other ? <button key={item.id} onClick={() => selectNode(other.id)}><i className={`kg-type-dot type-${other.type}`} /><span><strong>{other.label}</strong><small>{item.label} · {other.type.replace('-', ' ')}</small></span></button> : null })}</div></section>
-          <section><div className="kg-section-title"><span>Provenance</span></div><div className="kg-provenance"><Database size={15} /><p>{selectedNode.provenance}</p></div></section>
+          <div className="kg-inspector-hero">
+            <div className="kg-selected-heading"><div className={`kg-selected-node type-${selectedNode.type} status-${selectedNode.status}`}><CircleDot size={20} /></div><div><span className="v2-eyebrow">{selectedNode.type.replace('-', ' ')}</span><h2>{selectedNode.label}</h2><code>{selectedNode.entityId}</code></div></div>
+            <div className={`kg-health-banner status-${selectedNode.status}`}><i /><strong>{STATUS_LABEL[selectedNode.status]}</strong><span>{selectedNode.subtitle}</span></div>
+          </div>
+          {selectedNode.reading && <section className="kg-live-reading"><div><Radio size={15} /><span>Live bound signal</span><small>{new Date(selectedNode.reading.eventTime).toLocaleString()}</small></div><strong>{selectedNode.reading.value.toLocaleString()} <small>{String(selectedNode.properties.Unit ?? '')}</small></strong><p><span>Quality</span><b>{selectedNode.reading.quality}</b></p></section>}
+          <section className="kg-property-section"><div className="kg-section-title"><span>Overview</span><small>{selectedProperties.length} properties</small></div><dl>{primaryProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>{additionalProperties.length > 0 && <details className="kg-more-properties"><summary>Show {additionalProperties.length} more properties</summary><dl>{additionalProperties.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}</section>
+          <section><div className="kg-section-title"><span>Connected context</span><small>{connectedEdges.length} links</small></div><div className="kg-connections">{connectedEdges.slice(0, 10).map(item => { const otherId = item.source === selectedNode.id ? item.target : item.source; const other = graph.nodes.find(node => node.id === otherId); return other ? <button key={item.id} onClick={() => selectNode(other.id)}><i className={`kg-type-dot type-${other.type}`} /><span><strong>{other.label}</strong><small>{item.label} · {other.type.replace('-', ' ')}</small></span><ChevronRight size={14} /></button> : null })}</div></section>
+          <section><div className="kg-section-title"><span>Data lineage</span><ShieldCheck size={14} /></div><div className="kg-lineage"><div><span>Fabric Ontology</span><ChevronRight size={12} /><span>Native graph</span><ChevronRight size={12} /><span>Operational context</span></div><p><Database size={14} />{selectedNode.provenance}</p></div></section>
           {selectedNode.equipmentId && <div className="kg-open-actions"><button onClick={() => openRelatedView('digital-twin')}><Box size={15} />Digital Twin</button><button onClick={() => openRelatedView('telemetry')}><Activity size={15} />Telemetry</button><button onClick={() => openRelatedView('maintenance')}><Wrench size={15} />Maintenance</button></div>}
         </> : <div className="kg-no-selection"><CircleDot size={28} /><h2>Select an entity</h2><p>Inspect properties, bound values, relationships, and provenance.</p></div>}
       </aside>

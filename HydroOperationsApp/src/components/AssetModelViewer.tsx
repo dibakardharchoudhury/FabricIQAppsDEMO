@@ -124,6 +124,7 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
 
   return (
     <div className="twin-stage">
+      <div className="twin-stage-ambient" aria-hidden="true"><i /><i /><i /></div>
       <div className="twin-live-head">
         <span className="twin-live-dot" />
         <strong>{assetLabel ?? 'Live twin'}</strong>
