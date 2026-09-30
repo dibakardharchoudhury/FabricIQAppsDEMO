@@ -797,11 +797,11 @@ def build_configurations(should_run: Optional[bool] = None,
         inner["workspaceId"] = workspace_id
         config["configuration"]["dataSources"] = {datasource_id: inner}
     if pipeline_id:
+        # Preserve the template's "Pipeline" action itemType; OperationsAgentV1 rejects "DataPipeline".
         for action in config["configuration"]["actions"].values():
             if action.get("kind") == "FabricJobAction":
                 action["connection"]["jobArtifactId"] = pipeline_id
                 action["connection"]["jobWorkspaceId"] = workspace_id
-                action["connection"]["itemType"] = "DataPipeline"
     message_destination = config["configuration"].get("messageDestination")
     if message_destination:
         if team_id:

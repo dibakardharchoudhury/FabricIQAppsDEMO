@@ -204,7 +204,8 @@ class CapabilityTests(unittest.TestCase):
         action = next(iter(conf["actions"].values()))
         self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
         self.assertEqual(action["connection"]["jobWorkspaceId"], "workspace")
-        self.assertEqual(action["connection"]["itemType"], "DataPipeline")
+        self.assertEqual(action["connection"]["itemType"], "Pipeline")
+        self.assertEqual(action["connection"]["jobType"], "Pipeline")
         parameters = {item["name"] for item in action["parameters"]}
         self.assertEqual(parameters, {"equipment_id", "facility_id", "quality", "value", "unit", "event_time"})
         rules = config["playbook"]["RuleDefinitions"]
@@ -216,6 +217,14 @@ class CapabilityTests(unittest.TestCase):
                 self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
         with self.assertRaisesRegex(RuntimeError, "playbook"):
             ns["build_configurations"](copy_playbook=False)
+
+    def test_operations_auth_selects_notebook_pbi_token(self):
+        get_token = Mock(return_value="offline-token")
+        ns = functions(
+            "010", "get_access_token_for_fabric", "get_headers",
+            notebookutils=SimpleNamespace(credentials=SimpleNamespace(getToken=get_token)))
+        self.assertEqual(ns["get_headers"]()["Authorization"], "Bearer offline-token")
+        get_token.assert_called_once_with("pbi")
 
     def test_operations_update_never_drops_components_on_rejection(self):
         for status in (400, 401, 403, 404, 500, 202):
