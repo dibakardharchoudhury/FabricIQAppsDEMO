@@ -493,6 +493,7 @@ def rebind_weather_notebooks(
         dependencies["environment"] = wanted_environment
         part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
         part["payloadType"] = "InlineBase64"
+        definition["format"] = "ipynb"
         response = fab.poll_lro(fab.request(
             "POST",
             f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true",

@@ -361,12 +361,50 @@ class WeatherProvisioningTests(unittest.TestCase):
 
         self.assertEqual(len(fabric.updates), 4)
         for _, body in fabric.updates:
+            self.assertEqual(body["definition"]["format"], "ipynb")
             part = body["definition"]["parts"][0]
             content = json.loads(base64.b64decode(part["payload"]))
             dependencies = content["metadata"]["dependencies"]
             self.assertEqual(dependencies["lakehouse"]["default_lakehouse"], LAKEHOUSE_ID)
             self.assertEqual(dependencies["lakehouse"]["default_lakehouse_name"], LAKEHOUSE_NAME)
             self.assertEqual(dependencies["environment"]["environmentId"], "environment-id")
+
+    def test_rebinding_preserves_notebook_cells_and_unrelated_metadata(self):
+        fabric = FakeFabric()
+        content = {
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "cells": [{"cell_type": "code", "source": ["print('preserve me')"],
+                       "metadata": {}, "execution_count": None, "outputs": []}],
+            "metadata": {"custom": "preserved", "dependencies": {"custom": {"id": "keep"}}},
+        }
+        platform = {"path": ".platform", "payload": "e30=", "payloadType": "InlineBase64"}
+        original_request = fabric.request
+
+        def request(method, url, **kwargs):
+            if "/getDefinition" in url:
+                definition = ipynb_definition({})
+                parts = definition["definition"]["parts"]
+                parts[0]["payload"] = base64.b64encode(json.dumps(content).encode()).decode()
+                parts.append(dict(platform))
+                return FakeResponse(200, definition)
+            return original_request(method, url, **kwargs)
+
+        fabric.request = request
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure_weather_assets(fabric, "workspace-id", git_updated=False)
+
+        self.assertEqual(len(fabric.updates), 4)
+        for _, body in fabric.updates:
+            self.assertEqual(body["definition"]["format"], "ipynb")
+            parts = body["definition"]["parts"]
+            updated = json.loads(base64.b64decode(parts[0]["payload"]))
+            self.assertEqual(updated["cells"], content["cells"])
+            self.assertEqual(updated["nbformat"], content["nbformat"])
+            self.assertEqual(updated["nbformat_minor"], content["nbformat_minor"])
+            self.assertEqual(updated["metadata"]["custom"], "preserved")
+            self.assertEqual(updated["metadata"]["dependencies"]["custom"], {"id": "keep"})
+            self.assertEqual(parts[1], platform)
 
     def test_notebooks_already_bound_are_not_rewritten(self):
         bound = {
