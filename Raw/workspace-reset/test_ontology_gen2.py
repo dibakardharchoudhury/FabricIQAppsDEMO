@@ -391,6 +391,26 @@ class GenerationPersistenceTests(unittest.TestCase):
 
 
 class StructureTests(unittest.TestCase):
+    def test_custom_relationship_names_preserve_original_naming_contract(self):
+        ns = functions("004", ["make_safe_rel_name"])
+        ns["REL_NAME_OVERRIDES"] = {("systems", "facilities"): "systems_in_facilities"}
+        for source, target, expected in (
+            ("systems", "facilities", "systems_in_facilities"),
+            ("pumps", "sites", "pumps_to_sites"),
+            ("pump-devices", "site groups", "pump_devices_to_site_group"),
+            ("a" * 26, "sites", "a" * 26),
+        ):
+            with self.subTest(source=source, target=target):
+                self.assertEqual(ns["make_safe_rel_name"](source, target), expected)
+
+    def test_quoted_model_references_are_not_duplicated_on_structure_rerun(self):
+        initial = edit(bound(), "model.tmdl", lambda s: s.replace(
+            "ref entity facilities", "ref entity 'facilities'").replace(
+            "ref entity signal_master", "ref entity default.'signal_master'").replace(
+            "ref namespace default", "ref namespace 'default'"))
+        result = build_namespace()["_build_gen2_parts"](initial)
+        self.assertEqual(result, initial)
+
     def test_fresh_and_bound_rerun_preserve_all_parts_and_identities(self):
         initial = bound()
         initial += [support._encode_part("rules.tmdl", "rule keep\n\tlineageTag: custom\n"),
@@ -438,6 +458,27 @@ class StructureTests(unittest.TestCase):
 
 
 class LakehouseTests(unittest.TestCase):
+    def test_m_comments_preserve_urls_and_strings_and_allow_quotes_in_nested_comments(self):
+        literal = '"https://host//path ""/* literal */"""'
+        call = 'AzureStorage.DataLake("https://host/workspace/lakehouse")'
+        source = f'Source = {literal}, /* " quote /* nested */ */ Live = {call} // trailing'
+        result = support._without_m_comments(source)
+        self.assertIn(literal, result)
+        self.assertIn(call, result)
+        self.assertNotIn("nested", result)
+        self.assertNotIn("trailing", result)
+        for invalid in ("/* unfinished", "Source */"):
+            with self.subTest(source=invalid), self.assertRaisesRegex(RuntimeError, "M source comment"):
+                support._without_m_comments(invalid)
+
+    def test_commented_onelake_source_does_not_validate_a_different_source(self):
+        initial = edit(bound(), "expressions.tmdl", lambda s: s.replace(
+            'Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/workspace-a/lakehouse-a", [HierarchicalNavigation=true])',
+            '// AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/workspace-a/lakehouse-a")\n'
+            '\t\t    Source = OtherSource'))
+        with self.assertRaisesRegex(RuntimeError, "source mismatch"):
+            binding_namespace()["_bind_gen2_parts"](initial, table_columns())
+
     def test_fresh_rerun_crlf_and_unrelated_parts(self):
         initial = built() + [support._encode_part("entities/other.tmdl", "entity other\n\tkeyProperty: id\n")]
         initial = edit(initial, "entityRelationships.tmdl", lambda s: s + "\nentityRelationship unrelated\n\tfromEntity: other\n\ttoEntity: other\n")
@@ -520,6 +561,24 @@ class LakehouseTests(unittest.TestCase):
 
 
 class EventhouseTests(unittest.TestCase):
+    def test_source_annotations_and_query_must_match_not_just_contain_expected_values(self):
+        ns = event_namespace()
+        initial, _ = ns["_bind_eventhouse_parts"](bound())
+        for transform in (
+            lambda s: s.replace("ONT_ItemId = kql-id", "ONT_ItemId = kql-id-other"),
+            lambda s: s.replace("ONT_WorkspaceId = workspace-a", "ONT_WorkspaceId = workspace-a-other"),
+            lambda s: s.replace("ONT_ItemKind = KQLDatabase", "ONT_ItemKind = KQLDatabaseOther"),
+            lambda s: s.replace('Source = AzureDataExplorer.Contents(',
+                                '// Source = AzureDataExplorer.Contents(').replace(
+                                    '\t\t\t\tin\n', '\t\t\t\t  Source = OtherSource\n\t\t\t\tin\n'),
+        ):
+            with self.subTest(transform=transform):
+                stale = edit(initial, "tables/OPCUAEvents.tmdl", transform)
+                before = copy.deepcopy(stale)
+                with self.assertRaisesRegex(RuntimeError, "Eventhouse source"):
+                    ns["_bind_eventhouse_parts"](stale)
+                self.assertEqual(stale, before)
+
     def test_existing_telemetry_columns_require_exact_source_and_type(self):
         ns = event_namespace()
         initial, _ = ns["_bind_eventhouse_parts"](bound())

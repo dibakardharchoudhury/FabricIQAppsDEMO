@@ -355,8 +355,9 @@ def _merge_gen2_structure(live_parts, desired_parts):
                         live = live.rstrip() + "\n\n" + block
         else:
             for line in wanted.splitlines():
-                if line.startswith("ref ") and line not in live.splitlines():
-                    live = live.rstrip() + "\n" + line + "\n"
+                match = re.fullmatch(r"ref (entity|table|namespace) (.+)", line)
+                if match:
+                    live = _append_model_ref(live, match[1], _local_name(match[2]))
         if live != _decode_part(result[path]):
             result[path] = _encode_part(path, live)
     return list(result.values())
@@ -482,6 +483,34 @@ def _bind_physical_relationship(physical, bindings, default_name, from_column, t
     return physical, name
 
 
+def _without_m_comments(text):
+    """Ignore M comments without treating quoted URLs or escaped quotes as comments."""
+    tokens = re.compile(r'"(?:[^"]|"")*"|//[^\r\n]*|/\*|\*/', re.DOTALL)
+    comment_tokens = re.compile(r"/\*|\*/")
+    depth = 0
+    end = 0
+    output = []
+    while match := (comment_tokens if depth else tokens).search(text, end):
+        if not depth:
+            output.append(text[end:match.start()])
+        token = match[0]
+        if token == "/*":
+            if not depth:
+                output.append(" ")
+            depth += 1
+        elif token == "*/":
+            if not depth:
+                raise RuntimeError("Unexpected M source comment terminator")
+            depth -= 1
+        elif not depth and token.startswith('"'):
+            output.append(token)
+        end = match.end()
+    if depth:
+        raise RuntimeError("Unterminated M source comment")
+    output.append(text[end:])
+    return "".join(output)
+
+
 def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_id,
                               lakehouse_id, lakehouse_name, tag):
     result = _parts_by_path(parts)
@@ -494,7 +523,7 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
     expression = _object_block(expressions, "expression", expression_name, 0)
     source_url = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{lakehouse_id}"
     if expression:
-        sources = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', expression)
+        sources = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', _without_m_comments(expression))
         if len(sources) != 1 or sources[0].rstrip("/").casefold() != source_url.casefold():
             raise RuntimeError("Existing OneLake source mismatch; explicitly migrate bindings before retargeting")
     else:

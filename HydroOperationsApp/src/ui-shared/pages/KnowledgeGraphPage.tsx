@@ -137,11 +137,11 @@ export function KnowledgeGraphPage() {
       equipment_id: node.entityId, facility_id: node.facilityId!, system_id: '', tag: node.label,
     })),
   }), [graph.nodes])
-  const selectedAssetId = graph.nodes.find(node => node.id === effectiveSelectedId)?.equipmentId
+  const selectedAssetId = graph.nodes.find(node => node.id === effectiveSelectedId)?.equipmentId ?? data.selectedAssetId
   const revealPath = useMemo(() => pathToAsset(treeStations, selectedAssetId), [selectedAssetId, treeStations])
   const expansion = useTreeExpansion(revealPath)
   const assetStatuses = useMemo(() => new Map(graph.nodes.filter(node => node.type === 'equipment').map(node => [node.entityId, node.status])), [graph.nodes])
-  const scopeIds = useMemo(() => knowledgeGraphScope(graph, scope, effectiveSelectedId), [effectiveSelectedId, graph, scope])
+  const scopeIds = useMemo(() => knowledgeGraphScope(graph, scope, effectiveSelectedId, selectedAssetId), [effectiveSelectedId, graph, scope, selectedAssetId])
   const visibleNodes = useMemo(() => graph.nodes.filter(node => {
     const matchesQuery = matchesKnowledgeNodeQuery(node, deferredQuery)
     const matchesScope = Boolean(deferredQuery) || !scopeIds || scopeIds.has(node.id)
@@ -185,8 +185,8 @@ export function KnowledgeGraphPage() {
     navigateTo(tab)
   }
 
-  if (!ontologyGraph && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Reading the Ontology v2 contract and native backing graph.</p></section>
-  if (graphError || graph.error || !ontologyGraph) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Selected Ontology graph could not be loaded</h1><div className="v2-notice" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</div><p>For an unmaterialized or unmapped graph, open the selected Ontology in Fabric, use Manage graph to materialize its native graph, then configure the verified workspace, Ontology, and graph mapping.</p><p>No substitute or stale topology is displayed. KQL and SQL enrichments require native entities.</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
+  if (!ontologyGraph && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
+  if (graphError || graph.error || !ontologyGraph) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
@@ -194,10 +194,8 @@ export function KnowledgeGraphPage() {
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state">{!graphLoading && <span className="kg-live-dot" />}<span>{graphLoading ? 'Refreshing native Ontology graph' : `${ontologyGraph.graphModelName} · native graph · KQL + SQL enrichments`}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh native graph and Ontology discovery"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span>{`${ontologyGraph.graphModelName} · GQL`}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
-    {graphError && <div className="v2-notice" role="alert">{graphError}</div>}
-    {ontology?.warnings?.map(warning => <div className="v2-notice" role="status" key={warning}>{warning}</div>)}
 
     <div className="kg-workspace">
       <aside className="kg-sidebar kg-filters">

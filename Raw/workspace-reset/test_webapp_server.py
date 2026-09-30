@@ -1,8 +1,14 @@
 import importlib.util
+import contextlib
+import io
 import json
+import os
+import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import run_pipeline
 
 
 MODULE_PATH = Path(__file__).with_name("webapp") / "server.py"
@@ -73,6 +79,61 @@ class WorkspaceActionTests(unittest.TestCase):
             self.assertEqual(specs[name]["default"], "enabled")
             self.assertIn("auto: alias for enabled", specs[name]["help"])
             self.assertIn("disabled: skip", specs[name]["help"])
+        self.assertIn("runtime smoke check", specs["ontology_data_agent_mode"]["help"])
+
+    def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
+        for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
+            with self.subTest(state=state):
+                fabric = Mock()
+                fabric.resolve_workspace_id.return_value = ("canonical-workspace", "DEV")
+                fabric.find_pipeline.return_value = ("pipeline-id", "01_Pipe_Setup")
+                fabric.start_pipeline.return_value = "https://mock.invalid/job"
+                reason = "Required Data Agent ontology runtime smoke failed: unsupported Ontology API"
+                fabric.poll_job.return_value = {"status": state, "failureReason": {"message": reason}}
+
+                def child_process(command, **kwargs):
+                    output = io.StringIO()
+                    with (
+                        patch.object(sys, "argv", command[2:]),
+                        patch.dict(os.environ, kwargs["env"]),
+                        patch.object(run_pipeline, "Fabric", return_value=fabric),
+                        patch.object(run_pipeline, "ensure_key_vault_access"),
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(output),
+                    ):
+                        returncode = run_pipeline.main()
+                    return Mock(stdout=io.StringIO(output.getvalue()), returncode=returncode)
+
+                def start_job(argv, env_extra, timeout, phases, markers, **kwargs):
+                    job = SERVER.Job(phases)
+                    SERVER.JOBS[job.id] = job
+                    with patch.object(SERVER.subprocess, "Popen", side_effect=child_process), patch.object(SERVER.threading, "Timer"):
+                        SERVER._worker(job, argv, env_extra, timeout, markers)
+                    return job.id
+
+                try:
+                    with patch.object(SERVER, "_start", side_effect=start_job):
+                        response = self.client.post("/api/run-pipeline", json={
+                            "tenant": "tenant.example", "workspace": "DEV",
+                            "parameters": {"key_vault_uri": "https://mock.vault.azure.net/",
+                                           "ontology_data_agent_mode": "enabled",
+                                           "ontology_operations_agent_mode": "enabled"},
+                        })
+                    self.assertEqual(response.status_code, 200)
+                    job = self.client.get("/api/jobs/" + response.get_json()["jobId"]).get_json()
+                    self.assertEqual(job["status"], expected_status)
+                    self.assertEqual(job["returncode"], expected_code)
+                    self.assertTrue(job["done"])
+                    parameters = fabric.start_pipeline.call_args.args[2]
+                    self.assertEqual(parameters["workspace_id"], "canonical-workspace")
+                    self.assertEqual(parameters["ontology_data_agent_mode"], "enabled")
+                    log = "\n".join(job["lines"])
+                    if state == "Failed":
+                        self.assertIn(reason, log)
+                        self.assertNotIn("run COMPLETED", log)
+                    else:
+                        self.assertIn("run COMPLETED", log)
+                finally:
+                    SERVER.JOBS.clear()
 
     def test_pipeline_rejects_invalid_ontology_capability_mode(self):
         with patch.object(SERVER, "_start") as start:

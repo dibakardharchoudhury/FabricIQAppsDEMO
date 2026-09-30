@@ -15,8 +15,8 @@ provenance.
 
 > [!NOTE]
 > Screenshots are historical UI illustrations using a synthetic STID fixture and cached telemetry,
-> not evidence of native graph queries. Native-v2 live testing is in progress; no new successful
-> native graph evidence or app deployment is claimed by this correction.
+> not evidence of native graph queries. Live native-v2 evidence and the remaining platform
+> limitations are recorded below; these screenshots alone are not validation.
 
 ## Useful scenarios
 
@@ -138,6 +138,8 @@ freshness independently of graph materialization. When one native `signal_master
 one-to-one native `signals_from_instruments` relationship, the UI combines it with that instrument into one
 visual node and retains both entities in the inspector provenance. This removes duplicate labels
 without changing the governed v2 semantic contract. Unbound and non-one-to-one signals remain explicit nodes.
+The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
+one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
 Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
 `instrumentId`, or `opcuaNodeId` as explicit external overlays attached only to actual native entities.
 Existing GraphQL/STID reads serve other app pages; graph canvas, tree, and scope options do not

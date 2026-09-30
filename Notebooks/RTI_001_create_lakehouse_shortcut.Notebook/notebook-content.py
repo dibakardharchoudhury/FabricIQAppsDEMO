@@ -109,7 +109,7 @@ eventhouse_table_name = "OPCUAEvents"
 ops_agent_run_as_user = ""      # UPN the agent runs as; blank => the deploying user (optional)
 ops_agent_teams_team_id = ""
 ops_agent_teams_channel_id = ""
-# Full authored playbook is required. (STATIC, NOT injected.)
+# Whether to copy the playbook; false leaves generation to the portal. (STATIC, NOT injected.)
 ops_agent_copy_playbook = "true"
 ontology_data_agent_mode = "enabled"
 ontology_operations_agent_mode = "enabled"

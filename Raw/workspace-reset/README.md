@@ -83,7 +83,13 @@ agents are allowed, with SQL/custom content and selections retained and no cache
 Evidence is a source-specific functional smoke test; **execution provenance is not attested**, and
 SQL/combined-source answers are not certified. Failed or inconclusive checks fail required modes.
 Setup requires all three Data Agent statuses and NB10 `configured`, or the corresponding explicit
-`disabled`/`skipped` exception. NB10 remains stopped; configuration does not prove delivery.
+`disabled`/`skipped` exception. By default NB10 leaves the agent stopped; configuration does not
+prove delivery.
+
+The existing `ops_agent_copy_playbook=false` setting remains supported for operators who choose
+to generate the playbook in the portal. The default is still `true`, retaining the full authored
+BAD/UNCERTAIN rules, Teams destination, and email action. Explicit manual generation is reported
+as such; an API rejection never causes the notebook to silently remove the playbook or actions.
 
 NB11 requires matching `ready`/`published`/`verified` evidence bound to the same
 agent/workspace/ontology and exact ontology-source configuration. It compares only the ontology

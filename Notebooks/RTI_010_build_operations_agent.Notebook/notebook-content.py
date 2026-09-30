@@ -830,7 +830,7 @@ def build_configurations(should_run: Optional[bool] = None,
                         "Description": p["description"],
                     })
     if not keep_playbook:
-        raise RuntimeError("A complete Operations Agent requires the authored playbook.")
+        config.pop("playbook", None)
     return config
 
 
@@ -964,8 +964,6 @@ def deploy_operations_agent(ontology_id: str) -> dict:
         raise RuntimeError("Persisted Operations Agent ontology differs from the selected v2 item.")
     if not ops_agent_teams_team_id or not ops_agent_teams_channel_id:
         raise RuntimeError("Configure ops_agent_teams_team_id and ops_agent_teams_channel_id.")
-    if not ops_agent_copy_playbook:
-        raise RuntimeError("Required Operations Agent deployment must include its playbook.")
     get_access_token_for_fabric()
     check_run_as(ops_agent_run_as_user)
     connection_id = resolve_email_connection_id()
@@ -982,7 +980,7 @@ def deploy_operations_agent(ontology_id: str) -> dict:
     if not agent_id:
         raise RuntimeError("Operations Agent creation returned no id.")
     configuration = build_configurations(
-        should_run=ops_agent_should_run, copy_playbook=True,
+        should_run=ops_agent_should_run, copy_playbook=ops_agent_copy_playbook,
         team_id=ops_agent_teams_team_id, channel_id=ops_agent_teams_channel_id,
         datasource_id=ontology_id, pipeline_id=pipeline_id)
     update_operations_agent_definition(agent_id, configuration)
@@ -1006,7 +1004,9 @@ try:
     (DeltaTable.forName(spark, settings_table_name).alias("target")
      .merge(source.alias("source"), "target.setting_name = source.setting_name")
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
-    reason = "Complete configuration, playbook and email pipeline retained by readback; runtime actions not tested."
+    reason = ("Complete configuration, playbook and email pipeline retained by readback; runtime actions not tested."
+              if ops_agent_copy_playbook else
+              "Configuration and email pipeline retained by readback; generate the playbook in the portal as requested. Runtime actions not tested.")
     persist_agent_status("configured", reason)
     result.update(status="configured", reason=reason)
 except Exception as exc:

@@ -442,7 +442,7 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
      "help": "UPN used when configuring the Operations Agent to send Teams messages."},
     {"name": "ontology_data_agent_mode", "type": "string", "default": "enabled",
      "label": "Ontology Data Agent mode",
-     "help": "enabled: attempt matching v2 source configuration and verify readback, not runtime readiness; auto: alias for enabled; disabled: skip agent configuration."},
+     "help": "enabled: require matching v2 source publication and a successful ontology runtime smoke check; auto: alias for enabled; disabled: skip agent configuration. Required failures fail setup."},
     {"name": "ontology_operations_agent_mode", "type": "string", "default": "enabled",
      "label": "Ontology Operations Agent mode",
      "help": "enabled: attempt Operations Agent configuration for the selected v2 ontology and verify the result; auto: alias for enabled; disabled: skip. Product or permission failures remain explicit."},

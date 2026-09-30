@@ -148,20 +148,21 @@ test('malformed published source definitions fail explicitly rather than permitt
   assert.throws(() => verify([{ ...datasource(matchingSource), payload: Buffer.from('{broken').toString('base64') }]), /not a valid published datasource/)
 })
 
-test('completed app data setup does not certify agent execution or alert delivery', async () => {
+test('guided setup retains its original copy and layout without migration panels', async () => {
   const { AdministrationExperience } = await tsImport('../src/components/AdministrationExperience.tsx', {
     parentURL: import.meta.url,
     tsconfig: fileURLToPath(new URL('../tsconfig.app.json', import.meta.url)),
   })
-  const html = renderToStaticMarkup(createElement(AdministrationExperience, {
-    steps: [{ n: 2, title: 'Seed & provision', why: 'SQL/GraphQL only when agents are explicitly disabled', done: true, busy: false, action: 'Seed', run: () => {} }],
-  }))
-  assert.match(html, /App data setup steps are complete/)
-  assert.match(html, /Agent execution and alert delivery are not verified here/)
-  assert.match(html, /Agents are enabled by default; auto also attempts provisioning, and only disabled opts out/)
-  assert.match(html, /Required agent failures fail provisioning/)
-  assert.match(html, /do not verify playbook execution or Teams\/email delivery/)
-  assert.match(html, /data_agent_deployment_status/)
-  assert.match(html, /ops_agent_deployment_status/)
-  assert.doesNotMatch(html, /agent configured|agent ready|All setup steps are complete/i)
+  for (const done of [false, true]) {
+    const html = renderToStaticMarkup(createElement(AdministrationExperience, {
+      steps: [{ n: 2, title: 'Seed & provision', why: 'Provision the configured data sources', done, busy: false, action: 'Seed', run: () => {} }],
+    }))
+    assert.ok(html.includes(done
+      ? 'All setup steps are complete. Use the actions below to verify each connection.'
+      : 'Steps 2 and 3 are independent — you can start them together, then finish 4 and 5.'))
+    const heading = html.slice(html.indexOf('class="setup-head"'), html.indexOf('<ol'))
+    assert.equal((heading.match(/<p>/g) ?? []).length, 1)
+    assert.match(html, /class="setup-steps"/)
+    assert.doesNotMatch(html, /data_agent_deployment_status|ops_agent_deployment_status|Agents are enabled by default/)
+  }
 })

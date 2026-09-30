@@ -17,7 +17,7 @@ export function AdministrationPage() {
     {
       n: 2,
       title: 'Seed & provision',
-      why: 'Loads demo work orders/inspections into SQL, publishes the STID GraphQL API, and configures Data Agent sources unless explicitly disabled (RTI_011). Required agent failures fail provisioning; completion does not verify runtime execution. Do this before Connect STID.',
+      why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.',
       done: data.provisionState === 'complete',
       busy: data.provisionState === 'running' || Boolean(data.jobs.seed),
       action: 'Seed & provision',

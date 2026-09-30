@@ -110,15 +110,15 @@ function relatedNodes(node: KnowledgeNode, nodes: KnowledgeNode[], edges: Knowle
   return [...found.values()]
 }
 
-export function knowledgeGraphScope(graph: KnowledgeGraph, scope: 'asset' | 'facility' | 'all', selectedId?: string): Set<string> | undefined {
+export function knowledgeGraphScope(graph: KnowledgeGraph, scope: 'asset' | 'facility' | 'all', selectedId?: string, selectedAssetId?: string): Set<string> | undefined {
   if (scope === 'all') return undefined
   const selected = graph.nodes.find(node => node.id === selectedId)
   if (!selected) return undefined
+  const asset = graph.nodes.find(node => node.type === 'equipment' && node.entityId === (selectedAssetId ?? selected.equipmentId)) ?? selected
   if (scope === 'facility') {
-    return selected.facilityId ? new Set(graph.nodes.filter(node => node.facilityId === selected.facilityId).map(node => node.id)) : new Set([selected.id])
+    return asset.facilityId ? new Set(graph.nodes.filter(node => node.facilityId === asset.facilityId).map(node => node.id)) : new Set([selected.id])
   }
-  const asset = graph.nodes.find(node => node.type === 'equipment' && node.entityId === selected.equipmentId) ?? selected
-  const visible = new Set([asset.id, selected.id])
+  const visible = new Set([asset.id])
   for (const node of graph.nodes) if (asset.equipmentId && node.equipmentId === asset.equipmentId) visible.add(node.id)
   for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'system', [])) visible.add(node.id)
   for (const node of relatedNodes(asset, graph.nodes, graph.edges, 'facility', ['system'])) visible.add(node.id)
@@ -136,6 +136,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   if (!native.nodes.length) return unavailable('The selected Ontology backing graph contains no entities. Check Manage graph materialization and the verified workspace, Ontology, and graph mapping, then retry.')
   const nodes: KnowledgeNode[] = []
   const edges: KnowledgeEdge[] = []
+  const signalBindings: Array<{ source: KnowledgeNode; target: KnowledgeNode }> = []
   const readings = new Map(input.telemetry.map(item => [item.opcuaNodeId, item]))
   const byOid = new Map<string, KnowledgeNode>()
   for (const raw of native.nodes) {
@@ -153,7 +154,10 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     const roleNames = entity ? [entity.localName, entity.name, sourceRole] : []
     const role = roleNames.map(name => name ? roles[name] : undefined).find(Boolean)
     const properties = raw.properties
-    const keyValues = entity?.entityIdParts.map(key => text(properties[key]))
+    const keyValues = entity?.entityIdParts.map(key => {
+      const name = Object.entries(entity.propertyMetadata ?? {}).find(([, property]) => property.id === key)?.[0] ?? key
+      return text(properties[name])
+    })
     const contractKey = keyValues?.length && keyValues.every(Boolean) ? keyValues.join('|') : undefined
     const entityId = contractKey ?? (role ? text(properties[role.key]) : undefined)
     const type = role?.type ?? 'ontology'
@@ -161,21 +165,39 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     if (nodes.some(node => node.id === id)) return unavailable(`Native entities have an ambiguous ${type} identity ${entityId}; cannot safely join operational context.`)
     const opcuaNodeId = (type === 'signal' || type === 'instrument') ? text(properties.opcua_node_id) : undefined
     const reading = opcuaNodeId ? readings.get(opcuaNodeId) : undefined
-    const label = text(properties.tag ?? properties.facility_name ?? properties.system_name ?? properties.equipment_name
+    let label = text(properties.tag ?? properties.facility_name ?? properties.system_name ?? properties.equipment_name
       ?? Object.entries(properties).find(([key]) => key.endsWith('_name') || key === 'name')?.[1]) ?? entityId ?? raw.oid
+    let subtitle = (entity?.localName ?? raw.labels[0] ?? 'Ontology entity').replaceAll('_', ' ')
+    let presentation = properties
+    let provenance = `Fabric Ontology · ${native.graphModelName} · ${type === 'ontology' ? `${entity?.localName ?? raw.labels[0] ?? 'Ontology entity'} ` : ''}materialized graph node`
+    if (type === 'facility') {
+      label = text(properties.facility_name) ?? entityId ?? raw.oid
+      subtitle = text(properties.type) ?? 'Facility'
+      presentation = { Type: properties.type, Country: properties.country, Commissioned: properties.commissioned_date, Latitude: properties.lat, Longitude: properties.lon }
+    } else if (type === 'system') {
+      label = text(properties.system_name) ?? entityId ?? raw.oid
+      presentation = { 'System ID': entityId, 'OAG RDS code': properties.oag_rds_system_code, 'Equipment count': 0 }
+    } else if (type === 'equipment') {
+      label = text(properties.tag) ?? entityId ?? raw.oid
+      subtitle = text(properties.equipment_type_name ?? properties.equipment_type_code) ?? 'Equipment'
+      presentation = { 'Equipment ID': entityId, Type: properties.equipment_type_name, Manufacturer: properties.manufacturer, Model: properties.model, Criticality: properties.criticality, Status: properties.status, Installed: properties.install_date, Active: properties.is_active }
+    } else if (type === 'instrument') {
+      label = text(properties.tag) ?? entityId ?? raw.oid
+      subtitle = reading ? `${reading.value.toLocaleString()} ${text(properties.unit) ?? ''}`.trim() : text(properties.instrument_type) ?? 'Instrument'
+      presentation = { 'Instrument ID': entityId, Type: properties.instrument_type, 'OPC UA node': opcuaNodeId, Unit: properties.unit, Active: properties.is_active, 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime }
+    } else if (type === 'signal') {
+      label = `Signal · ${text(properties.tag ?? properties.signal_type ?? properties.instrument_id) ?? entityId ?? raw.oid}`
+      subtitle = reading ? `${reading.value.toLocaleString()} ${text(properties.unit) ?? ''}`.trim() : text(properties.signal_type) ?? 'Time-series signal'
+      presentation = { ...properties, 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime }
+      provenance = `Fabric Ontology · ${native.graphModelName} · signal_master node with Eventhouse time-series binding`
+    }
     const node: KnowledgeNode = {
-      id, entityId: entityId ?? raw.oid, type, label,
-      subtitle: reading ? `${reading.value.toLocaleString()} ${text(properties.unit) ?? ''}`.trim() : text(properties.equipment_type_name ?? properties.instrument_type) ?? entity?.name ?? raw.labels.join(', '),
+      id, entityId: entityId ?? raw.oid, type, label, subtitle,
       status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
       nativeOid: raw.oid, ontologyEntityTypeId: entity?.id,
       facilityId: type === 'facility' ? entityId : undefined,
       equipmentId: type === 'equipment' ? entityId : undefined,
-      properties: {
-        ...presentGraphProperties(properties), 'Native OID': raw.oid, 'Native labels': raw.labels.join(', '), 'Ontology entity': entity?.name ?? raw.labels.join(', '),
-        ...(opcuaNodeId ? { 'OPC UA node': opcuaNodeId, Unit: text(properties.unit), 'Latest value': reading?.value, Quality: reading?.quality, 'Event time': reading?.eventTime } : {}),
-      },
-      reading,
-      provenance: `Fabric Ontology v2 · ${native.graphModelName} · native materialized graph node${entity ? ` · ${entity.name}` : ' · unrecognized entity type'}${reading ? ' · KQL Eventhouse time-series enrichment via opcua_node_id' : ''}`,
+      properties: presentGraphProperties(presentation), reading, provenance,
     }
     nodes.push(node)
     byOid.set(raw.oid, node)
@@ -194,6 +216,10 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     if (candidates.length && matches.length !== 1) return unavailable(`Native relationship ${raw.oid} does not unambiguously match the Ontology contract's directed endpoints.`)
     const relationship = matches[0]
     const name = relationship?.name ?? raw.labels.join(', ') ?? 'RELATED TO'
+    if (source.type === 'signal' && target.type === 'instrument'
+      && (name === 'signals_from_instruments' || relationship?.name.endsWith('#signals_from_instruments'))) {
+      signalBindings.push({ source, target })
+    }
     const type = source.type === 'signal' || target.type === 'signal' ? 'has-signal' : source.type === 'instrument' || target.type === 'instrument' ? 'has-instrument' : 'contains'
     edges.push({
       id: `native-edge:${raw.oid}`, nativeOid: raw.oid, source: source.id, target: target.id, type,
@@ -203,7 +229,34 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     })
   }
 
+  const sourceCounts = new Map<string, number>()
+  const targetCounts = new Map<string, number>()
+  for (const { source, target } of signalBindings) {
+    sourceCounts.set(source.id, (sourceCounts.get(source.id) ?? 0) + 1)
+    targetCounts.set(target.id, (targetCounts.get(target.id) ?? 0) + 1)
+  }
+  const collapsed = new Map<string, string>()
+  for (const { source, target } of signalBindings) {
+    if (sourceCounts.get(source.id) !== 1 || targetCounts.get(target.id) !== 1) continue
+    collapsed.set(source.id, target.id)
+    target.properties['Signal entity'] = source.entityId
+    target.provenance = `Fabric Ontology · ${native.graphModelName} · combined one-to-one instruments + signal_master node with Eventhouse time-series binding`
+  }
+  for (let index = nodes.length - 1; index >= 0; index--) if (collapsed.has(nodes[index].id)) nodes.splice(index, 1)
+  for (let index = edges.length - 1; index >= 0; index--) {
+    const relationship = edges[index]
+    const remapped = collapsed.has(relationship.source) || collapsed.has(relationship.target)
+    relationship.source = collapsed.get(relationship.source) ?? relationship.source
+    relationship.target = collapsed.get(relationship.target) ?? relationship.target
+    if (remapped && relationship.source === relationship.target) edges.splice(index, 1)
+  }
+
   for (const node of nodes) {
+    if (node.type === 'system') {
+      const count = relatedNodes(node, nodes, edges, 'equipment', []).length
+      node.subtitle = `${count} connected assets`
+      node.properties['Equipment count'] = count
+    }
     if (node.type !== 'facility') {
       const facilities = relatedNodes(node, nodes, edges, 'facility', ['system', ...(node.type === 'equipment' ? [] : ['equipment' as const, 'instrument' as const, 'signal' as const])])
       if (facilities.length === 1) node.facilityId = facilities[0].entityId
@@ -217,7 +270,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const orders = input.workOrders.filter(order => equipment.has(order.equipmentId))
   const openNodeIds = new Set(orders.filter(order => !['completed', 'cancelled'].includes(order.status.toLowerCase())).map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
   for (const node of nodes) {
-    const opcuaNodeId = node.properties['OPC UA node']
+    const opcuaNodeId = node.properties['OPC UA node'] ?? node.properties.opcua_node_id
     if (opcuaNodeId && node.equipmentId && openNodeIds.has(`${node.equipmentId}|${opcuaNodeId}`)) {
       node.status = twinStatus({ id: node.id, label: node.label, nodeId: String(opcuaNodeId), value: node.reading?.value, quality: node.reading?.quality, hasOpenIssue: true })
     }
@@ -228,20 +281,20 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   }
 
   for (const model of input.models.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('model', model.id), entityId: model.id, type: 'model', label: model.modelName, subtitle: `${model.format}${model.version ? ` · ${model.version}` : ''}`, status: 'ok', equipmentId: model.equipmentId, properties: { Format: model.format, Version: model.version, URL: model.modelUrl, 'File size MB': model.fileSizeMb }, provenance: 'SQL operational enrichment · Asset3DModel' })
+    nodes.push({ id: nodeId('model', model.id), entityId: model.id, type: 'model', label: model.modelName, subtitle: `${model.format}${model.version ? ` · ${model.version}` : ''}`, status: 'ok', equipmentId: model.equipmentId, properties: { Format: model.format, Version: model.version, URL: model.modelUrl, 'File size MB': model.fileSizeMb }, provenance: 'Rayfin operational database · Asset3DModel' })
     edges.push(edge(equipment.get(model.equipmentId)!.id, nodeId('model', model.id), 'has-model', 'HAS MODEL'))
   }
   for (const order of orders) {
     const closed = ['completed', 'cancelled'].includes(order.status.toLowerCase())
-    nodes.push({ id: nodeId('work-order', order.id), entityId: order.workOrderNumber, type: 'work-order', label: order.workOrderNumber, subtitle: order.title, status: closed ? 'ok' : order.priority.toLowerCase() === 'critical' ? 'crit' : 'warn', equipmentId: order.equipmentId, properties: { Title: order.title, Priority: order.priority, Status: order.status, Created: String(order.createdAt), Due: order.dueAt ? String(order.dueAt) : undefined }, provenance: 'SQL operational enrichment · WorkOrder' })
+    nodes.push({ id: nodeId('work-order', order.id), entityId: order.workOrderNumber, type: 'work-order', label: order.workOrderNumber, subtitle: order.title, status: closed ? 'ok' : order.priority.toLowerCase() === 'critical' ? 'crit' : 'warn', equipmentId: order.equipmentId, properties: { Title: order.title, Priority: order.priority, Status: order.status, Created: String(order.createdAt), Due: order.dueAt ? String(order.dueAt) : undefined }, provenance: 'Rayfin operational database · WorkOrder' })
     edges.push(edge(nodeId('work-order', order.id), equipment.get(order.equipmentId)!.id, 'affects', 'AFFECTS'))
   }
   for (const inspection of input.inspections.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('inspection', inspection.id), entityId: inspection.id, type: 'inspection', label: inspection.inspectionType, subtitle: inspection.result, status: /fail|issue|attention/i.test(inspection.result) ? 'warn' : 'ok', equipmentId: inspection.equipmentId, properties: { Result: inspection.result, Findings: inspection.findings, Inspected: String(inspection.inspectedAt), 'Next due': inspection.nextDueAt ? String(inspection.nextDueAt) : undefined }, provenance: 'SQL operational enrichment · Inspection' })
+    nodes.push({ id: nodeId('inspection', inspection.id), entityId: inspection.id, type: 'inspection', label: inspection.inspectionType, subtitle: inspection.result, status: /fail|issue|attention/i.test(inspection.result) ? 'warn' : 'ok', equipmentId: inspection.equipmentId, properties: { Result: inspection.result, Findings: inspection.findings, Inspected: String(inspection.inspectedAt), 'Next due': inspection.nextDueAt ? String(inspection.nextDueAt) : undefined }, provenance: 'Rayfin operational database · Inspection' })
     edges.push(edge(nodeId('inspection', inspection.id), equipment.get(inspection.equipmentId)!.id, 'documents', 'DOCUMENTS'))
   }
   for (const notification of input.notifications.filter(item => equipment.has(item.equipmentId))) {
-    nodes.push({ id: nodeId('notification', notification.id), entityId: notification.id, type: 'notification', label: notification.summary, subtitle: `${notification.severity} · ${notification.status}`, status: /critical|high/i.test(notification.severity) ? 'crit' : 'warn', equipmentId: notification.equipmentId, properties: { Severity: notification.severity, Status: notification.status, Reported: String(notification.reportedAt), 'OPC UA node': notification.opcuaNodeId }, provenance: 'SQL operational enrichment · MaintenanceNotification' })
+    nodes.push({ id: nodeId('notification', notification.id), entityId: notification.id, type: 'notification', label: notification.summary, subtitle: `${notification.severity} · ${notification.status}`, status: /critical|high/i.test(notification.severity) ? 'crit' : 'warn', equipmentId: notification.equipmentId, properties: { Severity: notification.severity, Status: notification.status, Reported: String(notification.reportedAt), 'OPC UA node': notification.opcuaNodeId }, provenance: 'Rayfin operational database · MaintenanceNotification' })
     edges.push(edge(nodeId('notification', notification.id), equipment.get(notification.equipmentId)!.id, 'reports', 'REPORTS'))
   }
   for (const node of nodes) {

@@ -51,7 +51,7 @@
 # - Streaming (Eventstream with OPC UA–like telemetry)
 # - Eventhouse & KQL DB
 # - Ontology v2 (TMDL entities, relationships, and data bindings)
-# - Application asset topology from GraphQL rows plus the v2 semantic contract
+# - Native ontology-owned graph, enriched by KQL telemetry and operational SQL
 # - Required v2 Data Agent and full Operations Agent provisioning, with explicit opt-out
 #
 # **V2-only contract:** every selected live ontology must report integer
@@ -697,7 +697,7 @@
 # ## Example Validation Scenarios
 #
 # These are candidate application/query scenarios, not verified agent capabilities.
-# Use GraphQL rows + the v2 semantic contract, KQL, and SQL projection where supported;
+# Use the v2 ontology-owned native graph, enriched by KQL and operational SQL;
 # agent publication and successful setup alone do not prove these queries can execute.
 # 
 # - Which equipment shows abnormal vibration and has open work orders?

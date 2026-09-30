@@ -218,8 +218,12 @@ class CapabilityTests(unittest.TestCase):
         for rule in rules.values():
             for binding in rule["ActionBinding"]["ActionBindings"]:
                 self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
-        with self.assertRaisesRegex(RuntimeError, "playbook"):
-            ns["build_configurations"](copy_playbook=False)
+        manual = ns["build_configurations"](
+            copy_playbook=False, datasource_id="v2-ontology",
+            pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+        self.assertEqual(manual, {key: value for key, value in config.items() if key != "playbook"})
+        ns["ops_agent_copy_playbook"] = False
+        self.assertNotIn("playbook", ns["build_configurations"]())
 
     def test_operations_auth_selects_notebook_pbi_token(self):
         get_token = Mock(return_value="offline-token")
@@ -266,12 +270,12 @@ class CapabilityTests(unittest.TestCase):
                     check["verify_operations_readback"]("agent", "ontology", expected)
 
     def test_operations_provisioning_attempts_all_business_components_and_raises_actual_failure(self):
-        for outcome in ("success", "product_rejection", "missing_mailbox"):
+        for outcome in ("success", "manual_playbook", "product_rejection", "missing_mailbox"):
             ns = functions(
                 "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
                 get_ontology_generation=Mock(return_value=2),
                 ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
-                ops_agent_copy_playbook=True, ops_agent_should_run=False,
+                ops_agent_copy_playbook=outcome != "manual_playbook", ops_agent_should_run=False,
                 ops_agent_run_as_user="", ops_agent_name="agent", OPS_AGENT_DESCRIPTION="description",
                 get_access_token_for_fabric=Mock(), check_run_as=Mock(),
                 resolve_email_connection_id=Mock(return_value=None if outcome == "missing_mailbox" else "mailbox"),
@@ -285,7 +289,7 @@ class CapabilityTests(unittest.TestCase):
                 update_operations_agent_definition=Mock(), verify_operations_readback=Mock())
             if outcome == "product_rejection":
                 ns["update_operations_agent_definition"].side_effect = RuntimeError("actual product failure")
-            if outcome == "success":
+            if outcome in ("success", "manual_playbook"):
                 result = ns["deploy_operations_agent"]("ontology")
                 self.assertEqual(result["email_pipeline_id"], "pipeline")
                 self.assertEqual(result["ops_agent_id"], "agent")
@@ -295,7 +299,7 @@ class CapabilityTests(unittest.TestCase):
             ns["create_data_pipeline"].assert_called_once()
             ns["create_operations_agent"].assert_called_once()
             ns["build_configurations"].assert_called_once_with(
-                should_run=False, copy_playbook=True, team_id="team", channel_id="channel",
+                should_run=False, copy_playbook=outcome != "manual_playbook", team_id="team", channel_id="channel",
                 datasource_id="ontology", pipeline_id="pipeline")
             ns["update_operations_agent_definition"].assert_called_once()
             if outcome == "product_rejection":
