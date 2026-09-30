@@ -8,6 +8,7 @@ import re
 import time
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -180,7 +181,10 @@ class CapabilityTests(unittest.TestCase):
             self.assertNotEqual(payload["status"], "ready")
 
     def operations_namespace(self):
-        ns = functions("010", "build_configurations")
+        ns = functions(
+            "010", "build_configurations", "refresh_rule_time_ranges",
+            datetime=datetime, timedelta=timedelta, timezone=timezone,
+        )
         names = {"EMBEDDED_OPS_CONFIG_B64", "ACTION_PARAMETERS"}
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
@@ -191,7 +195,8 @@ class CapabilityTests(unittest.TestCase):
     def test_full_operations_configuration_preserves_business_capabilities(self):
         ns = self.operations_namespace()
         config = ns["build_configurations"](
-            datasource_id="v2-ontology", pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+            datasource_id="v2-ontology", pipeline_id="email-pipeline", team_id="team",
+            channel_id="channel", rule_window_now=datetime(2026, 9, 30, tzinfo=timezone.utc))
         self.assertFalse(config["shouldRun"])
         conf = config["configuration"]
         self.assertEqual(conf["dataSources"], {
@@ -212,11 +217,17 @@ class CapabilityTests(unittest.TestCase):
         self.assertTrue(any("BAD" in rule["Name"] for rule in rules.values()))
         self.assertTrue(any("UNCERTAIN" in rule["Name"] for rule in rules.values()))
         for rule in rules.values():
+            expression = json.loads(rule["ClassExpression"]["Expression"])
+            self.assertEqual(
+                expression["TimeSeriesSelector"]["TimeRange"]["End"],
+                "2036-09-27T00:00:00Z",
+            )
             for binding in rule["ActionBinding"]["ActionBindings"]:
                 self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
         manual = ns["build_configurations"](
             copy_playbook=False, datasource_id="v2-ontology",
-            pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+            pipeline_id="email-pipeline", team_id="team", channel_id="channel",
+            rule_window_now=datetime(2026, 9, 30, tzinfo=timezone.utc))
         self.assertEqual(manual, {key: value for key, value in config.items() if key != "playbook"})
         ns["ops_agent_copy_playbook"] = False
         self.assertNotIn("playbook", ns["build_configurations"]())
