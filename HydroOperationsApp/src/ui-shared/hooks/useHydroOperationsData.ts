@@ -20,9 +20,16 @@ const fmtSince = (ms: number) => { if (ms < 5000) return 'just now'; const s = M
 const fmtElapsed = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(s / 60); const r = s % 60; return m ? `${m}m ${r}s` : `${r}s` }
 const humanStatus = (status: JobStatus) => status === 'NotStarted' ? 'Queued' : status === 'InProgress' ? 'Running' : status
 
-const SETUP_STORAGE_KEY = 'hydro.v2.setup.v1'
-const DATA_CACHE_KEY = 'hydro.data-cache.v1'
-const JOBS_STORAGE_KEY = 'hydro.jobs.v1'
+const deploymentStorageScope = [
+  import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID,
+  import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID,
+  import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID,
+  import.meta.env.VITE_RAYFIN_STID_GRAPHQL_ID,
+].filter(Boolean).join('.')
+const scopedStorageKey = (key: string) => `${key}.${deploymentStorageScope || 'unconfigured'}`
+const SETUP_STORAGE_KEY = scopedStorageKey('hydro.v2.setup.v1')
+const DATA_CACHE_KEY = scopedStorageKey('hydro.data-cache.v1')
+const JOBS_STORAGE_KEY = scopedStorageKey('hydro.jobs.v1')
 const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
