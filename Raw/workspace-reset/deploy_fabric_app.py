@@ -1109,21 +1109,21 @@ def validate_entra_live_auth_with_reauth(
     )
 
 
+def rayfin_environment(tenant: str) -> dict[str, str]:
+    """Pass the validated Azure CLI identity only to each Rayfin child process."""
+    token = fabric_headers(tenant)["Authorization"].removeprefix("Bearer ").strip()
+    if not token:
+        raise DeployError("Azure CLI returned an empty Fabric token; Rayfin deployment stopped.")
+    return {**os.environ, "RAYFIN_TOKEN": token, "RAYFIN_TENANT_ID": tenant}
+
+
 def ensure_rayfin_login(tenant: str) -> None:
-    try:
-        status = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
-    except DeployError:
-        status = ""
-    if tenant.casefold() in status.casefold():
-        print("Rayfin is already signed into the target tenant.", flush=True)
-        return
-    if status:
-        run_stream(rayfin24("logout"), cwd=APP_DIR)
-    print("Rayfin sign-in is opening in your browser...", flush=True)
-    run_stream(rayfin24("login", "--tenant", tenant, "--select"), cwd=APP_DIR)
-    verified = run_stream(rayfin24("login", "status"), cwd=APP_DIR)
-    if tenant.casefold() not in verified.casefold():
-        raise DeployError("Rayfin sign-in completed, but its tenant does not match the requested tenant.")
+    status = run_stream(
+        rayfin24("login", "status"), cwd=APP_DIR, env=rayfin_environment(tenant),
+    )
+    if "signed in (ambient token via rayfin_token)" not in status.casefold():
+        raise DeployError("Rayfin did not accept the tenant-scoped Azure CLI token.")
+    print("Rayfin is using the tenant-scoped Azure CLI identity; its separate MSAL cache is not required.", flush=True)
 
 
 def current_git_push_target() -> tuple[str, str]:
@@ -1341,7 +1341,7 @@ def deploy(args: argparse.Namespace) -> None:
         command = rayfin24("up", "staticapp", "deploy")
     else:
         command = rayfin24("up", "--workspace-id", workspace_id, "--yes")
-    output = run_stream(command, cwd=APP_DIR)
+    output = run_stream(command, cwd=APP_DIR, env=rayfin_environment(args.tenant))
     urls = HOSTING_URL_RE.findall(output)
     if not urls:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
@@ -1372,6 +1372,7 @@ def deploy(args: argparse.Namespace) -> None:
             "--exclude-services", "staticHosting", "--yes",
         ),
         cwd=APP_DIR,
+        env=rayfin_environment(args.tenant),
     )
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)

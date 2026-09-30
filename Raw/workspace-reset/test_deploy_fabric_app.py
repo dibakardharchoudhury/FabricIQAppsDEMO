@@ -16,6 +16,37 @@ SPEC.loader.exec_module(DEPLOY)
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_rayfin_login_uses_tenant_scoped_azure_cli_token_not_stale_msal_cache(self):
+        with (
+            patch.dict(os.environ, {"RAYFIN_TOKEN": "old-token", "RAYFIN_TENANT_ID": "old-tenant"}),
+            patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer scoped-token"}) as headers,
+            patch.object(DEPLOY, "rayfin24", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_stream", return_value="Signed in (ambient token via RAYFIN_TOKEN)") as run,
+        ):
+            DEPLOY.ensure_rayfin_login("target-tenant")
+            self.assertEqual(os.environ["RAYFIN_TOKEN"], "old-token")
+            self.assertEqual(os.environ["RAYFIN_TENANT_ID"], "old-tenant")
+
+        headers.assert_called_once_with("target-tenant")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["login", "status"])
+        self.assertEqual(run.call_args.kwargs["env"]["RAYFIN_TOKEN"], "scoped-token")
+        self.assertEqual(run.call_args.kwargs["env"]["RAYFIN_TENANT_ID"], "target-tenant")
+
+    def test_rayfin_login_rejects_unverified_or_expired_status(self):
+        with (
+            patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer scoped-token"}),
+            patch.object(DEPLOY, "rayfin24", side_effect=lambda *args: list(args)),
+            patch.object(DEPLOY, "run_stream", return_value="Tenant: target-tenant\nToken: expired or unavailable"),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "tenant-scoped Azure CLI token"):
+                DEPLOY.ensure_rayfin_login("target-tenant")
+
+    def test_rayfin_environment_rejects_empty_azure_cli_token(self):
+        with patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer "}):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "empty Fabric token"):
+                DEPLOY.rayfin_environment("target-tenant")
+
     def test_spa_name_has_a_stable_configurable_default(self):
         self.assertEqual(DEPLOY.DEFAULT_APP_DISPLAY_NAME, "Hydro Operations Fabric Client")
         self.assertTrue(DEPLOY.APP_DISPLAY_NAME)
@@ -643,6 +674,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}]),
             patch.object(
                 DEPLOY,
                 "rayfin24",
@@ -668,6 +700,9 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.deploy(args)
 
         self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
+        self.assertEqual(run_stream.call_args_list[0].kwargs["env"]["RAYFIN_TOKEN"], "first")
+        self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[2].kwargs["env"])
 
     def test_existing_registered_origin_reapplies_backend_configuration(self):
         hosting_url = "https://fast.webapp.fabricapps.net"
@@ -695,6 +730,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(DEPLOY, "rayfin_environment", return_value={}),
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", return_value=["setup-live-auth"]),
             patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,

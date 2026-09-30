@@ -80,6 +80,12 @@ at least 1.35.0-alpha.1413. Updating only the CLI is insufficient: its static-ho
 preflight also requires a compatible auth SDK, provider, client, and core package.
 Use the locked repository dependency through the orchestrator, not an older globally installed CLI.
 
+The orchestrator supplies a tenant-scoped Azure CLI Fabric token to each Rayfin child process
+through the CLI's supported `RAYFIN_TOKEN` mechanism. It does not persist that token in environment
+files or depend on Rayfin's separate MSAL cache, which can report a signed-in account while its
+token is expired or unavailable after an SDK upgrade. Token acquisition is repeated before each
+deployment command; Azure CLI sign-in and Conditional Access requirements still apply.
+
 > [!IMPORTANT]
 > **Browser sign-in requires a tenant-scoped Entra SPA.** `Hydro Operations Fabric Client` is the
 > deployer's deterministic default display name for discovery/creation, not an Entra platform
