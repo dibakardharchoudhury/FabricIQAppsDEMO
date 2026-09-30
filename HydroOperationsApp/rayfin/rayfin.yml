@@ -45,11 +45,13 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
+      - https://maple-edge-ce46abd902-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist
     buildCommand: npm run build
     indexDocument: index.html
+    assetAccess: protected
   data:
     enabled: true
     dialect: mssql

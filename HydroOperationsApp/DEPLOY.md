@@ -21,8 +21,10 @@ the current v2 rollout, and Operations Agent automation is blocked pending a ver
 contract. Data Agent `enabled` attempts real configuration with source-identity/readback checks;
 Operations Agent `enabled` fails before writes. `disabled` skips the respective capability.
 See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
-The deployment orchestrator's `SUCCESS` verifies app deployment, not optional agent execution or
-native graph readiness.
+The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
+availability, which may be an identity-matched Fabric private-hosting sign-in gate rather than
+the application shell. It does not verify interactive authenticated application acceptance,
+optional agent execution, or native graph readiness.
 
 ### Native graph prerequisite (manual portal operation)
 
@@ -71,7 +73,8 @@ python Raw/workspace-reset/deploy_fabric_app.py `
 
 Use `--client-id <spa-app-guid>` only when SPA discovery is ambiguous. The script owns environment
 validation, Node 24, Rayfin state reuse/provisioning, static deployment, SPA setup, redirect
-preservation, permission/consent checks, hosted-page verification, and generated-origin persistence.
+preservation, permission/consent checks, hosted-page availability verification, and generated-origin
+persistence. Interactive authenticated application acceptance remains a separate browser check.
 The remaining numbered sections document those phases for operators and troubleshooting.
 
 The repository locks the Rayfin CLI and SDK release set to **1.36.0**. The current Fabric
@@ -388,6 +391,30 @@ backend warm-up and token HTTP 5xx responses are retried with bounded backoff; m
 `Access-Control-Allow-Origin`, required headers, GraphQL readiness, or persistent token 5xx remains
 a deployment failure.
 
+### Protected hosting availability versus application acceptance
+
+Rayfin 1.36 protected static hosting can return **HTTP 401 JSON** to a generic `Accept: */*`
+request while returning **HTTP 200 HTML** to `Accept: text/html`. That HTML can be Fabric's
+**Sign in to continue** private-hosting gate, not the Hydro Operations application bundle.
+The orchestrator requests HTML without following redirects and accepts only an identifiable
+Hydro Operations production app shell or the recognized Fabric gate. For a gate, its bootstrap
+must point to the official Fabric broker and match the deployment's tenant, workspace, and
+validated AppBackend ID. A bare 401, redirect, arbitrary HTML, malformed gate, or mismatched
+identity still fails verification.
+
+The output distinguishes `HOSTING_VERIFICATION=protected-sign-in-gate` from
+`HOSTING_VERIFICATION=app-shell`, and prints `INTERACTIVE_APP_ACCEPTANCE=not-performed`.
+The gate result verifies guarded hosting availability; **the application bundle/UI was not
+loaded**. Even the app-shell result does not establish JavaScript execution or authenticated
+UI behavior. The final `SUCCESS` reports deployment checks, not completed browser acceptance.
+
+Preserve the CLI-generated `services.staticHosting.assetAccess: protected` setting. Do not
+make hosting public, hand-edit generated state/redirects, or enable external Entra exchange to
+make a probe pass. An Azure CLI Fabric bearer token is not a substitute for the hosting browser
+sign-in flow. For interactive acceptance, open the deployed URL, complete Fabric sign-in with an
+authorized account, then verify that Hydro Operations loads and its required authenticated
+features work. Record that acceptance separately from the orchestrator's read-only hosting probe.
+
 The orchestrator records the generated **hosting URL** and runs the idempotent `setup-live-auth`
 workflow. It preserves every existing Entra SPA redirect registration and adds only the current
 hosting origin plus `localhost:5173`; never remove existing registrations or recreate historical
@@ -526,7 +553,8 @@ without re-provisioning, use `rayfin switch <workspace-name>` (it rewrites `rayf
 For an agent-driven deployment, return to the repository root and run the one-shot orchestrator with
 the new tenant/workspace instead of continuing these phases individually. It provisions the schema,
 deploys the static app, preserves and extends SPA redirects, configures live auth, and verifies the
-hosted page.
+hosted app shell or identity-matched protected sign-in gate. Interactive authenticated application
+acceptance remains separate.
 
 ### Node 24 wrapper — gotchas
 

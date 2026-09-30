@@ -19,9 +19,10 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -83,6 +84,141 @@ class AzureCliReauthenticationError(DeployError):
 
 
 T = TypeVar("T")
+
+
+class _HostingPage(HTMLParser):
+    """Read identity-bearing HTML elements without executing the hosting sign-in flow."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.titles: list[str] = []
+        self.headings: list[str] = []
+        self.bootstraps: list[str] = []
+        self.module_sources: list[str] = []
+        self.signin_button = False
+        self.signin_body = False
+        self.app_root = False
+        self._capture: tuple[str, list[str]] | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "title":
+            self._capture = (tag, self.titles)
+            self._text = []
+        elif tag == "h1":
+            self._capture = (tag, self.headings)
+            self._text = []
+        elif tag == "script":
+            if attributes.get("id") == "sh-bootstrap" and attributes.get("type") == "application/json":
+                self._capture = (tag, self.bootstraps)
+                self._text = []
+            if attributes.get("type") == "module" and attributes.get("src"):
+                self.module_sources.append(str(attributes["src"]))
+        elif tag == "body" and attributes.get("data-state") == "signin":
+            self.signin_body = True
+        elif tag == "button" and attributes.get("id") == "sh-signin":
+            self.signin_button = True
+        elif tag == "div" and attributes.get("id") == "root":
+            self.app_root = True
+
+    def handle_data(self, data: str) -> None:
+        if self._capture:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._capture and self._capture[0] == tag:
+            self._capture[1].append("".join(self._text).strip())
+            self._capture = None
+            self._text = []
+
+
+def validate_hosted_page(
+    hosting_url: str, workspace_id: str, item_id: str, tenant_id: str
+) -> str:
+    """Verify app-shell or identity-matched protected-gate availability, not browser acceptance."""
+    if not HOSTING_URL_RE.fullmatch(hosting_url.removesuffix("/")):
+        raise DeployError("Hosting verification requires the generated HTTPS Fabric hosting origin.")
+    try:
+        # Protected hosting negotiates a browser gate for HTML; */* instead returns JSON 401.
+        response = requests.get(
+            hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False
+        )
+    except requests.RequestException as exc:
+        raise DeployError(f"Hosting availability verification failed: {exc}") from exc
+    content_type = response.headers.get("Content-Type", "")
+    if response.status_code != 200 or content_type.split(";", 1)[0].strip().lower() != "text/html":
+        raise DeployError(
+            f"Hosting verification failed: {hosting_url} returned HTTP {response.status_code} "
+            f"with Content-Type {content_type or '(missing)'}. Expected identifiable HTML; "
+            "an unauthorized response or redirect is not deployment verification."
+        )
+    page = _HostingPage()
+    page.feed(response.text)
+    page.close()
+    if page.bootstraps:
+        if (
+            len(page.bootstraps) != 1
+            or page.titles != ["Sign in required"]
+            or "Sign in to continue" not in page.headings
+            or not page.signin_body
+            or not page.signin_button
+        ):
+            raise DeployError("Hosting verification failed: unrecognized Fabric protected sign-in gate.")
+        try:
+            bootstrap = json.loads(page.bootstraps[0])
+        except (ValueError, TypeError) as exc:
+            raise DeployError("Hosting verification failed: invalid protected-gate bootstrap JSON.") from exc
+        if not isinstance(bootstrap, dict) or not isinstance(bootstrap.get("authorizeBrokerUrl"), str):
+            raise DeployError("Hosting verification failed: missing protected-gate broker identity.")
+        broker = urlparse(bootstrap["authorizeBrokerUrl"])
+        parameters = parse_qs(broker.query, keep_blank_values=True)
+        expected = {
+            "workspaceId": workspace_id, "itemType": "AppBackend", "itemId": item_id,
+            "extensionPath": "/brokeredauth", "ctid": tenant_id,
+        }
+        if (
+            bootstrap.get("brokerOrigin") != "https://app.fabric.microsoft.com"
+            or str(bootstrap.get("projectId", "")).casefold() != item_id.casefold()
+            or broker.scheme != "https"
+            or broker.netloc != "app.fabric.microsoft.com"
+            or broker.path != "/secureItemEmbed"
+            or broker.fragment
+            or any(
+                len(parameters.get(key, [])) != 1
+                or parameters[key][0].casefold() != value.casefold()
+                for key, value in expected.items()
+            )
+        ):
+            raise DeployError(
+                "Hosting verification failed: protected-gate Fabric broker, tenant, workspace, "
+                "or AppBackend identity does not match this deployment."
+            )
+        state = "protected-sign-in-gate"
+        print(
+            "Hosting availability verified: identity-matched Fabric protected sign-in gate. "
+            "The application bundle/UI was not loaded by this check.",
+            flush=True,
+        )
+    elif (
+        page.titles == ["Hydro Operations"]
+        and page.app_root
+        and any(re.fullmatch(r"/assets/index-[A-Za-z0-9_-]+\.js", source) for source in page.module_sources)
+    ):
+        state = "app-shell"
+        print(
+            "Hosting availability verified: Hydro Operations HTML shell references a built app bundle. "
+            "JavaScript execution and authenticated UI behavior were not tested.",
+            flush=True,
+        )
+    else:
+        raise DeployError(
+            "Hosting verification failed: HTML is neither the Hydro Operations app shell "
+            "nor an identity-matched Fabric protected sign-in gate."
+        )
+    print(f"HOSTING_VERIFICATION={state}", flush=True)
+    print("INTERACTIVE_APP_ACCEPTANCE=not-performed", flush=True)
+    return state
 
 
 def command_argv(executable: str, *args: str) -> list[str]:
@@ -1395,13 +1531,8 @@ def deploy(args: argparse.Namespace) -> None:
         )
 
     print("[8/8] Checking the hosted page, Fabric backend, and sign-in readiness", flush=True)
-    response = requests.get(hosting_url, timeout=60)
-    if response.status_code != 200 or "text/html" not in response.headers.get("Content-Type", ""):
-        raise DeployError(
-            f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
-            f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
-        )
     item_id = validate_fabric_app(workspace_id, args.tenant)
+    hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
     validate_appbackend_cors(api_url, hosting_url, publishable_key)
@@ -1421,7 +1552,11 @@ def deploy(args: argparse.Namespace) -> None:
         branch, _ = current_git_push_target()
         print(f"Persisting Rayfin redirect configuration to origin/{branch}...", flush=True)
         persist_generated_origin(workspace_name)
-    print(f"SUCCESS: Hydro Operations is live at {hosting_url}", flush=True)
+    print(
+        f"SUCCESS: Hydro Operations deployment checks passed at {hosting_url} "
+        f"(hosting: {hosting_state}; interactive authenticated app acceptance not performed).",
+        flush=True,
+    )
 
 
 def parse_args() -> argparse.Namespace:

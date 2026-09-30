@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.parse import urlencode
 
 
 MODULE_PATH = Path(__file__).with_name("deploy_fabric_app.py")
@@ -13,6 +14,29 @@ SPEC = importlib.util.spec_from_file_location("deploy_fabric_app", MODULE_PATH)
 assert SPEC and SPEC.loader
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
+
+def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenant="tenant.example"):
+    bootstrap = {
+        "authorizeBrokerUrl": "https://app.fabric.microsoft.com/secureItemEmbed?" + urlencode({
+            "workspaceId": workspace, "itemType": "AppBackend", "itemId": item,
+            "extensionPath": "/brokeredauth", "ctid": tenant,
+        }),
+        "brokerOrigin": "https://app.fabric.microsoft.com",
+        "projectId": item,
+        "handoffCodeParam": "_hc",
+        "codeVerifierHeader": "x-rayfin-sh-code-verifier",
+        "monikerHeader": "x-ms-workload-resource-moniker",
+        "sessionKey": "authSession",
+    }
+    return (
+        '<!doctype html><html><head><title>Sign in required</title></head>'
+        '<body data-state="signin"><span>Microsoft Fabric</span>'
+        '<h1>Sign in to continue</h1>'
+        '<p>This app is private. Sign in with your Microsoft Fabric account to open it.</p>'
+        '<button id="sh-signin" type="button">Sign in</button>'
+        '<script type="application/json" id="sh-bootstrap">'
+        + json.dumps(bootstrap) + '</script></body></html>'
+    )
 
 
 class DeployOrderTests(unittest.TestCase):
@@ -689,7 +713,7 @@ class DeployOrderTests(unittest.TestCase):
                     "live auth configured",
                 ],
             ) as run_stream,
-            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
+            patch.object(DEPLOY, "validate_hosted_page", return_value="app-shell"),
             patch.object(DEPLOY, "validate_fabric_app"),
             patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
             patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
@@ -734,13 +758,23 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", return_value=["setup-live-auth"]),
             patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,
-            patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
-            patch.object(DEPLOY, "validate_fabric_app"),
+            patch.object(
+                DEPLOY.requests,
+                "get",
+                side_effect=lambda url, **kwargs: Mock(
+                    status_code=200, headers={"Content-Type": "text/html; charset=utf-8"},
+                    text=protected_hosting_gate(),
+                ) if kwargs.get("headers", {}).get("Accept") == "text/html" else Mock(
+                    status_code=401, headers={"Content-Type": "application/json"}, text='{"error":"Unauthorized"}',
+                ),
+            ) as hosting_get,
+            patch.object(DEPLOY, "validate_fabric_app", return_value="appbackend-id"),
             patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
             patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
             patch.object(DEPLOY, "validate_appbackend_cors"),
             patch.object(DEPLOY, "validate_spa_redirect_preservation"),
             patch.object(DEPLOY, "validate_entra_live_auth"),
+            patch("builtins.print") as printed,
         ):
             DEPLOY.deploy(args)
 
@@ -751,6 +785,12 @@ class DeployOrderTests(unittest.TestCase):
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
         self.assertEqual(run_stream.call_args_list[2].args[0], ["setup-live-auth"])
+        hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
+        output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
+        self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)
+        self.assertIn("INTERACTIVE_APP_ACCEPTANCE=not-performed", output)
+        self.assertIn("SUCCESS: Hydro Operations deployment checks passed", output)
+        self.assertNotIn("Hydro Operations is live", output)
 
     def test_verifies_installed_rayfin_without_running_the_cli(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1028,6 +1068,120 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(merged, [current, "http://localhost:5173"])
         self.assertNotIn(stale, written)
         self.assertIn(f"      - {current}", written)
+
+
+class ProtectedHostingTests(unittest.TestCase):
+    hosting_url = "https://fast.webapp.fabricapps.net"
+
+    def verify(self, body, *, status=200, content_type="text/html; charset=utf-8"):
+        response = Mock(status_code=status, headers={"Content-Type": content_type}, text=body)
+        with patch.object(DEPLOY.requests, "get", return_value=response) as get:
+            result = DEPLOY.validate_hosted_page(
+                self.hosting_url, "workspace-id", "appbackend-id", "tenant.example"
+            )
+        get.assert_called_once_with(
+            self.hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False
+        )
+        return result
+
+    def test_identity_matched_fabric_gate_is_availability_not_app_acceptance(self):
+        with patch("builtins.print") as printed:
+            self.assertEqual(self.verify(protected_hosting_gate()), "protected-sign-in-gate")
+        output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
+        self.assertIn("application bundle/UI was not loaded", output)
+        self.assertIn("INTERACTIVE_APP_ACCEPTANCE=not-performed", output)
+
+    def test_gate_bootstrap_accepts_real_escaped_query_separators(self):
+        gate = protected_hosting_gate().replace("&", "\\u0026")
+        self.assertEqual(self.verify(gate), "protected-sign-in-gate")
+
+    def test_rejects_401_redirects_errors_and_non_html_even_with_gate_body(self):
+        for status, content_type in [
+            (401, "application/json"), (401, "text/html"), (403, "text/html"),
+            (302, "text/html"), (500, "text/html"), (200, "application/json"),
+            (200, "text/html-not-really"), (200, ""),
+        ]:
+            with self.subTest(status=status, content_type=content_type):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "HTTP"):
+                    self.verify(protected_hosting_gate(), status=status, content_type=content_type)
+
+    def test_rejects_gate_for_another_tenant_workspace_or_appbackend(self):
+        for parameters in [
+            {"workspace": "other-workspace"}, {"item": "other-appbackend"}, {"tenant": "other-tenant"},
+        ]:
+            with self.subTest(parameters=parameters):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "identity does not match"):
+                    self.verify(protected_hosting_gate(**parameters))
+
+    def test_rejects_untrusted_or_wrong_broker_identity_and_duplicate_query_keys(self):
+        gate = protected_hosting_gate()
+        for body in [
+            gate.replace("app.fabric.microsoft.com", "example.test"),
+            gate.replace("https://app.fabric.microsoft.com", "http://app.fabric.microsoft.com"),
+            gate.replace("/secureItemEmbed?", "/unrelated?"),
+            gate.replace("itemType=AppBackend", "itemType=Notebook"),
+            gate.replace("extensionPath=%2Fbrokeredauth", "extensionPath=%2Funrelated"),
+            gate.replace("workspaceId=workspace-id", "workspaceId=workspace-id&workspaceId=another"),
+            gate.replace('"projectId": "appbackend-id"', '"projectId": "another"'),
+        ]:
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "identity does not match"):
+                    self.verify(body)
+
+    def test_rejects_arbitrary_html_and_gate_lookalikes_or_malformed_bootstraps(self):
+        gate = protected_hosting_gate()
+        for body in [
+            "<html><title>It works</title><h1>Welcome</h1></html>",
+            "<html><title>Sign in required</title><h1>Sign in to continue</h1></html>",
+            gate.replace('<button id="sh-signin"', '<button id="not-the-gate"'),
+            gate.replace('data-state="signin"', 'data-state="error"'),
+            gate.replace("Sign in required", "Something else"),
+            gate.replace('{"authorizeBrokerUrl"', '{INVALID "authorizeBrokerUrl"'),
+            gate.replace('"authorizeBrokerUrl":', '"unknownField":'),
+            gate.replace("</body>", '<script type="application/json" id="sh-bootstrap">{}</script></body>'),
+            '<!-- ' + gate + ' -->',
+        ]:
+            with self.subTest(body=body):
+                with self.assertRaises(DEPLOY.DeployError):
+                    self.verify(body)
+
+    def test_accepts_hydro_app_shell_without_claiming_javascript_executed(self):
+        body = (
+            '<!doctype html><html><head><title>Hydro Operations</title></head>'
+            '<body><div id="root"></div><script type="module" crossorigin '
+            'src="/assets/index-ABC_123.js"></script></body></html>'
+        )
+        with patch("builtins.print") as printed:
+            self.assertEqual(self.verify(body, content_type="Text/HTML; charset=utf-8"), "app-shell")
+        output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
+        self.assertIn("JavaScript execution and authenticated UI behavior were not tested", output)
+        self.assertIn("INTERACTIVE_APP_ACCEPTANCE=not-performed", output)
+        for unexpected in [
+            body.replace('id="root"', 'id="other"'),
+            body.replace('/assets/index-ABC_123.js', 'https://example.test/index.js'),
+            body.replace('/assets/index-ABC_123.js', '/src/main.tsx'),
+            body.replace("Hydro Operations", "Another app"),
+        ]:
+            with self.subTest(body=unexpected):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "neither"):
+                    self.verify(unexpected)
+
+    def test_rejects_untrusted_hosting_origin_without_requesting_it(self):
+        with patch.object(DEPLOY.requests, "get") as get:
+            for url in [
+                "http://fast.webapp.fabricapps.net", "https://example.test",
+                "https://fast.webapp.fabricapps.net.example.test",
+                "https://fast.webapp.fabricapps.net/other",
+            ]:
+                with self.subTest(url=url):
+                    with self.assertRaisesRegex(DEPLOY.DeployError, "generated HTTPS Fabric"):
+                        DEPLOY.validate_hosted_page(url, "workspace-id", "appbackend-id", "tenant.example")
+            get.assert_not_called()
+
+    def test_network_failure_remains_a_deployment_error(self):
+        with patch.object(DEPLOY.requests, "get", side_effect=DEPLOY.requests.Timeout("Timed out")):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "availability verification failed"):
+                DEPLOY.validate_hosted_page(self.hosting_url, "workspace-id", "appbackend-id", "tenant.example")
 
 
 if __name__ == "__main__":
