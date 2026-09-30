@@ -325,6 +325,10 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const equipment = new Map(nodes.filter(node => node.type === 'equipment' && node.equipmentId).map(node => [node.entityId, node]))
   const orders = input.workOrders.filter(order => equipment.has(order.equipmentId))
   const openNodeIds = new Set(orders.filter(order => !['completed', 'cancelled'].includes(order.status.toLowerCase())).map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
+  const criticalOpenNodeIds = new Set(orders.filter(order =>
+    !['completed', 'cancelled'].includes(order.status.toLowerCase())
+    && order.priority.toLowerCase() === 'critical')
+    .map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
   for (const asset of equipment.values()) {
     const statuses = nodes.filter(node => ['instrument', 'signal'].includes(node.type) && node.equipmentId === asset.entityId).map(node => {
       const opcuaNodeId = String(node.properties['OPC UA node'] ?? node.properties.opcua_node_id ?? '')
@@ -332,6 +336,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
         id: node.id, label: node.label, nodeId: opcuaNodeId,
         value: node.reading?.value, quality: node.reading?.quality,
         hasOpenIssue: openNodeIds.has(`${asset.entityId}|${opcuaNodeId}`),
+        hasCriticalIssue: criticalOpenNodeIds.has(`${asset.entityId}|${opcuaNodeId}`),
       })
     })
     asset.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'

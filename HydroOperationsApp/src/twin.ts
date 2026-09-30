@@ -9,6 +9,7 @@ export type TwinSignal = {
   unit?: string
   quality?: string
   hasOpenIssue?: boolean
+  hasCriticalIssue?: boolean
   // ISO time of the reading itself (from the Eventhouse), used to show how stale the value is.
   eventTime?: string
 }
@@ -16,7 +17,9 @@ export type TwinSignal = {
 export type TwinStatus = 'crit' | 'warn' | 'ok' | 'nodata'
 
 export function twinStatus(signal: TwinSignal): TwinStatus {
-  return signal.hasOpenIssue ? 'crit' : twinSignalStatus(signal)
+  const signalStatus = twinSignalStatus(signal)
+  if (signalStatus === 'crit' || signal.hasCriticalIssue) return 'crit'
+  return signal.hasOpenIssue ? 'warn' : signalStatus
 }
 
 // Maintenance contributes to asset health, not the quality of an individual reading.

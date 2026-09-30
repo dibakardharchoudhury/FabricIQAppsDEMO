@@ -25,6 +25,9 @@ export function DigitalTwinPage() {
   )
   const readings = useMemo(() => new Map(data.facilityTelemetry.map(item => [item.opcuaNodeId, item])), [data.facilityTelemetry])
   const openOrderNodes = useMemo(() => new Set(data.openOrders.map(order => order.opcuaNodeId)), [data.openOrders])
+  const criticalOrderNodes = useMemo(() => new Set(data.openOrders
+    .filter(order => order.priority.toLowerCase() === 'critical')
+    .map(order => order.opcuaNodeId)), [data.openOrders])
   const treeStations = useMemo(() => data.stid ? buildDigitalTwinTree(data.stid) : [], [data.stid])
   const revealPath = useMemo(() => pathToAsset(treeStations, selectedAsset?.equipment_id), [treeStations, selectedAsset])
   const expansion = useTreeExpansion(revealPath)
@@ -42,12 +45,13 @@ export function DigitalTwinPage() {
         value: reading?.value,
         quality: reading?.quality,
         hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id),
+        hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id),
       })
       const current = statuses.get(instrument.equipment_id) ?? 'nodata'
       if (rank[status] > rank[current]) statuses.set(instrument.equipment_id, status)
     }
     return statuses
-  }, [data.stid, data.telemetry, openOrderNodes])
+  }, [criticalOrderNodes, data.stid, data.telemetry, openOrderNodes])
   const twinSignals = useMemo<TwinSignal[]>(() => assetInstruments.map(instrument => {
     const reading = readings.get(instrument.opcua_node_id)
     return {
@@ -58,9 +62,10 @@ export function DigitalTwinPage() {
       unit: instrument.unit,
       quality: reading?.quality,
       hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id),
+      hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id),
       eventTime: reading?.eventTime,
     }
-  }), [assetInstruments, readings, openOrderNodes])
+  }), [assetInstruments, criticalOrderNodes, readings, openOrderNodes])
   const twinHealth = useMemo<Record<TwinStatus, number>>(() => {
     const counts = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const signal of twinSignals) counts[twinSignalStatus(signal)]++

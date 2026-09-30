@@ -211,6 +211,9 @@ export default function App() {
       return { reading, instrument, asset: instrument ? equipmentById.get(instrument.equipment_id) : undefined }
     }), [facilityTelemetry, instrumentByNode, equipmentById])
   const nodesWithOpenOrder = useMemo(() => new Set(openOrders.map(order => order.opcuaNodeId)), [openOrders])
+  const nodesWithCriticalOrder = useMemo(() => new Set(openOrders
+    .filter(order => order.priority.toLowerCase() === 'critical')
+    .map(order => order.opcuaNodeId)), [openOrders])
   // Live "digital twin" overlay: each instrument on the selected asset becomes a health-coded hotspot
   // on the 3D model — value + OPC UA quality from the Eventhouse, plus open-work-order state.
   const twinSignals = useMemo<TwinSignal[]>(() => instruments.map(instrument => {
@@ -223,9 +226,10 @@ export default function App() {
       unit: instrument.unit,
       quality: reading?.quality,
       hasOpenIssue: nodesWithOpenOrder.has(instrument.opcua_node_id),
+      hasCriticalIssue: nodesWithCriticalOrder.has(instrument.opcua_node_id),
       eventTime: reading?.eventTime,
     }
-  }), [instruments, readings, nodesWithOpenOrder])
+  }), [instruments, nodesWithCriticalOrder, readings, nodesWithOpenOrder])
   const twinHealth = useMemo(() => {
     const counts = { crit: 0, warn: 0, ok: 0, nodata: 0 }
     for (const signal of twinSignals) counts[twinSignalStatus(signal)]++
@@ -237,7 +241,7 @@ export default function App() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const inst of insts) {
       const reading = readings.get(inst.opcua_node_id)
-      health[twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) })]++
+      health[twinStatus({ id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id), hasCriticalIssue: nodesWithCriticalOrder.has(inst.opcua_node_id) })]++
     }
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return {
@@ -248,14 +252,14 @@ export default function App() {
       openOrders: openOrders.filter(o => equipmentById.get(o.equipmentId)?.facility_id === item.facility_id).length,
       health, worst,
     }
-  }), [facilities, stid, readings, nodesWithOpenOrder, openOrders, equipmentById])
+  }), [facilities, stid, readings, nodesWithOpenOrder, nodesWithCriticalOrder, openOrders, equipmentById])
   // The selected facility's assets, each with live per-signal quality, for the on-map asset ring.
   const assetPins = useMemo<AssetPin[]>(() => equipment.map(asset => {
     const insts = (stid?.instruments ?? []).filter(i => i.equipment_id === asset.equipment_id)
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     const signals = insts.map(inst => {
       const reading = readings.get(inst.opcua_node_id)
-      const signal = { id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id) }
+      const signal = { id: inst.instrument_id, label: inst.tag ?? '', nodeId: inst.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: nodesWithOpenOrder.has(inst.opcua_node_id), hasCriticalIssue: nodesWithCriticalOrder.has(inst.opcua_node_id) }
       const status = twinSignalStatus(signal)
       health[twinStatus(signal)]++
       return { label: inst.tag ?? inst.instrument_id, value: reading?.value, unit: inst.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
@@ -265,7 +269,7 @@ export default function App() {
       equipment_id: asset.equipment_id, tag: asset.tag ?? asset.equipment_id, worst, health,
       openOrders: openOrders.filter(o => o.equipmentId === asset.equipment_id).length, signals,
     }
-  }), [equipment, stid, readings, nodesWithOpenOrder, openOrders])
+  }), [equipment, stid, readings, nodesWithOpenOrder, nodesWithCriticalOrder, openOrders])
 
   useEffect(() => {
     // Restore bars for any job still running when the page was last open (before auth) so a

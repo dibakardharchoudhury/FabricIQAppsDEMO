@@ -17,6 +17,9 @@ export function OverviewPage() {
   const qualityTone = issueSignals.length ? 'warn' : data.counts.liveSignals ? 'good' : 'muted'
   const telemetryByNode = useMemo(() => new Map(data.telemetry.map(reading => [reading.opcuaNodeId, reading])), [data.telemetry])
   const openOrderNodes = useMemo(() => new Set(data.openOrders.map(order => order.opcuaNodeId)), [data.openOrders])
+  const criticalOrderNodes = useMemo(() => new Set(data.openOrders
+    .filter(order => order.priority.toLowerCase() === 'critical')
+    .map(order => order.opcuaNodeId)), [data.openOrders])
   const facilityStats = useMemo<FacilityStat[]>(() => (data.stid?.facilities ?? []).map(item => {
     const equipment = data.stid?.equipment.filter(asset => asset.facility_id === item.facility_id) ?? []
     const instruments = data.stid?.instruments.filter(instrument => instrument.facility_id === item.facility_id) ?? []
@@ -24,24 +27,24 @@ export function OverviewPage() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const instrument of instruments) {
       const reading = telemetryByNode.get(instrument.opcua_node_id)
-      health[twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: data.openOrders.some(order => order.opcuaNodeId === instrument.opcua_node_id) })]++
+      health[twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id), hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id) })]++
     }
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return { ...item, lat: Number(item.lat), lon: Number(item.lon), assetCount: equipment.length, instrumentCount: instruments.length, openOrders: data.openOrders.filter(order => equipmentIds.has(order.equipmentId)).length, health, worst }
-  }), [data.openOrders, data.stid, telemetryByNode])
+  }), [criticalOrderNodes, data.openOrders, data.stid, openOrderNodes, telemetryByNode])
   const assetPins = useMemo<AssetPin[]>(() => data.facilityEquipment.map(asset => {
     const instruments = data.facilityInstruments.filter(instrument => instrument.equipment_id === asset.equipment_id)
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     const signals = instruments.map(instrument => {
       const reading = telemetryByNode.get(instrument.opcua_node_id)
-      const signal = { id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id) }
+      const signal = { id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id), hasCriticalIssue: criticalOrderNodes.has(instrument.opcua_node_id) }
       const status = twinSignalStatus(signal)
       health[twinStatus(signal)]++
       return { label: instrument.tag ?? instrument.instrument_id, value: reading?.value, unit: instrument.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
     })
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'
     return { equipment_id: asset.equipment_id, tag: asset.tag ?? asset.equipment_id, worst, health, openOrders: data.openOrders.filter(order => order.equipmentId === asset.equipment_id).length, signals }
-  }), [data.facilityEquipment, data.facilityInstruments, data.openOrders, openOrderNodes, telemetryByNode])
+  }), [criticalOrderNodes, data.facilityEquipment, data.facilityInstruments, data.openOrders, openOrderNodes, telemetryByNode])
 
   return <div className="v2-overview">
     {data.notice && <div className="v2-notice"><AlertTriangle size={15} /><span>{data.notice}</span></div>}

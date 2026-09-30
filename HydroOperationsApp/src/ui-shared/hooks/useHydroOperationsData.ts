@@ -639,13 +639,15 @@ function useHydroOperationsDataController() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     for (const instrument of facilityInstruments) {
       const reading = readings.get(instrument.opcua_node_id)
+      const nodeOrders = openOrders.filter(order => order.opcuaNodeId === instrument.opcua_node_id)
       health[twinStatus({
         id: instrument.instrument_id,
         label: instrument.tag ?? instrument.instrument_id,
         nodeId: instrument.opcua_node_id,
         value: reading?.value,
         quality: reading?.quality,
-        hasOpenIssue: openOrders.some(order => order.opcuaNodeId === instrument.opcua_node_id),
+        hasOpenIssue: nodeOrders.length > 0,
+        hasCriticalIssue: nodeOrders.some(order => order.priority.toLowerCase() === 'critical'),
       })]++
     }
     return health

@@ -101,17 +101,20 @@ test('preserves main presentation for one-to-one signals and the existing inspec
   assert.ok(!graph.edges.some(edge => edge.nativeOid === 'si'))
 })
 
-test('current GOOD quality is not turned red by an open maintenance order', () => {
+test('open maintenance priority contributes the correct equipment health', () => {
   const options = input({
     telemetry: [{ opcuaNodeId: 'node-1', eventTime: '2026-09-30T19:00:00Z', value: 326.702, quality: 'GOOD' }],
   })
+  options.workOrders[0].priority = 'High'
   const graph = buildKnowledgeGraph(options)
   const instrument = graph.nodes.find(node => node.id === 'instrument:I1')!
   assert.equal(instrument.status, 'ok')
   assert.equal(instrument.reading?.quality, 'GOOD')
   assert.equal(instrument.reading?.value, 326.702)
-  assert.equal(graph.nodes.find(node => node.id === 'equipment:E1')?.status, 'crit')
+  assert.equal(graph.nodes.find(node => node.id === 'equipment:E1')?.status, 'warn')
   assert.ok(graph.edges.some(edge => edge.source === 'work-order:W1' && edge.target === 'equipment:E1'))
+  options.workOrders[0].priority = 'Critical'
+  assert.equal(buildKnowledgeGraph(options).nodes.find(node => node.id === 'equipment:E1')?.status, 'crit')
   options.telemetry = [{ opcuaNodeId: 'node-1', eventTime: '2026-09-30T19:00:30Z', value: 327.1, quality: 'UNCERTAIN' }]
   const refreshed = buildKnowledgeGraph(options).nodes.find(node => node.id === 'instrument:I1')!
   assert.equal(refreshed.status, 'warn')

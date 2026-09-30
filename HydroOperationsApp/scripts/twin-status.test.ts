@@ -13,10 +13,13 @@ const signal: twin.TwinSignal = {
 }
 
 test('signal quality remains independent of maintenance and reading age', () => {
-  for (const [quality, expected] of [['GOOD', 'ok'], [' good ', 'ok'], ['UNCERTAIN', 'warn'], ['BAD', 'crit']] as const) {
-    assert.equal(twin.twinSignalStatus({ ...signal, quality }), expected)
-    assert.equal(twin.twinStatus({ ...signal, quality }), 'crit', 'Asset maintenance health must be retained')
+  for (const [quality, signalExpected, assetExpected] of [
+    ['GOOD', 'ok', 'warn'], [' good ', 'ok', 'warn'], ['UNCERTAIN', 'warn', 'warn'], ['BAD', 'crit', 'crit'],
+  ] as const) {
+    assert.equal(twin.twinSignalStatus({ ...signal, quality }), signalExpected)
+    assert.equal(twin.twinStatus({ ...signal, quality }), assetExpected, 'Noncritical maintenance must not be promoted to critical')
   }
+  assert.equal(twin.twinStatus({ ...signal, hasCriticalIssue: true }), 'crit')
   assert.equal(twin.twinSignalStatus({ ...signal, value: 0 }), 'ok')
   assert.equal(twin.twinSignalStatus({ ...signal, value: undefined }), 'nodata')
   assert.equal(twin.freshnessOf(signal.eventTime, Date.parse('2026-09-30T19:17:00Z')), 'dead')
