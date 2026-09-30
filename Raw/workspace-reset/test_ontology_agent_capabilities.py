@@ -67,7 +67,7 @@ def json_part(path, value):
 
 class CapabilityTests(unittest.TestCase):
     def test_generation_mode_matrix(self):
-        for number in NAMES:
+        for number in ("009", "010"):
             ns = functions(number, "validate_agent_mode", "agent_capability_policy")
             for generation in (1, 2):
                 for mode in ("auto", "enabled", "disabled"):
@@ -77,10 +77,6 @@ class CapabilityTests(unittest.TestCase):
                     elif mode == "disabled":
                         expected = "skipped"
                     with self.subTest(number=number, generation=generation, mode=mode):
-                        if number == "011" and generation == 1:
-                            with self.assertRaisesRegex(RuntimeError, "v2-only"):
-                                ns["agent_capability_policy"](generation, mode)
-                            continue
                         result = ns["agent_capability_policy"](generation, mode)
                         self.assertEqual(result["status"], expected)
                         if expected != "allowed":
@@ -92,7 +88,7 @@ class CapabilityTests(unittest.TestCase):
                 ns["agent_capability_policy"](3, "enabled")
 
     def test_generation_is_read_from_live_ontology_api(self):
-        for number in NAMES:
+        for number in ("009", "010"):
             for value in (1, 2, None, 0, 3, "2", True):
                 response = Mock()
                 response.json.return_value = {"properties": {"generation": value}}
@@ -417,7 +413,7 @@ class CapabilityTests(unittest.TestCase):
                 ns["publish_data_agent"].assert_not_called()
 
     def test_agent_sources_must_all_be_live_v2_including_published_parts(self):
-        for number in ("009", "011"):
+        for number in ("009",):
             ns = functions(
                 number, "require_v2_ontology", "validate_agent_ontology_sources",
                 workspace_id="ws", get_ontology_generation=Mock(return_value=2),
@@ -431,7 +427,7 @@ class CapabilityTests(unittest.TestCase):
                     ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
 
     def test_unverifiable_or_missing_ontology_sources_fail_closed(self):
-        for number in ("009", "011"):
+        for number in ("009",):
             ns = functions(
                 number, "require_v2_ontology", "validate_agent_ontology_sources",
                 workspace_id="ws", get_ontology_generation=Mock(return_value=2),
@@ -447,40 +443,8 @@ class CapabilityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing source type"):
                 ns["validate_agent_ontology_sources"]([malformed], "ontology")
 
-    def test_sql_extension_rejects_legacy_agent_before_any_source_writes(self):
-        ns = functions(
-            "011", "extend_data_agent_sql_source", "validate_agent_ontology_sources", "require_v2_ontology",
-            workspace_id="ws", get_ontology_generation=Mock(return_value=1),
-            get_item_definition=Mock(return_value={"definition": {"parts": [ontology_part()]}}),
-            update_item_definition=Mock(), enable_preview_runtime=Mock(), publish_data_agent=Mock(),
-            fetch_sql_table_schema=Mock(),
-        )
-        with self.assertRaisesRegex(RuntimeError, "v2-only"):
-            ns["extend_data_agent_sql_source"]("agent", "ontology")
-        for name in ("update_item_definition", "enable_preview_runtime", "publish_data_agent", "fetch_sql_table_schema"):
-            ns[name].assert_not_called()
-
-    def test_selected_v2_ontology_does_not_authorize_unrelated_or_legacy_agent(self):
-        for source_id, source_generation in (("unrelated-v2", 2), ("legacy", 1)):
-            ns = functions(
-                "011", "extend_data_agent_sql_source", "validate_agent_ontology_sources", "require_v2_ontology",
-                workspace_id="ws",
-                get_ontology_generation=Mock(side_effect=lambda item_id: (
-                    2 if item_id == "selected-v2" else source_generation
-                )),
-                get_item_definition=Mock(return_value={
-                    "definition": {"parts": [ontology_part(ontology_id=source_id)]},
-                }),
-                update_item_definition=Mock(), enable_preview_runtime=Mock(), publish_data_agent=Mock(),
-                fetch_sql_table_schema=Mock(),
-            )
-            with self.assertRaisesRegex(RuntimeError, "does not match selected ontology"):
-                ns["extend_data_agent_sql_source"]("agent", "selected-v2")
-            for name in ("update_item_definition", "enable_preview_runtime", "publish_data_agent", "fetch_sql_table_schema"):
-                ns[name].assert_not_called()
-
-    def test_both_notebooks_reject_unrelated_published_sources_even_if_v2(self):
-        for number in ("009", "011"):
+    def test_nb09_rejects_unrelated_published_sources_even_if_v2(self):
+        for number in ("009",):
             ns = functions(
                 number, "require_v2_ontology", "validate_agent_ontology_sources",
                 workspace_id="ws", get_ontology_generation=Mock(return_value=2),
@@ -790,25 +754,6 @@ class CapabilityTests(unittest.TestCase):
             ns["update_item_definition"].assert_not_called()
             ns["publish_data_agent"].assert_not_called()
 
-        ns = self.extension_namespace(mode="enabled")
-        ns["list_items_of_type"].side_effect = lambda kind: (
-            [{"id": "agent-id", "displayName": "agent"}] if kind == "DataAgent" else [outside]
-        )
-        ns.update(
-            extend_data_agent_sql_source=Mock(), persist_sql_extension_status=Mock(),
-            step_results={"data_agent_sql_source": {"status": "failed", "reason": "not completed"}},
-            step_errors=[],
-        )
-        attempt = next(
-            node for node in ast.parse(source("011")).body
-            if isinstance(node, ast.Try) and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
-        )
-        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "folder-extension", "exec"), ns)
-        self.assertIn("target folder", str(ns["step_errors"][0]))
-        ns["get_ontology_generation"].assert_not_called()
-        ns["extend_data_agent_sql_source"].assert_not_called()
-        self.assertEqual(ns["persist_sql_extension_status"].call_args.args[0]["status"], "failed")
-
     def test_folder_uniqueness_checks_all_ontology_pages(self):
         for number in ("009", "010"):
             first = Mock()
@@ -824,80 +769,210 @@ class CapabilityTests(unittest.TestCase):
                 ns["resolve_ontology_id"]()
             self.assertEqual(ns["api_request"].call_count, 2)
 
-    def test_sql_extension_requires_draft_and_published_ontology_and_sql_evidence(self):
-        sql_path = "Files/Config/draft/sql-database-sql/datasource.json"
-        published_path = sql_path.replace("/draft/", "/published/")
-        submitted = {
-            "artifactId": "sql-id", "workspaceId": "ws", "type": "sql_database",
-            "elements": [{"id": "schema", "children": [{"id": "table"}]}],
-        }
-        draft_sql = json_part(sql_path, submitted)
-        published_sql = json_part(published_path, submitted)
-        for scenario in (
-            "draft_wrong_sql", "draft_missing_ontology", "published_wrong_sql",
-            "published_missing_sql", "published_missing_ontology", "published_changed_schema",
-            "ontology_changed", "valid", "valid_multi_source_evidence",
-        ):
-            draft = [ontology_part(), draft_sql]
-            published = [ontology_part(), draft_sql, ontology_part("published"), published_sql]
-            if scenario == "draft_wrong_sql":
-                draft = [ontology_part(), json_part(sql_path, {**submitted, "artifactId": "other"})]
-            elif scenario == "draft_missing_ontology":
-                draft = [draft_sql]
-            elif scenario == "published_wrong_sql":
-                published[-1] = json_part(published_path, {**submitted, "artifactId": "other"})
-            elif scenario == "published_missing_sql":
-                published = published[:-1]
-            elif scenario == "published_missing_ontology":
-                published = [ontology_part(), draft_sql, published_sql]
-            elif scenario == "published_changed_schema":
-                published[-1] = json_part(published_path, {**submitted, "elements": []})
-            elif scenario == "ontology_changed":
-                published[-2] = json_part("Files/Config/published/ontology-source/datasource.json", {
-                    "artifactId": "ontology", "workspaceId": "ws", "type": "ontology", "elements": ["changed"],
-                })
-            ontology_source = {"artifactId": "ontology", "workspaceId": "ws", "type": "ontology"}
-            proof = {
-                "verification": "ontology_facilities_smoke_v1", "agent_id": "agent",
-                "ontology_id": "ontology", "workspace_id": "ws",
-                "published_sources": {"Files/Config/published/ontology-source/datasource.json": ontology_source},
-                "expected_facilities": [{"facility_id": "id", "facility_name": "name"}],
-                "returned_facilities": [{"facility_id": "id", "facility_name": "name"}],
-            }
-            baseline = [ontology_part(), ontology_part("published")]
-            if scenario == "valid_multi_source_evidence":
-                baseline += [draft_sql, published_sql]
-                proof["published_sources"][published_path] = submitted
-            ns = functions(
-                "011", "extend_data_agent_sql_source", "verify_agent_source_readback",
-                "validate_agent_ontology_sources", "require_v2_ontology", "published_agent_sources",
-                "decode_payload", "encode_payload", "upsert_part",
-                get_ontology_generation=Mock(return_value=2), workspace_id="ws",
-                get_item_definition=Mock(side_effect=[
-                    {"definition": {"parts": baseline}},
-                    {"definition": {"parts": draft}}, {"definition": {"parts": published}},
-                ]),
-                sql_db_item_id="sql-id", sql_server="server", sql_database="database",
-                SQL_DATASOURCE_PATH=sql_path, SQL_TABLES=[("table", "description")],
-                DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
-                fetch_sql_table_schema=Mock(return_value={"table": [("id", "int")]}),
-                build_sql_datasource_obj=Mock(return_value=submitted),
-                build_stage_obj=Mock(return_value={}),
-                update_item_definition=Mock(), enable_preview_runtime=Mock(), publish_data_agent=Mock(),
-                first_setting=Mock(return_value=json.dumps(proof)),
-            )
-            if scenario in ("valid", "valid_multi_source_evidence", "ontology_changed"):
-                outcome = ns["extend_data_agent_sql_source"]("agent", "ontology")
-                self.assertEqual(outcome["status"], "published")
-                self.assertEqual(outcome["runtime_status"], "inconclusive" if scenario == "ontology_changed" else "verified")
+    def sql_extension_namespace(self, baseline=None):
+        state = {"definition": {"parts": copy.deepcopy(baseline or [])}}
+        ns = functions(
+            "011", "extend_data_agent_sql_source", "verify_agent_source_readback",
+            "decode_payload", "encode_payload", "upsert_part", "_ds_element",
+            "build_sql_datasource_obj", "merge_sql_elements", "build_stage_obj",
+            workspace_id="ws", uuid=uuid,
+            get_item_definition=Mock(side_effect=lambda _: copy.deepcopy(state)),
+            sql_db_item_id="sql-id", sql_db_item_name="sql", sql_server="server", sql_database="database",
+            SQL_DATASOURCE_PATH="Files/Config/draft/sql-database-sql/datasource.json",
+            SQL_TABLES=[("table", "description")], SQL_SCHEMA_NAME="dbo",
+            SQL_DATASOURCE_TYPE="sql_database", DATASOURCE_SCHEMA_URL="datasource-schema",
+            SQL_DS_INSTRUCTIONS="SQL guidance", STAGE_CONFIG_SCHEMA_URL="stage-schema",
+            OPERATIONAL_INSTRUCTIONS_MARKER="Operational", OPERATIONAL_INSTRUCTIONS="\nOperational guidance",
+            ASSET_RESOLUTION_INSTRUCTIONS_MARKER="Asset", ASSET_RESOLUTION_INSTRUCTIONS="\nAsset guidance",
+            DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+            fetch_sql_table_schema=Mock(return_value={"table": [("id", "int")]}),
+            enable_preview_runtime=Mock(), first_setting=Mock(side_effect=AssertionError("No NB09 settings")),
+            get_ontology_generation=Mock(side_effect=AssertionError("No ontology lookup")),
+        )
+
+        def update(agent_id, definition):
+            self.assertEqual(agent_id, "agent")
+            state["definition"] = copy.deepcopy(definition)
+
+        def publish(agent_id, description):
+            self.assertEqual(agent_id, "agent")
+            parts = state["definition"]["parts"]
+            for part in list(parts):
+                if part["path"].startswith("Files/Config/draft/"):
+                    published = {**part, "path": part["path"].replace("/draft/", "/published/", 1)}
+                    parts[:] = [old for old in parts if old["path"] != published["path"]]
+                    parts.append(published)
+
+        ns["update_item_definition"] = Mock(side_effect=update)
+        ns["publish_data_agent"] = Mock(side_effect=publish)
+        return ns, state
+
+    def test_sql_extension_publishes_without_ontology_or_nb09_evidence(self):
+        for baseline in ([], [json_part("Files/Config/draft/custom.json", {"custom": True})]):
+            with self.subTest(baseline=baseline):
+                ns, state = self.sql_extension_namespace(baseline)
+                result = ns["extend_data_agent_sql_source"]("agent")
+                self.assertEqual(set(result), {"status", "reason"})
+                self.assertEqual(result["status"], "published")
+                ns["update_item_definition"].assert_called_once()
+                ns["publish_data_agent"].assert_called_once()
                 self.assertEqual(ns["get_item_definition"].call_count, 3)
-            else:
-                with self.subTest(scenario=scenario), self.assertRaises(RuntimeError):
-                    ns["extend_data_agent_sql_source"]("agent", "ontology")
-                if scenario.startswith("draft_"):
+                ns["first_setting"].assert_not_called()
+                ns["get_ontology_generation"].assert_not_called()
+                parts = {part["path"]: part for part in state["definition"]["parts"]}
+                path = ns["SQL_DATASOURCE_PATH"]
+                self.assertEqual(parts[path]["payload"], parts[path.replace("/draft/", "/published/")]["payload"])
+                self.assertFalse(any("/ontology-" in path for path in parts))
+
+    def test_sql_extension_preserves_sources_custom_settings_and_selections_on_rerun(self):
+        baseline = [
+            ontology_part(ontology_id="unrelated-or-legacy", workspace="other"),
+            ontology_part("published", ontology_id="unrelated-or-legacy", workspace="other"),
+            json_part("Files/Config/draft/other-sql/datasource.json", {
+                "type": "sql_database", "artifactId": "other-sql", "elements": [{"is_selected": False}],
+                "dataSourceInstructions": "Other SQL instructions",
+            }),
+            json_part("Files/Config/draft/custom.json", {"custom": ["untouched"]}),
+            json_part("Files/Config/draft/stage_config.json", {
+                "aiInstructions": "My custom instructions", "customSetting": "keep",
+            }),
+        ]
+        ns, state = self.sql_extension_namespace(baseline)
+        existing = ns["build_sql_datasource_obj"]({}, "stale-sql-id", {"table": [("id", "int")]})
+        existing.update(dataSourceInstructions="Keep SQL instructions", userDescription="My source",
+                        metadata={"keep": True}, customSetting={"x": 1})
+        table = existing["elements"][0]["children"][0]["children"][0]["children"][0]
+        table.update(is_selected=False, description="Keep table choice", customSetting=True)
+        table["children"][0]["is_selected"] = False
+        state["definition"]["parts"].append(json_part(ns["SQL_DATASOURCE_PATH"], existing))
+        for _ in range(2):
+            ns["extend_data_agent_sql_source"]("agent")
+            parts = {part["path"]: part for part in state["definition"]["parts"]}
+            for original in baseline[:-1]:
+                self.assertEqual(parts[original["path"]], original)
+            actual = ns["decode_payload"](parts[ns["SQL_DATASOURCE_PATH"]]["payload"])
+            self.assertEqual(actual, {**existing, "artifactId": "sql-id"})
+            stage = ns["decode_payload"](parts[ns["DRAFT_STAGE_CONFIG_PATH"]]["payload"])
+            self.assertEqual(stage["customSetting"], "keep")
+            self.assertEqual(stage["aiInstructions"],
+                             "My custom instructions\nOperational guidance\nAsset guidance")
+        ns["get_ontology_generation"].assert_not_called()
+
+    def test_sql_extension_full_api_lifecycle_without_ontology(self):
+        ns, state = self.sql_extension_namespace()
+        runtime_settings = {"experimental": {"customSetting": "keep"}}
+        update = ns["update_item_definition"].side_effect
+        publish = ns["publish_data_agent"].side_effect
+
+        def api(method, url, **kwargs):
+            if url.endswith("/getDefinition") and method == "POST":
+                return Mock(status_code=200, json=lambda: copy.deepcopy(state))
+            if url.endswith("/updateDefinition") and method == "POST":
+                update("agent", kwargs["data"]["definition"])
+                return Mock(status_code=200, content=b"")
+            if url.endswith("/staging/publish") and method == "POST":
+                publish("agent", kwargs["data"]["publishedDescription"])
+                return Mock(status_code=200)
+            if url.endswith("/staging/settings") and method in ("GET", "PATCH"):
+                if method == "PATCH":
+                    runtime_settings.update(copy.deepcopy(kwargs["data"]))
+                return Mock(status_code=200, json=lambda: copy.deepcopy(runtime_settings))
+            self.fail(f"Unexpected API request: {method} {url}")
+
+        real = functions(
+            "011", "get_item_definition", "update_item_definition", "publish_data_agent",
+            "enable_preview_runtime", api_request=Mock(side_effect=api), workspace_id="ws",
+            FABRIC_API_BASE="base", wait_for_lro=Mock(),
+        )
+        for name in ("get_item_definition", "update_item_definition", "publish_data_agent",
+                     "enable_preview_runtime"):
+            ns[name] = real[name]
+        result = ns["extend_data_agent_sql_source"]("agent")
+        self.assertEqual(result["status"], "published")
+        self.assertNotIn("runtime_status", result)
+        self.assertEqual(runtime_settings["experimental"],
+                         {"customSetting": "keep", "enableExperimentalFeatures": True})
+        self.assertEqual(
+            [(call.args[0], call.args[1].removeprefix("base/v1/workspaces/ws/"))
+             for call in real["api_request"].call_args_list],
+            [
+                ("POST", "items/agent/getDefinition"),
+                ("POST", "items/agent/updateDefinition"),
+                ("POST", "items/agent/getDefinition"),
+                ("GET", "dataAgents/agent/staging/settings"),
+                ("PATCH", "dataAgents/agent/staging/settings"),
+                ("GET", "dataAgents/agent/staging/settings"),
+                ("POST", "dataAgents/agent/staging/publish"),
+                ("POST", "items/agent/getDefinition"),
+            ],
+        )
+
+    def test_sql_extension_rejects_unreadable_baselines_before_writes(self):
+        for envelope in (None, {}, {"definition": {}}, {"definition": {"parts": None}},
+                         {"definition": {"parts": [{"path": "custom", "payload": "bad",
+                                                  "payloadType": "InlineBase64"}]}}):
+            with self.subTest(envelope=envelope):
+                ns, _ = self.sql_extension_namespace()
+                ns["get_item_definition"].side_effect = None
+                ns["get_item_definition"].return_value = envelope
+                with self.assertRaises((RuntimeError, ValueError)):
+                    ns["extend_data_agent_sql_source"]("agent")
+                ns["update_item_definition"].assert_not_called()
+                ns["publish_data_agent"].assert_not_called()
+
+    def test_sql_extension_requires_exact_draft_and_published_sql_readback(self):
+        for phase in ("draft", "published"):
+            for mismatch in ("missing", "artifact", "schema"):
+                with self.subTest(phase=phase, mismatch=mismatch):
+                    ns, state = self.sql_extension_namespace()
+
+                    def readback(_):
+                        result = copy.deepcopy(state)
+                        if ns["get_item_definition"].call_count == (2 if phase == "draft" else 3):
+                            path = ns["SQL_DATASOURCE_PATH"].replace("/draft/", f"/{phase}/")
+                            parts = result["definition"]["parts"]
+                            if mismatch == "missing":
+                                parts[:] = [part for part in parts if part["path"] != path]
+                            else:
+                                part = next(part for part in parts if part["path"] == path)
+                                value = ns["decode_payload"](part["payload"])
+                                value["artifactId" if mismatch == "artifact" else "elements"] = (
+                                    "other" if mismatch == "artifact" else []
+                                )
+                                part["payload"] = ns["encode_payload"](value)
+                        return result
+
+                    ns["get_item_definition"].side_effect = readback
+                    with self.assertRaisesRegex(RuntimeError, "SQL source readback"):
+                        ns["extend_data_agent_sql_source"]("agent")
+                    self.assertEqual(ns["publish_data_agent"].call_count, phase == "published")
+
+    def test_sql_extension_surfaces_sql_and_api_failures(self):
+        for failing in ("get_item_definition", "fetch_sql_table_schema", "update_item_definition",
+                        "enable_preview_runtime", "publish_data_agent"):
+            with self.subTest(failing=failing):
+                ns, _ = self.sql_extension_namespace()
+                ns[failing].side_effect = PermissionError("denied")
+                with self.assertRaisesRegex(PermissionError, "denied"):
+                    ns["extend_data_agent_sql_source"]("agent")
+                if failing != "publish_data_agent":
                     ns["publish_data_agent"].assert_not_called()
-                else:
-                    ns["publish_data_agent"].assert_called_once()
+        ns, _ = self.sql_extension_namespace()
+        ns.update(sql_db_item_id=None, find_item_by_name=Mock(return_value=None))
+        with self.assertRaisesRegex(RuntimeError, "SQL Database item"):
+            ns["extend_data_agent_sql_source"]("agent")
+        ns["update_item_definition"].assert_not_called()
+
+    def test_sql_publication_http_failures_are_not_success(self):
+        for status, headers in ((401, {}), (403, {}), (500, {}), (202, {})):
+            with self.subTest(status=status):
+                ns = functions("011", "publish_data_agent", FABRIC_API_BASE="base", workspace_id="ws",
+                               api_request=Mock(return_value=Mock(status_code=status, headers=headers,
+                                                                 text="failure")),
+                               wait_for_lro=Mock())
+                with self.assertRaises(RuntimeError):
+                    ns["publish_data_agent"]("agent")
+                ns["wait_for_lro"].assert_not_called()
 
     def extension_namespace(self, mode="auto", prior="ready", agents=None, generation=2,
                             runtime="verified", publication="published"):
@@ -907,7 +982,7 @@ class CapabilityTests(unittest.TestCase):
             "data_agent_runtime_status": runtime, "data_agent_publication_status": publication,
         }
         return functions(
-            "011", "validate_agent_mode", "agent_capability_policy",
+            "011", "validate_agent_mode",
             "resolve_data_agent_id", "resolve_agent_extension_target",
             first_setting=lambda *names, default=None, **kwargs: next(
                 (values[name] for name in names if name in values), default
@@ -940,7 +1015,9 @@ class CapabilityTests(unittest.TestCase):
                 "get_item_definition": Mock(return_value={"definition": {"parts": []}}),
                 "upsert_part": Mock(return_value=[]), "build_graphql_definition": Mock(return_value={}),
                 "GRAPHQL_DEFINITION_PATH": "graphql", "GRAPHQL_OBJECTS": [],
-                "update_item_definition": Mock(), "extend_data_agent_sql_source": Mock(),
+                "update_item_definition": Mock(), "extend_data_agent_sql_source": Mock(return_value={
+                    "status": "published", "reason": "SQL readback matches",
+                }),
                 "persist_sql_extension_status": Mock(),
             })
             tree = ast.parse(source("011"))
@@ -951,10 +1028,15 @@ class CapabilityTests(unittest.TestCase):
             ns["seed_sql_database"].assert_called_once()
             ns["create_graphql_api"].assert_called_once()
             ns["update_item_definition"].assert_called_once_with("graphql-id", {"parts": []})
-            ns["extend_data_agent_sql_source"].assert_not_called()
+            succeeds = bool(agents) and mode != "disabled"
+            if succeeds:
+                ns["extend_data_agent_sql_source"].assert_called_once_with("agent-id")
+            else:
+                ns["extend_data_agent_sql_source"].assert_not_called()
             result = ns["step_results"]["data_agent_sql_source"]
-            self.assertEqual(result["status"], "skipped" if mode == "disabled" else "failed")
-            self.assertEqual(bool(ns["step_errors"]), mode != "disabled")
+            self.assertEqual(result["status"],
+                             "skipped" if mode == "disabled" else "published" if succeeds else "failed")
+            self.assertEqual(bool(ns["step_errors"]), mode != "disabled" and not succeeds)
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
         tree = ast.parse(source("011"))
@@ -965,7 +1047,7 @@ class CapabilityTests(unittest.TestCase):
         for failing_call in ("resolve_agent_extension_target", "extend_data_agent_sql_source"):
             ns = {
                 "resolve_agent_extension_target": Mock(return_value=(
-                    "agent", {"status": "allowed", "ontology_id": "ontology"},
+                    "agent", {"status": "allowed", "reason": ""},
                 )),
                 "extend_data_agent_sql_source": Mock(),
                 "persist_sql_extension_status": Mock(),
@@ -983,24 +1065,25 @@ class CapabilityTests(unittest.TestCase):
                 {"status": "failed", "reason": "forbidden"}
             )
 
-    def test_extension_auth_and_unknown_generation_errors_surface(self):
+    def test_extension_auth_errors_surface_without_ontology_lookup(self):
         ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
         ns["list_items_of_type"].side_effect = PermissionError("denied")
         with self.assertRaises(PermissionError):
             ns["resolve_agent_extension_target"]()
         ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
         ns["get_ontology_generation"].side_effect = RuntimeError("unknown generation")
-        with self.assertRaisesRegex(RuntimeError, "unknown generation"):
-            ns["resolve_agent_extension_target"]()
+        self.assertEqual(ns["resolve_agent_extension_target"]()[0], "agent-id")
+        ns["get_ontology_generation"].assert_not_called()
 
-    def test_enabled_v2_sql_extension_requires_live_agent(self):
+    def test_enabled_sql_extension_requires_only_live_agent(self):
         ns = self.extension_namespace(
             mode="enabled", generation=2, agents=[{"id": "agent-id", "displayName": "agent"}]
         )
         agent_id, policy = ns["resolve_agent_extension_target"]()
         self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
-        self.assertEqual(policy["ontology_id"], "ontology-id")
-        ns["get_ontology_generation"].assert_called_once_with("ontology-id")
+        self.assertEqual(policy, {"status": "allowed", "reason": ""})
+        ns["list_items_of_type"].assert_called_once_with("DataAgent")
+        ns["get_ontology_generation"].assert_not_called()
 
     def test_auto_and_enabled_sql_extension_fail_on_unavailable_agent(self):
         for mode in ("auto", "enabled"):
@@ -1009,62 +1092,111 @@ class CapabilityTests(unittest.TestCase):
                     ns = self.extension_namespace(mode=mode, prior=prior, agents=agents)
                     with self.assertRaises(RuntimeError):
                         ns["resolve_agent_extension_target"]()
-            ns = self.extension_namespace(
-                mode=mode, generation=1, agents=[{"id": "agent-id", "displayName": "agent"}])
-            with self.assertRaisesRegex(RuntimeError, "v2-only"):
+            ns = self.extension_namespace(mode=mode)
+            ns["data_agent_name"] = ""
+            with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
                 ns["resolve_agent_extension_target"]()
 
-    def test_sql_extension_rejects_publication_without_runtime_evidence(self):
-        for runtime in ("failed", "blocked", "inconclusive", "checking", ""):
-            with self.subTest(runtime=runtime):
+    def test_sql_extension_allows_failed_nb09(self):
+        for mode in ("auto", "enabled"):
+            with self.subTest(mode=mode):
                 ns = self.extension_namespace(
-                    runtime=runtime, agents=[{"id": "agent-id", "displayName": "agent"}])
-                with self.assertRaisesRegex(RuntimeError, "Publication alone is insufficient"):
-                    ns["resolve_agent_extension_target"]()
+                    mode=mode, prior="failed", runtime="failed", publication="published",
+                    agents=[{"id": "agent-id", "displayName": "agent"}],
+                )
+                agent_id, policy = ns["resolve_agent_extension_target"]()
+                self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
+                ns["list_items_of_type"].assert_called_once_with("DataAgent")
                 ns["get_ontology_generation"].assert_not_called()
 
-    def test_sql_republication_does_not_reuse_stale_runtime_proof(self):
+    def test_sql_status_preserves_nb09_result_on_every_outcome(self):
+        for status in ("published", "failed", "skipped"):
+            with self.subTest(status=status):
+                spark = SimpleNamespace(createDataFrame=Mock())
+                delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+                ns = functions(
+                    "011", "persist_sql_extension_status", spark=spark,
+                    F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings",
+                )
+                with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+                    ns["persist_sql_extension_status"]({"status": status, "reason": "SQL step result"})
+                written = {row["setting_name"]: row["setting_value"]
+                           for row in spark.createDataFrame.call_args.args[0]}
+                self.assertEqual(written, {
+                    "data_agent_sql_source_status": status,
+                    "data_agent_sql_source_reason": "SQL step result",
+                })
+
+    def test_sql_extension_ignores_all_nb09_statuses_and_settings(self):
+        for mode in ("auto", "enabled"):
+            for prior in ("failed", "blocked", "inconclusive", "checking", ""):
+                with self.subTest(mode=mode, prior=prior):
+                    ns = self.extension_namespace(
+                        mode=mode, prior=prior, runtime=prior, publication=prior,
+                        agents=[{"id": "agent-id", "displayName": "agent"}])
+                    ns["first_setting"] = Mock(side_effect=lambda name, **kwargs: (
+                        mode if name == "ontology_data_agent_mode" else
+                        self.fail(f"SQL must not read {name}")
+                    ))
+                    self.assertEqual(ns["resolve_agent_extension_target"](),
+                                     ("agent-id", {"status": "allowed", "reason": ""}))
+                    ns["list_items_of_type"].assert_called_once_with("DataAgent")
+                    ns["get_ontology_generation"].assert_not_called()
+
+    def test_sql_extension_disabled_skips_live_reads_and_invalid_modes_fail(self):
+        ns = self.extension_namespace(mode="disabled")
+        ns["list_items_of_type"].side_effect = AssertionError("disabled must not read live items")
+        self.assertEqual(ns["resolve_agent_extension_target"]()[1]["status"], "skipped")
+        ns["list_items_of_type"].assert_not_called()
+        for mode in ("", "invalid"):
+            ns = self.extension_namespace(mode=mode)
+            with self.assertRaises(ValueError):
+                ns["resolve_agent_extension_target"]()
+            ns["list_items_of_type"].assert_not_called()
+
+    def test_sql_final_step_completes_without_ontology_runtime_proof(self):
         tree = ast.parse(source("011"))
         attempt = next(
             node for node in tree.body if isinstance(node, ast.Try)
             and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
         )
-        result = {"status": "published", "runtime_status": "inconclusive", "reason": "Fresh probe required"}
+        result = {"status": "published", "reason": "SQL source readback matches"}
         ns = {
             "resolve_agent_extension_target": Mock(return_value=(
-                "agent", {"status": "allowed", "ontology_id": "ontology"})),
+                "agent", {"status": "allowed", "reason": ""})),
             "extend_data_agent_sql_source": Mock(return_value=result),
             "persist_sql_extension_status": Mock(), "step_results": {}, "step_errors": [], "json": json,
         }
         exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
         self.assertEqual(ns["step_results"]["data_agent_sql_source"], result)
         ns["persist_sql_extension_status"].assert_called_once_with(result)
-        self.assertEqual(len(ns["step_errors"]), 1)
+        ns["extend_data_agent_sql_source"].assert_called_once_with("agent")
+        self.assertEqual(ns["step_errors"], [])
         terminal = next(node for node in tree.body if isinstance(node, ast.If)
                         and isinstance(node.test, ast.Name) and node.test.id == "step_errors")
-        with self.assertRaisesRegex(RuntimeError, "Operational setup failed") as raised:
-            exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
-        self.assertEqual(str(raised.exception.__cause__), "Fresh probe required")
-        result["runtime_status"] = "verified"
-        result["reason"] = "Unchanged ontology source proof retained; SQL runtime unverified"
-        ns["step_errors"] = []
-        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
-        self.assertEqual(ns["step_errors"], [])
+        exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
+        exit_node = next(node for node in tree.body if isinstance(node, ast.Expr)
+                         and "notebookutils.notebook.exit" in ast.unparse(node))
+        ns["notebookutils"] = SimpleNamespace(notebook=SimpleNamespace(exit=Mock()))
+        exec(compile(ast.Module(body=[exit_node], type_ignores=[]), "exit", "exec"), ns)
+        result = json.loads(ns["notebookutils"].notebook.exit.call_args.args[0])
+        self.assertEqual(result["status"], "completed")
+        self.assertFalse(result["agent_ready"])
 
-    def test_sql_publication_preserves_verified_scoped_evidence(self):
+    def test_sql_status_ignores_legacy_runtime_fields(self):
         spark = SimpleNamespace(createDataFrame=Mock())
         delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
         ns = functions("011", "persist_sql_extension_status", spark=spark,
                        F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings")
         with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
             ns["persist_sql_extension_status"]({
-                "status": "published", "runtime_status": "verified", "reason": "Ontology proof retained"})
+                "status": "published", "runtime_status": "inconclusive", "reason": "SQL publication only"})
         written = {row["setting_name"]: row["setting_value"]
                    for row in spark.createDataFrame.call_args.args[0]}
-        self.assertEqual(written["data_agent_sql_source_status"], "published")
-        self.assertNotIn("data_agent_runtime_evidence", written)
-        self.assertNotIn("data_agent_runtime_status", written)
-        self.assertNotIn("data_agent_deployment_status", written)
+        self.assertEqual(written, {
+            "data_agent_sql_source_status": "published",
+            "data_agent_sql_source_reason": "SQL publication only",
+        })
 
     def test_runtime_failure_status_preserves_published_identity_in_delta(self):
         spark = SimpleNamespace(createDataFrame=Mock())

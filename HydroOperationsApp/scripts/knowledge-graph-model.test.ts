@@ -90,6 +90,7 @@ test('preserves main presentation for one-to-one signals and the existing inspec
     'Instrument ID': 'I1', Type: undefined, 'OPC UA node': 'node-1', Unit: 'C', Active: undefined,
     'Latest value': 96.8, Quality: 'Bad', 'Event time': '2026-09-14T08:00:00Z', 'Signal entity': 'node-1',
   })
+
   assert.equal(instrument.provenance, 'Fabric Ontology · Native Hydro graph · combined one-to-one instruments + signal_master node with Eventhouse time-series binding')
   const system = graph.nodes.find(node => node.id === 'system:S1')!
   assert.equal(system.subtitle, '1 connected assets')
@@ -98,6 +99,25 @@ test('preserves main presentation for one-to-one signals and the existing inspec
   assert.deepEqual(Object.keys(graph.nodes.find(node => node.id === 'equipment:E1')!.properties),
     ['Equipment ID', 'Type', 'Manufacturer', 'Model', 'Criticality', 'Status', 'Installed', 'Active'])
   assert.ok(!graph.edges.some(edge => edge.nativeOid === 'si'))
+})
+
+test('renders Ontology-bound STID with KQL and SQL context before the native query completes', () => {
+  const graph = buildKnowledgeGraph(input({
+    ontologyGraph: null,
+    facilities: [{ facility_id: 'F1', facility_name: 'Station' }],
+    systems: [{ system_id: 'S1', facility_id: 'F1', system_name: 'System' }],
+    equipment: [{ equipment_id: 'E1', facility_id: 'F1', system_id: 'S1', tag: 'Turbine' }],
+    instruments: [{ instrument_id: 'I1', equipment_id: 'E1', system_id: 'S1', facility_id: 'F1', opcua_node_id: 'node-1' }],
+  }))
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.length, 8)
+  assert.equal(graph.edges.length, 7)
+  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 96.8)
+  assert.equal(graph.nodes.find(node => node.id === 'work-order:W1')?.facilityId, 'F1')
+  assert.ok(graph.nodes.every(node => !node.nativeOid))
+  assert.ok(graph.edges.every(edge => !edge.nativeOid))
+  assert.match(graph.nodes.find(node => node.id === 'facility:F1')!.provenance, /Lakehouse entity binding/)
+  assert.ok(graph.edges.some(edge => edge.ontologyRelationshipId === 'equipment-system'))
 })
 
 test('keeps non-bijective signals separate and redirects other edges of collapsed signals', () => {
@@ -113,6 +133,32 @@ test('keeps non-bijective signals separate and redirects other edges of collapse
   const collapsed = buildKnowledgeGraph(input({ ontologyGraph: single }))
   assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.source, 'instrument:I1')
   assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.target, 'ontology:d1')
+})
+
+test('bound loading uses only declared ontology relationships, not guessed foreign keys', () => {
+  const graph = buildKnowledgeGraph(input({
+    ontologyGraph: null, ontology: { ...ontology, relationshipTypes: [] },
+  }))
+  assert.equal(graph.error, undefined)
+  assert.ok(!graph.edges.some(edge => edge.type === 'contains' || edge.type === 'has-instrument'))
+  assert.ok(graph.edges.some(edge => edge.type === 'affects'))
+})
+
+test('demo-sized bound topology is available within 250ms without a native request', () => {
+  const facilities = Array.from({ length: 3 }, (_, index) => ({ facility_id: `F${index}`, facility_name: `Station ${index}` }))
+  const systems = Array.from({ length: 6 }, (_, index) => ({ system_id: `S${index}`, facility_id: `F${index % 3}` }))
+  const equipment = Array.from({ length: 12 }, (_, index) => ({ equipment_id: `E${index}`, facility_id: `F${index % 3}`, system_id: `S${index % 6}` }))
+  const instruments = Array.from({ length: 90 }, (_, index) => ({
+    instrument_id: `I${index}`, equipment_id: `E${index % 12}`, facility_id: `F${index % 3}`,
+    system_id: `S${index % 6}`, opcua_node_id: `node-${index}`,
+  }))
+  const start = performance.now()
+  const graph = buildKnowledgeGraph(input({ ontologyGraph: null, facilities, systems, equipment, instruments }))
+  const durationMs = performance.now() - start
+  assert.equal(graph.error, undefined)
+  assert.equal(graph.nodes.length, 115)
+  assert.equal(graph.edges.length, 112)
+  assert.ok(durationMs < 250, `Bound graph took ${durationMs.toFixed(1)}ms`)
 })
 
 test('page snapshot reads the native query-refreshed contract, never the earlier cached definition', async () => {
@@ -164,9 +210,9 @@ test('native entities, directed relationships, and context win over conflicting 
   assert.match(native.find(edge => edge.nativeOid === 'es')?.provenance ?? '', /Ontology equipment_in_systems/)
 })
 
-test('requires both a verified v2 contract and native results; never substitutes STID or SQL nodes', () => {
+test('requires a verified v2 contract and rejects invalid native results rather than masking them', () => {
   for (const overrides of [
-    { ontologyGraph: null }, { ontology: null },
+    { ontology: null },
     { ontology: { ...ontology, generation: 1 } as unknown as OntologyContract },
     { ontologyGraph: { ...nativeGraph(), nodes: [], edges: [] } },
     { ontologyGraph: { ...nativeGraph(), ontologyId: 'different-ontology' } },

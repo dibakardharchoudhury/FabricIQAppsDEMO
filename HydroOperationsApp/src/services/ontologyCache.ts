@@ -1,3 +1,7 @@
+export class OntologyCacheInvalidatedError extends Error {
+  constructor() { super('Ontology discovery changed during refresh. Refresh again to load the current workspace.') }
+}
+
 /** Failed/absent refreshes invalidate previous data; old in-flight requests cannot repopulate a cleared cache. */
 export function createOntologyCache<T>(ttlMs: number) {
   let revision = 0
@@ -11,7 +15,7 @@ export function createOntologyCache<T>(ttlMs: number) {
       cached = undefined
       const current = ++revision
       const promise = Promise.resolve().then(load).then(value => {
-        if (revision !== current) throw new Error('Ontology discovery changed during refresh. Refresh again to load the current workspace.')
+        if (revision !== current) throw new OntologyCacheInvalidatedError()
         if (value !== null) cached = { key, expiresAt: Date.now() + ttlMs, value }
         return value
       }).finally(() => {

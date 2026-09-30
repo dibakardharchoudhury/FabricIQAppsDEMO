@@ -65,11 +65,11 @@ export function KnowledgeGraphPage() {
   const graphRefreshVersion = useRef(0)
   const cancelGraphQuery = useCallback(() => { graphRefreshVersion.current++ }, [])
 
-  const loadOntologyGraph = useCallback(async () => {
+  const loadOntologyGraph = useCallback(async (force = false) => {
     const version = ++graphRefreshVersion.current
     setGraphLoading(true)
     try {
-      const { ontology: contract, ontologyGraph: next } = await loadNativeGraphSnapshot(queryOntologyGraph, queryOntologyContract)
+      const { ontology: contract, ontologyGraph: next } = await loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
       if (version !== graphRefreshVersion.current) return
       setOntology(contract)
       setOntologyGraph(current => graphVersion(current) === graphVersion(next) ? current : next)
@@ -77,6 +77,7 @@ export function KnowledgeGraphPage() {
       setGraphError(next ? undefined : 'No verified native backing graph is loaded for the selected Ontology. Materialize it through Manage graph in the Ontology portal, then configure the verified workspace, Ontology, and graph mapping and retry.')
     } catch (error) {
       if (version !== graphRefreshVersion.current) return
+      console.warn('Native ontology graph query failed; Ontology-bound Lakehouse data remains available.', error)
       setOntologyGraph(null)
       setOntology(null)
       setGraphQueriedAt(undefined)
@@ -86,20 +87,20 @@ export function KnowledgeGraphPage() {
   }, [])
 
   const refreshAll = async () => {
-    data.actions.refreshDiscovery()
-    await loadOntologyGraph()
+    await data.actions.refreshStid(true)
+    await loadOntologyGraph(true)
   }
 
   useEffect(() => {
     let inFlight = false
-    const refresh = async () => {
+    const refresh = async (force = false) => {
       if (inFlight || document.hidden) return
       inFlight = true
-      try { await loadOntologyGraph() }
+      try { await loadOntologyGraph(force) }
       finally { inFlight = false }
     }
     void refresh()
-    const interval = window.setInterval(refresh, 30_000)
+    const interval = window.setInterval(() => void refresh(true), 30_000)
     const handleVisibility = () => { if (!document.hidden) void refresh() }
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
@@ -110,18 +111,18 @@ export function KnowledgeGraphPage() {
   }, [cancelGraphQuery, loadOntologyGraph])
 
   const graph = useMemo(() => buildKnowledgeGraph({
-    facilities: [],
-    systems: [],
-    equipment: [],
-    instruments: [],
+    facilities: data.stid?.facilities ?? [],
+    systems: data.stid?.systems ?? [],
+    equipment: data.stid?.equipment ?? [],
+    instruments: data.stid?.instruments ?? [],
     telemetry: data.telemetry,
     workOrders: data.orders,
     inspections: data.inspections,
     notifications: data.notifications,
     models: data.assetModels,
-    ontology,
+    ontology: ontology ?? data.ontology,
     ontologyGraph,
-  }), [data.assetModels, data.inspections, data.notifications, data.orders, data.telemetry, ontology, ontologyGraph])
+  }), [data.assetModels, data.inspections, data.notifications, data.ontology, data.orders, data.stid, data.telemetry, ontology, ontologyGraph])
 
   const sharedSelectedId = data.selectedAssetId ? `equipment:${data.selectedAssetId}` : undefined
   const effectiveSelectedId = selection && graph.nodes.some(item => item.id === selection.nodeId)
@@ -185,8 +186,8 @@ export function KnowledgeGraphPage() {
     navigateTo(tab)
   }
 
-  if (!ontologyGraph && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
-  if (graphError || graph.error || !ontologyGraph) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
+  if (!graph.nodes.length && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
+  if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
@@ -194,7 +195,7 @@ export function KnowledgeGraphPage() {
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span>{`${ontologyGraph.graphModelName} · GQL`}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className="kg-workspace">

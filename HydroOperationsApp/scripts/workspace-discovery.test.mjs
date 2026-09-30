@@ -4,6 +4,171 @@ import test from 'node:test'
 import ts from 'typescript'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+const serviceDependencies = Object.fromEntries(await Promise.all([
+  'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
+  'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight',
+].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
+const serviceCode = ts.transpileModule(source.replaceAll('import.meta.env', 'testEnv'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText
+const workspaceId = '11111111-1111-1111-1111-111111111111'
+const ontologyId = '22222222-2222-2222-2222-222222222222'
+const graphModelId = '33333333-3333-3333-3333-333333333333'
+const graphDefinition = { definition: { parts: [{
+  path: 'entities/facilities.tmdl', payloadType: 'InlineBase64',
+  payload: Buffer.from('entity facilities\n    backingTable: silver_facilities\n    keyProperty: facility_id\n    property facility_id\n        dataType: string\n').toString('base64'),
+}] } }
+
+function graphService(onRequest = async () => undefined) {
+  const requests = []
+  const dependencies = {
+    ...serviceDependencies,
+    './artifactDiscovery': { selectDataAgent: () => undefined },
+    '@azure/msal-browser': { PublicClientApplication: class {
+      async initialize() {}
+      async handleRedirectPromise() {}
+      getAllAccounts() { return [{}] }
+      async acquireTokenSilent() { return { accessToken: 'test-token' } }
+    } },
+  }
+  const exports = {}
+  new Function('require', 'exports', 'testEnv', 'fetch', 'location', serviceCode)(
+    name => {
+      assert.ok(dependencies[name], `Unexpected dependency: ${name}`)
+      return dependencies[name]
+    }, exports, {
+      VITE_RAYFIN_AAD_CLIENT_ID: 'test-client', VITE_RAYFIN_TENANT_ID: 'test-tenant',
+      VITE_RAYFIN_WORKSPACE_ID: workspaceId,
+      VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING: JSON.stringify({ workspaceId, ontologyId, graphModelId }),
+    }, async (url, init) => {
+      requests.push(String(url))
+      const override = await onRequest(String(url), init)
+      if (override) return override
+      if (url.endsWith('/items')) return Response.json({ value: [
+        { id: ontologyId, type: 'Ontology', displayName: 'Hydro v2' },
+      ] })
+      if (url.endsWith(`/ontologies/${ontologyId}`)) return Response.json({ properties: { generation: 2 } })
+      if (url.endsWith('/getDefinition')) return Response.json(graphDefinition)
+      if (url.endsWith(`/graphModels/${graphModelId}`)) return Response.json({
+        id: graphModelId, type: 'GraphModel', displayName: 'Hydro native graph',
+      })
+      if (url.includes('/getQueryableGraphType')) return Response.json({
+        nodeTypes: [{ alias: 'f', labels: ['facilities'] }], edgeTypes: [],
+      })
+      if (url.includes('/executeQuery')) return Response.json({
+        status: { code: '00000' }, result: { kind: 'TABLE', data:
+          JSON.parse(init.body).query.startsWith('MATCH (n)') ? [{
+            node: JSON.stringify({ oid: 'f1', labels: ['facilities'], properties: { facility_id: 'F1' } }),
+          }] : [],
+        },
+      })
+      throw new Error(`Unexpected request: ${url}`)
+    }, { origin: 'https://app.example.test' },
+  )
+  return { service: exports, requests }
+}
+
+test('graph loading reuses one definition and coalesces concurrent native requests', async () => {
+  const { service, requests } = graphService()
+  const graphs = await Promise.all([service.queryOntologyGraph(), service.queryOntologyGraph()])
+  assert.equal(graphs[0].nodes.length, 1)
+  assert.deepEqual(graphs[0], graphs[1])
+  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
+  const coldRequests = requests.length
+  await service.queryOntologyGraph()
+  await service.queryOntologyContract()
+  assert.equal(requests.length, coldRequests, 'Warm graph reads must not issue more network requests')
+})
+
+test('discovery refresh during a graph read does not surface an obsolete-request error', async () => {
+  let started
+  const waiting = new Promise(resolve => { started = resolve })
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  let definitions = 0
+  const { service } = graphService(async url => {
+    if (url.endsWith('/getDefinition') && ++definitions === 1) {
+      started()
+      await pending
+    }
+  })
+  const graph = service.queryOntologyGraph()
+  await waiting
+  service.clearWorkspaceConfigCache()
+  finish()
+  assert.equal((await graph).nodes.length, 1)
+})
+
+test('workspace refresh does not invalidate a same-ontology contract request in flight', async () => {
+  let started
+  const waiting = new Promise(resolve => { started = resolve })
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  let definitions = 0
+  const { service } = graphService(async url => {
+    if (url.endsWith('/getDefinition') && ++definitions === 2) {
+      started()
+      await pending
+    }
+  })
+  await service.queryOntologyGraph()
+  const contract = service.queryOntologyContract(true)
+  await waiting
+  service.clearWorkspaceConfigCache()
+  const graph = service.queryOntologyGraph()
+  finish()
+  const [current, topology] = await Promise.all([contract, graph])
+  assert.equal(current.id, topology.ontologyId)
+})
+
+test('periodic native refresh bypasses only graph cache, not the valid ontology definition', async () => {
+  const { service, requests } = graphService()
+  await service.queryOntologyGraph()
+  await service.queryOntologyGraph(true)
+  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 4)
+})
+
+test('native failures are propagated and a later read retries instead of returning stale graph data', async () => {
+  let rejectQuery = false
+  const { service } = graphService(async url =>
+    rejectQuery && url.includes('/executeQuery') ? new Response('denied', { status: 403 }) : undefined)
+  await service.queryOntologyGraph()
+  rejectQuery = true
+  await assert.rejects(service.queryOntologyGraph(true), /403/)
+  await assert.rejects(service.queryOntologyGraph(), /403/)
+  rejectQuery = false
+  assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
+})
+
+test('failed contract refresh prevents reuse of both discovery data and cached native results', async () => {
+  let denied = false
+  const { service } = graphService(async url =>
+    denied && url.endsWith(`/ontologies/${ontologyId}`) ? new Response('denied', { status: 403 }) : undefined)
+  await service.queryOntologyGraph()
+  denied = true
+  await assert.rejects(service.queryOntologyContract(true), /403/)
+  await assert.rejects(service.queryOntologyGraph(), /403/)
+  denied = false
+  assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
+})
+
+test('changed ontology selection cannot reuse the previous ontology native graph', async () => {
+  const replacement = '44444444-4444-4444-4444-444444444444'
+  let changed = false
+  const { service, requests } = graphService(async url => {
+    if (changed && url.endsWith('/items')) return Response.json({
+      value: [{ id: replacement, type: 'Ontology', displayName: 'Replacement v2' }],
+    })
+    if (url.endsWith(`/ontologies/${replacement}`)) return Response.json({ properties: { generation: 2 } })
+  })
+  await service.queryOntologyGraph()
+  changed = true
+  service.clearWorkspaceConfigCache()
+  await assert.rejects(service.queryOntologyGraph(), /different workspace or ontology/)
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
+})
 // Execute the production discovery and environment readers without browser MSAL or service writes.
 const constants = source.slice(source.indexOf('const clientId ='), source.indexOf('const msal ='))
 const discovery = source.slice(source.indexOf('type WorkspaceItem ='), source.indexOf('// ---- Fabric Embed'))

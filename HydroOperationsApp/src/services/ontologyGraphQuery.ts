@@ -11,7 +11,7 @@ export type OntologyGraphBinding = {
 }
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export const GRAPH_SETUP_REQUIRED = 'Materialize the graph from the selected Ontology v2 using Manage graph, then configure RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING with its verified workspaceId, ontologyId and graphModelId. The app does not substitute Lakehouse joins or guess graph ownership.'
+export const GRAPH_SETUP_REQUIRED = 'Materialize the graph from the selected Ontology v2 using Manage graph, then configure RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING with its verified workspaceId, ontologyId and graphModelId. Native queries do not substitute Lakehouse joins or guess graph ownership.'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)

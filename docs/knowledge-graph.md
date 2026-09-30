@@ -53,8 +53,8 @@ signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
 **This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
-a legacy parser or used as agent sources. Graph materialization is optional in the Fabric ontology
-experience, but **required for this app's graph canvas, tree, and scopes**. Open the selected ontology,
+a legacy parser or used as agent sources. Graph materialization is required for native GQL reads,
+but does not block the existing progressive view of Ontology-bound STID entities. Open the selected ontology,
 choose **Manage graph → select eligible entities and relationships → Continue → Materialize**.
 Use the resulting ontology-managed GraphModel, not an independently created look-alike graph.
 
@@ -98,15 +98,17 @@ bound native GraphModel for topology:
 ```mermaid
 flowchart LR
    DEF["Fabric IQ Ontology v2\nTMDL semantic contract"]
+   STID["Lakehouse/STID bound entity rows"]
    GM["Ontology-managed GraphModel"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
-   BUILD["buildKnowledgeGraph()\nnative topology + enrichment"]
+   BUILD["buildKnowledgeGraph()\nprogressive bound view, then native topology"]
     CY["Cytoscape canvas"]
 
    DEF -->|"getDefinition"| BUILD
+   STID -->|"declared ontology bindings while native data loads"| BUILD
    GM --> GQL --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
@@ -117,8 +119,12 @@ flowchart LR
 Physical TOM relationships in `relationships.tmdl` are not semantic ontology edges.
 `queryOntologyGraph()` verifies live numeric generation `2`, the live TMDL contract, configured
 GraphModel metadata, queryable aliases, node/edge types, and relationship endpoints before accepting
-native GQL results. `buildKnowledgeGraph()` preserves native topology and adds enrichment; it never
-fabricates entities or governed edges from STID rows or foreign-key joins.
+native GQL results. `buildKnowledgeGraph()` preserves native topology when it is available.
+While native reads are pending or unavailable, it retains the original progressive loading path:
+existing STID entities are mapped through the verified v2 contract's entity bindings and declared
+semantic relationship keys, then enriched with KQL/SQL. Arbitrary physical relationships and
+unsupported junction joins do not become semantic edges. Bound rows have compatibility provenance,
+not native OIDs or a claim of successful GQL execution.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and
@@ -128,7 +134,12 @@ warnings, truncation, malformed responses, dangling edges, or limits exceeding *
 4,000 edges** fail closed; a partial result is never presented as a complete graph.
 
 For page-load performance, Cytoscape is route-lazy and
-single-flight requests prevent duplicate calls. The page defaults to a selected-asset projection;
+single-flight requests prevent duplicate calls. Discovery's parsed ontology contract is reused,
+avoiding a second definition download on first graph load. Contract and graph caches retain the
+original 15-minute lifetime; the 30-second native poll explicitly refreshes graph instances only.
+Workspace discovery changes restart obsolete reads instead of displaying a cache-revision error.
+The page does not hide available bound entities behind the native-query loading screen.
+The page defaults to a selected-asset projection;
 facility and all-graph views are opt-in. Cytoscape reconciles changed element data in place, so live
 polls preserve the current viewport, selection, and dragged node positions instead of rebuilding
 the graph. A layout is rerun only on initial load or when the operator selects a different layout.
@@ -141,9 +152,10 @@ without changing the governed v2 semantic contract. Unbound and non-one-to-one s
 The v2 adaptation retains the existing page layout, controls, friendly inspector labels, and
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
 Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
-`instrumentId`, or `opcuaNodeId` as explicit external overlays attached only to actual native entities.
-Existing GraphQL/STID reads serve other app pages; graph canvas, tree, and scope options do not
-depend on them and never use them as a fallback when native graph reads fail.
+`instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
+native or Ontology-bound equipment. Existing GraphQL/STID reads support the progressive view,
+as on main. Native graph results replace that instance view once loaded; missing native edges
+are never filled in from foreign keys.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -471,12 +483,11 @@ certification or attested execution provenance:
 - Semantic errors (including nested JSON errors despite `isError: false`), wrong rows, and
   transport failures are `failed`. Nonparseable, count-only, or otherwise unverifiable answers are
   `inconclusive`. Both fail required modes; neither is a static v2 skip.
-- NB11 requires `ready`/`published`/`verified` and matching agent/workspace/ontology evidence plus
-  the exact ontology source configuration. It compares the ontology subset of multi-source
-  evidence: adding SQL alone does not invalidate the smoke evidence if that source is retained.
-  Changed ontology configuration is inconclusive and fails required execution. SQL/custom parts,
-  operational/custom instructions, and entity selections survive NB09 reruns, including failing
-  runtime checks. Required failures propagate through NB09/NB11/setup.
+- NB11 configures its SQL source independently of NB09's ontology status or attachment.
+  It preserves existing sources and custom content, verifies the submitted SQL source in draft
+  and published readback, and writes only its own SQL-source status. It neither requires nor
+  manufactures successful ontology-runtime evidence. Real SQL/GraphQL/source-publication errors
+  still fail NB11. NB09's required ontology failure remains a separate setup limitation.
 
 The reported **58 focused offline tests** and parent-run **102/102 full ontology regressions on
 Python 3.12** passed. These test results do not establish healthy ontology runtime.

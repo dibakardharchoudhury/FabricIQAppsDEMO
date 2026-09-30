@@ -2,7 +2,7 @@ import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
 import { invokeVerifiedDataAgent, requireDataAgentEndpoint, selectDataAgent } from './artifactDiscovery'
 import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
-import { createOntologyCache } from './ontologyCache'
+import { createOntologyCache, OntologyCacheInvalidatedError } from './ontologyCache'
 import { parseOntologyContract, type OntologyContract } from './ontologyContract'
 import { waitForDefinitionResult } from './ontologyDefinition'
 import type { OntologyGraph } from './ontologyGraph'
@@ -155,11 +155,12 @@ async function ensureConfig(interactive: boolean, forceRefresh = false): Promise
     clearWorkspaceConfigCache()
   }
   if (configCache) return configCache
-  if (configPromise) return configPromise
-  const promise = discoverConfig(interactive, configRevision)
+  const revision = configRevision
+  const promise = configPromise ?? discoverConfig(interactive, revision)
   configPromise = promise
   try {
-    return await promise
+    const config = await promise
+    return revision === configRevision ? config : ensureConfig(interactive)
   } finally {
     if (configPromise === promise) configPromise = undefined
   }
@@ -223,17 +224,18 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
         return response.json() as Promise<{ properties?: { generation?: number } }>
       },
       definition: async id => {
+        const signal = AbortSignal.timeout(30_000)
         const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${id}/getDefinition`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, signal,
         })
-        return waitForDefinitionResult(response, token)
+        return waitForDefinitionResult(response, token, signal)
       },
     })
     const da = semantic.ontologyGeneration === 2 && !semantic.ontologyError ? selectDataAgent(items) : undefined
     const dataAgentUrl = da
       ? `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${da.id}/agent`
       : undefined
-    if (revision !== configRevision) throw new Error('Workspace discovery changed during refresh. Refresh again.')
+    if (revision !== configRevision) return null
     configCache = {
       pipelineId: pipeline?.id ?? env.pipelineId,
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
@@ -247,6 +249,7 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
     }
     return configCache
   } catch (error) {
+    if (revision !== configRevision) return null
     console.warn('Workspace discovery failed; using configured fallback values.', error)
     return { ...env, ontologyError: error instanceof Error ? error.message : 'Workspace discovery failed. Sign in and refresh.' }
   }
@@ -296,7 +299,6 @@ export function clearWorkspaceConfigCache() {
   configRevision++
   configCache = null
   configPromise = undefined
-  ontologyContractCache.clear()
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -488,53 +490,77 @@ export type System = {
 
 const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
 const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
+const ontologyGraphCache = createOntologyCache<OntologyGraph>(ONTOLOGY_CONTRACT_TTL_MS)
+
+async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {
+  for (;;) {
+    const config = await ensureConfig(false)
+    const revision = configRevision
+    try {
+      const result = await load(config)
+      if (revision === configRevision) return result
+    } catch (error) {
+      if (revision === configRevision && !(error instanceof OntologyCacheInvalidatedError)) throw error
+    }
+  }
+}
 
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
-  const config = await ensureConfig(false)
-  if (config?.ontologyError) {
-    ontologyContractCache.clear()
-    configCache = null
-    throw new Error(config.ontologyError)
-  }
-  if (!config?.ontologyId) { ontologyContractCache.clear(); throw new Error('Sign in and select a verified Ontology v2 before loading governed topology.') }
-  return ontologyContractCache.read(config.ontologyId, force, async () => {
-    const token = await fabricToken(false)
-    if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
-    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+  return withCurrentConfig(async config => {
+    if (config?.ontologyError) {
+      ontologyContractCache.clear()
+      configCache = null
+      throw new Error(config.ontologyError)
+    }
+    if (!config?.ontologyId) { ontologyContractCache.clear(); throw new Error('Sign in and select a verified Ontology v2 before loading governed topology.') }
+    if (!force && config.ontologyContract && config.ontologyReadAt !== undefined
+      && Date.now() - config.ontologyReadAt < ONTOLOGY_CONTRACT_TTL_MS) return config.ontologyContract
+    config.ontologyContract = undefined
+    config.ontologyReadAt = undefined
+    return ontologyContractCache.read(`${requireWorkspaceId()}:${config.ontologyId}`, force, async () => {
+      const token = await fabricToken(false)
+      if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
+      const signal = AbortSignal.timeout(30_000)
+      const metadataResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`, {
+        headers: { Authorization: `Bearer ${token}` }, signal,
+      })
+      if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
+      const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
+      requireV2Generation(metadata.properties?.generation)
+      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}/getDefinition`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }, signal,
+      })
+      const definition = await waitForDefinitionResult(response, token, signal)
+      const contract = parseOntologyContract(config.ontologyId!, config.ontologyName ?? 'Fabric Ontology', definition, metadata.properties?.generation)
+      config.ontologyContract = contract
+      config.ontologyReadAt = Date.now()
+      return contract
     })
-    const definition = await waitForDefinitionResult(response, token)
-    return parseOntologyContract(config.ontologyId!, config.ontologyName ?? 'Fabric Ontology', definition, config.ontologyGeneration)
   })
 }
 
-export async function queryOntologyGraph(): Promise<OntologyGraph | null> {
-  const config = await ensureConfig(false)
-  const revision = configRevision
-  if (config?.ontologyError) throw new Error(config.ontologyError)
-  if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')
-  const binding = parseGraphBinding(
-    import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined,
-    requireWorkspaceId(), config.ontologyId,
-  )
-  const token = await fabricToken(false)
-  if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
-  const request = (url: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers)
-    headers.set('Authorization', `Bearer ${token}`)
-    return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
-  }
-  const metadataResponse = await request(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`)
-  if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
-  const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
-  requireV2Generation(metadata.properties?.generation)
-  const ontology = await queryOntologyContract(true)
-  if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
-  if (revision !== configRevision) throw new Error('Workspace discovery changed during graph loading. Refresh again.')
-  const graph = await queryBoundOntologyGraph(binding, ontology, request)
-  if (revision !== configRevision) throw new Error('Workspace discovery changed during graph loading. Refresh again.')
-  return graph
+export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
+  return withCurrentConfig(async config => {
+    if (config?.ontologyError) throw new Error(config.ontologyError)
+    if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')
+    const binding = parseGraphBinding(
+      import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined,
+      requireWorkspaceId(), config.ontologyId,
+    )
+    const ontology = await queryOntologyContract()
+    if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
+    return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
+      const token = await fabricToken(false)
+      if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
+      const request = (url: string, init?: RequestInit) => {
+        const headers = new Headers(init?.headers)
+        headers.set('Authorization', `Bearer ${token}`)
+        return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+      }
+      return queryBoundOntologyGraph(binding, ontology, request)
+    })
+  })
 }
 
 // Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are

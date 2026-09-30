@@ -91,12 +91,13 @@ to generate the playbook in the portal. The default is still `true`, retaining t
 BAD/UNCERTAIN rules, Teams destination, and email action. Explicit manual generation is reported
 as such; an API rejection never causes the notebook to silently remove the playbook or actions.
 
-NB11 requires matching `ready`/`published`/`verified` evidence bound to the same
-agent/workspace/ontology and exact ontology-source configuration. It compares only the ontology
-subset of multi-source evidence: adding SQL does not invalidate retained ontology evidence, while
-changed ontology configuration is inconclusive and fails required completion. SQL-source status
-is separately `published`; independent SQL/GraphQL results are preserved before required failure
-is raised.
+NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
+ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.
+Existing sources, custom settings, instructions, and selections are retained. Exact SQL-source
+draft and published readback is required; publication is not runtime verification. Only explicit
+`disabled` skips the extension; missing agents and real SQL/API failures still fail it. NB11
+writes only its SQL-source status/reason, leaving NB09's deployment/publication/runtime results
+untouched. Independent SQL/GraphQL results are preserved before required failure is raised.
 
 The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
 metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
@@ -104,9 +105,11 @@ metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09
 semantic error despite HTTP 200 / `isError: false`. Delta readback confirmed deployment/runtime
 `failed`, publication/SQL-source `published`, and enabled mode. All five SQL tables, all five
 ontology elements, and custom content remained intact in draft and published definitions; a
-subsequent SQL-only MCP query returned `{"workOrderCount":12}`. **Full setup and NB11 were not rerun
-after the new gate.** This proves required-failure handling and preservation, not healthy ontology
-runtime. See [the full live record](../../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
+subsequent SQL-only MCP query returned `{"workOrderCount":12}`. **At that historical validation,
+full setup and NB11 were not rerun after the then-new gate. The NB11 gate has since been removed
+and the independent SQL extension validated offline only.** That live record proves NB09
+required-failure handling and preservation, not healthy ontology runtime or a live rerun of
+the current NB11. See [the full live record](../../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
 
 - **`az login`** first (optionally `az login --tenant <tenant>`). Both scripts use
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as

@@ -73,12 +73,11 @@ smoke test; execution provenance is not attested."** It does not certify cryptog
 SQL/combined-source answers, or the entire agent. Semantic/transport errors and wrong rows fail;
 nonparseable, count-only, or unverifiable answers are inconclusive. Both fail required execution.
 
-RTI_011 requires prior `ready`/`published`/`verified` and matching agent/workspace/ontology evidence
-with the exact ontology-source configuration. It filters the ontology subset from multi-source
-evidence: adding SQL alone does not invalidate smoke evidence if that source is retained; changed
-ontology configuration is inconclusive and fails required completion. SQL publication is recorded
-separately as `data_agent_sql_source_status=published`. SQL/custom parts, custom instructions, and
-entity selections are preserved, including on runtime-failing NB09 reruns.
+RTI_011 attaches and publishes the SQL source independently of the ontology source or NB09's
+runtime result. It verifies the SQL source through draft/published readback, preserves existing
+sources and custom settings, and records `data_agent_sql_source_status=published` without
+overwriting NB09's ontology status. Actual SQL-source failures still fail NB11. SQL/custom parts,
+custom instructions, and entity selections also survive runtime-failing NB09 reruns.
 
 The Operations Agent is configured in a **stopped** state; `configured` does not mean a playbook has
 run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
@@ -287,11 +286,12 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
 GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
-Knowledge Graph provides selected-asset, facility, and all-entity views over native ontology-managed
-GraphModel topology validated against the live v2 TMDL contract. Eventhouse supplies fresh readings,
-and SQL contributes explicit external overlays only on actual native entities. GraphQL is not a
-dependency or fallback for the graph canvas, tree, or scopes. Published REST metadata does not expose
-ontology ownership, so an explicit operator binding is required; names and structural similarity
+Knowledge Graph retains progressive loading: available Lakehouse/STID entities are interpreted through
+the v2 Ontology's declared entity and relationship bindings while its native graph is loading.
+Verified native GraphModel results take precedence when available. Both paths retain Eventhouse
+readings and SQL operational overlays, with distinct provenance rather than presenting bound rows as
+native GQL results. Published REST metadata does not expose ontology ownership, so native queries
+require an explicit operator binding; names and structural similarity
 are not evidence. Latest production-parser/model checks passed with 111 native nodes / 108 edges
 and 174 enriched nodes / 171 edges using real KQL/SQL and empty STID topology inputs. Protected
 hosting checks passed, but these API/model results do not certify interactive app behavior. See

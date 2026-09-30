@@ -30,40 +30,18 @@
 # triggered on demand — for example, from the web app's **Seed demo data** button via the Fabric
 # job API (`jobType=RunNotebook`) — and is fully **idempotent**, so repeated runs are safe.
 # 
-# SQL seed and GraphQL run independently of Data Agent availability. Unexpected failures
-# are reported and raised, not converted to agent readiness. The SQL source step
-# honors `ontology_data_agent_mode` (enabled by default, auto/disabled also accepted)
-# and the live ontology generation.
-# Agent integration is v2-only: both target ontology and existing agent ontology sources
-# must have live integer `properties.generation == 2`. Legacy sources are rejected,
-# never silently reused, migrated, or deleted.
-# Existing agent sources must also match the selected ontology id and workspace exactly;
-# selecting a separate v2 ontology never authorizes extension of an unrelated agent.
-# Draft readback must retain the ontology and exact submitted SQL source before publish.
-# Both published counterparts must then be verified before reporting SQL source success.
-# `auto` is a backwards-compatible alias for `enabled`: both attempt the real v2
-# source extension and fail if the agent is missing/unconfigured, RTI_009 did not
-# report both publication and verified ontology-runtime evidence, or the source is
-# legacy. Only `disabled` skips it.
-# SQL/GraphQL setup still runs independently, but required agent failures make the
-# overall notebook fail. Draft/published verification is not runtime readiness.
-# 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
 # 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse,
 #    provisioning the web app's STID and Weather read endpoints.
-# 3. **Data Agent (enabled/auto)** — attempts to add the `hydro-operations` SQL Database
-#    as a second source and **republishes** the agent, retaining the exact v2 ontology
-#    source from RTI_009. Successful publication does not establish query readiness.
-#    Prior NB09 source-specific functional smoke evidence is retained only for the exact
-#    unchanged ontology source on the same agent/workspace. It does not certify
-#    SQL or combined-source runtime. Changed ontology configuration invalidates proof.
+# 3. **Data Agent** — adds the operational SQL Database to the live agent and
+#    **republishes**, preserving existing sources and custom settings. This step is
+#    independent of NB09's ontology result and requires no ontology source or runtime proof.
 #
-# STID/Weather GraphQL provisioning is independent of native ontology-owned graph
-# topology. The app uses native graph entities and relationships; operational SQL
-# records and KQL telemetry enrich those native entities. GraphQL is not a graph
-# fallback and does not establish native graph readiness. REST `/v1` and name
-# suffixes such as `_V9` are not ontology generation indicators.
+# SQL seed and GraphQL run independently of Data Agent availability. The SQL source step
+# honors `ontology_data_agent_mode`: `enabled` (default) and `auto` attempt the extension;
+# only `disabled` skips it. Real failures are surfaced after saving the per-step results.
+# Exact SQL draft/published readback confirms publication, not runtime verification.
 # 
 # Settings are read from / written back to `rti_demo_settings`.
 # 
@@ -1038,92 +1016,10 @@ def validate_agent_mode(value: str) -> str:
     return mode
 
 
-def get_ontology_generation(ontology_id: str) -> int:
-    response = api_request(
-        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}"
-    )
-    response.raise_for_status()
-    generation = (response.json().get("properties") or {}).get("generation")
-    if type(generation) is int and generation in (1, 2):
-        return generation
-    raise RuntimeError(
-        f"Unknown live Ontology properties.generation {generation!r}. "
-        "Verify the Ontology API response and update generation support before deploying agents."
-    )
-
-
-def agent_capability_policy(generation: int, mode: str) -> dict:
-    mode = validate_agent_mode(mode)
-    if type(generation) is not int or generation not in (1, 2):
-        raise ValueError(f"Unsupported live ontology generation: {generation!r}")
-    if generation != 2:
-        raise RuntimeError(
-            "This deployment is v2-only. Replace the generation 1 ontology and agent sources "
-            "through an explicit migration before retrying; no legacy agent writes are allowed."
-        )
-    if mode == "disabled":
-        return {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
-    return {"status": "allowed", "reason": ""}
-
-
-def require_v2_ontology(ontology_id: str) -> None:
-    if get_ontology_generation(ontology_id) != 2:
-        raise RuntimeError(
-            f"Ontology {ontology_id!r} is not generation 2. This deployment is v2-only; "
-            "migrate the legacy source explicitly before configuring or publishing agents."
-        )
-
-
-def validate_agent_ontology_sources(
-    parts: list, expected_ontology_id: str,
-    require_draft: bool = False, require_published: bool = False,
-) -> None:
-    """Require every ontology source to reference the selected live v2 item, without removing parts."""
-    if not expected_ontology_id:
-        raise RuntimeError("A selected live v2 ontology id is required before verifying agent sources.")
-    found_draft = False
-    found_published = False
-    for part in parts:
-        path = part.get("path", "")
-        if not path.endswith("/datasource.json"):
-            continue
-        if part.get("payloadType") != "InlineBase64":
-            raise RuntimeError(f"Cannot verify agent data source {path!r}: expected InlineBase64.")
-        ds = json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
-        if not isinstance(ds, dict):
-            raise RuntimeError(f"Cannot verify agent data source {path!r}: expected a JSON object.")
-        if not isinstance(ds.get("type"), str) or not ds["type"].strip():
-            raise RuntimeError(f"Cannot verify agent data source {path!r}: missing source type.")
-        if ds["type"].lower() != "ontology":
-            if "/ontology-" in path:
-                raise RuntimeError(f"Malformed ontology data source {path!r}; no agent writes are allowed.")
-            continue
-        if not ds.get("artifactId") or ds.get("workspaceId") != workspace_id:
-            raise RuntimeError(
-                f"Ontology source {path!r} lacks a verifiable id in the target workspace; "
-                "migrate it explicitly before configuring this v2-only agent."
-            )
-        if ds["artifactId"] != expected_ontology_id:
-            raise RuntimeError(
-                f"Agent ontology source {ds['artifactId']!r} does not match selected ontology "
-                f"{expected_ontology_id!r}. Unrelated or legacy agent sources must be migrated explicitly."
-            )
-        require_v2_ontology(ds["artifactId"])
-        found_draft = found_draft or path.startswith("Files/Config/draft/")
-        found_published = found_published or path.startswith("Files/Config/published/")
-    if require_draft and not found_draft:
-        raise RuntimeError("No verified draft v2 ontology source exists. Run RTI_009 with verified product support first.")
-    if require_published and not found_published:
-        raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
-
-
 def verify_agent_source_readback(
-    agent_id: str, ontology_id: str, submitted_sql_source: dict, published: bool = False,
+    agent_id: str, submitted_sql_source: dict, published: bool = False,
 ) -> list:
     parts = definition_parts(get_item_definition(agent_id))
-    validate_agent_ontology_sources(
-        parts, ontology_id, require_draft=not published, require_published=published,
-    )
     path = SQL_DATASOURCE_PATH.replace("/draft/", "/published/", 1) if published else SQL_DATASOURCE_PATH
     sql_part = next((part for part in parts if part["path"] == path), None)
     if sql_part is None or decode_payload(sql_part["payload"]) != submitted_sql_source:
@@ -1134,50 +1030,16 @@ def verify_agent_source_readback(
     return parts
 
 
-def published_agent_sources(parts: list) -> dict:
-    return {
-        part["path"]: json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
-        for part in parts
-        if part["path"].startswith("Files/Config/published/") and part["path"].endswith("/datasource.json")
-    }
-
-
 def resolve_agent_extension_target() -> tuple:
     mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
     if mode == "disabled":
-        return None, {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
-    prior_status = first_setting("data_agent_deployment_status", default="")
-    publication_status = first_setting("data_agent_publication_status", default="")
-    runtime_status = first_setting("data_agent_runtime_status", default="")
-    if prior_status != "ready" or publication_status != "published" or runtime_status != "verified":
-        raise RuntimeError(
-            f"RTI_009 status is {prior_status!r}, publication {publication_status!r}, runtime {runtime_status!r}; "
-            "verified source-specific functional smoke evidence is required before SQL extension. "
-            "Publication alone is insufficient."
-        )
+        return None, {"status": "skipped", "reason": "Data Agent SQL extension explicitly disabled."}
     if not data_agent_id and not data_agent_name:
-        raise RuntimeError("No Data Agent configured; run RTI_009 successfully before SQL extension.")
+        raise RuntimeError("No Data Agent configured; configure a live Data Agent before SQL extension.")
     agent_id = resolve_data_agent_id()
     if not agent_id:
-        raise RuntimeError("No live Data Agent found; run RTI_009 successfully before SQL extension.")
-    ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
-    ontologies = [
-        item for item in list_items_of_type("Ontology") if item.get("displayName") == ontology_name
-    ]
-    if not ontologies:
-        raise RuntimeError(f"Ontology {ontology_name!r} not found; cannot verify the Data Agent capability.")
-    in_folder = [item for item in ontologies if item.get("folderId") == target_folder_id]
-    candidates = in_folder if target_folder_id else ontologies
-    if len(candidates) != 1:
-        raise RuntimeError(
-            f"Expected exactly one Ontology {ontology_name!r} in configured target folder "
-            f"{target_folder_id!r}; found {len(candidates)}."
-        )
-    ontology_id = candidates[0]["id"]
-    generation = get_ontology_generation(ontology_id)
-    policy = agent_capability_policy(generation, mode)
-    policy["ontology_id"] = ontology_id
-    return (agent_id if policy["status"] == "allowed" else None), policy
+        raise RuntimeError("No live Data Agent found; create or configure one before SQL extension.")
+    return agent_id, {"status": "allowed", "reason": ""}
 
 
 def _ds_element(type_name: str, display_name: str, is_selected: bool, children: list, **extra) -> dict:
@@ -1200,11 +1062,11 @@ def build_sql_datasource_obj(existing: dict, artifact_id: str, schema_map: dict)
     ds["$schema"] = DATASOURCE_SCHEMA_URL
     ds["artifactId"] = artifact_id
     ds["workspaceId"] = workspace_id
-    ds["dataSourceInstructions"] = SQL_DS_INSTRUCTIONS
+    ds.setdefault("dataSourceInstructions", SQL_DS_INSTRUCTIONS)
     ds["displayName"] = sql_db_item_name
     ds["type"] = SQL_DATASOURCE_TYPE
-    ds["userDescription"] = None
-    ds["metadata"] = None
+    ds.setdefault("userDescription", None)
+    ds.setdefault("metadata", None)
     table_nodes = []
     for table, _desc in SQL_TABLES:
         column_nodes = [
@@ -1212,14 +1074,32 @@ def build_sql_datasource_obj(existing: dict, artifact_id: str, schema_map: dict)
             for col, dtype in (schema_map.get(table) or [])
         ]
         table_nodes.append(_ds_element("sql_database.table", table, True, column_nodes))
-    ds["elements"] = [
+    elements = [
         _ds_element("schema_grouping", "Schemas", False, [
             _ds_element(f"{SQL_DATASOURCE_TYPE}.schema", SQL_SCHEMA_NAME, False, [
                 _ds_element("table_grouping", "Tables", False, table_nodes),
             ]),
         ]),
     ]
+    ds["elements"] = merge_sql_elements(existing.get("elements", []), elements)
     return ds
+
+
+def merge_sql_elements(existing: list, desired: list) -> list:
+    """Add discovered schema nodes without resetting saved IDs, selections, or custom fields."""
+    merged = list(existing)
+    for node in desired:
+        index = next((i for i, old in enumerate(merged)
+                      if (old.get("type"), old.get("display_name")) ==
+                      (node["type"], node["display_name"])), None)
+        if index is None:
+            merged.append(node)
+        else:
+            old = merged[index]
+            merged[index] = {**node, **old, "children": merge_sql_elements(
+                old.get("children", []), node["children"],
+            )}
+    return merged
 
 
 def build_stage_obj(existing: dict) -> dict:
@@ -1235,27 +1115,10 @@ def build_stage_obj(existing: dict) -> dict:
     return stage
 
 
-def extend_data_agent_sql_source(agent_id: str, ontology_id: str) -> dict:
+def extend_data_agent_sql_source(agent_id: str) -> dict:
     global sql_db_item_id, sql_server, sql_database
-    require_v2_ontology(ontology_id)
     definition = get_item_definition(agent_id)
-    parts = definition_parts(definition)
-    validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
-    prior_sources = {path: source for path, source in published_agent_sources(parts).items()
-                     if source.get("type", "").lower() == "ontology"}
-    proof = json.loads(first_setting("data_agent_runtime_evidence", required=True))
-    proof_sources = proof.get("published_sources", {}) if isinstance(proof, dict) else {}
-    if not isinstance(proof_sources, dict) or any(not isinstance(source, dict) for source in proof_sources.values()):
-        raise RuntimeError("Prior functional smoke evidence has malformed source configuration; rerun NB09.")
-    proof_ontology_sources = {path: source for path, source in proof_sources.items()
-                             if source.get("type", "").lower() == "ontology"}
-    if (not isinstance(proof, dict) or proof.get("verification") != "ontology_facilities_smoke_v1"
-            or proof.get("agent_id") != agent_id or proof.get("ontology_id") != ontology_id
-            or proof.get("workspace_id") != workspace_id
-            or len(prior_sources) != 1 or proof_ontology_sources != prior_sources
-            or not proof.get("expected_facilities")
-            or proof.get("expected_facilities") != proof.get("returned_facilities")):
-        raise RuntimeError("Prior source-specific functional smoke evidence does not match this agent/source; rerun NB09.")
+    parts = definition_parts(definition, allow_empty=True)
     if not sql_db_item_id:
         # Resolve id even if seeding failed, so the source can still be wired.
         sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
@@ -1278,8 +1141,6 @@ def extend_data_agent_sql_source(agent_id: str, ontology_id: str) -> dict:
     filled = sum(1 for t, _ in SQL_TABLES if schema_map.get(t))
     print(f"✅ Enumerated columns for {filled}/{len(SQL_TABLES)} operational table(s)")
 
-    # Reuse/upgrade the existing sql_database datasource part (it may hold a stale
-    # artifactId from a prior run) — there is only one SQL source, matched by type.
     # Use only the datasource path belonging to the requested SQL Database.
     # Never reuse another app's sql_database datasource.
     sql_part_path = SQL_DATASOURCE_PATH
@@ -1307,26 +1168,16 @@ def extend_data_agent_sql_source(agent_id: str, ontology_id: str) -> dict:
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • SQL data source ->", sql_part_path, f"({len(SQL_TABLES)} table(s), nested column tree)")
     update_item_definition(agent_id, {"parts": parts})
-    verify_agent_source_readback(agent_id, ontology_id, submitted_sql_source)
+    verify_agent_source_readback(agent_id, submitted_sql_source)
 
     enable_preview_runtime(agent_id)
     publish_data_agent(agent_id, "Operational SQL source added.")
-    published_parts = verify_agent_source_readback(agent_id, ontology_id, submitted_sql_source, published=True)
-    retained_sources = {path: source for path, source in published_agent_sources(published_parts).items()
-                        if source.get("type", "").lower() == "ontology"}
-    print("🌐 Data Agent republished with ontology + operational SQL sources.")
-    if retained_sources != prior_sources:
-        return {
-            "status": "published", "runtime_status": "inconclusive",
-            "reason": "SQL source published, but the verified ontology source configuration changed; "
-                      "prior functional proof is invalid and a fresh source-specific probe is required.",
-        }
+    verify_agent_source_readback(agent_id, submitted_sql_source, published=True)
+    print("🌐 Data Agent republished with operational SQL source.")
     return {
         "status": "published",
-        "runtime_status": "verified",
-        "reason": "Publish completed with matching ontology and submitted SQL source verified in published "
-                  "readback. Prior source-specific functional smoke evidence retained for the unchanged ontology source; "
-                  "SQL and combined-source runtime answers are not verified.",
+        "reason": "Publish completed with the exact submitted SQL source confirmed in draft and published "
+                  "readback. Runtime answers are not verified.",
     }
 
 
@@ -1337,15 +1188,6 @@ def persist_sql_extension_status(result: dict) -> None:
         "data_agent_sql_source_status": result["status"],
         "data_agent_sql_source_reason": result["reason"],
     }
-    if result.get("runtime_status") and result["runtime_status"] != "verified":
-        values["data_agent_runtime_status"] = result["runtime_status"]
-        values["data_agent_runtime_reason"] = result["reason"]
-        values["data_agent_runtime_evidence"] = ""
-        values["data_agent_deployment_status"] = "failed"
-        values["data_agent_deployment_reason"] = result["reason"]
-    if result["status"] in ("skipped", "blocked", "failed"):
-        values["data_agent_deployment_status"] = result["status"]
-        values["data_agent_deployment_reason"] = result["reason"]
     source = spark.createDataFrame(
         [{"setting_name": k, "setting_value": v} for k, v in values.items()]
     ).withColumn("updated_utc", F.current_timestamp())
@@ -1361,10 +1203,8 @@ step_results["data_agent_sql_source"] = {
 try:
     agent_id, agent_policy = resolve_agent_extension_target()
     step_results["data_agent_sql_source"] = (
-        extend_data_agent_sql_source(agent_id, agent_policy["ontology_id"]) if agent_id else agent_policy
+        extend_data_agent_sql_source(agent_id) if agent_id else agent_policy
     )
-    if agent_id and step_results["data_agent_sql_source"].get("runtime_status") != "verified":
-        step_errors.append(RuntimeError(step_results["data_agent_sql_source"]["reason"]))
 except Exception as exc:
     step_results["data_agent_sql_source"] = {"status": "failed", "reason": str(exc)}
     step_errors.append(exc)

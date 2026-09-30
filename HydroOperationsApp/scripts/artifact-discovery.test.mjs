@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { tsImport } from 'tsx/esm/api'
@@ -165,4 +167,51 @@ test('guided setup retains its original copy and layout without migration panels
     assert.match(html, /class="setup-steps"/)
     assert.doesNotMatch(html, /data_agent_deployment_status|ops_agent_deployment_status|Agents are enabled by default/)
   }
+})
+
+test('Knowledge Graph page displays available bound entities while native loading is pending', async () => {
+  const pageSource = await readFile(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
+  const { outputText } = ts.transpileModule(pageSource, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  })
+  const ontology = {
+    id: 'ontology', displayName: 'Hydro v2', generation: 2,
+    entityTypes: [{ id: 'facility', name: 'facilities', sourceTable: 'silver_facilities', entityIdParts: ['facility_id'], properties: {} }],
+    relationshipTypes: [],
+  }
+  const data = {
+    ontology, stid: { facilities: [{ facility_id: 'F1', facility_name: 'Station' }], systems: [], equipment: [], instruments: [] },
+    telemetry: [], orders: [], inspections: [], notifications: [], assetModels: [], actions: {},
+  }
+  let canvasNodes = []
+  const dependencies = {
+    react: await import('react'), 'react/jsx-runtime': await import('react/jsx-runtime'),
+    'lucide-react': await import('lucide-react'),
+    '../../services/fabric': {
+      queryOntologyGraph: () => { throw new Error('Rendering must not wait for a graph request') },
+      queryOntologyContract: () => { throw new Error('Rendering must use the available contract') },
+    },
+    '../knowledgeGraphModel': await import('../src/ui-shared/knowledgeGraphModel.ts'),
+    '../components/digitalTwin/digitalTwinTreeModel': await import('../src/ui-shared/components/digitalTwin/digitalTwinTreeModel.ts'),
+    '../components/digitalTwin/DigitalTwinTree': { DigitalTwinTree: () => null },
+    '../components/knowledgeGraph/KnowledgeGraphCanvas': { KnowledgeGraphCanvas: ({ nodes }) => {
+      canvasNodes = nodes
+      return createElement('div', { 'data-testid': 'canvas' })
+    } },
+    '../hooks/useHydroOperationsData': { useHydroOperationsData: () => data },
+    '../hooks/useTheme': { useTheme: () => ({ theme: 'light' }) },
+    '../hooks/useTreeExpansion': { useTreeExpansion: () => ({ isExpanded: () => true, toggle: () => {} }) },
+  }
+  const exports = {}
+  new Function('require', 'exports', outputText)(name => {
+    assert.ok(dependencies[name], `Unexpected page dependency: ${name}`)
+    return dependencies[name]
+  }, exports)
+  const html = renderToStaticMarkup(createElement(exports.KnowledgeGraphPage))
+  assert.match(html, /Operational Knowledge Graph/)
+  assert.match(html, /data-testid="canvas"/)
+  assert.doesNotMatch(html, /<h1>Loading the Ontology graph<\/h1>/)
+  assert.equal(canvasNodes.length, 1)
+  assert.equal(canvasNodes[0].label, 'Station')
+  assert.equal(canvasNodes[0].nativeOid, undefined)
 })

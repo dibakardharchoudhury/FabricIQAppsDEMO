@@ -59,7 +59,9 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Namespaces stay distinct; display names and namespace are derived from the qualified name.
 - **Only `entityRelationships.tmdl` defines semantic relationship types.** `relationships.tmdl`
   resolves referenced single-column physical joins, never additional semantic edge types.
-  Actual instance edges must come from native graph query results, not browser-side FK joins.
+  Progressive loading uses only declared semantic relationships and their supported backing-table
+  keys over the existing STID rows; it does not turn arbitrary physical FK relationships into ontology edges.
+  Native graph results take precedence when available.
 - Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
   retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
   Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
@@ -67,7 +69,8 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   reports these limitations. Composite keys, multiline expressions, unknown entity/property
   constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
-- A v2 materialized GraphModel is **required for this app's graph canvas, tree, and scopes**.
+- A v2 materialized GraphModel is required for **native GQL results**, not for displaying already
+  available Ontology-bound STID entities with KQL/SQL enrichment.
   In the selected ontology use **Manage graph → select eligible entities/relationships → Continue
   → Materialize**, then configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
@@ -84,11 +87,14 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Native GQL reads use GET `getQueryableGraphType?beta=true` and POST `executeQuery?beta=true`
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges
-  fail closed. GraphQL remains available to other pages, not as a graph dependency or fallback.
-- Failed refreshes clear semantic caches and graph timestamps. Definition errors hide governed
-  topology and offer retry; native graph failures are actionable errors, not compatibility views.
-  Ontology contracts are not restored from unscoped browser storage. Manual refresh rediscovers
-  the workspace so a failed initial discovery or changed generation can recover.
+  fail explicitly. Malformed native results are never reinterpreted as valid native topology.
+- Ontology definitions and native results are cached and concurrent requests are coalesced.
+  The page can show the existing Ontology-bound compatibility view while native queries run; a
+  native failure is reported in the source-state tooltip and console without removing available
+  bound entities. Definition errors still prevent unverified governed topology. Workspace refreshes
+  restart obsolete reads against current discovery rather than surfacing cache-invalidation errors.
+  Manual refresh updates STID and the ontology contract before querying the native graph.
+  The 30-second native poll does not repeatedly download the TMDL definition.
 
 These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
 execution succeeds. The latest live attempt accepted source publication and stopped-agent

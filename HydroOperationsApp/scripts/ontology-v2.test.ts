@@ -250,9 +250,13 @@ const graphInput = {
   systems: [{ system_id: 'S1', facility_id: 'F1' }],
   equipment: [], instruments: [], telemetry: [], workOrders: [], inspections: [], notifications: [], models: [],
 }
-test('v2 topology requires native results and does not reconstruct custom namespace edges from table joins', () => {
+test('v2 bindings support progressive namespace-aware loading and native results take precedence', () => {
   const ontology = parse(hydro)
-  assert.equal(buildKnowledgeGraph({ ...graphInput, ontology }).nodes.length, 0)
+  const bound = buildKnowledgeGraph({ ...graphInput, ontology })
+  assert.equal(bound.nodes.length, 2)
+  assert.equal(bound.edges.length, 1)
+  assert.equal(bound.edges[0].ontologyRelationshipId, ontology.relationshipTypes[0].id)
+  assert.equal(bound.edges[0].nativeOid, undefined)
   const ontologyGraph = {
     ontologyId: ontology.id, graphModelId: 'native', graphModelName: 'Verified v2 projection',
     nodes: [
