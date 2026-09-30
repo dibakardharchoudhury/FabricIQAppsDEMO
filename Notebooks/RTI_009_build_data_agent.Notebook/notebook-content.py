@@ -23,52 +23,18 @@
 
 # MARKDOWN ********************
 
-# # 09 — Capability-gated Data Agent integration over Ontology v2
-# 
-# By default, attempts to create/publish a Fabric **Data Agent** with
-# the configured live v2 ontology as its real source. The ontology's `signal_master`
-# TMDL bindings describe both sources; publication does not prove query execution:
-# 
-# - **Real-time (KQL)** — `OPCUAEvents` in the configured Eventhouse provides the
-#   time-series `event_time` / `value` / `quality`.
-# - **Static (Lakehouse)** — `silver_signal_master` (and the `equipment`,
-#   `facilities`, `systems`, `instruments` entities) provide `equipment_id`,
-#   `facility_id`, `system_id`, `unit`, `tag`, ... keyed on `opcua_node_id`.
-# 
-# The submitted data source is the **ontology item** (`type = ontology`), not a
-# substitute Lakehouse/KQL source. Whether the agent runtime can query or join
-# the bound data must be validated separately; native v2 graph/GQL is not promised.
-# 
-# ## This notebook
-# 
-# 1. Reads shared settings from `rti_demo_settings` (written by 001/002).
-# 2. Resolves the live `ontology_id` by name in the target folder.
-# 3. Builds the Data Agent item definition (`.platform` + `Files/Config/**`).
-# 4. Deploys it as a Fabric **DataAgent** item via REST, then **publishes** it
-#    (staging → published) with live generation 2 unless explicitly disabled.
-# 5. Persists `data_agent_name` / `data_agent_id` back to `rti_demo_settings`.
-# 6. Calls the published MCP tool with delegated notebook-user credentials for the
-#    first five facility IDs/names, comparing exact content against independent live
-#    Lakehouse rows. Expected values are never supplied in the prompt. This is a
-#    source-specific functional smoke test, not execution attestation. Existing SQL
-#    sources are retained and do not prevent a fresh smoke test without cached evidence.
-#    Semantic errors (including `isError=false` text errors), wrong rows and inconclusive
-#    answers fail required setup. Publication remains separate from this bounded
-#    functional verification; no synthetic execution receipt is required.
+# # 09 — Build a Data Agent over Ontology v2
 #
-# Capability policy: `ontology_data_agent_mode` is `enabled` (default), `auto`, or
-# `disabled`. This deployment is v2-only: generation 1 is rejected in every mode.
-# Auto is a backwards-compatible alias for enabled: both attempt the real v2 source
-# and propagate service failures. Existing legacy sources are never reused or deleted.
-# Disabled explicitly skips integration. Publication alone is not a runtime
-# readiness guarantee. Generation must be integer `properties.generation == 2`
-# on the live Ontology resource, never inferred from a name, `_V9`, or REST `/v1`.
-# Every preserved/submitted ontology source must match the selected item id and workspace.
-# Draft readback verifies identity before publish; published-stage evidence is mandatory
-# before recording published status. Only an explicitly empty definition from a newly
-# created agent is a valid empty baseline; unreadable/existing empty definitions fail closed.
-# Reruns retain non-ontology sources, operational/custom instructions and custom entity
-# configuration. Defaults only fill missing configuration; runtime failure never removes sources.
+# Uses `rti_demo_settings` to configure and publish a Fabric **Data Agent** with the
+# selected Ontology v2, then verifies it with a sample query. Existing sources and
+# custom configuration are preserved on reruns.
+#
+# > **Known Fabric limitation (September 2026):** Ontology v2 support in Data Agents
+# > is pending. Publication can succeed while the final ontology query fails with
+# > "This API version is not supported for the specified Ontology item."
+# > Rerun verification after the Fabric product fix is available.
+#
+# Configuration and verification details: [deployment guide](../../Raw/workspace-reset/README.md#prerequisites).
 
 
 # CELL ********************
