@@ -337,6 +337,17 @@ The repository's environment exporter also preserves that JSON through Rayfin re
 loading, including `#` in alias maps. The browser parser remains strict; an escaped dotenv value
 is not accepted as a substitute for valid binding JSON.
 
+**Latest repair is not yet deployed:** the last verified hosted build is **1.0.614 / `05ead69`**.
+Its generated graph binding failed the actual Vite-load/strict-parser check because Rayfin rewrites
+escaped the JSON. The producer repair is committed as `ba82f68` and passes the regression tests
+above, including recovery of the real affected binding in an isolated fixture. Its canonical
+redeployment stopped at SPA discovery when Azure Continuous Access Evaluation required fresh
+interactive authentication (`InteractionRequired`, `TokenCreatedWithOutdatedPolicies`).
+The unattended sign-in was cancelled before deployment changes; no authentication policy was
+bypassed. Complete fresh Microsoft sign-in when rerunning the canonical orchestrator, then require
+`SUCCESS`, verify the Vite-loaded binding against the expected workspace/ontology IDs, and verify
+the new hosted build. **Do not treat the currently hosted graph page as repaired.**
+
 **Remaining interactive acceptance:** the separate Fabric/MSAL popup is outside the integrated
 browser automation's accessible pages. Hosted Fabric Connect, graph canvas/tree/filter interactions,
 and operational create/update/delete have not yet been certified. The browser's authenticated
