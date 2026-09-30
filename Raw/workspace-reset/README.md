@@ -64,12 +64,13 @@ situation.
 ## Prerequisites
 
 The setup pipeline and **Run pipeline** form expose `ontology_data_agent_mode` and
-`ontology_operations_agent_mode` (`auto`, `enabled`, or `disabled`, default `auto`).
+`ontology_operations_agent_mode` (`auto`, `enabled`, or `disabled`, default `enabled`).
 The project requires Ontology v2; existing v1 items are rejected rather than reused.
-The automatic policy explicitly reports currently blocked v2 agent capabilities without
-preventing core ontology, SQL/GraphQL, or weather setup. No legacy agent source or playbook is used.
-Only opt in after verifying product support in the target tenant; Operations Agent automation
-remains blocked until a verified v2 playbook contract is implemented. See
+`auto` is a backward-compatible alias for `enabled`; both attempt actual agent provisioning.
+Only `disabled` opts out. The original Data Agent, Operations Agent, playbook/actions, Teams, and
+email-alert provisioning are retained against the verified v2 ontology, never a v1 source.
+Required failures propagate through RTI_009/010/011 and setup. Product support and execution must
+still be checked in the target tenant; restored implementation is not live certification. See
 [ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
 
 - **`az login`** first (optionally `az login --tenant <tenant>`). Both scripts use
@@ -178,9 +179,10 @@ The pipeline's declared parameter defaults point at the tenant it was authored i
 `key_vault_uri`. Keep the chosen `env_suffix` consistent with app discovery/configuration; example
 suffixes such as `V6` and `V9` are environment names, not ontology generations. Use a fresh workspace
 or unused suffix when an existing target ontology is v1: setup rejects it without migration.
-`ops_agent_run_as_user`, `ops_agent_teams_team_id`, and `ops_agent_teams_channel_id` are retained
-settings, but the current blocked Operations Agent flow does not provision an agent with or without
-Teams delivery. Review capability statuses separately from pipeline and app-deployment success.
+`ops_agent_run_as_user`, `ops_agent_teams_team_id`, and `ops_agent_teams_channel_id` configure the
+restored Operations Agent run-as identity and Teams delivery. Email alerts additionally require
+the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and
+verify actual playbook execution and delivery separately from app-deployment success.
 
 The **Run pipeline** tab accepts either the target workspace display name or GUID in
 the sidebar. Its workspace parameter mirrors that value, and the runner resolves it

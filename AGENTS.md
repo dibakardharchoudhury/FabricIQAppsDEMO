@@ -3,16 +3,22 @@
 ## Ontology v2 documentation and implementation contract
 
 - This project is v2-only: require live `properties.generation == 2`; never restore v1
-  authoring, parsing, agent sources, or embedded playbooks. Existing v1 items need a separately
+  authoring, parsing, or agent sources. Preserve the original Operations Agent playbook/actions
+  capabilities while binding them to the verified v2 ontology. Existing v1 items need a separately
   planned replacement, not silent reuse or destructive migration.
 - Fresh ontology creation uses TMDL database/model/default-namespace parts. Preserve existing
   bindings and unknown parts on reruns, and verify readback before publication.
 - REST `/v1`, definition schema versions, and `env_suffix` values such as `V9` are not
   ontology generations. Do not globally rename them to `v2`.
-- Treat optional agent status separately from core setup: Data Agent `auto` reports the rollout
-  block; `enabled` attempts matching v2 draft/published sources. Operations Agent automation is
-  blocked pending a verified v2 playbook contract; `enabled` fails before writes.
-- SQL/GraphQL setup remains independent. The app requires an explicitly bound ontology-managed
+- Agent modes default to `enabled`; `auto` is a backward-compatible alias that attempts actual
+  provisioning, not a static skip. Only explicit `disabled` opts out. Preserve Data Agent,
+  Operations Agent, playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
+  binding. Required-agent failures propagate through RTI_009/010/011 and setup.
+  Setup requires NB09 `published` / NB10 `configured` unless explicitly `disabled` with `skipped`.
+  NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained business
+  configuration schema, not ontology generation. NB11 requires prior NB09 `published`.
+- SQL/GraphQL can be provisioned with the Data Agent explicitly disabled; otherwise RTI_011 must
+  propagate agent-extension failures. The app requires an explicitly bound ontology-managed
   native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
   graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
   ontology's Manage graph flow and configure `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING`; never infer

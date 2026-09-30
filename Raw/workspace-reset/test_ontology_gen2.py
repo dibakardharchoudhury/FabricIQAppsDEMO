@@ -499,8 +499,108 @@ class LakehouseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "fromColumn"):
             binding_namespace()["_bind_gen2_parts"](stale, table_columns())
 
+    def test_renamed_physical_relationship_is_reused_and_validated(self):
+        initial = edit(bound(), "relationships.tmdl", lambda s: s.replace(
+            "relationship signal_master_facilities", "relationship 'UI authored join'"))
+        initial = edit(initial, "entityRelationships.tmdl", lambda s: s.replace(
+            "relationship: signal_master_facilities", "relationship: 'UI authored join'"))
+        before = copy.deepcopy(initial)
+        result = binding_namespace()["_bind_gen2_parts"](initial, table_columns())[0]
+        self.assertEqual(result, initial)
+        support._verify_definition(initial, result)
+        for transform in (
+            lambda s: s.replace("fromColumn: signal_master.facility_id", "fromColumn: signal_master.state"),
+            lambda s: "",
+        ):
+            with self.subTest(transform=transform):
+                stale = edit(initial, "relationships.tmdl", transform)
+                with self.assertRaises(RuntimeError):
+                    binding_namespace()["_bind_gen2_parts"](stale, table_columns())
+        self.assertEqual(initial, before)
+
 
 class EventhouseTests(unittest.TestCase):
+    def test_existing_telemetry_columns_require_exact_source_and_type(self):
+        ns = event_namespace()
+        initial, _ = ns["_bind_eventhouse_parts"](bound())
+        for column, dtype in (("event_time", "dateTime"), ("opcua_node_id", "string"),
+                              ("value", "double"), ("quality", "string")):
+            block = support._object_block(text(initial, "tables/OPCUAEvents.tmdl"), "column", column, 4)
+            for replacement in (
+                block.replace(f"sourceColumn: {column}", "sourceColumn: wrong_column"),
+                block.replace(f"sourceColumn: {column}",
+                              f"sourceColumn: {'quality' if column == 'opcua_node_id' else 'opcua_node_id'}"),
+                block.replace(f"dataType: {dtype}", "dataType: int64"),
+                "",
+            ):
+                with self.subTest(column=column, replacement=replacement):
+                    stale = edit(initial, "tables/OPCUAEvents.tmdl", lambda s: support._replace_object(
+                        s, "column", column, replacement, 4))
+                    before = copy.deepcopy(stale)
+                    with self.assertRaises(RuntimeError):
+                        ns["_bind_eventhouse_parts"](stale)
+                    self.assertEqual(stale, before)
+
+    def test_existing_telemetry_requires_single_source_partition(self):
+        ns = event_namespace()
+        initial, _ = ns["_bind_eventhouse_parts"](bound())
+        for transform in (
+            lambda s: s + (
+                '\n\tpartition Other = m\n\t\tmode: directQuery\n'
+                '\t\tsource = AzureDataExplorer.Contents("https://other", "Other", "Other")\n'),
+            lambda s: support._replace_object(s, "partition", "OPCUAEvents", "", 4),
+            lambda s: s.replace("mode: directQuery", "mode: import\n\t\t// mode: directQuery"),
+        ):
+            with self.subTest(transform=transform):
+                stale = edit(initial, "tables/OPCUAEvents.tmdl", transform)
+                before = copy.deepcopy(stale)
+                with self.assertRaises(RuntimeError):
+                    ns["_bind_eventhouse_parts"](stale)
+                self.assertEqual(stale, before)
+        renamed = edit(initial, "tables/OPCUAEvents.tmdl",
+                       lambda s: s.replace("partition OPCUAEvents = m", "partition 'UI partition' = m"))
+        result, changed = ns["_bind_eventhouse_parts"](renamed)
+        self.assertFalse(changed)
+        self.assertEqual(renamed, result)
+
+    def test_renamed_telemetry_relationship_is_reused_and_validated(self):
+        ns = event_namespace()
+        initial, _ = ns["_bind_eventhouse_parts"](bound())
+        initial = edit(initial, "relationships.tmdl", lambda s: s.replace(
+            "relationship signal_master_OPCUAEvents", "relationship 'UI telemetry join'"))
+        initial = edit(initial, "entities/signal_master.tmdl", lambda s: s.replace(
+            "relationship: signal_master_OPCUAEvents", "relationship: 'UI telemetry join'"))
+        result, changed = ns["_bind_eventhouse_parts"](initial)
+        self.assertFalse(changed)
+        self.assertEqual(initial, result)
+        support._verify_definition(initial, result)
+        for transform in (
+            lambda s: s.replace("toColumn: signal_master.opcua_node_id", "toColumn: signal_master.state"),
+            lambda s: support._replace_object(s, "relationship", "UI telemetry join", "", 0),
+        ):
+            with self.subTest(transform=transform):
+                stale = edit(initial, "relationships.tmdl", transform)
+                before = copy.deepcopy(stale)
+                with self.assertRaises(RuntimeError):
+                    ns["_bind_eventhouse_parts"](stale)
+                self.assertEqual(stale, before)
+
+    def test_standalone_timestamp_is_bound_and_readback_required(self):
+        ns = event_namespace()
+        parts, _ = ns["_bind_eventhouse_parts"](bound())
+        entity = text(parts, "entities/signal_master.tmdl")
+        timestamp = ns["_property_block"](entity, "event_time")
+        self.assertIn("dataType: TimeSeries<dateTime>", timestamp)
+        self.assertIn("valueColumn: OPCUAEvents.event_time", timestamp)
+        self.assertIn("orderingColumn: OPCUAEvents.event_time", timestamp)
+        missing = edit(parts, "entities/signal_master.tmdl", lambda value: value.replace(
+            "valueColumn: OPCUAEvents.event_time", "valueColumn: OPCUAEvents.value"))
+        with self.assertRaises(RuntimeError):
+            support._verify_definition(parts, missing)
+        rerun, changed = ns["_bind_eventhouse_parts"](parts)
+        self.assertFalse(changed)
+        self.assertEqual(parts, rerun)
+
     def test_fresh_rerun_and_resource_link_with_quoted_property(self):
         initial = edit(bound(), "entities/signal_master.tmdl",
                        lambda s: s.replace("property quality", "property 'quality'")

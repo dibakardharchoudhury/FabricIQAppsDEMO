@@ -135,10 +135,16 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
-- **Operations Agent automation is blocked** in the current implementation pending a verified v2
-  playbook contract. `RTI_010` creates neither an agent nor an alert pipeline. Review
-  `ops_agent_deployment_status` and its reason; an Outlook connection or completed setup job alone
-  does not establish agent readiness.
+- **Agent provisioning defaults to enabled.** `auto` also attempts the real capability; only
+  `disabled` opts out. RTI_010 retains Operations Agent, playbook/actions, Teams, and
+  `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. Required failures propagate
+  through RTI_009/010/011 and setup. Review deployment status/reasons and validate playbook execution
+  and alert delivery; an Outlook connection, item creation, or completed job alone does not prove
+  runtime readiness. The restored flow still needs a new live attempt; earlier core-only evidence
+  does not certify full capability parity or resolution of external product issues.
+  NB09 success is `published`; NB10 success is `configured` with the agent stopped, not runtime
+  tested. Setup requires those statuses (or explicit `disabled` plus `skipped`), and RTI_011
+  requires the prior Data Agent `published` status before its source extension.
 
 ## Rayfin SQL data model
 

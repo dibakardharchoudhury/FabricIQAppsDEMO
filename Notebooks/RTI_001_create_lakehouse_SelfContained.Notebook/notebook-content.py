@@ -44,11 +44,10 @@
 # `useRootDefaultLakehouse`; canonical notebook names remain unchanged.
 # Ontology creation/binding is v2-only (live integer `properties.generation == 2`).
 # Existing v1 is rejected, not migrated/deleted. `_V9`, REST `/v1`, and ADLS Gen2
-# are not ontology generation indicators. Agent modes default to `auto`: Data Agent
-# v2 onboarding is blocked and Operations Agent automation/playbooks are blocked.
-# `enabled` only attempts Data Agent publication with strict source-identity checks;
-# Operations Agent `enabled` fails before writes. `disabled` skips integration.
-# No legacy playbook or automatic `Pipe_SendEmailAlert` provisioning is performed.
+# are not ontology generation indicators. Agent modes default to `enabled`; `auto`
+# also attempts full provisioning. Data Agent publication verifies source identity.
+# Operations Agent provisions the playbook, Teams destination and email pipeline.
+# Explicit `disabled` skips integration. Required failures abort setup.
 # 
 # ---
 # 
@@ -123,14 +122,14 @@ key_vault_client_secret_name = ""
 # Eventhouse landing table (a table name, not a versioned artifact). (STATIC.)
 eventhouse_table_name = "OPCUAEvents"
 
-# Retained Operations Agent Teams inputs; v2 automation is blocked. (INJECTED by Pipe_Setup.)
+# Operations Agent Teams inputs. (INJECTED by Pipe_Setup.)
 ops_agent_run_as_user = ""      # UPN the agent runs as; blank => the deploying user (optional)
 ops_agent_teams_team_id = ""
 ops_agent_teams_channel_id = ""
-# Retained compatibility setting only; no v2 playbook is copied. (STATIC, NOT injected.)
+# Full authored playbook is required. (STATIC, NOT injected.)
 ops_agent_copy_playbook = "true"
-ontology_data_agent_mode = "auto"
-ontology_operations_agent_mode = "auto"
+ontology_data_agent_mode = "enabled"
+ontology_operations_agent_mode = "enabled"
 
 # Structured table names used by the ontology.
 silver_facilities_table = "silver_facilities"
@@ -174,7 +173,7 @@ alert_pipeline_description = "This will be triggered from Ops Agent!"
 
 # Fail fast if the injected parameters (from Pipe_Setup via the orchestrator's nb01_args) are
 # missing. Only these are injected; the STATIC config above keeps its own defaults.
-# ops_agent_run_as_user is retained and optional; no Operations Agent is provisioned.
+# ops_agent_run_as_user is an optional delegated-identity guard.
 _required_injected = {
     "env_suffix": env_suffix,
     "workspace_id": workspace_id,
@@ -260,7 +259,7 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "fabric_kql_db_name": kql_database_name,
         "fabric_eventhouse_table": eventhouse_table_name,
 
-        # Retained Operations Agent inputs, not evidence of provisioning/readiness.
+        # Operations Agent inputs; not evidence of runtime readiness.
         "ops_agent_run_as_user": ops_agent_run_as_user,
         "ops_agent_teams_team_id": ops_agent_teams_team_id,
         "ops_agent_teams_channel_id": ops_agent_teams_channel_id,

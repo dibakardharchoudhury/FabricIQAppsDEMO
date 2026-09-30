@@ -148,17 +148,19 @@ test('malformed published source definitions fail explicitly rather than permitt
   assert.throws(() => verify([{ ...datasource(matchingSource), payload: Buffer.from('{broken').toString('base64') }]), /not a valid published datasource/)
 })
 
-test('completed core setup never labels optional agents configured or ready', async () => {
+test('completed app data setup does not certify agent execution or alert delivery', async () => {
   const { AdministrationExperience } = await tsImport('../src/components/AdministrationExperience.tsx', {
     parentURL: import.meta.url,
     tsconfig: fileURLToPath(new URL('../tsconfig.app.json', import.meta.url)),
   })
   const html = renderToStaticMarkup(createElement(AdministrationExperience, {
-    steps: [{ n: 2, title: 'Seed & provision', why: 'SQL/GraphQL only', done: true, busy: false, action: 'Seed', run: () => {} }],
+    steps: [{ n: 2, title: 'Seed & provision', why: 'SQL/GraphQL only when agents are explicitly disabled', done: true, busy: false, action: 'Seed', run: () => {} }],
   }))
   assert.match(html, /App data setup steps are complete/)
-  assert.match(html, /Optional agent readiness is not verified/)
-  assert.match(html, /Successful notebook completion can include blocked or disabled capabilities/)
+  assert.match(html, /Agent execution and alert delivery are not verified here/)
+  assert.match(html, /Agents are enabled by default; auto also attempts provisioning, and only disabled opts out/)
+  assert.match(html, /Required agent failures fail provisioning/)
+  assert.match(html, /do not verify playbook execution or Teams\/email delivery/)
   assert.match(html, /data_agent_deployment_status/)
   assert.match(html, /ops_agent_deployment_status/)
   assert.doesNotMatch(html, /agent configured|agent ready|All setup steps are complete/i)

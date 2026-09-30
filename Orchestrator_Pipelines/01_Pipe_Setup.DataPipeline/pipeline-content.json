@@ -214,11 +214,11 @@
       },
       "ontology_data_agent_mode": {
         "type": "string",
-        "defaultValue": "auto"
+        "defaultValue": "enabled"
       },
       "ontology_operations_agent_mode": {
         "type": "string",
-        "defaultValue": "auto"
+        "defaultValue": "enabled"
       }
     }
   }

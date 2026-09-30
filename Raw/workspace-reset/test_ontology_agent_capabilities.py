@@ -73,9 +73,11 @@ class CapabilityTests(unittest.TestCase):
                         expected = "blocked"
                     elif mode == "disabled":
                         expected = "skipped"
-                    elif generation == 2 and (number == "010" or mode == "auto"):
-                        expected = "blocked"
                     with self.subTest(number=number, generation=generation, mode=mode):
+                        if number == "011" and generation == 1:
+                            with self.assertRaisesRegex(RuntimeError, "v2-only"):
+                                ns["agent_capability_policy"](generation, mode)
+                            continue
                         result = ns["agent_capability_policy"](generation, mode)
                         self.assertEqual(result["status"], expected)
                         if expected != "allowed":
@@ -108,7 +110,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_policy_guard_exits_before_any_agent_or_pipeline_writes(self):
         for number in ("009", "010"):
-            for generation, mode in ((2, "auto"), (2, "disabled")):
+            for generation, mode in ((2, "disabled"),):
                 status = Mock()
                 exit_mock = Mock(side_effect=NotebookExit)
                 ns = functions(
@@ -135,7 +137,7 @@ class CapabilityTests(unittest.TestCase):
                 self.assertEqual(payload["capability"], "data_agent" if number == "009" else "operations_agent")
                 self.assertTrue(payload["reason"])
 
-    def test_enabled_v2_operations_is_actionable_failure_before_writes(self):
+    def test_required_v2_operations_attempts_instead_of_static_product_gate(self):
         status = Mock()
         ns = functions(
             "010", "validate_agent_mode", "agent_capability_policy", "check_agent_capability",
@@ -145,9 +147,10 @@ class CapabilityTests(unittest.TestCase):
             ops_agent_ontology_datasource_id="",
             persist_agent_status=status,
         )
-        with self.assertRaisesRegex(RuntimeError, "1970"):
-            ns["check_agent_capability"]()
-        self.assertEqual(status.call_args.args[0], "blocked")
+        result = ns["check_agent_capability"]()
+        self.assertEqual(result["status"], "allowed")
+        self.assertEqual(result["ontology_id"], "live-id")
+        self.assertNotIn("1970", source("010"))
 
     def test_final_deployment_exit_reports_capability_not_readiness(self):
         for number, capability in (("009", "data_agent"), ("010", "operations_agent")):
@@ -177,18 +180,153 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(payload["reason"], ns["agent_deployment_result"]["reason"])
             self.assertNotEqual(payload["status"], "ready")
 
-    def test_no_legacy_operations_payload_or_provisioning_path_remains(self):
-        code = source("010")
-        for forbidden in (
-            "EMBEDDED_OPS_CONFIG_B64", "EMBEDDED_PIPELINE", "OperationsAgentV1",
-            "create_operations_agent", "create_data_pipeline", "updateDefinition",
-            "build_configurations", "RuleDefinitions",
-        ):
-            self.assertNotIn(forbidden, code)
-        ns = functions("010", "api_request")
-        for method in ("POST", "PATCH", "DELETE"):
-            with self.assertRaisesRegex(ValueError, "read-only"):
-                ns["api_request"](method, "https://example.invalid")
+    def operations_namespace(self):
+        ns = functions("010", "build_configurations")
+        names = {"EMBEDDED_OPS_CONFIG_B64", "ACTION_PARAMETERS"}
+        nodes = [node for node in ast.parse(source("010")).body
+                 if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "operations-template", "exec"), ns)
+        ns.update(workspace_id="workspace", ops_agent_should_run=False, ops_agent_copy_playbook=True)
+        return ns
+
+    def test_full_operations_configuration_preserves_business_capabilities(self):
+        ns = self.operations_namespace()
+        config = ns["build_configurations"](
+            datasource_id="v2-ontology", pipeline_id="email-pipeline", team_id="team", channel_id="channel")
+        self.assertFalse(config["shouldRun"])
+        conf = config["configuration"]
+        self.assertEqual(conf["dataSources"], {
+            "v2-ontology": {"id": "v2-ontology", "type": "Ontology", "workspaceId": "workspace"},
+        })
+        self.assertEqual(conf["messageDestination"], {
+            "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
+        })
+        action = next(iter(conf["actions"].values()))
+        self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
+        self.assertEqual(action["connection"]["jobWorkspaceId"], "workspace")
+        self.assertEqual(action["connection"]["itemType"], "DataPipeline")
+        parameters = {item["name"] for item in action["parameters"]}
+        self.assertEqual(parameters, {"equipment_id", "facility_id", "quality", "value", "unit", "event_time"})
+        rules = config["playbook"]["RuleDefinitions"]
+        self.assertEqual(len(rules), 2)
+        self.assertTrue(any("BAD" in rule["Name"] for rule in rules.values()))
+        self.assertTrue(any("UNCERTAIN" in rule["Name"] for rule in rules.values()))
+        for rule in rules.values():
+            for binding in rule["ActionBinding"]["ActionBindings"]:
+                self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
+        with self.assertRaisesRegex(RuntimeError, "playbook"):
+            ns["build_configurations"](copy_playbook=False)
+
+    def test_operations_update_never_drops_components_on_rejection(self):
+        for status in (400, 401, 403, 404, 500, 202):
+            response = Mock(status_code=status, text="product error", headers={})
+            ns = functions("010", "update_operations_agent_definition", "encode_payload",
+                           workspace_id="workspace", FABRIC_API_BASE="base",
+                           OPS_AGENT_DEFINITION_FORMAT="OperationsAgentV1",
+                           api_request=Mock(return_value=response), wait_for_lro=Mock())
+            with self.assertRaises(RuntimeError):
+                ns["update_operations_agent_definition"]("agent", {"configuration": {}, "playbook": {}})
+            ns["api_request"].assert_called_once()
+            ns["wait_for_lro"].assert_not_called()
+
+    def test_operations_readback_requires_all_components_and_exact_source(self):
+        ns = self.operations_namespace()
+        expected = ns["build_configurations"](
+            datasource_id="ontology", pipeline_id="pipeline", team_id="team", channel_id="channel")
+        for changed in ("source", "playbook", "actions", "teams", "none"):
+            actual = json.loads(json.dumps(expected))
+            if changed == "source":
+                actual["configuration"]["dataSources"]["ontology"]["workspaceId"] = "other"
+            elif changed == "playbook":
+                actual["playbook"] = {}
+            elif changed == "actions":
+                actual["configuration"]["actions"] = {}
+            elif changed == "teams":
+                actual["configuration"].pop("messageDestination")
+            check = functions(
+                "010", "verify_operations_readback", "require_retained", "read_json_part",
+                get_ontology_generation=Mock(return_value=2),
+                get_definition_parts=Mock(return_value=[json_part("Configurations.json", actual)]))
+            if changed == "none":
+                check["verify_operations_readback"]("agent", "ontology", expected)
+            else:
+                with self.assertRaises(RuntimeError):
+                    check["verify_operations_readback"]("agent", "ontology", expected)
+
+    def test_operations_provisioning_attempts_all_business_components_and_raises_actual_failure(self):
+        for outcome in ("success", "product_rejection", "missing_mailbox"):
+            ns = functions(
+                "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
+                get_ontology_generation=Mock(return_value=2),
+                ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+                ops_agent_copy_playbook=True, ops_agent_should_run=False,
+                ops_agent_run_as_user="", ops_agent_name="agent", OPS_AGENT_DESCRIPTION="description",
+                get_access_token_for_fabric=Mock(), check_run_as=Mock(),
+                resolve_email_connection_id=Mock(return_value=None if outcome == "missing_mailbox" else "mailbox"),
+                ALERT_EMAIL_TO="operations@example.test", get_signed_in_upn=Mock(),
+                PIPELINE_NAME="Pipe_SendEmailAlert", PIPELINE_DESCRIPTION="alerts",
+                build_email_pipeline_content=Mock(return_value={"properties": {}}),
+                create_data_pipeline=Mock(return_value={"id": "pipeline"}),
+                get_definition_parts=Mock(), read_json_part=Mock(return_value={"properties": {}}),
+                require_retained=Mock(), create_operations_agent=Mock(return_value={"id": "agent"}),
+                build_configurations=Mock(return_value={"configuration": {}, "playbook": {"rules": "full"}}),
+                update_operations_agent_definition=Mock(), verify_operations_readback=Mock())
+            if outcome == "product_rejection":
+                ns["update_operations_agent_definition"].side_effect = RuntimeError("actual product failure")
+            if outcome == "success":
+                result = ns["deploy_operations_agent"]("ontology")
+                self.assertEqual(result["email_pipeline_id"], "pipeline")
+                self.assertEqual(result["ops_agent_id"], "agent")
+            else:
+                with self.assertRaisesRegex(RuntimeError, "actual product failure|OAuth2 connection is missing"):
+                    ns["deploy_operations_agent"]("ontology")
+            ns["create_data_pipeline"].assert_called_once()
+            ns["create_operations_agent"].assert_called_once()
+            ns["build_configurations"].assert_called_once_with(
+                should_run=False, copy_playbook=True, team_id="team", channel_id="channel",
+                datasource_id="ontology", pipeline_id="pipeline")
+            ns["update_operations_agent_definition"].assert_called_once()
+            if outcome == "product_rejection":
+                ns["verify_operations_readback"].assert_not_called()
+            else:
+                ns["verify_operations_readback"].assert_called_once()
+
+    def test_operations_outer_failure_is_persisted_and_reraised(self):
+        attempt = next(node for node in ast.parse(source("010")).body
+                       if isinstance(node, ast.Try) and "deploy_operations_agent" in ast.unparse(node))
+        failure = RuntimeError("actual product rejection")
+        ns = {
+            "deploy_operations_agent": Mock(side_effect=failure),
+            "persist_agent_status": Mock(), "result": {"ontology_id": "ontology"},
+        }
+        with self.assertRaisesRegex(RuntimeError, "actual product rejection"):
+            exec(compile(ast.Module(body=[attempt], type_ignores=[]), "operations-deploy", "exec"), ns)
+        ns["persist_agent_status"].assert_called_once_with("failed", "actual product rejection")
+
+    def test_operations_generation_failure_prevents_pipeline_and_agent_writes(self):
+        ns = functions("010", "deploy_operations_agent", get_ontology_generation=Mock(return_value=1),
+                       create_data_pipeline=Mock(), create_operations_agent=Mock())
+        with self.assertRaisesRegex(RuntimeError, "live v2"):
+            ns["deploy_operations_agent"]("legacy")
+        ns["create_data_pipeline"].assert_not_called()
+        ns["create_operations_agent"].assert_not_called()
+
+    def test_forced_email_connection_must_be_a_real_oauth2_mailbox(self):
+        for credential in ("ServicePrincipal", "OAuth2"):
+            response = Mock()
+            response.json.return_value = {
+                "connectionDetails": {"type": "MicrosoftOutlook"},
+                "credentialDetails": {"credentialType": credential},
+            }
+            ns = functions(
+                "010", "resolve_email_connection_id", "_is_office365_connection", "_office365_cred_type",
+                first_setting=lambda *args, **kwargs: "mailbox", api_request=Mock(return_value=response),
+                FABRIC_API_BASE="base")
+            if credential == "OAuth2":
+                self.assertEqual(ns["resolve_email_connection_id"](), "mailbox")
+            else:
+                with self.assertRaisesRegex(RuntimeError, "OAuth2"):
+                    ns["resolve_email_connection_id"]()
 
     def test_generation1_is_blocked_before_agent_writes_in_every_mode(self):
         for number in ("009", "010"):
@@ -521,13 +659,14 @@ class CapabilityTests(unittest.TestCase):
         ns.update(
             extend_data_agent_sql_source=Mock(), persist_sql_extension_status=Mock(),
             step_results={"data_agent_sql_source": {"status": "failed", "reason": "not completed"}},
+            step_errors=[],
         )
         attempt = next(
             node for node in ast.parse(source("011")).body
             if isinstance(node, ast.Try) and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
         )
-        with self.assertRaisesRegex(RuntimeError, "target folder"):
-            exec(compile(ast.Module(body=[attempt], type_ignores=[]), "folder-extension", "exec"), ns)
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "folder-extension", "exec"), ns)
+        self.assertIn("target folder", str(ns["step_errors"][0]))
         ns["get_ontology_generation"].assert_not_called()
         ns["extend_data_agent_sql_source"].assert_not_called()
         self.assertEqual(ns["persist_sql_extension_status"].call_args.args[0]["status"], "failed")
@@ -602,7 +741,7 @@ class CapabilityTests(unittest.TestCase):
                 else:
                     ns["publish_data_agent"].assert_called_once()
 
-    def extension_namespace(self, mode="auto", prior="", agents=None, generation=2):
+    def extension_namespace(self, mode="auto", prior="published", agents=None, generation=2):
         values = {
             "ontology_data_agent_mode": mode, "data_agent_deployment_status": prior,
             "ontology_name": "ontology",
@@ -623,7 +762,7 @@ class CapabilityTests(unittest.TestCase):
             get_ontology_generation=Mock(return_value=generation),
         )
 
-    def test_sql_graphql_scaffolding_runs_without_agent(self):
+    def test_sql_graphql_scaffolding_runs_but_required_agent_failure_is_recorded(self):
         for mode, prior, generation, agents in (
             ("auto", "", 1, []),
             ("disabled", "", 1, [{"id": "agent-id", "displayName": "agent"}]),
@@ -653,7 +792,9 @@ class CapabilityTests(unittest.TestCase):
             ns["create_graphql_api"].assert_called_once()
             ns["update_item_definition"].assert_called_once_with("graphql-id", {"parts": []})
             ns["extend_data_agent_sql_source"].assert_not_called()
-            self.assertIn(ns["step_results"]["data_agent_sql_source"]["status"], ("skipped", "blocked"))
+            result = ns["step_results"]["data_agent_sql_source"]
+            self.assertEqual(result["status"], "skipped" if mode == "disabled" else "failed")
+            self.assertEqual(bool(ns["step_errors"]), mode != "disabled")
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
         tree = ast.parse(source("011"))
@@ -669,13 +810,17 @@ class CapabilityTests(unittest.TestCase):
                 "extend_data_agent_sql_source": Mock(),
                 "persist_sql_extension_status": Mock(),
                 "step_results": {"data_agent_sql_source": {"status": "failed", "reason": "failure"}},
+                "step_errors": [],
                 "json": json,
             }
             ns[failing_call].side_effect = PermissionError("forbidden")
-            with self.assertRaises(PermissionError):
-                exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+            exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+            terminal = next(node for node in tree.body if isinstance(node, ast.If)
+                            and isinstance(node.test, ast.Name) and node.test.id == "step_errors")
+            with self.assertRaisesRegex(RuntimeError, "Operational setup failed"):
+                exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
             ns["persist_sql_extension_status"].assert_called_once_with(
-                {"status": "failed", "reason": "failure"}
+                {"status": "failed", "reason": "forbidden"}
             )
 
     def test_extension_auth_and_unknown_generation_errors_surface(self):
@@ -696,6 +841,18 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
         self.assertEqual(policy["ontology_id"], "ontology-id")
         ns["get_ontology_generation"].assert_called_once_with("ontology-id")
+
+    def test_auto_and_enabled_sql_extension_fail_on_unavailable_agent(self):
+        for mode in ("auto", "enabled"):
+            for prior, agents in (("published", []), ("blocked", []), ("failed", []), ("", [])):
+                with self.subTest(mode=mode, prior=prior):
+                    ns = self.extension_namespace(mode=mode, prior=prior, agents=agents)
+                    with self.assertRaises(RuntimeError):
+                        ns["resolve_agent_extension_target"]()
+            ns = self.extension_namespace(
+                mode=mode, generation=1, agents=[{"id": "agent-id", "displayName": "agent"}])
+            with self.assertRaisesRegex(RuntimeError, "v2-only"):
+                ns["resolve_agent_extension_target"]()
 
     def test_raw_distributions_match_canonical_cells_and_preserve_metadata(self):
         for number, name in NAMES.items():

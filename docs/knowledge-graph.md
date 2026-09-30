@@ -28,7 +28,7 @@ provenance.
 | Shift handover | Share a compact facility or selected-asset context with health and provenance visible in one view. |
 | Data-quality investigation | Distinguish critical operating state from uncertain quality, stale readings, and missing data. |
 | Engineering impact analysis | Inspect which operational records and signals are connected before changing an asset, system, or instrumentation model. |
-| AI grounding and audit | Preserve stable IDs and semantic provenance that a supported, enabled v2 Data Agent can also use; current agent availability is independently gated. |
+| AI grounding and audit | Preserve stable IDs and semantic provenance for the default-enabled v2 Data Agent; provisioning and runtime support require separate verification. |
 
 ## What exists in Fabric
 
@@ -40,11 +40,11 @@ The authoritative semantic asset is built before the app runs:
    contextualizations.
 3. `RTI_006_TimeSeriesBinding_RTI_signal` binds Eventhouse `OPCUAEvents` observations to
    `signal_master`.
-4. `RTI_009_build_data_agent` publishes only a verified v2 Ontology as a Data Agent source when
-   product support and the configured policy permit it; blocked onboarding is reported explicitly.
+4. `RTI_009_build_data_agent` attempts to publish the verified v2 Ontology as a Data Agent source
+   by default. `auto` also attempts provisioning; only `disabled` opts out. Required failures propagate.
 5. `RTI_011_seed_sql_wire_graphql_agent` creates the app-facing GraphQL API and adds Rayfin SQL as
-   another Data Agent source when an agent is available. SQL/GraphQL provisioning does not require
-   a Data Agent.
+   another Data Agent source unless explicitly disabled. Missing/ineligible required agents and
+   source-extension failures fail the job even if SQL/GraphQL writes already succeeded.
 
 The governed semantic path is:
 
@@ -255,12 +255,14 @@ describes current entities, relationships, and optional observation snapshots.
 
 Current live acceptance is restricted to **ws-vteam-demoV3** in tenant
 `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace `9c73201e-b2e5-48eb-81b9-3526d320faca`.
-At the September 30, 2026 checkpoint, **74 Python ontology tests, 65 app graph tests, and
-75 deployment-orchestrator tests pass**. The four environment-export tests additionally exercise
+At the September 30, 2026 checkpoint **before the capability-parity restoration**, **74 Python
+ontology tests, 65 app graph tests, and 75 deployment-orchestrator tests passed**. These are historical
+results, not validation of the restored agent/alert flow. The four environment-export tests exercised
 12 real Rayfin SDK rewrite cycles, Vite loading, and the application's strict graph-binding parser.
 App typecheck, lint, environment validation, and the
-production build also passed; the existing bundle-size warning remains. Changes are published to
-`feat/dibakar`, not `main`.
+production build also passed; the existing bundle-size warning remained. That checkpoint was
+published to `feat/dibakar`, not `main`. The new full-capability live attempt is pending; no product
+issue resolution or full end-to-end acceptance is claimed by the restoration.
 
 ### Earlier live execution (before the requested clean rebuild)
 
@@ -285,8 +287,10 @@ The scheduled capacity pause was also observed and the same capacity resumed wit
 Operational SQL contains **12 WorkOrders, 30 Inspections, 6 Notifications, 12 SpareParts, and
 15 Asset3DModels**. The live STID GraphQL endpoint returned HTTP 200 without GraphQL errors:
 **3 facilities, 3 systems, 15 equipment, 90 instruments, 120 Weather forecasts, and 72 observations**.
-Optional agent extensions report their product capability blockers without preventing this core
-provisioning. This does not certify optional agent runtime readiness.
+That historical run used capability gates that allowed core provisioning despite reported agent
+blockers. It is **core-only evidence**, not current full-capability certification. The restored
+default-enabled policy now attempts both agents (also for `auto`) and propagates required failures.
+New live agent/playbook/action/Teams/email acceptance remains pending.
 
 ### Native graph and enrichment evidence
 
@@ -347,7 +351,7 @@ below. Fresh administrator sign-in resolved the intervening Azure Continuous Acc
 challenge (`InteractionRequired`, `TokenCreatedWithOutdatedPolicies`); no authentication policy
 was bypassed.
 
-### Fresh rebuild acceptance
+### Fresh rebuild acceptance (historical core-only evidence)
 
 On September 30 the existing reset workflow removed the inspected demo resources from
 `ws-vteam-demoV3` and verified the workspace empty. Git import from `feat/dibakar` succeeded,

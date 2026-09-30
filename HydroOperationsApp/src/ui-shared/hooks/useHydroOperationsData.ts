@@ -310,7 +310,7 @@ function useHydroOperationsDataController() {
         setProvisionState('complete')
         writePersistedSetup({ provisioned: true })
         await loadOperationalData()
-        setNotice('SQL/GraphQL provisioning notebook completed. Checking STID publication; optional Data Agent and Operations Agent readiness is not verified.')
+        setNotice('Provisioning notebook completed. Checking STID publication; agent execution and Teams/email delivery still require separate verification.')
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
@@ -328,7 +328,7 @@ function useHydroOperationsDataController() {
       const activeUser = user ?? await authenticate()
       if (!activeUser) { setProvisionState('idle'); setNotice('Sign in with Fabric to seed operational data.'); return }
       if (isPostSeedConfigured()) {
-        beginProgress('seed', 'Provisioning SQL and the STID GraphQL API; optional agent source setup is capability-gated (RTI_011)...', SEED_ETA_MS)
+        beginProgress('seed', 'Provisioning SQL, the STID GraphQL API, and required Data Agent sources unless explicitly disabled (RTI_011)...', SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(status => updateJob('seed', humanStatus(status))))
       } else {
         const result = await seedOperationalDataIfEmpty(activeUser)

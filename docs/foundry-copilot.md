@@ -13,7 +13,10 @@ verifies that the candidate agent's **published** ontology datasource references
 workspace/item before forwarding a question to MCP. Draft-only, missing, mismatched, or unreadable
 sources block invocation. Matching source identity is not runtime certification: product errors
 still propagate. See [the app's v2 contract](../HydroOperationsApp/README.md#ontology-v2-only)
-and [optional agent policies](../README.md#ontology-generations-and-optional-agents).
+and [agent provisioning policies](../README.md#ontology-generations-and-optional-agents).
+Agent provisioning defaults to `enabled`; `auto` also attempts actual provisioning and only
+`disabled` opts out. Foundry success is not evidence that the separate Data Agent, Operations
+Agent, playbook/actions, or alert delivery succeeded.
 
 ---
 

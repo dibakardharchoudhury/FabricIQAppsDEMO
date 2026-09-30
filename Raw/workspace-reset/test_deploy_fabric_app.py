@@ -1232,6 +1232,23 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             self.assertEqual(resolved[key], "", key)
         self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE"], "RTI_Demo_Eventhouse_V3")
 
+    def test_missing_optional_jobs_keep_discoverable_names_but_clear_stale_ids(self):
+        resolved = self.resolve()
+        for prefix, name in [
+            ("STREAM_PIPELINE", "02_Pipe_Stream"),
+            ("POSTSEED_NOTEBOOK", "RTI_011_seed_sql_wire_graphql_agent"),
+        ]:
+            self.assertEqual(resolved[f"RAYFIN_PUBLIC_{prefix}_NAME"], name)
+            self.assertEqual(resolved[f"RAYFIN_PUBLIC_{prefix}_ID"], "")
+        for kind, prefix, name in [
+            ("DataPipeline", "STREAM_PIPELINE", "02_Pipe_Stream"),
+            ("Notebook", "POSTSEED_NOTEBOOK", "RTI_011_seed_sql_wire_graphql_agent"),
+        ]:
+            self.items.append({"id": prefix, "type": kind, "displayName": name})
+        resolved = self.resolve()
+        self.assertEqual(resolved["RAYFIN_PUBLIC_STREAM_PIPELINE_ID"], "STREAM_PIPELINE")
+        self.assertEqual(resolved["RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID"], "POSTSEED_NOTEBOOK")
+
     def test_does_not_select_ontology_managed_eventhouse_or_database_by_name(self):
         self.items.append({"id": "unrelated-database", "type": "KQLDatabase", "displayName": "RTI_Demo_Eventhouse_V3"})
         self.details["unrelated-database"] = {

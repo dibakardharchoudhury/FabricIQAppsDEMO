@@ -128,28 +128,40 @@ class OntologySetupContractTests(unittest.TestCase):
         stage_one = next(activity for activity in pipeline["activities"]
                          if activity["name"] == SETUP_NAMES[0])
         for mode in MODES:
-            self.assertEqual(pipeline["parameters"][mode]["defaultValue"], "auto")
+            self.assertEqual(pipeline["parameters"][mode]["defaultValue"], "enabled")
             self.assertEqual(stage_one["typeProperties"]["parameters"][mode]["value"]["value"],
                              f"@pipeline().parameters.{mode}")
             for name in SETUP_NAMES:
                 text = source(name)
-                self.assertIn(f'{mode} = "auto"', text)
+                self.assertIn(f'{mode} = "enabled"', text)
                 self.assertIn(f'"{mode}": {mode}', text)
                 self.assertLess(text.index('must be auto, enabled, or disabled'),
                                 text.index("lakehouse_id = ensure_lakehouse("))
 
-    def test_optional_capabilities_are_reported_as_blocked_not_ready(self):
+    def test_required_capabilities_fail_closed_and_disabled_is_explicit(self):
         report = load_function(ORCHESTRATOR, "_report_agent_capabilities", {"json": json})
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             report({
-                "NB09_dataagent": {"exitVal": json.dumps({"status": "blocked", "reason": "Ontology v2"})},
-                "NB10_opsagent": {"exitVal": json.dumps({"status": "disabled", "reason": "Configured policy"})},
+                "NB09_dataagent": {"exitVal": json.dumps({
+                    "status": "published", "mode": "enabled", "generation": 2, "reason": "Source verified"})},
+                "NB10_opsagent": {"exitVal": json.dumps({
+                    "status": "configured", "mode": "auto", "generation": 2, "reason": "Definition verified"})},
             })
-        self.assertIn("NB09_dataagent: blocked - Ontology v2", output.getvalue())
-        self.assertIn("NB10_opsagent: disabled - Configured policy", output.getvalue())
+        self.assertIn("NB09_dataagent: published - Source verified", output.getvalue())
+        self.assertIn("NB10_opsagent: configured - Definition verified", output.getvalue())
+        for mode in ("auto", "enabled", None):
+            for status in ("blocked", "failed", "skipped", None):
+                with self.subTest(mode=mode, status=status), self.assertRaises(RuntimeError):
+                    report({"NB09_dataagent": {"exitVal": {
+                        "status": status, "mode": mode, "generation": 2}}, "NB10_opsagent": {}})
+        with contextlib.redirect_stdout(output):
+            report({name: {"exitVal": {"status": "skipped", "mode": "disabled", "generation": 2}}
+                    for name in ("NB09_dataagent", "NB10_opsagent")})
         with self.assertRaises(RuntimeError):
             report({"NB09_dataagent": {"exitVal": "{}"}, "NB10_opsagent": {}})
+        with self.assertRaises(RuntimeError):
+            report({"NB09_dataagent": {}, "NB10_opsagent": {}})
 
     def test_raw_notebook_code_matches_canonical_sources(self):
         for name in (*SETUP_NAMES, ORCHESTRATOR):

@@ -16,15 +16,19 @@ an unused `env_suffix` through the RTI setup workflow, then resolve the new onto
 sources. REST `/v1` URLs and environment suffixes such as `V9` are not ontology generations.
 
 Core ontology, SQL/GraphQL, dashboard, weather, and app-hosting completion do not establish agent
-readiness. The default agent modes are `auto`: Data Agent onboarding is reported as blocked for
-the current v2 rollout, and Operations Agent automation is blocked pending a verified v2 playbook
-contract. Data Agent `enabled` attempts real configuration with source-identity/readback checks;
-Operations Agent `enabled` fails before writes. `disabled` skips the respective capability.
+readiness. Both agent modes default to `enabled`; `auto` is a backward-compatible alias that also
+attempts real provisioning, not a static blocked result. Data Agent provisioning verifies v2
+source identity/readback. Operations Agent provisioning retains playbook/actions, Teams, and
+email-alert setup against the verified v2 ontology. Only explicit `disabled` skips an agent.
+Required failures propagate through RTI_009/010/011 and setup. External product issues are not
+claimed resolved; a new full-capability live attempt remains pending.
+Setup requires NB09 `published` and NB10 `configured`, or explicit `disabled` plus `skipped`.
+NB10 leaves the agent stopped; `configured` verifies readback, not execution or delivery.
 See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
 The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
 availability, which may be an identity-matched Fabric private-hosting sign-in gate rather than
 the application shell. It does not verify interactive authenticated application acceptance,
-optional agent execution, or native graph readiness.
+agent execution, alert delivery, or native graph readiness.
 
 ### Native graph prerequisite (manual portal operation)
 
@@ -162,7 +166,7 @@ every target needs its own ontology-managed graph and matching explicit binding 
   [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
-- **Optional manual/future email alerts:** an independently configured Outlook email activity needs a mailbox-backed OAuth2 connection, not a notebook service-principal connection. This is not required for current core setup: `RTI_010` does not create or wire an Operations Agent, playbook, or `Pipe_SendEmailAlert`. See the prerequisite notes in the [root README](../README.md).
+- **Email alerts:** the Outlook email activity needs a mailbox-backed OAuth2 connection, not a notebook service-principal connection. RTI_010 retains Operations Agent, playbook/actions, Teams, and `Pipe_SendEmailAlert` provisioning against v2. Create the mailbox connection and configure destinations as described in the [root README](../README.md); verify actual delivery separately.
 
 ## Identities and permissions
 
@@ -282,13 +286,14 @@ Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner
 ## 1. Build the RTI Fabric environment (in Fabric)
 
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
-run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and reports optional
-agent capability statuses separately. It does **not**
+run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and attempts Data Agent
+and Operations Agent provisioning by default. Required-agent failures fail setup. It does **not**
 create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
 
-> **Operations Agent is not provisioned by this flow.** An Outlook connection or successful
-> `RTI_010` capability report is not proof of a runnable v2 playbook. Do not attempt to restore the
-> removed legacy playbook as a workaround. Check `ops_agent_deployment_status` and its reason.
+> **Operations Agent provisioning includes playbook/actions, Teams, and email-alert wiring.**
+> Configure the run-as identity, Teams destination, and Outlook OAuth2 connection as described in
+> the root README. Check `ops_agent_deployment_status` and its reason, then separately verify real
+> execution and delivery. No mode permits a generation-1 ontology fallback.
 
 ## 2. Clone and install
 
@@ -474,10 +479,12 @@ through Step 7; hosting success does not establish native graph readiness.
 2. Click **"Seed & provision"** in the header.
 
 It runs `RTI_011` in your workspace, which upserts the operational tables, creates + **auto‑binds**
-the STID **GraphQL API** to the Lakehouse SQL endpoint. These stages do not require a Data Agent.
-It adds SQL only to an eligible agent whose ontology source matches the selected live v2 item,
-and verifies retained draft and published ontology/SQL sources. Check the notebook's independent
-capability result; successful SQL/GraphQL setup does not mean an agent was published or is runnable.
+the STID **GraphQL API** to the Lakehouse SQL endpoint. It also adds SQL to the required Data Agent
+whose ontology source matches the selected live v2 item, verifying retained draft and published
+ontology/SQL sources. Only explicit `ontology_data_agent_mode=disabled` omits this extension.
+Missing/ineligible agents and extension failures fail the notebook in `enabled`/`auto` mode, even
+if SQL/GraphQL writes already succeeded. Successful configuration does not certify agent runtime.
+The prior RTI_009 status must be `published`; a missing/blocked prior result is not eligible.
 The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
 
 > **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric

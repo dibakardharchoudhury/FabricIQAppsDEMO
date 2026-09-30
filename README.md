@@ -3,14 +3,15 @@
 An end‑to‑end **Microsoft Fabric** solution built on a **fully synthetic** hydropower dataset. One
 **Data Pipeline** stands up the whole environment: a medallion Lakehouse, an Eventhouse telemetry
 stream, a Fabric IQ Ontology v2 with live time-series bindings, and a Real-Time Dashboard.
-Optional agent steps report supported, blocked, or skipped capabilities separately; they do not
-guarantee a Data Agent or Operations Agent exists. A companion React app
+Data Agent and Operations Agent provisioning are enabled by default, retaining the original
+playbook, actions, Teams, and email-alert capabilities while adopting Ontology v2. Service failures
+remain failures, not successful static capability skips. A companion React app
 ([`HydroOperationsApp/`](HydroOperationsApp/README.md)) composes the data on one screen.
 
 > [!NOTE]
 > All data is synthetic — no real plant or customer data.
 > The project is v2-only. Agent availability depends on Fabric product support; a successful
-> core setup does not imply that optional agents are ready.
+> core-only setup or item creation does not certify agent execution or alert delivery.
 
 ## Ontology generations and optional agents
 
@@ -43,24 +44,34 @@ fabricate STID/FK topology. See [the native graph contract](docs/knowledge-graph
 | `entityRelationships.tmdl` | Semantic entity relationships. |
 | `relationships.tmdl` | Physical table joins referenced by semantic relationships or time-series backing; not additional semantic edges. |
 
-Two optional `01_Pipe_Setup` parameters are persisted in `rti_demo_settings`:
+Two agent-policy `01_Pipe_Setup` parameters are persisted in `rti_demo_settings`:
 
 | Parameter | Default | Policy |
 | --- | --- | --- |
-| `ontology_data_agent_mode` | `auto` | Report v2 ontology-source integration as blocked until product support is verified; never fall back to a v1 source. |
-| `ontology_operations_agent_mode` | `auto` | Report v2 playbook integration as blocked; never create a legacy playbook. |
+| `ontology_data_agent_mode` | `enabled` | Attempt real provisioning against the verified v2 ontology and verify draft/published source identity. |
+| `ontology_operations_agent_mode` | `enabled` | Attempt Operations Agent, playbook, actions, Teams configuration, and email-alert pipeline provisioning against the verified v2 ontology. |
 
-Both accept `auto`, `enabled`, or `disabled`. `enabled` is an explicit opt-in, **not** a workaround
-for a product defect or proof of agent readiness. Data Agent enablement attempts the v2 ontology
-source and propagates service failures. Operations Agent enablement fails before writes until a
-verified v2 playbook automation contract is available. `disabled` avoids configuring that agent. Agent notebooks
-report capability status and reason separately from core setup completion, and
-`RTI_011_seed_sql_wire_graphql_agent` can seed SQL and provision GraphQL without a Data Agent.
+Both accept `auto`, `enabled`, or `disabled`. `auto` is a backward-compatible alias for `enabled`:
+both attempt the actual capability, rather than returning a static blocked status. `disabled` is
+the explicit opt-out for that agent. No mode bypasses generation-2 verification or falls back to a
+generation-1 ontology. Required-agent failures propagate through RTI_009, RTI_010, RTI_011, and setup;
+status/reason reporting is diagnostic, not a substitute for failure. RTI_011 can seed SQL and
+provision GraphQL with the Data Agent explicitly disabled; otherwise its agent extension is required.
+Successful configuration still does not prove agent execution or alert delivery.
+
+The required success statuses are `data_agent_deployment_status=published` after RTI_009 and
+`ops_agent_deployment_status=configured` after RTI_010. The Operations Agent is configured in a
+**stopped** state; `configured` does not mean a playbook has run. The orchestrator requires those
+statuses, or `skipped` paired with an explicit `disabled` mode. RTI_011 requires the prior Data
+Agent `published` status as well as verified source identity. The retained `OperationsAgentV1`
+business-configuration schema is not ontology generation 1: its selected ontology must still be v2.
 
 As of September 29, 2026, generation-2 Data Agent onboarding is blocked in the reported rollout,
 and [Fabric known issue 1970](https://support.fabric.microsoft.com/known-issues/) covers Operations
 Agent playbook-generation timeouts with the new ontology experience. Check product support in the
-target tenant before opting in; do not infer support from an estimated fix date.
+target tenant using the real provisioning attempt; do not infer resolution from an estimated fix
+date or the restored implementation. A new full-capability live attempt is pending. Existing live
+evidence is core-only, and the observed five-entity graph-projection blocker remains unresolved.
 
 `RTI_001` remaps downstream notebook attachments, and the orchestrator passes
 `useRootDefaultLakehouse: True`. Rebinding failures now stop setup. Standalone notebook sessions
@@ -96,14 +107,14 @@ writes the shared **`rti_demo_settings`** Delta table, and every other notebook 
 | Ontology | `RTI_Demo_Ontology_V6` |
 | Eventhouse / KQL DB | `RTI_Demo_Eventhouse_V6` (table `OPCUAEvents`) |
 | Eventstream | `RTI_Demo_Eventstream_V6` |
-| Data Agent (when supported and explicitly enabled) | `RTI_Demo_Agent_V6` |
+| Data Agent (enabled by default) | `RTI_Demo_Agent_V6` |
 | Dashboard | `RTI_Demo_OPCUA_TelemetryStats_V6` |
-| Operations Agent (reserved name; automation blocked) | `RTI_Demo_OpsAgent_V6` |
+| Operations Agent (enabled by default) | `RTI_Demo_OpsAgent_V6` |
 
 `V6`, `V9`, and other environment suffixes distinguish demo instances; they do not select an
 ontology generation. Every supported ontology is generation 2.
-The setup/stream/weather pipelines are **not** versioned. `Pipe_SendEmailAlert` belongs to the
-previous Operations Agent flow; the current v2-only setup does not create or wire it.
+The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creation and wiring of
+`Pipe_SendEmailAlert` as part of Operations Agent provisioning.
 
 ## Notebooks
 
@@ -114,19 +125,19 @@ previous Operations Agent flow; the current v2-only setup does not create or wir
 | **RTI_003_ingest_transform_medallion_SelfContained** | Bronze → Silver → Gold transforms; builds `silver_signal_master`. | ✅ |
 | **RTI_004_build_ontology_mapping_rti_structured** | Creates/verifies Ontology v2 TMDL (5 entities, 4 semantic relationships) + time‑series properties; preserves existing bindings on safe reruns. | ✅ |
 | **RTI_005_entity_DataBinding_rti_structured** | Direct Lake backing tables, scalar-property bindings, and physical joins referenced by semantic relationships. | ✅ |
-| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`. | ✅ |
+| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including the standalone `event_time` property. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
-| **RTI_009_build_data_agent** | Reports the v2 Data Agent capability; explicit enablement attempts deployment with matching live v2 source and draft/published readback checks. Default `auto` is blocked. | ✅ |
-| **RTI_010_build_operations_agent** | Reports the blocked/skipped v2 playbook capability. No agent, playbook, or alert pipeline is provisioned; explicit enablement fails before writes. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup, independent of agents. Extends SQL only on an eligible, verified v2-backed Data Agent. Run by **Seed & provision**. | — |
+| **RTI_009_build_data_agent** | Provisions the Data Agent by default with matching live v2 source and draft/published readback checks; required failures propagate. | ✅ |
+| **RTI_010_build_operations_agent** | Provisions the Operations Agent, playbook, actions, Teams configuration, and email-alert pipeline against v2 by default; required failures propagate. | ✅ |
+| **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup; extends the required verified v2-backed Data Agent with SQL unless explicitly disabled. Run by **Seed & provision**. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
 
 NB09 and NB10 report separately gated agent capabilities but both persist status in the same
 `rti_demo_settings` Delta table. Their required execution order is **NB06 → NB09 → NB10**:
 serialize the two status `MERGE` operations to avoid `DELTA_CONCURRENT_APPEND`. Other independent
-setup branches remain parallel; a blocked optional capability is not itself an infrastructure
-failure, but an actual status-write failure still fails setup.
+setup branches remain parallel. Agent failures in `enabled` or `auto` mode fail setup; only an
+explicit `disabled` mode permits a capability skip. Status-write failures also fail setup.
 
 > [!NOTE]
 > `RTI_000` is documentation only. `*_shortcut` / non‑self‑contained variants are legacy reference copies, not wired into `Pipe_Setup`. Readable `.ipynb` mirrors live in [`Raw/RTI_Notebooks/`](Raw/RTI_Notebooks/).
@@ -149,17 +160,17 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 |:--:|---|---|
 | 1 | **Key Vault secrets** | SPN has **Key Vault Secrets User** — *Get* on `tenantid`, `clientid`, `clientsecret`. |
 | 2 | **Workspace access** | SPN has **Contributor** (or higher) on the Fabric workspace. |
-| 3 | **Tenant settings** *(Admin portal)* | **Service principals can use Fabric APIs** (SPN in the allowed security group); Copilot / AI settings are additional prerequisites for supported optional agent use, not a workaround for v2 service limitations. |
+| 3 | **Tenant settings** *(Admin portal)* | **Service principals can use Fabric APIs** (SPN in the allowed security group); Copilot / AI settings are additional prerequisites for the default-enabled agents, not a workaround for v2 service limitations. |
 | 4 | **Private endpoint to Key Vault** | Only if the vault blocks public access — add a managed private endpoint in *Workspace settings → Networking* and approve it on the vault. |
 | 5 | **Tenant settings for the companion app** *(Admin portal)* | **Enable Fabric App Items (preview)** — without it `rayfin up` gets `403 FeatureNotAvailable`. Add **Users can sync workspace items with GitHub repositories** if you populate the workspace via Git; the generic Git switch alone is not enough. |
 | 6 | **Capacity region** | *Fabric App (preview)* is unavailable in some regions (West US 3, East US 2, UK South, North Europe, …) and a capacity's region is fixed at creation. Sweden Central covers Fabric App, Ontology, Digital twin builder and the Operations agent. See [region availability](https://learn.microsoft.com/fabric/admin/region-availability). |
 
 > [!IMPORTANT]
-> **Optional future/manual email-alert integration (OAuth2).**
+> **Email-alert delivery prerequisite (OAuth2).**
 >
-> This is **not a prerequisite for the current v2 core setup**. `RTI_010` does not create an
-> Operations Agent or `Pipe_SendEmailAlert`. The following connection guidance applies only if
-> you separately implement and verify a supported v2 alert flow.
+> RTI_010 retains Operations Agent and `Pipe_SendEmailAlert` provisioning. Email delivery requires
+> the mailbox connection below; core-only setup with Operations Agent explicitly disabled does not
+> validate this capability.
 >
 > The `Pipe_SendEmailAlert` pipeline sends mail via the **Office 365 Outlook “Send an email”** activity,
 > which posts **from a mailbox** and so needs an **OAuth2** connection. It **cannot** be created from a
@@ -173,7 +184,7 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
 > **`RTI_Office365_EmailAlert`** → **Create**.*
 >
 > An Outlook connection alone does not provision or validate an Operations Agent or playbook.
-> A separately configured alert pipeline must explicitly use that connection. If a connection
+> RTI_010 wires the alert pipeline to that connection. If a connection
 > later shows *“Failed to load”*, open it and **Edit → Sign in** to refresh expired consent.
 
 > [!NOTE]
@@ -201,17 +212,17 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
    | `key_vault_tenant_id_secret_name` | `tenantid` | Secret **name**, not value. |
    | `key_vault_client_id_secret_name` | `clientid` | Secret **name**, not value. |
    | `key_vault_client_secret_name` | `clientsecret` | Secret **name**, not value. |
-   | `ontology_data_agent_mode` | `auto` | `auto` reports the v2 rollout block; `enabled` attempts verified v2 configuration; `disabled` skips. |
-   | `ontology_operations_agent_mode` | `auto` | `auto` reports blocked; `disabled` skips; `enabled` fails before writes until a verified v2 playbook contract exists. |
-   | `ops_agent_teams_team_id` | `c480320e-…` | Retained configuration; not used by the blocked v2 Operations Agent flow. |
-   | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Retained configuration; does not enable Teams alerts. |
-   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Retained optional setting; does not start or configure an agent. |
+   | `ontology_data_agent_mode` | `enabled` | Default; `auto` also attempts verified v2 configuration; only `disabled` skips. |
+   | `ontology_operations_agent_mode` | `enabled` | Default; `auto` also attempts agent/playbook/actions/alert provisioning; only `disabled` skips. |
+   | `ops_agent_teams_team_id` | `c480320e-…` | Target team for Operations Agent Teams delivery. |
+   | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Target channel for Operations Agent Teams delivery. |
+   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Run-as identity used to configure Operations Agent execution. |
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
    > [!IMPORTANT]
    > The pipeline ships with the author's **example defaults** — replace **every** value for a new tenant. Enter each **full** name (the UI truncates long names visually); the child notebooks' own parameter cells ship blank and fail fast if a required value is missing.
 
-2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Review optional capability statuses separately; core completion is not agent readiness.
+2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Agents are required unless explicitly disabled; inspect status/reasons and verify execution/delivery separately from configuration.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.
 4. **`03_Pipe_Weather` runs automatically every six hours** (03:20/09:20/15:20/21:20 UTC, aligned to the 00/06/12/18 UTC model runs both vendors derive from). It refreshes Aurora, refreshes UKMet, then runs `Weather_020_area_calculations` to rebuild vendor- and forecast-type-specific area metrics, enforce retention, and refresh the wide serving tables the app reads. Workspace provisioning creates and enables the schedule.
 

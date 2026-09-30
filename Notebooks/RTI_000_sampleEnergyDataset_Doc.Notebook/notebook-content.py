@@ -52,7 +52,7 @@
 # - Eventhouse & KQL DB
 # - Ontology v2 (TMDL entities, relationships, and data bindings)
 # - Application asset topology from GraphQL rows plus the v2 semantic contract
-# - Capability-gated Data Agent integration; blocked Operations Agent automation
+# - Required v2 Data Agent and full Operations Agent provisioning, with explicit opt-out
 #
 # **V2-only contract:** every selected live ontology must report integer
 # `properties.generation == 2`. Names such as `*_V9`, Fabric REST `/v1`, and ADLS Gen2
@@ -423,10 +423,11 @@
 #    - Uses named TMDL properties and preserves live identities for the binding.
 # 
 # 3. **Build and push Eventhouse TimeSeries DataBinding**
-#    - Merges the Eventhouse `dataSource` and `dataBinding` into the live TMDL,
+#    - Merges the Eventhouse DirectQuery table, join and backing configurations into live TMDL,
 #      retaining static bindings, contextualizations, and all unrelated/custom parts.
-#    - Maps `opcua_node_id`, `event_time`, `value`, and `quality` to their named
-#      properties and sets the `event_time` timestamp contract.
+#    - Joins by `opcua_node_id`; binds standalone `event_time`, `value`, and `quality`.
+#      Each time-series property has its own `valueColumn` and uses
+#      `OPCUAEvents.event_time` as its `orderingColumn`, including `event_time` itself.
 #    - Validates Kusto query/ingest endpoints separately; one is not inferred from the other.
 #    - Rejects incompatible existing source/binding changes before `updateDefinition`.
 # 
@@ -447,26 +448,36 @@
 # Builds the realtime dashboard using KQL/Eventhouse resources independently of
 # agent availability. Streaming is started separately through `Pipe_Stream`.
 #
-# ### 9. RTI_009 – Capability-gated Data Agent
+# ### 9. RTI_009 – Required v2 Data Agent
 # Requires the selected live ontology and every retained ontology source to report
 # integer `properties.generation == 2`. Both item ID and workspace must match.
-# `ontology_data_agent_mode=auto` records generation 2 onboarding as blocked;
-# `disabled` skips integration. `enabled` explicitly attempts the real v2 source.
+# `ontology_data_agent_mode=enabled` is the default; `auto` is a compatibility alias
+# that also attempts provisioning. Only explicit `disabled` skips integration.
 # Draft identity is read back before publish and published-stage identity must also
 # be verified before success is recorded. Publication is **not runtime query readiness**.
 # Existing v1 sources are rejected, never reused, migrated, or deleted.
 #
-# ### 10. RTI_010 – Blocked Operations Agent automation
-# No verified v2 automation/playbook contract is implemented. `auto` records blocked;
-# `disabled` skips; `enabled` fails before agent/playbook writes. No old playbook,
-# agent, connection, or automatic `Pipe_SendEmailAlert` provisioning is performed.
-# Existing resources remain untouched. Completion does not mean an agent is ready.
+# ### 10. RTI_010 – Complete Operations Agent provisioning
+# `enabled` (default) and `auto` attempt the selected live v2 ontology source, authored
+# BAD/UNCERTAIN playbook, Teams destination, parameterized email action and
+# `Pipe_SendEmailAlert` pipeline. Only explicit `disabled` skips. No static product
+# issue gate or fallback that drops business components can report success.
+# Actual HTTP/LRO/readback failures persist failure and raise. Missing Outlook OAuth2
+# connection requires interactive sign-in and fails setup after scaffolding creation.
+# Success means `configured`, STOPPED by default; queries, monitoring, Teams and email
+# delivery still require live verification. `OperationsAgentV1` names the agent format,
+# not the ontology generation.
 #
-# ### 11. RTI_011 – SQL seed, GraphQL, and optional SQL Data Agent source
+# ### 11. RTI_011 – SQL seed, GraphQL, and required SQL Data Agent source
 # SQL seeding and GraphQL setup run independently of Data Agent availability.
-# The optional agent extension follows the same auto/enabled/disabled v2 policy
-# as RTI_009, rejects v1, and verifies exact draft/published ontology and SQL-source
-# identities. It never silently extends an unrelated agent or proves runtime readiness.
+# Unless explicitly disabled, the extension requires a successfully published RTI_009
+# agent, rejects missing/blocked/failed agents and v1, and verifies exact draft/published
+# ontology and SQL-source identities. Independent step outcomes are saved, but required
+# failures fail the notebook. Publication does not prove runtime readiness.
+#
+# Setup retains NB06 -> NB09 -> NB10 ordering. Before enabling Weather it requires
+# NB09 `published` and NB10 `configured`, or each capability's explicit disabled/skipped
+# result. Missing, blocked or failed evidence cannot become green setup success.
 #
 # ### Application consumption and graph boundary
 # HydroOperationsApp reads v2 TMDL and queries the ontology-managed GraphModel
@@ -543,7 +554,7 @@
 # This data is suitable for:
 # - Eventstream/Eventhouse validation
 # - Near‑real‑time monitoring examples
-# - Potential future Operations Agent reasoning (v2 automation currently blocked)
+# - Operations Agent reasoning scenarios (live v2 runtime verification still required)
 # 
 # ---
 # 
@@ -578,7 +589,7 @@
 # 
 # **Typical use cases**
 # - Alarm threshold comparison
-# - Potential future Operations Agent decisions (no verified v2 playbook contract)
+# - Potential additional Operations Agent decisions beyond the restored quality playbook
 # - Engineering context in analytics
 # 
 # ---

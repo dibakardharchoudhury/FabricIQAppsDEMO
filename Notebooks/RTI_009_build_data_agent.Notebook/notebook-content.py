@@ -25,7 +25,7 @@
 
 # # 09 — Capability-gated Data Agent integration over Ontology v2
 # 
-# With explicit enablement, attempts to create/publish a Fabric **Data Agent** with
+# By default, attempts to create/publish a Fabric **Data Agent** with
 # the configured live v2 ontology as its real source. The ontology's `signal_master`
 # TMDL bindings describe both sources; publication does not prove query execution:
 # 
@@ -45,14 +45,14 @@
 # 2. Resolves the live `ontology_id` by name in the target folder.
 # 3. Builds the Data Agent item definition (`.platform` + `Files/Config/**`).
 # 4. Deploys it as a Fabric **DataAgent** item via REST, then **publishes** it
-#    (staging → published) only with explicit enablement and live generation 2.
+#    (staging → published) with live generation 2 unless explicitly disabled.
 # 5. Persists `data_agent_name` / `data_agent_id` back to `rti_demo_settings`.
 #
-# Capability policy: `ontology_data_agent_mode` is `auto` (default), `enabled`, or
+# Capability policy: `ontology_data_agent_mode` is `enabled` (default), `auto`, or
 # `disabled`. This deployment is v2-only: generation 1 is rejected in every mode.
-# Auto conservatively blocks generation 2 onboarding for the user-reported rollout
-# limitation pending the product fix. Existing legacy sources are never reused or deleted.
-# Enabled attempts the real v2 source; disabled skips integration. Neither is a
+# Auto is a backwards-compatible alias for enabled: both attempt the real v2 source
+# and propagate service failures. Existing legacy sources are never reused or deleted.
+# Disabled explicitly skips integration. Publication alone is not a runtime
 # readiness guarantee. Generation must be integer `properties.generation == 2`
 # on the live Ontology resource, never inferred from a name, `_V9`, or REST `/v1`.
 # Every preserved/submitted ontology source must match the selected item id and workspace.
@@ -358,13 +358,6 @@ def agent_capability_policy(generation: int, mode: str) -> dict:
         }
     if mode == "disabled":
         return {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
-    if mode == "auto":
-        return {
-            "status": "blocked",
-            "reason": "Auto policy blocks Ontology generation 2 Data Agent onboarding for the "
-                      "user-reported rollout limitation; product fix pending. "
-                      "Set ontology_data_agent_mode=enabled only after verifying product support.",
-        }
     return {"status": "allowed", "reason": ""}
 
 
@@ -385,7 +378,7 @@ def persist_agent_status(status: str, reason: str) -> None:
 def check_agent_capability() -> tuple:
     persist_agent_status("checking", "Checking v2-only Data Agent capability; no readiness established.")
     try:
-        mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="auto"))
+        mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
         ontology_id = resolve_ontology_id()
         generation = get_ontology_generation(ontology_id)
         policy = agent_capability_policy(generation, mode)
@@ -688,7 +681,7 @@ def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
 
 
 # -------------------------------------------------------------------------
-# V2-only deployment: explicit opt-in, no legacy fallback, errors always propagate.
+# V2-only deployment: enabled by default, no legacy fallback, errors always propagate.
 # -------------------------------------------------------------------------
 data_agent_item_id = None
 ontology_id, ontology_generation = check_agent_capability()
@@ -784,7 +777,7 @@ if data_agent_item_id:
 notebookutils.notebook.exit(json.dumps({
     "capability": "data_agent",
     "generation": ontology_generation,
-    "mode": validate_agent_mode(first_setting("ontology_data_agent_mode", default="auto")),
+    "mode": validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled")),
     **agent_deployment_result,
     "data_agent_deployment_status": agent_deployment_result["status"],
     "data_agent_deployment_reason": agent_deployment_result["reason"],

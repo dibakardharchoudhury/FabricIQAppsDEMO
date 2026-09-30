@@ -641,6 +641,28 @@ def _binding_block(block, desired, settings):
     return block.rstrip() + "\n\n" + desired.rstrip() + "\n"
 
 
+def _bind_physical_relationship(physical, bindings, default_name, from_column, to_column):
+    if len(bindings) > 1:
+        raise RuntimeError(f"Ambiguous backing relationship for {default_name}")
+    name = default_name
+    if bindings:
+        reference = _direct_setting(bindings[0], "relationship")
+        if not reference:
+            raise RuntimeError(f"Missing backing relationship for {default_name}")
+        name = _local_name(reference)
+    existing = _object_block(physical, "relationship", name, 0)
+    expected = {"fromColumn": from_column, "toColumn": to_column}
+    if existing:
+        for field, value in expected.items():
+            _require_setting(existing, field, value, reference=True)
+    elif bindings:
+        raise RuntimeError(f"Missing physical relationship {name}")
+    else:
+        physical = physical.rstrip() + f"\n\nrelationship {_quote_name(name)}\n" + "".join(
+            f"\t{field}: {value}\n" for field, value in expected.items())
+    return physical, name
+
+
 def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_id,
                               lakehouse_id, lakehouse_name, tag):
     result = _parts_by_path(parts)
@@ -750,16 +772,9 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
         key = _local_name(_direct_setting(_decode_part(result[f"entities/{target}.tmdl"]), "keyProperty") or "")
         if key not in table_columns[entity_to_table[source]]:
             raise RuntimeError(f"Missing relationship source column {source}.{key}")
-        backing_name = f"{source}_{target}"
-        expected = {"fromColumn": f"{_quote_name(source)}.{_quote_name(key)}",
-                    "toColumn": f"{_quote_name(target)}.{_quote_name(key)}"}
-        existing = _object_block(physical, "relationship", backing_name, 0)
-        if existing:
-            for field, value in expected.items():
-                _require_setting(existing, field, value, reference=True)
-        else:
-            physical = physical.rstrip() + f"\n\nrelationship {_quote_name(backing_name)}\n" + "".join(
-                f"\t{field}: {value}\n" for field, value in expected.items())
+        physical, backing_name = _bind_physical_relationship(
+            physical, _unnamed_blocks(block, "backingConfiguration", 4), f"{source}_{target}",
+            f"{_quote_name(source)}.{_quote_name(key)}", f"{_quote_name(target)}.{_quote_name(key)}")
         bound = _binding_block(
             block, f"\tbackingConfiguration\n\t\trelationship: {_quote_name(backing_name)}\n",
             {"relationship": _quote_name(backing_name)})
@@ -1864,7 +1879,7 @@ if not static_table or f"tables/{static_table}.tmdl" not in live_by_path:
         "Static Lakehouse binding is missing. Run 005 first."
     )
 
-for name in (VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
+for name in (TIMESTAMP_COLUMN_NAME, VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
     block = _property_block(entity_text, name)
     if not block:
         raise RuntimeError(
@@ -1909,7 +1924,6 @@ def _bind_eventhouse_parts(parts):
     result = dict(original)
     entity = result[entity_path]
     event_table = KQL_TABLE_NAME
-    relationship = f"{STATIC_ENTITY_NAME}_{event_table}"
     event_path = f"tables/{event_table}.tmdl"
     if event_table == static_table:
         raise RuntimeError("Eventhouse table name conflicts with the static backing table")
@@ -1920,17 +1934,27 @@ def _bind_eventhouse_parts(parts):
     if '"' in CLUSTER_QUERY_URI or '"' in KQL_DB_NAME:
         raise RuntimeError("Source URI or KQL database name contains an unsupported quote")
 
-    # An existing UI binding is left intact when it already points to this source.
+    columns = [(TIMESTAMP_COLUMN_NAME, "dateTime"), (KEY_COLUMN_NAME, "string"),
+               (VALUE_COLUMN_NAME, "double"), (QUALITY_COLUMN_NAME, "string")]
+    # Preserve compatible UI bindings, but verify their physical column mappings.
     if event_path in result:
         table_text = result[event_path]
-        checks = ['mode: directQuery',
-                  f'AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")',
+        partitions = _object_spans(table_text, "partition", 4)
+        if len(partitions) != 1:
+            raise RuntimeError(f"Existing {event_path} must have exactly one Eventhouse partition")
+        partition = partitions[0][3]
+        _require_setting(partition, "mode", "directQuery")
+        checks = [f'AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")',
                   f'annotation ONT_ItemId = {KQL_DB_ID}', f'annotation ONT_WorkspaceId = {WORKSPACE_ID}', 'annotation ONT_ItemKind = KQLDatabase']
-        if not all(check in table_text for check in checks):
+        if not all(check in partition for check in checks):
             raise RuntimeError(f"Existing {event_path} points to another Eventhouse source; inspect it before replacing")
+        for name, dtype in columns:
+            column = _object_block(table_text, "column", name, 4)
+            if not column:
+                raise RuntimeError(f"Existing {event_path} is missing column {name}")
+            _require_setting(column, "dataType", dtype)
+            _require_setting(column, "sourceColumn", _quote_name(name), reference=True)
     else:
-        columns = [(TIMESTAMP_COLUMN_NAME, "dateTime"), (KEY_COLUMN_NAME, "string"),
-                   (VALUE_COLUMN_NAME, "double"), (QUALITY_COLUMN_NAME, "string")]
         column_text = "\n".join(
             f"\tcolumn {name}\n\t\tdataType: {dtype}\n"
             f"\t\tlineageTag: {_tmdl_tag('event-column', KQL_DB_ID, event_table, name)}\n"
@@ -1949,23 +1973,17 @@ def _bind_eventhouse_parts(parts):
               f"\t\tannotation ONT_ItemName = {KQL_DB_NAME}\n"
               f"\t\tannotation ONT_PinnedAtUtc = {pinned}\n")
 
-    physical = result.get("relationships.tmdl", "")
-    heading = f"relationship {relationship}"
-    desired = (f"{heading}\n\tfromColumn: {event_table}.{KEY_COLUMN_NAME}\n"
-               f"\ttoColumn: {static_table}.{KEY_COLUMN_NAME}\n")
-
-    existing_relationship = _object_block(physical, "relationship", relationship, 0)
-    if existing_relationship:
-        _require_setting(existing_relationship, "fromColumn", f"{event_table}.{KEY_COLUMN_NAME}", reference=True)
-        _require_setting(existing_relationship, "toColumn", f"{static_table}.{KEY_COLUMN_NAME}", reference=True)
-    else:
-        result["relationships.tmdl"] = _append_unique_block(physical, heading, desired)
+    backings = [block for block in _unnamed_blocks(entity, "additionalBackingTable", 4)
+                if _local_name(_direct_setting(block, "table") or "") == event_table]
+    result["relationships.tmdl"], relationship = _bind_physical_relationship(
+        result.get("relationships.tmdl", ""), backings, f"{STATIC_ENTITY_NAME}_{event_table}",
+        f"{event_table}.{KEY_COLUMN_NAME}", f"{static_table}.{KEY_COLUMN_NAME}")
 
     model = result.get("model.tmdl", "")
     if not model.startswith("model "):
         raise RuntimeError("Generation 2 model.tmdl is missing")
     result["model.tmdl"] = _append_model_ref(model, "table", event_table)
-    for prop in (VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
+    for prop in (TIMESTAMP_COLUMN_NAME, VALUE_COLUMN_NAME, QUALITY_COLUMN_NAME):
         block = _property_block(entity, prop)
         expected = (f"\t\tbackingConfiguration\n\t\t\ttype: timeSeries\n"
                     f"\t\t\tvalueColumn: {event_table}.{prop}\n"

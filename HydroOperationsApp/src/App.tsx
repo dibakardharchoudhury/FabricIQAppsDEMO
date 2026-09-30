@@ -489,7 +489,7 @@ export default function App() {
       if (status === 'Completed') {
         setProvisioned(true)
         await loadOperationalData()
-        setNotice('SQL/GraphQL provisioning notebook completed. Connecting STID; optional Data Agent and Operations Agent readiness is not verified.')
+        setNotice('Provisioning notebook completed. Connecting STID; agent execution and Teams/email delivery still require separate verification.')
         await connectStid({ retries: 5 })
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
@@ -556,7 +556,7 @@ export default function App() {
       if (isPostSeedConfigured()) {
         // RTI_011 is the authoritative seeder: its SQL MERGE upserts (re-seeds/updates)
         // every run, so skip the client-side insert-if-empty pre-seed.
-        const label = 'Provisioning SQL and the STID GraphQL API; optional agent source setup is capability-gated (RTI_011)...'
+        const label = 'Provisioning SQL, the STID GraphQL API, and required Data Agent sources unless explicitly disabled (RTI_011)...'
         beginProgress('seed', label, SEED_ETA_MS)
         await awaitProvision(() => runPostSeedNotebook(s => updateJob('seed', humanStatus(s))))
       } else {
@@ -664,7 +664,7 @@ export default function App() {
   // Ordered first-run setup. Each step explains why it exists and unlocks the next.
   const steps = [
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
-    { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API (RTI_011). Optional agent source setup is capability-gated; completion does not verify agent readiness. Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
+    { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL, publishes the STID GraphQL API, and configures Data Agent sources unless explicitly disabled (RTI_011). Required agent failures fail provisioning; completion does not verify runtime execution. Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
     { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel. Takes ~5 min to warm up before signals appear.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
     { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },

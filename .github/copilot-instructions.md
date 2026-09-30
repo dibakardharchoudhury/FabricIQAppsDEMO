@@ -4,18 +4,22 @@
 
 Use the [v2-only contract](../README.md#ontology-generations-and-optional-agents) for code and docs.
 Require live numeric generation 2, explicit TMDL authoring, safe binding preservation, and verified
-readback. Never restore legacy ontology/agent/playbook fallbacks. REST `/v1`, app layout names,
+readback. Never restore generation-1 ontology or agent-source fallbacks. Retain the original
+Operations Agent playbook/actions capabilities against the verified v2 ontology. REST `/v1`, app layout names,
 and environment suffixes are not ontology generations.
 
-Core setup and hosted-page success do not prove optional capabilities: Data Agent onboarding is
-gated and requires matching published v2 source identity; Operations Agent automation remains
-blocked pending a verified v2 playbook contract. Keep SQL/GraphQL independent. The app's native graph
+Agent modes default to `enabled`; backward-compatible `auto` also attempts actual provisioning,
+and only explicit `disabled` opts out. Preserve Data Agent, Operations Agent, playbook/actions,
+Teams, email-alert provisioning, and standalone `event_time` binding. Required failures propagate
+through RTI_009/010/011 and setup. Data Agent sources require matching verified v2 identity.
+SQL/GraphQL-only success requires explicit Data Agent disablement; configuration or hosted-page
+success does not certify agent execution or delivery. The app's native graph
 requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
 → Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON. No ownership is inferred
 from names, sole-graph discovery, or structure. Native topology is authoritative; KQL/SQL only enrich
 actual native entities. GraphQL/STID is not a canvas/tree/scope dependency or topology fallback.
 No published ontology-owned materialization REST endpoint is established; keep this portal
-prerequisite separate from automated deployment and optional agent readiness.
+prerequisite separate from automated deployment and agent runtime readiness.
 
 ## Deploying HydroOperationsApp (Rayfin) — don't reinvent the wheel
 This repo already automates deployment. Before doing ANY deploy / new-tenant / redeploy work:

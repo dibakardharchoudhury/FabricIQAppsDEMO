@@ -2,6 +2,11 @@
 
 How to change, add, provision and embed a Fabric Real-Time Dashboard in this repo.
 
+Dashboard validation covers that surface only. The v2 setup retains default-enabled Data Agent,
+Operations Agent, playbook/actions, Teams, and email-alert provisioning; `auto` also attempts those
+capabilities, and only explicit `disabled` opts out. Required-agent failures fail setup. A working
+dashboard does not certify agent execution or alert delivery.
+
 For *why* the current dashboard is built the way it is, see
 [realtime-dashboard-plan.md](realtime-dashboard-plan.md).
 

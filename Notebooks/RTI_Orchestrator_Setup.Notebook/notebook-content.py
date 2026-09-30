@@ -37,12 +37,10 @@
 # rejected, not migrated or deleted. Binding reruns preserve live TMDL/custom parts
 # and verify service readback. REST `/v1` and suffixes such as `_V9` are not generations.
 #
-# Agent notebook completion is not readiness: NB09 `auto` reports v2 onboarding
-# blocked, `disabled` skips, and `enabled` attempts a real v2 source with strict
-# draft/published identity verification (not runtime query verification). Both agent
-# flows reject v1. NB10 has no verified v2 automation/playbook contract: `auto` is
-# blocked, `disabled` skips, and `enabled` fails before writes. No legacy playbook
-# or automatic `Pipe_SendEmailAlert` is provisioned.
+# Agent notebook completion is not runtime readiness. `enabled` (default) and `auto`
+# require actual provisioning; only explicit `disabled` skips. NB09 verifies its v2
+# draft/published identity, and NB10 restores the full playbook, Teams/action and email
+# pipeline with definition readback. Both reject v1 and propagate actual API failures.
 # NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
 # independent of Data Agent availability. The Knowledge Graph uses native
 # ontology-managed graph instances, enriched by KQL and operational SQL.
@@ -208,18 +206,25 @@ def _report_agent_capabilities(results_by_activity: dict) -> None:
     for name in ("NB09_dataagent", "NB10_opsagent"):
         exit_value = results_by_activity[name].get("exitVal")
         if not exit_value:
-            print(f"{name}: completed; consult notebook output for agent readiness.")
-            continue
+            raise RuntimeError(f"{name} returned no capability evidence.")
         capability = json.loads(exit_value) if isinstance(exit_value, str) else exit_value
         if not isinstance(capability, dict) or not capability.get("status"):
             raise RuntimeError(f"{name} returned an invalid capability result: {capability!r}")
+        expected = "published" if name == "NB09_dataagent" else "configured"
+        mode = capability.get("mode")
+        if mode == "disabled":
+            valid = capability["status"] == "skipped"
+        else:
+            valid = mode in ("auto", "enabled") and capability["status"] == expected
+        if not valid or capability.get("generation") != 2:
+            raise RuntimeError(f"{name} did not fulfill its required deployment contract: {capability!r}")
         print(f"{name}: {capability['status']} - {capability.get('reason', '')}")
 
 
 _require_successful_dag(results)
 _report_agent_capabilities(results)
 _activate_weather_schedule()
-print("✅ Core setup complete; Weather schedule enabled. Agent capability status is reported separately above.")
+print("✅ Setup contracts complete; Weather schedule enabled. Agent runtime actions remain untested.")
 results
 
 # METADATA ********************

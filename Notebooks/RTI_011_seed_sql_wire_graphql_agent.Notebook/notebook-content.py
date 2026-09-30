@@ -31,8 +31,9 @@
 # job API (`jobType=RunNotebook`) — and is fully **idempotent**, so repeated runs are safe.
 # 
 # SQL seed and GraphQL run independently of Data Agent availability. Unexpected failures
-# are reported and raised, not converted to agent readiness. The optional SQL source step
-# honors `ontology_data_agent_mode` (auto/enabled/disabled) and the live ontology generation.
+# are reported and raised, not converted to agent readiness. The SQL source step
+# honors `ontology_data_agent_mode` (enabled by default, auto/disabled also accepted)
+# and the live ontology generation.
 # Agent integration is v2-only: both target ontology and existing agent ontology sources
 # must have live integer `properties.generation == 2`. Legacy sources are rejected,
 # never silently reused, migrated, or deleted.
@@ -40,15 +41,17 @@
 # selecting a separate v2 ontology never authorizes extension of an unrelated agent.
 # Draft readback must retain the ontology and exact submitted SQL source before publish.
 # Both published counterparts must then be verified before reporting SQL source success.
-# `auto` reports generation 2 Data Agent integration blocked; `disabled` skips it;
-# `enabled` explicitly attempts the real v2 source extension. These gates do not
-# disable SQL/GraphQL setup. Draft/published verification is not runtime readiness.
+# `auto` is a backwards-compatible alias for `enabled`: both attempt the real v2
+# source extension and fail if the agent is missing/unconfigured, RTI_009 did not
+# report published success, or the source is legacy. Only `disabled` skips it.
+# SQL/GraphQL setup still runs independently, but required agent failures make the
+# overall notebook fail. Draft/published verification is not runtime readiness.
 # 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
 # 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse,
 #    provisioning the web app's STID and Weather read endpoints.
-# 3. **Data Agent (enabled only)** — attempts to add the `hydro-operations` SQL Database
+# 3. **Data Agent (enabled/auto)** — attempts to add the `hydro-operations` SQL Database
 #    as a second source and **republishes** the agent, retaining the exact v2 ontology
 #    source from RTI_009. Successful publication does not establish query readiness.
 #
@@ -1050,20 +1053,12 @@ def agent_capability_policy(generation: int, mode: str) -> dict:
     if type(generation) is not int or generation not in (1, 2):
         raise ValueError(f"Unsupported live ontology generation: {generation!r}")
     if generation != 2:
-        return {
-            "status": "blocked",
-            "reason": "This deployment is v2-only. Replace the generation 1 ontology and agent sources "
-                      "through an explicit migration before retrying; no legacy agent writes are allowed.",
-        }
+        raise RuntimeError(
+            "This deployment is v2-only. Replace the generation 1 ontology and agent sources "
+            "through an explicit migration before retrying; no legacy agent writes are allowed."
+        )
     if mode == "disabled":
         return {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
-    if mode == "auto":
-        return {
-            "status": "blocked",
-            "reason": "Auto policy blocks Ontology generation 2 Data Agent onboarding for the "
-                      "user-reported rollout limitation; product fix pending. "
-                      "Set ontology_data_agent_mode=enabled only after verifying product support.",
-        }
     return {"status": "allowed", "reason": ""}
 
 
@@ -1135,20 +1130,19 @@ def verify_agent_source_readback(
 
 
 def resolve_agent_extension_target() -> tuple:
-    mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="auto"))
+    mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
     if mode == "disabled":
         return None, {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
     prior_status = first_setting("data_agent_deployment_status", default="")
-    if prior_status in ("skipped", "blocked", "failed", "checking", "deploying", "configured_unpublished"):
-        return None, {
-            "status": "blocked",
-            "reason": f"RTI_009 status is {prior_status}; rerun RTI_009 successfully before SQL extension.",
-        }
+    if prior_status != "published":
+        raise RuntimeError(
+            f"RTI_009 status is {prior_status!r}; rerun RTI_009 successfully before SQL extension."
+        )
     if not data_agent_id and not data_agent_name:
-        return None, {"status": "skipped", "reason": "No Data Agent configured; SQL/GraphQL remain independent."}
+        raise RuntimeError("No Data Agent configured; run RTI_009 successfully before SQL extension.")
     agent_id = resolve_data_agent_id()
     if not agent_id:
-        return None, {"status": "skipped", "reason": "No live Data Agent found; run RTI_009 when supported."}
+        raise RuntimeError("No live Data Agent found; run RTI_009 successfully before SQL extension.")
     ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
     ontologies = [
         item for item in list_items_of_type("Ontology") if item.get("displayName") == ontology_name
@@ -1312,7 +1306,7 @@ def persist_sql_extension_status(result: dict) -> None:
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
 
 
-print("\n=== STEP C — Optional Data Agent SQL source ===")
+print("\n=== STEP C — Data Agent SQL source (required unless disabled) ===")
 step_results["data_agent_sql_source"] = {
     "status": "failed", "reason": "SQL source step did not complete; inspect the raised exception.",
 }
@@ -1321,8 +1315,11 @@ try:
     step_results["data_agent_sql_source"] = (
         extend_data_agent_sql_source(agent_id, agent_policy["ontology_id"]) if agent_id else agent_policy
     )
+except Exception as exc:
+    step_results["data_agent_sql_source"] = {"status": "failed", "reason": str(exc)}
+    step_errors.append(exc)
 finally:
-    # Persist failure as well as skips without intercepting authentication/API exceptions.
+    # Persist every outcome; failures are raised after the independent step results are saved.
     persist_sql_extension_status(step_results["data_agent_sql_source"])
     print(json.dumps({"steps": step_results}))
 
@@ -1367,7 +1364,7 @@ if step_errors:
     raise RuntimeError("Operational setup failed; inspect the per-step results above.") from step_errors[0]
 notebookutils.notebook.exit(json.dumps({
     "status": "completed",
-    "reason": "Operational steps completed; inspect the separate optional Data Agent SQL source result.",
+    "reason": "Operational steps completed; Data Agent SQL source published or explicitly disabled.",
     "capability": "operational_setup",
     "agent_ready": False,
     "steps": step_results,

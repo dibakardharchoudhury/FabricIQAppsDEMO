@@ -18,11 +18,15 @@ const clientId = import.meta.env.VITE_RAYFIN_AAD_CLIENT_ID as string | undefined
 const tenantId = (import.meta.env.VITE_FABRIC_TENANT_ID ?? import.meta.env.VITE_RAYFIN_TENANT_ID) as string | undefined
 const workspaceId = (import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID) as string | undefined
 
-// Artifact ids / URIs are DISCOVERED at runtime from the workspace; only stable display names are configured.
+// Explicit deployment selections take precedence; otherwise discover by name or the legacy defaults.
 const pipelineName = (import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_NAME as string | undefined) ?? '02_Pipe_Stream'
 const postseedNotebookName = (import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_NAME as string | undefined) ?? 'RTI_011_seed_sql_wire_graphql_agent'
 const weatherPipelineName = '03_Pipe_Weather'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
+const eventhouseId = import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID as string | undefined
+const kqlDatabaseId = import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID as string | undefined
+const graphqlId = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_ID as string | undefined
+const graphqlName = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_NAME as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
@@ -116,7 +120,7 @@ function requireWorkspaceId(): string {
   return workspaceId
 }
 
-/** Last-known-good values injected at build time; used only when live discovery is unavailable. */
+/** Build-time selections and last-known-good endpoints for unavailable live discovery. */
 function envConfig(): ResolvedConfig {
   return {
     pipelineId: import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_ID as string | undefined,
@@ -173,7 +177,10 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
     const find = (type: string, name: string) => items.find(i => i.type === type && i.displayName === name)
     const pipeline = find('DataPipeline', pipelineName)
     const notebook = find('Notebook', postseedNotebookName)
-    const eh = find('Eventhouse', eventhouseName) ?? items.find(i => i.type === 'Eventhouse')
+    const eh = eventhouseId
+      ? items.find(i => i.type === 'Eventhouse' && i.id === eventhouseId)
+      : find('Eventhouse', eventhouseName) ?? items.find(i => i.type === 'Eventhouse')
+    if (eventhouseId && !eh) throw new Error('The configured Eventhouse was not found in this workspace. Refresh deployment configuration.')
     let eventhouseQueryUri: string | undefined
     let kqlDatabase: string | undefined
     if (eh) {
@@ -181,19 +188,31 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
       if (res.ok) {
         const props = ((await res.json()) as { properties?: { queryServiceUri?: string; databasesItemIds?: string[] } }).properties
         eventhouseQueryUri = props?.queryServiceUri
-        const dbId = props?.databasesItemIds?.[0]
-        kqlDatabase = items.find(i => i.id === dbId)?.displayName ?? eh.displayName
+        const databaseIds = props?.databasesItemIds ?? []
+        const database = kqlDatabaseId || env.kqlDatabase
+          ? items.find(i => i.type === 'KQLDatabase' && databaseIds.includes(i.id)
+            && (kqlDatabaseId ? i.id === kqlDatabaseId : i.displayName === env.kqlDatabase))
+          : items.find(i => i.id === databaseIds[0])
+        if ((kqlDatabaseId || env.kqlDatabase) && !database) {
+          throw new Error('The configured KQL database does not belong to the selected Eventhouse. Refresh deployment configuration.')
+        }
+        kqlDatabase = database?.displayName ?? eh.displayName
       } else {
         // 401/403 here usually means the token lacks Item.Read.All / Eventhouse.Read.All.
         console.warn(`Get Eventhouse failed (${res.status}) — telemetry query URI unresolved.`, (await res.text()).slice(0, 300))
       }
     }
     // Fabric doesn't expose a GraphQL item's endpoint, but api.fabric.microsoft.com serves
-    // queries directly at this deterministic path — no per-capacity cluster host or env override needed.
-    const gql = items.find(i => i.type === 'GraphQLApi')
-    const graphqlUrl = gql
+    // queries directly at this deterministic path when no explicit URL is configured.
+    const gql = graphqlId
+      ? items.find(i => i.type === 'GraphQLApi' && i.id === graphqlId)
+      : graphqlName ? find('GraphQLApi', graphqlName) : items.find(i => i.type === 'GraphQLApi')
+    if ((graphqlId || graphqlName) && !gql && !graphqlUrlOverride) {
+      throw new Error('The configured STID GraphQL API was not found in this workspace. Run SQL/GraphQL provisioning and refresh discovery.')
+    }
+    const graphqlUrl = graphqlUrlOverride || (gql
       ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/graphqlapis/${gql.id}/graphql`
-      : undefined
+      : undefined)
     // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
     // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')

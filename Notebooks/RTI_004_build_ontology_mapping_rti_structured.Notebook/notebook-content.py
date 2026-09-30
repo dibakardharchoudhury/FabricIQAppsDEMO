@@ -771,6 +771,28 @@ def _binding_block(block, desired, settings):
     return block.rstrip() + "\n\n" + desired.rstrip() + "\n"
 
 
+def _bind_physical_relationship(physical, bindings, default_name, from_column, to_column):
+    if len(bindings) > 1:
+        raise RuntimeError(f"Ambiguous backing relationship for {default_name}")
+    name = default_name
+    if bindings:
+        reference = _direct_setting(bindings[0], "relationship")
+        if not reference:
+            raise RuntimeError(f"Missing backing relationship for {default_name}")
+        name = _local_name(reference)
+    existing = _object_block(physical, "relationship", name, 0)
+    expected = {"fromColumn": from_column, "toColumn": to_column}
+    if existing:
+        for field, value in expected.items():
+            _require_setting(existing, field, value, reference=True)
+    elif bindings:
+        raise RuntimeError(f"Missing physical relationship {name}")
+    else:
+        physical = physical.rstrip() + f"\n\nrelationship {_quote_name(name)}\n" + "".join(
+            f"\t{field}: {value}\n" for field, value in expected.items())
+    return physical, name
+
+
 def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_id,
                               lakehouse_id, lakehouse_name, tag):
     result = _parts_by_path(parts)
@@ -880,16 +902,9 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
         key = _local_name(_direct_setting(_decode_part(result[f"entities/{target}.tmdl"]), "keyProperty") or "")
         if key not in table_columns[entity_to_table[source]]:
             raise RuntimeError(f"Missing relationship source column {source}.{key}")
-        backing_name = f"{source}_{target}"
-        expected = {"fromColumn": f"{_quote_name(source)}.{_quote_name(key)}",
-                    "toColumn": f"{_quote_name(target)}.{_quote_name(key)}"}
-        existing = _object_block(physical, "relationship", backing_name, 0)
-        if existing:
-            for field, value in expected.items():
-                _require_setting(existing, field, value, reference=True)
-        else:
-            physical = physical.rstrip() + f"\n\nrelationship {_quote_name(backing_name)}\n" + "".join(
-                f"\t{field}: {value}\n" for field, value in expected.items())
+        physical, backing_name = _bind_physical_relationship(
+            physical, _unnamed_blocks(block, "backingConfiguration", 4), f"{source}_{target}",
+            f"{_quote_name(source)}.{_quote_name(key)}", f"{_quote_name(target)}.{_quote_name(key)}")
         bound = _binding_block(
             block, f"\tbackingConfiguration\n\t\trelationship: {_quote_name(backing_name)}\n",
             {"relationship": _quote_name(backing_name)})

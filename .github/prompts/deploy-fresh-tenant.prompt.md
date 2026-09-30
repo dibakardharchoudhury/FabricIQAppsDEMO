@@ -18,10 +18,12 @@ Use the [RTI setup workflow](../../README.md#deploy) with a fresh workspace or u
 suffix when a replacement is needed. REST `/v1` and suffixes such as `V9` are unrelated to the
 ontology generation.
 
-Report core setup, app hosting/auth, and optional agent readiness separately. Data Agent `auto`
-reports the current v2 onboarding block; explicit enablement requires verified v2 source identities.
-Operations Agent automation is blocked until a verified v2 playbook contract is implemented and
-never reuses the old playbook. SQL/GraphQL can complete without either agent. The orchestrator's
+Report core setup, app hosting/auth, and agent execution/delivery separately. Both agent modes
+default to `enabled`; backward-compatible `auto` also attempts actual provisioning, and only
+explicit `disabled` opts out. Retain Operations Agent playbook/actions, Teams, and email-alert
+provisioning against the verified v2 ontology. Required failures propagate through RTI_009/010/011
+and setup; SQL/GraphQL-only success requires explicit Data Agent disablement. No product issue
+resolution or full end-to-end acceptance follows from restoring the implementation. The orchestrator's
 `SUCCESS` marker certifies its deployment checks, not ontology provisioning, native graph readiness,
 or agent execution.
 

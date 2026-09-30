@@ -1197,11 +1197,12 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
     }
-    for prefix, item in [
-        ("STREAM_PIPELINE", pipeline), ("POSTSEED_NOTEBOOK", notebook),
-        ("LAKEHOUSE", lakehouse), ("KQL_DASHBOARD", dashboard),
+    for prefix, item, default_name in [
+        ("STREAM_PIPELINE", pipeline, "02_Pipe_Stream"),
+        ("POSTSEED_NOTEBOOK", notebook, "RTI_011_seed_sql_wire_graphql_agent"),
+        ("LAKEHOUSE", lakehouse, ""), ("KQL_DASHBOARD", dashboard, ""),
     ]:
-        values[f"RAYFIN_PUBLIC_{prefix}_NAME"] = str(item["displayName"]) if item else ""
+        values[f"RAYFIN_PUBLIC_{prefix}_NAME"] = str(item["displayName"]) if item else default_name
         values[f"RAYFIN_PUBLIC_{prefix}_ID"] = str(item["id"]) if item else ""
 
     ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
