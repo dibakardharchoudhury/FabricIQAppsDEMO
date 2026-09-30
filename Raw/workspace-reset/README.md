@@ -3,7 +3,9 @@
 Populate (or wipe-and-repopulate) a Microsoft Fabric workspace from this GitHub repo
 **without clicking through the Fabric portal**. These tools drive the same Fabric
 Git-integration APIs the portal uses, so the result is identical to a manual sync —
-just scripted, repeatable, and safe to run from CI or a fresh machine.
+just scripted and repeatable from CI or a fresh machine. Git synchronization can remove generated
+resources: a prior full `PreferRemote` import did so in V3, and setup restored them. For the current
+readiness correction, use only bounded notebook-definition updates, not another full import/reset.
 
 This automation does **not** replace the ontology-managed graph portal prerequisite: in the selected
 v2 ontology choose **Manage graph → select eligible entities/relationships → Continue → Materialize**.
@@ -72,6 +74,33 @@ email-alert provisioning are retained against the verified v2 ontology, never a 
 Required failures propagate through RTI_009/010/011 and setup. Product support and execution must
 still be checked in the target tenant; restored implementation is not live certification. See
 [ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
+
+Required Data Agent completion is **deployment `ready`, publication `published`, runtime
+`verified`**, with generation `2`; publication-only success is insufficient. The real NB09 smoke
+check requests the selected ontology's first five facility IDs/names, compares exact records with
+independently read Lakehouse rows, and does not put expected values in the prompt. Multi-source
+agents are allowed, with SQL/custom content and selections retained and no cached proof required.
+Evidence is a source-specific functional smoke test; **execution provenance is not attested**, and
+SQL/combined-source answers are not certified. Failed or inconclusive checks fail required modes.
+Setup requires all three Data Agent statuses and NB10 `configured`, or the corresponding explicit
+`disabled`/`skipped` exception. NB10 remains stopped; configuration does not prove delivery.
+
+NB11 requires matching `ready`/`published`/`verified` evidence bound to the same
+agent/workspace/ontology and exact ontology-source configuration. It compares only the ontology
+subset of multi-source evidence: adding SQL does not invalidate retained ontology evidence, while
+changed ontology configuration is inconclusive and fails required completion. SQL-source status
+is separately `published`; independent SQL/GraphQL results are preserved before required failure
+is raised.
+
+The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
+metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
+`b1818634-f77e-4dec-ab55-982460ecb101` correctly **failed** on the actual unsupported Ontology API
+semantic error despite HTTP 200 / `isError: false`. Delta readback confirmed deployment/runtime
+`failed`, publication/SQL-source `published`, and enabled mode. All five SQL tables, all five
+ontology elements, and custom content remained intact in draft and published definitions; a
+subsequent SQL-only MCP query returned `{"workOrderCount":12}`. **Full setup and NB11 were not rerun
+after the new gate.** This proves required-failure handling and preservation, not healthy ontology
+runtime. See [the full live record](../../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
 
 - **`az login`** first (optionally `az login --tenant <tenant>`). Both scripts use
   your current Azure CLI sign-in to get a Fabric token — whoever you are signed in as

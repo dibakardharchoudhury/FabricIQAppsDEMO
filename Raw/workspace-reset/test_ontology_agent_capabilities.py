@@ -2,13 +2,16 @@
 
 import ast
 import base64
+import copy
 import json
 import re
+import time
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -483,13 +486,13 @@ class CapabilityTests(unittest.TestCase):
                 ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True)
             self.assertEqual(len(parts), 2)
 
-    def test_submitted_and_readback_identity_gate_published_success(self):
+    def test_publication_is_preserved_but_inconclusive_runtime_fails(self):
         tree = ast.parse(source("009"))
         deploy = next(
             node for node in tree.body if isinstance(node, ast.Try)
             and "create_data_agent" in ast.unparse(node)
         )
-        for mismatch_at in ("submission", "before_publish", "after_publish", "draft_only", "none"):
+        for mismatch_at in ("submission", "before_publish", "after_publish", "draft_only", "none", "healthy"):
             matching = {"definition": {"parts": [ontology_part()]}}
             published = {"definition": {"parts": [ontology_part(), ontology_part("published")]}}
             unrelated = {"definition": {"parts": [ontology_part(ontology_id="unrelated-v2")]}}
@@ -500,7 +503,7 @@ class CapabilityTests(unittest.TestCase):
                 responses += [matching, unrelated]
             elif mismatch_at == "draft_only":
                 responses += [matching, matching]
-            elif mismatch_at == "none":
+            elif mismatch_at in ("none", "healthy"):
                 responses += [matching, published]
             ns = functions(
                 "009", "upsert_part", "encode_payload", "validate_agent_ontology_sources",
@@ -521,16 +524,38 @@ class CapabilityTests(unittest.TestCase):
                 }),
                 update_item_definition=Mock(), enable_preview_runtime=Mock(),
                 publish_data_agent=Mock(), persist_agent_status=Mock(),
+                probe_data_agent_ontology=Mock(return_value={
+                    "status": "verified" if mismatch_at == "healthy" else "inconclusive",
+                    "reason": "Functional probe result", "evidence": {},
+                }),
             )
-            if mismatch_at == "none":
+            if mismatch_at == "healthy":
                 exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
-                self.assertEqual(ns["persist_agent_status"].call_args.args[0], "published")
+                final = ns["persist_agent_status"].call_args
+                self.assertEqual(final.args[0], "ready")
+                self.assertEqual(final.kwargs["runtime_status"], "verified")
+                self.assertEqual(final.kwargs["publication_status"], "published")
+                continue
+            if mismatch_at == "none":
+                with self.assertRaisesRegex(RuntimeError, "runtime inconclusive"):
+                    exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
+                calls = ns["persist_agent_status"].call_args_list
+                published_calls = [call for call in calls if call.args[0] == "published"]
+                self.assertEqual(len(published_calls), 1)
+                self.assertEqual(published_calls[0].kwargs["publication_status"], "published")
+                self.assertEqual(published_calls[0].kwargs["id"], "agent-id")
+                self.assertEqual(published_calls[0].kwargs["name"], "agent")
+                runtime_calls = [call for call in calls if "runtime_evidence" in call.kwargs]
+                self.assertEqual(runtime_calls[0].kwargs["runtime_status"], "inconclusive")
+                self.assertEqual(runtime_calls[0].kwargs["publication_status"], "published")
+                self.assertEqual(calls[-1].args[0], "failed")
                 self.assertEqual(ns["get_item_definition"].call_count, 3)
                 continue
             message = "No verified published" if mismatch_at == "draft_only" else "does not match selected ontology"
             with self.assertRaisesRegex(RuntimeError, message):
                 exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
             self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+            ns["probe_data_agent_ontology"].assert_not_called()
             self.assertNotIn("published", [call.args[0] for call in ns["persist_agent_status"].call_args_list])
             if mismatch_at in ("submission", "before_publish"):
                 ns["publish_data_agent"].assert_not_called()
@@ -546,6 +571,106 @@ class CapabilityTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "v2-only"):
             ns["build_datasource_obj"]({}, "legacy")
+
+    def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
+        sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
+                                          if assign_to(node, "SQL_TABLES")))
+        sql = {
+            "type": "sql_database", "artifactId": "sql-id", "workspaceId": "ws",
+            "dataSourceInstructions": "Keep operational SQL guidance",
+            "elements": [{"type": "sql_database.table", "display_name": name, "is_selected": True,
+                          "children": [{"id": "custom-column", "is_selected": True}]} for name, _ in sql_tables],
+            "customSqlOptions": {"preserve": True},
+        }
+        stage = {
+            "$schema": "existing-stage-schema",
+            "aiInstructions": "Original ontology instructions\nOperational SQL guidance\nUser custom rules",
+            "customOptions": {"preserve": True},
+        }
+        ontology = {
+            "type": "ontology", "artifactId": "ontology", "workspaceId": "ws",
+            "displayName": "Custom ontology label", "dataSourceInstructions": "Custom ontology guidance",
+            "elements": [
+                {"id": "ui-id", "type": "ontology.entity", "display_name": "facilities",
+                 "is_selected": False, "description": "custom description",
+                 "children": [{"id": "custom-property", "is_selected": True}]},
+                {"id": "extra-entity", "type": "ontology.entity", "display_name": "custom_entity",
+                 "is_selected": True, "children": []},
+            ],
+        }
+        baseline = []
+        for version in ("draft", "published"):
+            for path, value in (
+                ("stage_config.json", stage), ("ontology-source/datasource.json", ontology),
+                ("sql-source/datasource.json", sql), ("custom_queries.json", {"queries": ["custom query"]}),
+            ):
+                baseline.append(json_part(f"Files/Config/{version}/{path}", value))
+        custom_part = {
+            "path": "Files/custom/document.txt", "payloadType": "InlineBase64",
+            "payload": base64.b64encode(b"custom agent knowledge").decode(), "customPartMetadata": "preserve",
+        }
+        baseline.append(custom_part)
+        state = {"parts": copy.deepcopy(baseline)}
+
+        def update(_agent, definition):
+            state["parts"] = copy.deepcopy(definition["parts"])
+
+        def publish(*_args):
+            by_path = {part["path"]: copy.deepcopy(part) for part in state["parts"]}
+            for part in state["parts"]:
+                if part["path"].startswith("Files/Config/draft/"):
+                    path = part["path"].replace("/draft/", "/published/", 1)
+                    by_path[path] = {**copy.deepcopy(part), "path": path}
+            state["parts"] = list(by_path.values())
+
+        ns = functions(
+            "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
+            "require_v2_ontology", "verify_agent_source_readback", "build_stage_obj", "build_datasource_obj",
+            workspace_id="ws", ontology_name="ontology-name", ontology_id="ontology",
+            get_ontology_generation=Mock(return_value=2), data_agent_name="agent",
+            DATA_AGENT_DESCRIPTION="description", FABRIC_API_BASE="base",
+            DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
+            DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
+            STAGE_CONFIG_SCHEMA_URL="default-stage-schema", DATASOURCE_SCHEMA_URL="default-source-schema",
+            DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
+            ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name"), ("equipment", "equipment_id")],
+            get_spn_access_token_for_fabric=Mock(),
+            create_data_agent=Mock(return_value={"id": "agent-id", "_created_this_run": False}),
+            get_item_definition=Mock(side_effect=lambda _id: {"definition": {"parts": copy.deepcopy(state["parts"])}}),
+            update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
+            enable_preview_runtime=Mock(), persist_agent_status=Mock(),
+            probe_data_agent_ontology=Mock(return_value={
+                "status": "failed", "reason": "Ontology source unavailable", "evidence": {},
+            }),
+        )
+        deployment = next(node for node in ast.parse(source("009")).body
+                          if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
+        with self.assertRaisesRegex(RuntimeError, "runtime failed"):
+            exec(compile(ast.Module(body=[deployment], type_ignores=[]), "preserving-rerun", "exec"), ns)
+        actual = {part["path"]: part for part in state["parts"]}
+        for version in ("draft", "published"):
+            prefix = f"Files/Config/{version}/"
+            self.assertEqual(ns["decode_payload"](actual[prefix + "stage_config.json"]["payload"]), stage)
+            retained_sql = ns["decode_payload"](actual[prefix + "sql-source/datasource.json"]["payload"])
+            self.assertEqual(retained_sql, sql)
+            self.assertEqual(len(retained_sql["elements"]), 5)
+            retained_ontology = ns["decode_payload"](actual[prefix + "ontology-source/datasource.json"]["payload"])
+            self.assertEqual(retained_ontology["elements"][:2], ontology["elements"])
+            self.assertEqual(retained_ontology["displayName"], "Custom ontology label")
+            self.assertEqual(retained_ontology["dataSourceInstructions"], "Custom ontology guidance")
+            self.assertEqual(len(retained_ontology["elements"]), 3)
+            self.assertEqual(ns["build_datasource_obj"](retained_ontology, "ontology"), retained_ontology)
+            self.assertEqual(ns["decode_payload"](actual[prefix + "custom_queries.json"]["payload"]),
+                             {"queries": ["custom query"]})
+        self.assertEqual(actual[custom_part["path"]], custom_part)
+        ns["update_item_definition"].assert_called_once()
+        ns["publish_data_agent"].assert_called_once()
+        self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
+        self.assertEqual(ns["build_stage_obj"]({})["aiInstructions"], "default ontology instructions")
+        with self.assertRaisesRegex(RuntimeError, "not a string"):
+            ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
+        with self.assertRaisesRegex(RuntimeError, "malformed"):
+            ns["build_datasource_obj"]({"elements": None}, "ontology")
 
     def test_malformed_existing_agent_baseline_never_updates_or_publishes(self):
         tree = ast.parse(source("009"))
@@ -706,7 +831,8 @@ class CapabilityTests(unittest.TestCase):
         published_sql = json_part(published_path, submitted)
         for scenario in (
             "draft_wrong_sql", "draft_missing_ontology", "published_wrong_sql",
-            "published_missing_sql", "published_missing_ontology", "published_changed_schema", "valid",
+            "published_missing_sql", "published_missing_ontology", "published_changed_schema",
+            "ontology_changed", "valid", "valid_multi_source_evidence",
         ):
             draft = [ontology_part(), draft_sql]
             published = [ontology_part(), draft_sql, ontology_part("published"), published_sql]
@@ -722,13 +848,29 @@ class CapabilityTests(unittest.TestCase):
                 published = [ontology_part(), draft_sql, published_sql]
             elif scenario == "published_changed_schema":
                 published[-1] = json_part(published_path, {**submitted, "elements": []})
+            elif scenario == "ontology_changed":
+                published[-2] = json_part("Files/Config/published/ontology-source/datasource.json", {
+                    "artifactId": "ontology", "workspaceId": "ws", "type": "ontology", "elements": ["changed"],
+                })
+            ontology_source = {"artifactId": "ontology", "workspaceId": "ws", "type": "ontology"}
+            proof = {
+                "verification": "ontology_facilities_smoke_v1", "agent_id": "agent",
+                "ontology_id": "ontology", "workspace_id": "ws",
+                "published_sources": {"Files/Config/published/ontology-source/datasource.json": ontology_source},
+                "expected_facilities": [{"facility_id": "id", "facility_name": "name"}],
+                "returned_facilities": [{"facility_id": "id", "facility_name": "name"}],
+            }
+            baseline = [ontology_part(), ontology_part("published")]
+            if scenario == "valid_multi_source_evidence":
+                baseline += [draft_sql, published_sql]
+                proof["published_sources"][published_path] = submitted
             ns = functions(
                 "011", "extend_data_agent_sql_source", "verify_agent_source_readback",
-                "validate_agent_ontology_sources", "require_v2_ontology",
+                "validate_agent_ontology_sources", "require_v2_ontology", "published_agent_sources",
                 "decode_payload", "encode_payload", "upsert_part",
                 get_ontology_generation=Mock(return_value=2), workspace_id="ws",
                 get_item_definition=Mock(side_effect=[
-                    {"definition": {"parts": [ontology_part()]}},
+                    {"definition": {"parts": baseline}},
                     {"definition": {"parts": draft}}, {"definition": {"parts": published}},
                 ]),
                 sql_db_item_id="sql-id", sql_server="server", sql_database="database",
@@ -738,9 +880,12 @@ class CapabilityTests(unittest.TestCase):
                 build_sql_datasource_obj=Mock(return_value=submitted),
                 build_stage_obj=Mock(return_value={}),
                 update_item_definition=Mock(), enable_preview_runtime=Mock(), publish_data_agent=Mock(),
+                first_setting=Mock(return_value=json.dumps(proof)),
             )
-            if scenario == "valid":
-                self.assertEqual(ns["extend_data_agent_sql_source"]("agent", "ontology")["status"], "published")
+            if scenario in ("valid", "valid_multi_source_evidence", "ontology_changed"):
+                outcome = ns["extend_data_agent_sql_source"]("agent", "ontology")
+                self.assertEqual(outcome["status"], "published")
+                self.assertEqual(outcome["runtime_status"], "inconclusive" if scenario == "ontology_changed" else "verified")
                 self.assertEqual(ns["get_item_definition"].call_count, 3)
             else:
                 with self.subTest(scenario=scenario), self.assertRaises(RuntimeError):
@@ -750,10 +895,12 @@ class CapabilityTests(unittest.TestCase):
                 else:
                     ns["publish_data_agent"].assert_called_once()
 
-    def extension_namespace(self, mode="auto", prior="published", agents=None, generation=2):
+    def extension_namespace(self, mode="auto", prior="ready", agents=None, generation=2,
+                            runtime="verified", publication="published"):
         values = {
             "ontology_data_agent_mode": mode, "data_agent_deployment_status": prior,
             "ontology_name": "ontology",
+            "data_agent_runtime_status": runtime, "data_agent_publication_status": publication,
         }
         return functions(
             "011", "validate_agent_mode", "agent_capability_policy",
@@ -862,6 +1009,296 @@ class CapabilityTests(unittest.TestCase):
                 mode=mode, generation=1, agents=[{"id": "agent-id", "displayName": "agent"}])
             with self.assertRaisesRegex(RuntimeError, "v2-only"):
                 ns["resolve_agent_extension_target"]()
+
+    def test_sql_extension_rejects_publication_without_runtime_evidence(self):
+        for runtime in ("failed", "blocked", "inconclusive", "checking", ""):
+            with self.subTest(runtime=runtime):
+                ns = self.extension_namespace(
+                    runtime=runtime, agents=[{"id": "agent-id", "displayName": "agent"}])
+                with self.assertRaisesRegex(RuntimeError, "Publication alone is insufficient"):
+                    ns["resolve_agent_extension_target"]()
+                ns["get_ontology_generation"].assert_not_called()
+
+    def test_sql_republication_does_not_reuse_stale_runtime_proof(self):
+        tree = ast.parse(source("011"))
+        attempt = next(
+            node for node in tree.body if isinstance(node, ast.Try)
+            and node.finalbody and "resolve_agent_extension_target" in ast.unparse(node)
+        )
+        result = {"status": "published", "runtime_status": "inconclusive", "reason": "Fresh probe required"}
+        ns = {
+            "resolve_agent_extension_target": Mock(return_value=(
+                "agent", {"status": "allowed", "ontology_id": "ontology"})),
+            "extend_data_agent_sql_source": Mock(return_value=result),
+            "persist_sql_extension_status": Mock(), "step_results": {}, "step_errors": [], "json": json,
+        }
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+        self.assertEqual(ns["step_results"]["data_agent_sql_source"], result)
+        ns["persist_sql_extension_status"].assert_called_once_with(result)
+        self.assertEqual(len(ns["step_errors"]), 1)
+        terminal = next(node for node in tree.body if isinstance(node, ast.If)
+                        and isinstance(node.test, ast.Name) and node.test.id == "step_errors")
+        with self.assertRaisesRegex(RuntimeError, "Operational setup failed") as raised:
+            exec(compile(ast.Module(body=[terminal], type_ignores=[]), "terminal", "exec"), ns)
+        self.assertEqual(str(raised.exception.__cause__), "Fresh probe required")
+        result["runtime_status"] = "verified"
+        result["reason"] = "Unchanged ontology source proof retained; SQL runtime unverified"
+        ns["step_errors"] = []
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+        self.assertEqual(ns["step_errors"], [])
+
+    def test_sql_publication_preserves_verified_scoped_evidence(self):
+        spark = SimpleNamespace(createDataFrame=Mock())
+        delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+        ns = functions("011", "persist_sql_extension_status", spark=spark,
+                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings")
+        with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+            ns["persist_sql_extension_status"]({
+                "status": "published", "runtime_status": "verified", "reason": "Ontology proof retained"})
+        written = {row["setting_name"]: row["setting_value"]
+                   for row in spark.createDataFrame.call_args.args[0]}
+        self.assertEqual(written["data_agent_sql_source_status"], "published")
+        self.assertNotIn("data_agent_runtime_evidence", written)
+        self.assertNotIn("data_agent_runtime_status", written)
+        self.assertNotIn("data_agent_deployment_status", written)
+
+    def test_runtime_failure_status_preserves_published_identity_in_delta(self):
+        spark = SimpleNamespace(createDataFrame=Mock())
+        delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
+        ns = functions("009", "persist_agent_status", spark=spark,
+                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings")
+        with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
+            ns["persist_agent_status"](
+                "published", "identity readback verified", publication_status="published",
+                id="agent-id", name="agent", runtime_status="checking")
+            ns["persist_agent_status"](
+                "failed", "unsupported ontology API", runtime_status="failed",
+                runtime_reason="unsupported ontology API", runtime_evidence={"ontology_id": "ontology"})
+            ns["persist_agent_status"]("failed", "Data Agent runtime failed")
+        saved = {}
+        for call in spark.createDataFrame.call_args_list:
+            saved.update({row["setting_name"]: row["setting_value"] for row in call.args[0]})
+        self.assertEqual(saved["data_agent_publication_status"], "published")
+        self.assertEqual(saved["data_agent_id"], "agent-id")
+        self.assertEqual(saved["data_agent_name"], "agent")
+        self.assertEqual(saved["data_agent_deployment_status"], "failed")
+        self.assertEqual(saved["data_agent_runtime_status"], "failed")
+        self.assertEqual(json.loads(saved["data_agent_runtime_evidence"]), {"ontology_id": "ontology"})
+
+    def runtime_namespace(self, result, delegated=True):
+        def response(request_id, value, status=200, headers=None):
+            return Mock(
+                status_code=status, headers=headers or {"Content-Type": "application/json"},
+                json=Mock(return_value={"jsonrpc": "2.0", "id": request_id, "result": value}),
+            )
+
+        claims = {"scp": "DataAgent.Execute.All"} if delegated else {"idtyp": "app"}
+        token = "header." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode() + ".signature"
+        replies = [
+            response(1, {"protocolVersion": "2025-03-26"},
+                     headers={"Mcp-Session-Id": "session", "Content-Type": "application/json"}),
+            response(None, {}, status=202),
+            response(2, {"tools": [{
+                "name": "DataAgent_agent", "inputSchema": {
+                    "type": "object", "properties": {"userQuestion": {"type": "string"}},
+                    "required": ["userQuestion"],
+                },
+            }]}),
+            response(3, result),
+        ]
+        request = SimpleNamespace(post=Mock(side_effect=replies), RequestException=ConnectionError)
+        ns = functions(
+            "009", "mcp_response_result", "mcp_semantic_error", "probe_data_agent_ontology",
+            "published_agent_sources", "normalized_facility_rows", "facility_rows_from_mcp",
+            "validate_agent_ontology_sources", "require_v2_ontology",
+            re=re, time=time, uuid=uuid, requests=request,
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", workspace_id="ws", data_agent_name="agent",
+            lakehouse_id="lakehouse", first_setting=Mock(return_value="silver_facilities"),
+            get_item_definition=Mock(return_value={"definition": {"parts": [ontology_part("published")]}}),
+            get_ontology_generation=Mock(return_value=2),
+            facility_probe_reference=Mock(return_value=[
+                {"facility_id": "FACILITY_RTI_001", "facility_name": "Sloy Power Station"},
+                {"facility_id": "FACILITY_RTI_002", "facility_name": "Foyers Power Station"},
+                {"facility_id": "FACILITY_RTI_003", "facility_name": "Pitlochry Power Station"},
+            ]),
+            notebookutils=SimpleNamespace(credentials=SimpleNamespace(getToken=Mock(return_value=token))),
+        )
+        return ns, replies
+
+    def test_runtime_probe_rejects_actual_semantic_error_with_iserror_false(self):
+        error = ("Ontology source unavailable: The analyze_ontology tool call failed with "
+                 "The request is invalid. This API version is not supported for the specified Ontology item.")
+        ns, _ = self.runtime_namespace({
+            "isError": False, "content": [{"type": "text", "text": json.dumps({"error": error})}],
+        })
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], error)
+        self.assertEqual(outcome["evidence"]["ontology_id"], "ontology")
+        self.assertNotIn("Bearer", json.dumps(outcome))
+        self.assertNotIn(".signature", json.dumps(outcome))
+        calls = ns["requests"].post.call_args_list
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[-1].kwargs["json"]["method"], "tools/call")
+        self.assertEqual(calls[-1].kwargs["json"]["params"]["name"], "DataAgent_agent")
+        self.assertIn("Use ONLY the Ontology item ontology", calls[-1].kwargs["json"]["params"]["arguments"]["userQuestion"])
+        self.assertEqual(calls[-1].kwargs["headers"]["Mcp-Session-Id"], "session")
+        self.assertEqual(calls[-1].kwargs["headers"]["MCP-Protocol-Version"], "2025-03-26")
+        ns["notebookutils"].credentials.getToken.assert_called_once_with("pbi")
+
+    def test_runtime_probe_fails_closed_for_unverifiable_answers(self):
+        for result in (
+            {"isError": False, "content": []},
+            {"isError": False, "content": [{"type": "text", "text": "There are 5 facilities."}]},
+            {"isError": False, "content": [{"type": "text", "text": json.dumps({
+                "ontology_id": "ontology", "workspace_id": "ws", "count": 5, "verified": True,
+            })}]},
+            {"structuredContent": {"source": "ontology", "executed": True, "count": 5}},
+        ):
+            with self.subTest(result=result):
+                ns, _ = self.runtime_namespace(result)
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "inconclusive")
+                self.assertTrue(outcome["reason"])
+
+    def test_runtime_probe_has_positive_exact_content_path_without_receipts(self):
+        for shape in ("text", "fenced", "structured", "data_error_word"):
+            with self.subTest(shape=shape):
+                ns, replies = self.runtime_namespace({})
+                expected = ns["facility_probe_reference"].return_value
+                if shape == "data_error_word":
+                    expected[0]["facility_name"] = "Error Creek Station"
+                text = json.dumps(list(reversed(expected)))
+                result = ({"structuredContent": {"facilities": expected}} if shape == "structured" else {
+                    "isError": False, "content": [{
+                        "type": "text", "text": "```json\n" + text + "\n```" if shape == "fenced" else text,
+                    }],
+                })
+                replies[-1].json.return_value["result"] = result
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "verified")
+                self.assertEqual(outcome["evidence"]["expected_facilities"], expected)
+                self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
+                self.assertEqual(outcome["evidence"]["verification"], "ontology_facilities_smoke_v1")
+                question = outcome["evidence"]["question"]
+                for row in expected:
+                    self.assertNotIn(row["facility_id"], question)
+                    self.assertNotIn(row["facility_name"], question)
+
+    def test_runtime_probe_rejects_wrong_name_or_missing_rows(self):
+        for actual in (
+            [{"facility_id": "FACILITY_RTI_001", "facility_name": "RTI Demo Hydropower Plant"}],
+            [{"facility_id": "FACILITY_RTI_001", "facility_name": "Sloy Power Station"}],
+        ):
+            ns, _ = self.runtime_namespace({"content": [{"type": "text", "text": json.dumps(actual)}]})
+            outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+            self.assertEqual(outcome["status"], "failed")
+            self.assertIn("do not match", outcome["reason"])
+
+    def test_healthy_multi_source_rerun_needs_no_cached_proof_and_still_rejects_semantic_errors(self):
+        ns, replies = self.runtime_namespace({})
+        ns["settings"] = {}
+
+        def fresh_setting(name, **_kwargs):
+            if name != "silver_facilities_table":
+                raise AssertionError(f"No cached proof/settings available for {name}")
+            return "silver_facilities"
+
+        ns["first_setting"].side_effect = fresh_setting
+        parts = ns["get_item_definition"].return_value["definition"]["parts"]
+        parts.append(json_part("Files/Config/published/sql/datasource.json", {
+            "type": "sql_database", "artifactId": "sql", "workspaceId": "ws",
+        }))
+        baseline = copy.deepcopy(parts)
+        replies[-1].json.return_value["result"] = {
+            "content": [{"type": "text", "text": json.dumps(ns["facility_probe_reference"].return_value)}]}
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        self.assertIn("functional smoke test", outcome["evidence"]["scope"])
+        self.assertIn("not attested", outcome["evidence"]["scope"])
+        self.assertIn("Use ONLY the Ontology item ontology", outcome["evidence"]["question"])
+        self.assertEqual(parts, baseline)
+        unsupported = ("The request is invalid. This API version is not supported for the specified Ontology item. "
+                       "RAID: 5082e3f9-6b1e-45a5-b675-acfe7d8660e2")
+        replies[-1].json.return_value["result"] = {
+            "isError": False, "content": [{"type": "text", "text": json.dumps({"error": unsupported})}]}
+        ns["requests"].post.side_effect = replies
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], unsupported)
+        self.assertEqual(parts, baseline)
+
+    def test_facility_reference_reads_configured_lakehouse_not_prompt_constants(self):
+        context = {"defaultLakehouseId": "lh", "defaultLakehouseWorkspaceId": "ws"}
+        spark = SimpleNamespace(read=SimpleNamespace(table=Mock()))
+        rows = [{"facility_id": "live-id", "facility_name": "Live lakehouse name"}]
+        frame = spark.read.table.return_value
+        frame.select.return_value.orderBy.return_value.limit.return_value.collect.return_value = [
+            SimpleNamespace(asDict=lambda: rows[0])]
+        ns = functions("009", "facility_probe_reference", "normalized_facility_rows",
+                       notebookutils=SimpleNamespace(runtime=SimpleNamespace(context=context)),
+                       lakehouse_id="lh", workspace_id="ws", re=re, spark=spark,
+                       first_setting=Mock(return_value="silver_facilities"))
+        self.assertEqual(ns["facility_probe_reference"](), rows)
+        spark.read.table.assert_called_once_with("silver_facilities")
+        frame.select.assert_called_once_with("facility_id", "facility_name")
+        frame.select.return_value.orderBy.return_value.limit.assert_called_once_with(5)
+        context["defaultLakehouseId"] = "wrong-lakehouse"
+        with self.assertRaisesRegex(RuntimeError, "configured Lakehouse"):
+            ns["facility_probe_reference"]()
+
+    def test_runtime_probe_recognizes_error_shapes(self):
+        for result in (
+            {"isError": True, "content": [{"type": "text", "text": "bad"}]},
+            {"content": [{"type": "resource", "resource": {"text": '{"error":"Unavailable"}'}}]},
+            {"structuredContent": {"status": "failed", "message": "bad"}},
+            {"content": [{"type": "text", "text": "```json\n{\"error\":\"Unavailable\"}\n```"}]},
+            {"content": [{"type": "text", "text": "This API version is not supported for this item."}]},
+            {"content": [{"type": "text", "text": '{"error":'}]},
+        ):
+            with self.subTest(result=result):
+                ns, _ = self.runtime_namespace(result)
+                self.assertEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "failed")
+
+    def test_runtime_probe_rejects_app_identity_before_network(self):
+        ns, _ = self.runtime_namespace({}, delegated=False)
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertIn("delegated", outcome["reason"])
+        ns["requests"].post.assert_not_called()
+
+    def test_runtime_probe_transport_failures_do_not_become_ready(self):
+        for failure in ("http", "jsonrpc", "id", "tool", "schema", "pagination"):
+            with self.subTest(failure=failure):
+                ns, replies = self.runtime_namespace({})
+                if failure == "http":
+                    replies[0].raise_for_status.side_effect = ConnectionError("HTTP 403")
+                elif failure == "jsonrpc":
+                    replies[0].json.return_value = {"jsonrpc": "2.0", "id": 1, "error": {"message": "denied"}}
+                elif failure == "id":
+                    replies[0].json.return_value["id"] = 999
+                elif failure == "tool":
+                    replies[2].json.return_value["result"]["tools"][0]["name"] = "unrelated_agent"
+                elif failure == "schema":
+                    replies[2].json.return_value["result"]["tools"][0]["inputSchema"]["required"] = ["other"]
+                else:
+                    replies[2].json.return_value["result"]["nextCursor"] = "more"
+                outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+                self.assertEqual(outcome["status"], "failed")
+                self.assertTrue(outcome["reason"])
+                self.assertLess(ns["requests"].post.call_count, 4)
+
+    def test_mcp_sse_matches_request_id_and_rejects_duplicate_results(self):
+        ns, _ = self.runtime_namespace({})
+        message = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"content": []}})
+        response = Mock(
+            status_code=200, headers={"Content-Type": "text/event-stream"},
+            text='data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\ndata: ' + message + "\n\n",
+        )
+        self.assertEqual(ns["mcp_response_result"](response, 3), {"content": []})
+        response.text += "data: " + message + "\n\n"
+        with self.assertRaisesRegex(RuntimeError, "duplicate"):
+            ns["mcp_response_result"](response, 3)
 
     def test_raw_distributions_match_canonical_cells_and_preserve_metadata(self):
         for number, name in NAMES.items():

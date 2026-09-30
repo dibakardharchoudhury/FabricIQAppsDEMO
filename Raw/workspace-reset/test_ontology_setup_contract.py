@@ -144,17 +144,23 @@ class OntologySetupContractTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             report({
                 "NB09_dataagent": {"exitVal": json.dumps({
-                    "status": "published", "mode": "enabled", "generation": 2, "reason": "Source verified"})},
+                    "status": "ready", "publication_status": "published", "runtime_status": "verified",
+                    "mode": "enabled", "generation": 2, "reason": "Source verified"})},
                 "NB10_opsagent": {"exitVal": json.dumps({
                     "status": "configured", "mode": "auto", "generation": 2, "reason": "Definition verified"})},
             })
-        self.assertIn("NB09_dataagent: published - Source verified", output.getvalue())
+        self.assertIn("NB09_dataagent: ready - Source verified", output.getvalue())
         self.assertIn("NB10_opsagent: configured - Definition verified", output.getvalue())
         for mode in ("auto", "enabled", None):
-            for status in ("blocked", "failed", "skipped", None):
+            for status in ("published", "ready", "blocked", "failed", "skipped", None):
                 with self.subTest(mode=mode, status=status), self.assertRaises(RuntimeError):
                     report({"NB09_dataagent": {"exitVal": {
                         "status": status, "mode": mode, "generation": 2}}, "NB10_opsagent": {}})
+        for runtime in ("failed", "inconclusive", "checking", None):
+            with self.subTest(runtime=runtime), self.assertRaises(RuntimeError):
+                report({"NB09_dataagent": {"exitVal": {
+                    "status": "ready", "mode": "enabled", "generation": 2,
+                    "publication_status": "published", "runtime_status": runtime}}, "NB10_opsagent": {}})
         with contextlib.redirect_stdout(output):
             report({name: {"exitVal": {"status": "skipped", "mode": "disabled", "generation": 2}}
                     for name in ("NB09_dataagent", "NB10_opsagent")})

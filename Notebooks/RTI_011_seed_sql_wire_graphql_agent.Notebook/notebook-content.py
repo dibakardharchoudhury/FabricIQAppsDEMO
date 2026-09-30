@@ -43,7 +43,8 @@
 # Both published counterparts must then be verified before reporting SQL source success.
 # `auto` is a backwards-compatible alias for `enabled`: both attempt the real v2
 # source extension and fail if the agent is missing/unconfigured, RTI_009 did not
-# report published success, or the source is legacy. Only `disabled` skips it.
+# report both publication and verified ontology-runtime evidence, or the source is
+# legacy. Only `disabled` skips it.
 # SQL/GraphQL setup still runs independently, but required agent failures make the
 # overall notebook fail. Draft/published verification is not runtime readiness.
 # 
@@ -54,6 +55,9 @@
 # 3. **Data Agent (enabled/auto)** — attempts to add the `hydro-operations` SQL Database
 #    as a second source and **republishes** the agent, retaining the exact v2 ontology
 #    source from RTI_009. Successful publication does not establish query readiness.
+#    Prior NB09 source-specific functional smoke evidence is retained only for the exact
+#    unchanged ontology source on the same agent/workspace. It does not certify
+#    SQL or combined-source runtime. Changed ontology configuration invalidates proof.
 #
 # STID/Weather GraphQL provisioning is independent of native ontology-owned graph
 # topology. The app uses native graph entities and relationships; operational SQL
@@ -1115,7 +1119,7 @@ def validate_agent_ontology_sources(
 
 def verify_agent_source_readback(
     agent_id: str, ontology_id: str, submitted_sql_source: dict, published: bool = False,
-) -> None:
+) -> list:
     parts = definition_parts(get_item_definition(agent_id))
     validate_agent_ontology_sources(
         parts, ontology_id, require_draft=not published, require_published=published,
@@ -1127,6 +1131,15 @@ def verify_agent_source_readback(
             f"SQL source readback at {path!r} does not match the submitted SQL source; "
             "source retention and publish success are unverified."
         )
+    return parts
+
+
+def published_agent_sources(parts: list) -> dict:
+    return {
+        part["path"]: json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
+        for part in parts
+        if part["path"].startswith("Files/Config/published/") and part["path"].endswith("/datasource.json")
+    }
 
 
 def resolve_agent_extension_target() -> tuple:
@@ -1134,9 +1147,13 @@ def resolve_agent_extension_target() -> tuple:
     if mode == "disabled":
         return None, {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
     prior_status = first_setting("data_agent_deployment_status", default="")
-    if prior_status != "published":
+    publication_status = first_setting("data_agent_publication_status", default="")
+    runtime_status = first_setting("data_agent_runtime_status", default="")
+    if prior_status != "ready" or publication_status != "published" or runtime_status != "verified":
         raise RuntimeError(
-            f"RTI_009 status is {prior_status!r}; rerun RTI_009 successfully before SQL extension."
+            f"RTI_009 status is {prior_status!r}, publication {publication_status!r}, runtime {runtime_status!r}; "
+            "verified source-specific functional smoke evidence is required before SQL extension. "
+            "Publication alone is insufficient."
         )
     if not data_agent_id and not data_agent_name:
         raise RuntimeError("No Data Agent configured; run RTI_009 successfully before SQL extension.")
@@ -1224,6 +1241,21 @@ def extend_data_agent_sql_source(agent_id: str, ontology_id: str) -> dict:
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition)
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
+    prior_sources = {path: source for path, source in published_agent_sources(parts).items()
+                     if source.get("type", "").lower() == "ontology"}
+    proof = json.loads(first_setting("data_agent_runtime_evidence", required=True))
+    proof_sources = proof.get("published_sources", {}) if isinstance(proof, dict) else {}
+    if not isinstance(proof_sources, dict) or any(not isinstance(source, dict) for source in proof_sources.values()):
+        raise RuntimeError("Prior functional smoke evidence has malformed source configuration; rerun NB09.")
+    proof_ontology_sources = {path: source for path, source in proof_sources.items()
+                             if source.get("type", "").lower() == "ontology"}
+    if (not isinstance(proof, dict) or proof.get("verification") != "ontology_facilities_smoke_v1"
+            or proof.get("agent_id") != agent_id or proof.get("ontology_id") != ontology_id
+            or proof.get("workspace_id") != workspace_id
+            or len(prior_sources) != 1 or proof_ontology_sources != prior_sources
+            or not proof.get("expected_facilities")
+            or proof.get("expected_facilities") != proof.get("returned_facilities")):
+        raise RuntimeError("Prior source-specific functional smoke evidence does not match this agent/source; rerun NB09.")
     if not sql_db_item_id:
         # Resolve id even if seeding failed, so the source can still be wired.
         sql_db_item_id = (find_item_by_name(sql_db_item_name, item_type="SQLDatabase") or {}).get("id")
@@ -1279,12 +1311,22 @@ def extend_data_agent_sql_source(agent_id: str, ontology_id: str) -> dict:
 
     enable_preview_runtime(agent_id)
     publish_data_agent(agent_id, "Operational SQL source added.")
-    verify_agent_source_readback(agent_id, ontology_id, submitted_sql_source, published=True)
+    published_parts = verify_agent_source_readback(agent_id, ontology_id, submitted_sql_source, published=True)
+    retained_sources = {path: source for path, source in published_agent_sources(published_parts).items()
+                        if source.get("type", "").lower() == "ontology"}
     print("🌐 Data Agent republished with ontology + operational SQL sources.")
+    if retained_sources != prior_sources:
+        return {
+            "status": "published", "runtime_status": "inconclusive",
+            "reason": "SQL source published, but the verified ontology source configuration changed; "
+                      "prior functional proof is invalid and a fresh source-specific probe is required.",
+        }
     return {
         "status": "published",
+        "runtime_status": "verified",
         "reason": "Publish completed with matching ontology and submitted SQL source verified in published "
-                  "readback; runtime answers are not verified.",
+                  "readback. Prior source-specific functional smoke evidence retained for the unchanged ontology source; "
+                  "SQL and combined-source runtime answers are not verified.",
     }
 
 
@@ -1295,6 +1337,12 @@ def persist_sql_extension_status(result: dict) -> None:
         "data_agent_sql_source_status": result["status"],
         "data_agent_sql_source_reason": result["reason"],
     }
+    if result.get("runtime_status") and result["runtime_status"] != "verified":
+        values["data_agent_runtime_status"] = result["runtime_status"]
+        values["data_agent_runtime_reason"] = result["reason"]
+        values["data_agent_runtime_evidence"] = ""
+        values["data_agent_deployment_status"] = "failed"
+        values["data_agent_deployment_reason"] = result["reason"]
     if result["status"] in ("skipped", "blocked", "failed"):
         values["data_agent_deployment_status"] = result["status"]
         values["data_agent_deployment_reason"] = result["reason"]
@@ -1315,6 +1363,8 @@ try:
     step_results["data_agent_sql_source"] = (
         extend_data_agent_sql_source(agent_id, agent_policy["ontology_id"]) if agent_id else agent_policy
     )
+    if agent_id and step_results["data_agent_sql_source"].get("runtime_status") != "verified":
+        step_errors.append(RuntimeError(step_results["data_agent_sql_source"]["reason"]))
 except Exception as exc:
     step_results["data_agent_sql_source"] = {"status": "failed", "reason": str(exc)}
     step_errors.append(exc)

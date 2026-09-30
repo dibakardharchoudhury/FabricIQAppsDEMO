@@ -261,14 +261,16 @@ results, not validation of the restored agent/alert flow. The four environment-e
 12 real Rayfin SDK rewrite cycles, Vite loading, and the application's strict graph-binding parser.
 App typecheck, lint, environment validation, and the
 production build also passed; the existing bundle-size warning remained. That checkpoint was
-published to `feat/dibakar`, not `main`. The new full-capability live attempt is pending; no product
-issue resolution or full end-to-end acceptance is claimed by the restoration.
+published to `feat/dibakar`, not `main`. The later bounded live attempts are recorded under
+**Latest V3 acceptance** below; neither the historical tests nor the new results certify full
+end-to-end operation.
 
 ### Earlier live execution (before the requested clean rebuild)
 
 The user subsequently requested a from-scratch rebuild of this same workspace. The IDs and
 row counts in this earlier acceptance record are historical, not the identities of the rebuilt
-resources. See **Fresh rebuild acceptance** below for the current deployment.
+resources. **Fresh rebuild acceptance** is a second historical record; see **Latest V3 acceptance**
+for the current item identities.
 
 | Execution | Completed run ID | Verified result |
 | --- | --- | --- |
@@ -290,9 +292,10 @@ Operational SQL contains **12 WorkOrders, 30 Inspections, 6 Notifications, 12 Sp
 That historical run used capability gates that allowed core provisioning despite reported agent
 blockers. It is **core-only evidence**, not current full-capability certification. The restored
 default-enabled policy now attempts both agents (also for `auto`) and propagates required failures.
-New live agent/playbook/action/Teams/email acceptance remains pending.
+At that checkpoint, live agent/playbook/action/Teams/email acceptance was still pending. The later
+attempts below establish source/configuration evidence, not successful semantic runtime or delivery.
 
-### Native graph and enrichment evidence
+### Earlier native graph and enrichment evidence
 
 Ownership was established through the selected ontology's actual **Manage graph** workflow:
 ontology `d0d041aa-13ea-4277-aa6e-1d3ab565a2d4` owns the verified projection
@@ -329,7 +332,7 @@ has **five entities, four relationships, and its valid TimeSeries declarations/b
 KQL enriches native instruments through `opcua_node_id`. No ontology content was deleted and no
 substitute graph was created. Full five-entity graph projection remains a product limitation.
 
-### Hosted application acceptance
+### Earlier hosted application acceptance
 
 The canonical deployment orchestrator completed with `SUCCESS` and `DEPLOYED_APP_URL` at
 `https://maple-edge-ce46abd902-swedencentral.webapp.fabricapps.net`.
@@ -408,6 +411,133 @@ request-context replay is also unsupported by this host (`Storage.getCookies` un
 These limitations were not bypassed by weakening authentication, injecting credentials, or using
 fake browser data. Complete the interactive checks above before describing the entire hosted UI
 as end-to-end certified.
+
+### Latest V3 acceptance (September 30, 2026)
+
+This record supersedes the earlier item identities above, without replacing their historical
+evidence. Corrective commit `8ac32e0` and the live-proven Operations Agent action-type correction
+`70f99a4` were pushed to **`feat/dibakar` only**; `main` was not changed. Times below are the reported
+run times; abbreviated run IDs are explicitly prefixes, not full identifiers.
+
+| Current item | ID |
+| --- | --- |
+| Ontology v2 | `0e34df51-28bd-44db-93d0-71d90bcffbf8` |
+| Ontology-managed graph | `1243b115-ca47-417a-8886-ccb7c2f16b68` |
+| Data Agent | `2fa36931-2ddd-459b-9803-a45cb8cd13ae` |
+| Operations Agent | `16024bc3-1c4f-4094-ab36-a2cfb0964987` |
+| STID GraphQL | `33b7c87b-e707-439f-a197-e734d3045ba0` |
+
+| Live check | Recorded run/time | Evidence and limit |
+| --- | --- | --- |
+| Entire five-entity projection | HTTP 400 | All three TimeSeries properties (`event_time`, `value`, `quality`) still project as `INVALID`; this product limitation is not resolved |
+| Selected four-entity/three-relationship projection | Refresh prefix `ff0d8113`, Completed 15:58 | Native projection became queryable; the ontology itself still has all five entities and four relationships |
+| Canonical app deployment | `SUCCESS`, 16:06 | Same `icy-twist` host, backend/SQL checks, and all 32 existing SPA redirects preserved; protected-hosting gate, not interactive application acceptance |
+| Weather | Prefix `eed6c26b`, Completed 16:08 | 516 forecasts, 405 observations, 516 metrics; serving tables contain 120 forecasts / 69 observations |
+| Stream | Prefix `fb83f3f5`, Completed 16:19 | 9,002 rows across 90 signals |
+| RTI_011 | Prefix `190fbd8a`, Completed 16:26 | SQL and GraphQL succeeded; all five selected SQL tables verified in the published agent definition; not proof of ontology runtime |
+| RTI_010 rerun | Prefix `018e1356`, Completed | Full Operations Agent configuration retained; agent configured and stopped |
+
+After deployment, the **actual production application parsers and graph model** passed against the
+new resources: five ontology entities/four relationships and all three time-series backings;
+**111 native nodes / 108 edges**; actual KQL readings for **90 signals**; and a fresh SQL export.
+The combined model produced **174 nodes / 171 edges** and **three facility scopes of 58 nodes each**.
+STID topology input arrays were **empty**. This is new API/model-level evidence, not browser
+canvas/tree/filter or operational CRUD acceptance.
+
+**Data Agent: publication is not semantic runtime.** A real MCP ontology question failed inside
+`analyze_ontology` with **API version not supported**, even though the MCP envelope contained
+`isError: false`. That envelope flag cannot certify functional success. A separate SQL-only MCP
+question correctly returned **12 work orders**. Neither SQL success nor matching published source
+identity proves that the ontology question works. The fresh pre-update MCP probe returned HTTP 200
+with the unsupported-API semantic error (RootActivityId `5082e3f9-6b1e-45a5-b675-acfe7d8660e2`).
+That probe preceded the authorized revised-NB09 run documented below; it remains historical
+publication/semantic-error evidence, not a verified smoke result.
+
+The revised implementation requires a **bounded functional smoke test**, not full agent
+certification or attested execution provenance:
+
+- NB09 asks only for the selected ontology's first five facility IDs/names, without including
+  expected values in the prompt. It compares exact returned records with independently read rows
+  in the configured Lakehouse. Attached SQL sources are permitted and preserved; no cached proof
+  is required for this new check.
+- `data_agent_publication_status=published` records source publication independently. Successful
+  comparison sets `data_agent_deployment_status=ready` and `data_agent_runtime_status=verified`,
+  with evidence `verification=ontology_facilities_smoke_v1` and scope
+  **"Source-specific functional smoke test; execution provenance is not attested."**
+  These labels do not certify cryptographic provenance, SQL/combined-source answers, or the entire
+  agent.
+- Semantic errors (including nested JSON errors despite `isError: false`), wrong rows, and
+  transport failures are `failed`. Nonparseable, count-only, or otherwise unverifiable answers are
+  `inconclusive`. Both fail required modes; neither is a static v2 skip.
+- NB11 requires `ready`/`published`/`verified` and matching agent/workspace/ontology evidence plus
+  the exact ontology source configuration. It compares the ontology subset of multi-source
+  evidence: adding SQL alone does not invalidate the smoke evidence if that source is retained.
+  Changed ontology configuration is inconclusive and fails required execution. SQL/custom parts,
+  operational/custom instructions, and entity selections survive NB09 reruns, including failing
+  runtime checks. Required failures propagate through NB09/NB11/setup.
+
+The reported **58 focused offline tests** and parent-run **102/102 full ontology regressions on
+Python 3.12** passed. These test results do not establish healthy ontology runtime.
+
+#### Authorized live NB09 failure-path validation
+
+**Failure-path validation passed; the NB09 job correctly FAILED.** Only the NB09, NB11, and setup
+orchestrator notebook definitions were updated. Exact definition readbacks preserved live metadata,
+attachments, parameter/configure cells, and all other parts. Only NB09 was executed, once:
+
+- Job `b1818634-f77e-4dec-ab55-982460ecb101`, September 30, 2026,
+  **17:04:17.981Z–17:10:55.532Z**.
+- Required-readiness failure: **"Data Agent published but ontology runtime failed: The request is
+  invalid. This API version is not supported for the specified Ontology item."**
+- RootActivityId `860accc8-feb7-4717-a44f-53fcf172b7c6`; MCP `tools/call` request
+  `ef7abc1e-2b91-42ed-82d5-9ca002855319`. MCP initialize/list/call each returned HTTP 200, and
+  the actual `isError: false` semantic error was correctly detected rather than treated as readiness.
+
+Persisted settings were verified directly from active **Delta snapshot 23** through read-only
+OneLake:
+
+| Setting | Persisted result |
+| --- | --- |
+| Agent mode | `enabled` |
+| `data_agent_deployment_status` | `failed` |
+| `data_agent_publication_status` | `published` |
+| `data_agent_runtime_status` | `failed` |
+| `data_agent_sql_source_status` | `published` |
+
+The complete **16,216-character runtime evidence** was valid JSON in Delta. The SQL endpoint read
+used for inspection truncated that value at 8,000 characters, so it was not used to certify evidence
+completeness.
+
+Draft **and** published agent definitions retained ontology and SQL identities, all **five selected
+SQL tables**, all **five ontology elements**, exact custom instructions/selections, and other
+capability content. The full-part comparison found only `publish_info.description` changed from
+NB11's publication note to NB09's publication note; `.platform` and every other part were equal.
+After the failed NB09 run, a new SQL-only MCP question still returned exactly
+`{"workOrderCount":12}`, with `isError: false` and no semantic error.
+
+This proves truthful required failure plus multi-source/custom-content preservation. It does
+**not** prove healthy ontology runtime or a successful smoke check. There was no retry, full setup
+run, NB11 execution, Operations Agent activation, alert send, reset, or further source change in
+this bounded validation.
+
+**Operations Agent: full configuration accepted, execution untested.** The first live request
+returned HTTP 400 for the action type `DataPipeline`. Changing **only** that enum to the original
+`Pipeline` yielded HTTP 200 with the complete configuration retained; no playbook, action, Teams
+setting, or email component was removed. `OperationsAgentV1` is the agent configuration format,
+not Ontology v1. The actual Operations Agent UI showed instructions, the selected ontology source,
+the connected email action, and the authored BAD/UNCERTAIN rules. The rerun remains
+`configured`/stopped: activation, monitoring, action execution, and Teams/email sends were **not**
+verified. No product-wide playbook-runtime fix is claimed.
+
+The deployment URL remains
+**https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net**. Protected hosting succeeded,
+but the separate authentication popup prevented interactive application acceptance; do not carry
+forward earlier browser evidence as certification of this deployment.
+
+**Update boundary:** an earlier full `PreferRemote` Git import removed generated resources, which
+were restored through setup. Do not repeat a full Git import for these corrections. Subsequent
+updates are bounded notebook-definition updates; the records above are not authorization for
+another workspace reset or import.
 
 ## Key implementation files
 

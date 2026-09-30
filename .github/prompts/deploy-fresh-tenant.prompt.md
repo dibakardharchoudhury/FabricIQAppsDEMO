@@ -22,7 +22,11 @@ Report core setup, app hosting/auth, and agent execution/delivery separately. Bo
 default to `enabled`; backward-compatible `auto` also attempts actual provisioning, and only
 explicit `disabled` opts out. Retain Operations Agent playbook/actions, Teams, and email-alert
 provisioning against the verified v2 ontology. Required failures propagate through RTI_009/010/011
-and setup; SQL/GraphQL-only success requires explicit Data Agent disablement. No product issue
+and setup. Require Data Agent deployment/publication/runtime `ready`/`published`/`verified` with
+generation 2 and matching source-specific functional smoke evidence, not historical publication
+alone. NB11 must retain the exact ontology source; compatible added SQL does not invalidate the
+evidence. The bounded smoke does not attest execution provenance or certify SQL/combined-source
+answers. SQL/GraphQL-only success requires explicit Data Agent disablement. No product issue
 resolution or full end-to-end acceptance follows from restoring the implementation. The orchestrator's
 `SUCCESS` marker certifies its deployment checks, not ontology provisioning, native graph readiness,
 or agent execution.

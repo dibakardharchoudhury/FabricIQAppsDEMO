@@ -454,7 +454,15 @@
 # `ontology_data_agent_mode=enabled` is the default; `auto` is a compatibility alias
 # that also attempts provisioning. Only explicit `disabled` skips integration.
 # Draft identity is read back before publish and published-stage identity must also
-# be verified before success is recorded. Publication is **not runtime query readiness**.
+# be verified before publication is recorded separately. A delegated notebook-user MCP
+# probe asks for the first five facility IDs/names and compares exact content against
+# independently read live Lakehouse rows, without including expected values in the
+# prompt. The question requests only the selected ontology, but attached SQL sources
+# do not prevent a fresh smoke test when Setup has reset cached evidence. All sources
+# and custom configuration are preserved. Semantic errors fail even if `isError=false`;
+# wrong rows fail, and non-JSON/count-only answers are inconclusive. This is source-specific
+# functional smoke evidence, not execution attestation or a synthetic receipt. Publication and evidence
+# are retained on runtime failure; no static v2 skip or source fallback is used.
 # Existing v1 sources are rejected, never reused, migrated, or deleted.
 #
 # ### 10. RTI_010 – Complete Operations Agent provisioning
@@ -470,13 +478,17 @@
 #
 # ### 11. RTI_011 – SQL seed, GraphQL, and required SQL Data Agent source
 # SQL seeding and GraphQL setup run independently of Data Agent availability.
-# Unless explicitly disabled, the extension requires a successfully published RTI_009
-# agent, rejects missing/blocked/failed agents and v1, and verifies exact draft/published
+# Unless explicitly disabled, the extension requires a published RTI_009 agent with
+# verified runtime evidence, rejects missing/blocked/failed/inconclusive agents and v1,
+# and verifies exact draft/published
 # ontology and SQL-source identities. Independent step outcomes are saved, but required
-# failures fail the notebook. Publication does not prove runtime readiness.
+# failures fail the notebook. Prior functional smoke evidence is retained when the exact
+# verified ontology source is unchanged on the same agent/workspace, and invalidated
+# when that configuration changes. SQL and combined-source runtime remain unverified.
 #
 # Setup retains NB06 -> NB09 -> NB10 ordering. Before enabling Weather it requires
-# NB09 `published` and NB10 `configured`, or each capability's explicit disabled/skipped
+# NB09 `ready` with separate `published`/runtime `verified` evidence and NB10 `configured`,
+# or each capability's explicit disabled/skipped
 # result. Missing, blocked or failed evidence cannot become green setup success.
 #
 # ### Application consumption and graph boundary

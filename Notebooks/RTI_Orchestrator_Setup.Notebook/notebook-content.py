@@ -39,7 +39,9 @@
 #
 # Agent notebook completion is not runtime readiness. `enabled` (default) and `auto`
 # require actual provisioning; only explicit `disabled` skips. NB09 verifies its v2
-# draft/published identity, and NB10 restores the full playbook, Teams/action and email
+# draft/published identity and attempts a delegated MCP ontology-only query. Publication,
+# semantic errors returned as text, and inconclusive functional smoke results cannot
+# pass the runtime gate. NB10 restores the full playbook, Teams/action and email
 # pipeline with definition readback. Both reject v1 and propagate actual API failures.
 # NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
 # independent of Data Agent availability. The Knowledge Graph uses native
@@ -210,12 +212,15 @@ def _report_agent_capabilities(results_by_activity: dict) -> None:
         capability = json.loads(exit_value) if isinstance(exit_value, str) else exit_value
         if not isinstance(capability, dict) or not capability.get("status"):
             raise RuntimeError(f"{name} returned an invalid capability result: {capability!r}")
-        expected = "published" if name == "NB09_dataagent" else "configured"
+        expected = "ready" if name == "NB09_dataagent" else "configured"
         mode = capability.get("mode")
         if mode == "disabled":
             valid = capability["status"] == "skipped"
         else:
             valid = mode in ("auto", "enabled") and capability["status"] == expected
+            if name == "NB09_dataagent":
+                valid = (valid and capability.get("publication_status") == "published"
+                         and capability.get("runtime_status") == "verified")
         if not valid or capability.get("generation") != 2:
             raise RuntimeError(f"{name} did not fulfill its required deployment contract: {capability!r}")
         print(f"{name}: {capability['status']} - {capability.get('reason', '')}")

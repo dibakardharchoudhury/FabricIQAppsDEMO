@@ -18,6 +18,20 @@ Agent provisioning defaults to `enabled`; `auto` also attempts actual provisioni
 `disabled` opts out. Foundry success is not evidence that the separate Data Agent, Operations
 Agent, playbook/actions, or alert delivery succeeded.
 
+In the latest V3 live check, the separate Fabric Data Agent published its selected ontology and
+five selected SQL tables, but a real ontology MCP question failed inside `analyze_ontology` with
+an unsupported API version despite an `isError: false` envelope. A SQL-only question returned the
+correct 12 work orders. This is not evidence that Foundry was tested, or that semantic runtime,
+Operations Agent monitoring, or Teams/email delivery works. The revised NB09 facility-record MCP
+smoke check independently compares real Lakehouse IDs/names without leaking expected values into
+the prompt. Its successful `ready`/`verified` statuses are scoped functional evidence: execution
+provenance is not attested, and SQL/combined-source readiness is not certified. Failed or
+inconclusive results fail required execution. The updated NB09 was run once and correctly failed
+on the real semantic error, preserving full ontology/SQL sources and custom content. A post-failure
+SQL-only MCP question still returned exactly `{"workOrderCount":12}`. This proves failure handling
+and preservation, not a passed ontology smoke test or Foundry acceptance. See
+[latest V3 acceptance](knowledge-graph.md#latest-v3-acceptance-september-30-2026).
+
 ---
 
 ## Where things live

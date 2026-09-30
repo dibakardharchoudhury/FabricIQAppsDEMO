@@ -90,8 +90,11 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Ontology contracts are not restored from unscoped browser storage. Manual refresh rediscovers
   the workspace so a failed initial discovery or changed generation can recover.
 
-These read capabilities do **not** imply Data Agent v2 source onboarding is available or that
-Operations Agent playbook generation succeeds (the reported issue1970 remains external).
+These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
+execution succeeds. The latest live attempt accepted source publication and stopped-agent
+configuration, but the real ontology MCP question failed inside `analyze_ontology` with an
+unsupported API version despite `isError: false`. A SQL-only question correctly returned 12 work
+orders; it does not validate ontology reasoning or resolve the external playbook-runtime issue.
 The app does not fabricate success for either service.
 Guided setup marks only SQL/GraphQL and app data connection steps complete. It does not read
 notebook capability statuses or treat a completed notebook as agent readiness: review
@@ -140,11 +143,32 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
   `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. Required failures propagate
   through RTI_009/010/011 and setup. Review deployment status/reasons and validate playbook execution
   and alert delivery; an Outlook connection, item creation, or completed job alone does not prove
-  runtime readiness. The restored flow still needs a new live attempt; earlier core-only evidence
-  does not certify full capability parity or resolution of external product issues.
-  NB09 success is `published`; NB10 success is `configured` with the agent stopped, not runtime
-  tested. Setup requires those statuses (or explicit `disabled` plus `skipped`), and RTI_011
-  requires the prior Data Agent `published` status before its source extension.
+  runtime readiness. The latest live NB10 attempt retained the full configuration after restoring
+  the action enum from `DataPipeline` to the original `Pipeline`. Instructions, ontology source,
+  connected email action, and BAD/UNCERTAIN rules were visible in the actual Operations Agent UI.
+  Activation, monitoring, action execution, and Teams/email sends remain unverified.
+  NB09 records `data_agent_publication_status=published` independently. Only a successful bounded
+  facility-record smoke check sets `data_agent_deployment_status=ready` and
+  `data_agent_runtime_status=verified`; execution provenance is not attested, and this does not
+  certify SQL/combined-source answers or the whole agent. NB10 remains `configured`/stopped.
+  NB11 checks the matching smoke evidence and exact ontology-source subset, allowing added SQL
+  without invalidating evidence when the ontology configuration is retained. Failed or inconclusive
+  required checks fail NB09/NB11/setup. The revised NB09 was run once and correctly failed on the
+  actual unsupported-Ontology-API semantic error despite HTTP 200 / `isError: false`. Persisted
+  deployment/runtime are `failed`, while publication and SQL-source status remain `published`.
+  Both draft and published configurations retained all five SQL tables, all five ontology
+  elements, and custom instructions/selections; a subsequent SQL-only MCP query still returned
+  exactly `{"workOrderCount":12}`. This validates failure handling and preservation, not healthy
+  ontology runtime. NB11 and full setup were not executed in that bounded validation.
+  See the root mode/status contract and the
+  [latest V3 acceptance record](../docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026).
+
+The latest postdeployment production-parser/model check used the new native graph, actual KQL
+readings for 90 signals, and a fresh SQL export, producing 174 nodes / 171 edges with empty STID
+topology inputs. The complete five-entity projection still fails on all three TimeSeries properties;
+the selected four-entity projection supplies 111 native nodes / 108 edges. Hosting checks succeeded
+at the same `icy-twist` URL with 32 redirects preserved, but the protected gate/authentication popup
+prevented interactive app acceptance. These are API/model/configuration results, not full UI E2E.
 
 ## Rayfin SQL data model
 

@@ -20,15 +20,34 @@ readiness. Both agent modes default to `enabled`; `auto` is a backward-compatibl
 attempts real provisioning, not a static blocked result. Data Agent provisioning verifies v2
 source identity/readback. Operations Agent provisioning retains playbook/actions, Teams, and
 email-alert setup against the verified v2 ontology. Only explicit `disabled` skips an agent.
-Required failures propagate through RTI_009/010/011 and setup. External product issues are not
-claimed resolved; a new full-capability live attempt remains pending.
-Setup requires NB09 `published` and NB10 `configured`, or explicit `disabled` plus `skipped`.
+Required failures propagate through RTI_009/010/011 and setup. Latest live attempts verified source
+publication and stopped-agent configuration, not complete capability readiness: the ontology MCP
+question failed with an unsupported API version even though its envelope said `isError: false`.
+The revised NB09 was executed once and correctly failed at required readiness on the real semantic
+error. Persisted deployment/runtime status is `failed`; publication and SQL-source status remain
+`published`. This is passed failure-path validation, not a healthy ontology smoke test. External
+product issues are not claimed resolved.
+NB09 `data_agent_publication_status=published` and NB10 `configured` record source/configuration
+outcomes, not the whole success gate. Required setup needs the bounded facility-record smoke check
+to set Data Agent deployment `ready` and runtime `verified`; failed or inconclusive checks must
+propagate through NB09/NB11/setup. Only explicit `disabled` allows the corresponding `skipped` path.
 NB10 leaves the agent stopped; `configured` verifies readback, not execution or delivery.
 See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
 The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
 availability, which may be an identity-matched Fabric private-hosting sign-in gate rather than
 the application shell. It does not verify interactive authenticated application acceptance,
 agent execution, alert delivery, or native graph readiness.
+
+The latest canonical deployment reported `SUCCESS` at 16:06 at the existing
+`https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net` host, with backend/SQL checks and
+all 32 existing SPA redirects preserved. The protected-hosting gate passed; the separate browser
+authentication popup prevented interactive app acceptance. Subsequent native/API/model checks
+passed independently, while full five-entity graph projection still returned HTTP 400.
+See the [latest V3 acceptance record](../docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026).
+
+For these corrections, use bounded notebook-definition updates, not another full `PreferRemote`
+Git import: an earlier full import removed generated resources, subsequently restored through setup.
+This acceptance record does not authorize a new import, reset, deployment, or alert send.
 
 ### Native graph prerequisite (manual portal operation)
 
@@ -484,7 +503,14 @@ whose ontology source matches the selected live v2 item, verifying retained draf
 ontology/SQL sources. Only explicit `ontology_data_agent_mode=disabled` omits this extension.
 Missing/ineligible agents and extension failures fail the notebook in `enabled`/`auto` mode, even
 if SQL/GraphQL writes already succeeded. Successful configuration does not certify agent runtime.
-The prior RTI_009 status must be `published`; a missing/blocked prior result is not eligible.
+RTI_011 requires prior RTI_009 deployment/publication/runtime statuses `ready`/`published`/`verified`
+and matching smoke evidence for the agent/workspace/ontology and exact ontology source. It filters
+the ontology subset from multi-source evidence, so adding SQL alone does not invalidate evidence
+if that source configuration is unchanged. Changed ontology configuration is inconclusive and
+fails required execution. The smoke check does not attest execution provenance or SQL/combined
+source readiness. The revised NB09 live failure path was validated once with full multi-source
+preservation; neither NB11 nor full setup was executed in that bounded run. See the
+[authorized failure-path evidence](../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
 The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
 
 > **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric

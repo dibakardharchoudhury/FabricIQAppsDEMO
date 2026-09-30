@@ -136,7 +136,7 @@ flowchart TD
 | RTI_005 | Silver Delta tables and v2 ontology | Binds Direct Lake tables, scalar properties, and physical joins referenced by semantic relationships | Lakehouse-backed v2 entities |
 | RTI_006 | `OPCUAEvents` and signal master | Maps node, timestamp, value, and quality columns, including standalone `event_time` | Eventhouse-backed ontology time series |
 | RTI_008 | `OPCUAEvents` | Builds KQL visual queries and parses turbine tags from node IDs | Real-Time Dashboard |
-| RTI_009 | Fully bound v2 ontology and capability policy | Attempts matching draft/published source configuration by default; required failures propagate | Published-source evidence and diagnostic status, not runtime certification |
+| RTI_009 | Fully bound v2 ontology and capability policy | Attempts matching draft/published source configuration and requires a real ontology MCP functional check; required failures propagate | Live failure path validated: deployment/runtime failed on semantic error while publication/SQL-source status and all source/custom content were preserved |
 | RTI_010 | Fully bound v2 ontology, destinations, capability policy | Provisions Operations Agent, playbook/actions, Teams, and email-alert pipeline by default | Configured v2-backed artifacts; execution/delivery require live validation |
 | RTI_011 | Rayfin SQL item, Lakehouse, required Data Agent unless explicitly disabled | Seeds SQL, creates/binds GraphQL API; extends the verified v2-backed agent with SQL | Operational/GraphQL paths and verified published sources; required extension failures propagate |
 
@@ -287,8 +287,11 @@ in the browser and can be reset by the user.
 
 With the default enabled policy, RTI_009 attempts to publish the generation-2 ontology source. RTI_011 later
 preserves that source, adds the app SQL database, and republishes the agent. Consequently, the
-Data Agent can answer across semantic telemetry/master data and operational work records without
-the React app constructing that cross-source query itself. `auto` is a backward-compatible alias
+intended Data Agent contract spans semantic telemetry/master data and operational work records
+without the React app constructing that cross-source query itself. The latest real ontology MCP
+question failed in `analyze_ontology` with an unsupported API version despite `isError: false`;
+the SQL-only question correctly returned 12 work orders. Publication is not semantic-runtime
+acceptance. `auto` is a backward-compatible alias
 for `enabled`, not a static capability skip. Only explicit `disabled` permits SQL/GraphQL-only
 provisioning. Required-agent onboarding, source verification, and extension failures propagate
 through RTI_009/RTI_011 and setup, including real authentication, schema, and service failures.
@@ -302,12 +305,24 @@ core-only setup as full parity. An accepted item definition does not prove playb
 alert delivery, and the restored implementation does not resolve external product issues.
 Successful strict readback records `ops_agent_deployment_status=configured` with the agent stopped,
 not running. The retained `OperationsAgentV1` business-configuration schema does not select ontology
-generation 1. Setup requires NB09 `published` and NB10 `configured`, except for an explicitly
-disabled agent with status `skipped`. RTI_011 also requires the prior NB09 `published` status.
+generation 1. NB09 publication status `published` is independent of deployment `ready` and runtime
+`verified`, which require the bounded facility-record smoke check. Its evidence scope explicitly
+does not attest execution provenance or certify SQL/combined-source answers. NB11 requires these
+three statuses and matching exact ontology-source evidence, ignoring added SQL when that ontology
+configuration is retained. Failed/inconclusive checks fail required NB09/NB11/setup; explicit
+`disabled` allows `skipped`. The revised NB09 was run once and correctly failed on the unsupported
+Ontology API semantic error despite HTTP 200 / `isError: false`. Publication and SQL-source status
+remained published, with source/custom content preserved. This is not healthy ontology runtime.
 Email delivery also depends on a manually created
 Office 365 Outlook OAuth2 connection. This is separate from both the notebook service principal
 and browser SPA identity. Missing or expired mailbox consent breaks delivery even when the
 ontology and agent are healthy.
+
+The latest live NB10 attempt rejected action type `DataPipeline` with HTTP 400. Restoring only
+the original `Pipeline` enum yielded HTTP 200 with the full business configuration retained.
+The actual Operations Agent UI displayed instructions, ontology source, connected email action,
+and BAD/UNCERTAIN rules. The agent remains configured/stopped; activation, monitoring, action
+execution, and Teams/email delivery have not been verified.
 
 ## Identity and Authorization Boundaries
 
@@ -371,8 +386,15 @@ There is no distributed transaction across the three stores. A work order can re
 Use these checks to validate each boundary independently:
 
 Current live acceptance is restricted to **ws-vteam-demoV3**, tenant
-`ad340c84-1886-4202-a483-2da2cb9168eb`. Native live testing is in progress; no new live native result
-or app deployment is claimed here.
+`ad340c84-1886-4202-a483-2da2cb9168eb`. The
+[latest V3 acceptance record](docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026)
+records new native/API/model, Weather, stream, SQL/GraphQL, source-publication, and stopped-agent
+configuration evidence. Full five-entity projection still fails; the ontology MCP question failed;
+agent activation/delivery and interactive app acceptance remain unverified. The new required NB09
+failure path was validated live by one correctly failed run with all five SQL tables, all five
+ontology elements, and custom content preserved in draft and published definitions. A subsequent
+SQL-only MCP check still returned exactly `{"workOrderCount":12}`. No successful ontology smoke,
+NB11 execution, or full setup execution is claimed for that bounded validation.
 
 1. Run `01_Pipe_Setup` in a fresh/compatible target with the default-enabled agents; verify required failures fail setup, and inspect status/reasons. Label an explicitly disabled run core-only, not full parity.
 2. Query Lakehouse table counts for the expected silver tables and inspect `rti_demo_settings`.

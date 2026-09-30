@@ -48,7 +48,7 @@ Two agent-policy `01_Pipe_Setup` parameters are persisted in `rti_demo_settings`
 
 | Parameter | Default | Policy |
 | --- | --- | --- |
-| `ontology_data_agent_mode` | `enabled` | Attempt real provisioning against the verified v2 ontology and verify draft/published source identity. |
+| `ontology_data_agent_mode` | `enabled` | Verify v2 draft/published source identity and require the real facility-record MCP smoke check; failed or inconclusive checks fail required execution. |
 | `ontology_operations_agent_mode` | `enabled` | Attempt Operations Agent, playbook, actions, Teams configuration, and email-alert pipeline provisioning against the verified v2 ontology. |
 
 Both accept `auto`, `enabled`, or `disabled`. `auto` is a backward-compatible alias for `enabled`:
@@ -59,19 +59,49 @@ status/reason reporting is diagnostic, not a substitute for failure. RTI_011 can
 provision GraphQL with the Data Agent explicitly disabled; otherwise its agent extension is required.
 Successful configuration still does not prove agent execution or alert delivery.
 
-The required success statuses are `data_agent_deployment_status=published` after RTI_009 and
-`ops_agent_deployment_status=configured` after RTI_010. The Operations Agent is configured in a
-**stopped** state; `configured` does not mean a playbook has run. The orchestrator requires those
-statuses, or `skipped` paired with an explicit `disabled` mode. RTI_011 requires the prior Data
-Agent `published` status as well as verified source identity. The retained `OperationsAgentV1`
-business-configuration schema is not ontology generation 1: its selected ontology must still be v2.
+RTI_009 tracks publication separately from functional validation. Required success is
+`data_agent_deployment_status=ready`, `data_agent_publication_status=published`, and
+`data_agent_runtime_status=verified`, with live generation `2`. The setup orchestrator requires
+all three values, plus `ops_agent_deployment_status=configured` after RTI_010, or `skipped` paired
+with the respective explicit `disabled` mode. Publication-only `published` is not readiness.
 
-As of September 29, 2026, generation-2 Data Agent onboarding is blocked in the reported rollout,
-and [Fabric known issue 1970](https://support.fabric.microsoft.com/known-issues/) covers Operations
-Agent playbook-generation timeouts with the new ontology experience. Check product support in the
-target tenant using the real provisioning attempt; do not infer resolution from an estimated fix
-date or the restored implementation. A new full-capability live attempt is pending. Existing live
-evidence is core-only, and the observed five-entity graph-projection blocker remains unresolved.
+The Data Agent smoke check asks only for the selected ontology's first five facility IDs/names and
+compares the exact answer with independently read configured Lakehouse rows. Expected values are
+not supplied in the prompt; attached SQL sources are allowed and no cached proof is required.
+Evidence uses `verification=ontology_facilities_smoke_v1`, scoped to **"Source-specific functional
+smoke test; execution provenance is not attested."** It does not certify cryptographic provenance,
+SQL/combined-source answers, or the entire agent. Semantic/transport errors and wrong rows fail;
+nonparseable, count-only, or unverifiable answers are inconclusive. Both fail required execution.
+
+RTI_011 requires prior `ready`/`published`/`verified` and matching agent/workspace/ontology evidence
+with the exact ontology-source configuration. It filters the ontology subset from multi-source
+evidence: adding SQL alone does not invalidate smoke evidence if that source is retained; changed
+ontology configuration is inconclusive and fails required completion. SQL publication is recorded
+separately as `data_agent_sql_source_status=published`. SQL/custom parts, custom instructions, and
+entity selections are preserved, including on runtime-failing NB09 reruns.
+
+The Operations Agent is configured in a **stopped** state; `configured` does not mean a playbook has
+run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
+The latest live configuration required only restoring the action enum from `DataPipeline` to the
+original `Pipeline`; full playbook/actions/Teams/email configuration was retained, not stripped.
+
+The September 29 report described generation-2 onboarding limitations and
+[Fabric known issue 1970](https://support.fabric.microsoft.com/known-issues/) covers Operations Agent
+playbook-generation timeouts. Later September 30 attempts published the sources and configured the
+stopped Operations Agent, but **healthy ontology runtime remains blocked**. Do not infer product
+resolution from publication, an estimated fix date, or the restored implementation.
+
+**Live failure-path validation is complete:** revised NB09 job
+`b1818634-f77e-4dec-ab55-982460ecb101` correctly failed on the unsupported Ontology API semantic error
+despite HTTP 200 / `isError: false`. Delta readback verified deployment/runtime `failed`,
+publication and SQL-source `published`, and enabled mode. Draft and published sources retained all
+five SQL tables, all five ontology elements, and custom content; a subsequent SQL-only MCP query
+still returned exactly `{"workOrderCount":12}`. Only NB09 ran once after bounded NB09/NB11/setup
+definition updates; **full setup and NB11 were not rerun after the new gate**. This validates
+truthful failure and preservation, not a successful ontology smoke test.
+See [current and historical live evidence](docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026).
+Full five-entity graph projection still fails, and Operations Agent activation/delivery and
+interactive application acceptance remain unverified.
 
 `RTI_001` remaps downstream notebook attachments, and the orchestrator passes
 `useRootDefaultLakehouse: True`. Rebinding failures now stop setup. Standalone notebook sessions
@@ -128,7 +158,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including the standalone `event_time` property. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
-| **RTI_009_build_data_agent** | Provisions the Data Agent by default with matching live v2 source and draft/published readback checks; required failures propagate. | ✅ |
+| **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then requires bounded real MCP facility-record validation; failed or inconclusive results fail required execution. | ✅ |
 | **RTI_010_build_operations_agent** | Provisions the Operations Agent, playbook, actions, Teams configuration, and email-alert pipeline against v2 by default; required failures propagate. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup; extends the required verified v2-backed Data Agent with SQL unless explicitly disabled. Run by **Seed & provision**. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
@@ -262,7 +292,8 @@ GraphModel topology validated against the live v2 TMDL contract. Eventhouse supp
 and SQL contributes explicit external overlays only on actual native entities. GraphQL is not a
 dependency or fallback for the graph canvas, tree, or scopes. Published REST metadata does not expose
 ontology ownership, so an explicit operator binding is required; names and structural similarity
-are not evidence. Native live testing is in progress; this correction claims no new live native
-graph evidence or app deployment. See
+are not evidence. Latest production-parser/model checks passed with 111 native nodes / 108 edges
+and 174 enriched nodes / 171 edges using real KQL/SQL and empty STID topology inputs. Protected
+hosting checks passed, but these API/model results do not certify interactive app behavior. See
 [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).

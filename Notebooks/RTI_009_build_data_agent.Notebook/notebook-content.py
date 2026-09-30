@@ -47,6 +47,14 @@
 # 4. Deploys it as a Fabric **DataAgent** item via REST, then **publishes** it
 #    (staging → published) with live generation 2 unless explicitly disabled.
 # 5. Persists `data_agent_name` / `data_agent_id` back to `rti_demo_settings`.
+# 6. Calls the published MCP tool with delegated notebook-user credentials for the
+#    first five facility IDs/names, comparing exact content against independent live
+#    Lakehouse rows. Expected values are never supplied in the prompt. This is a
+#    source-specific functional smoke test, not execution attestation. Existing SQL
+#    sources are retained and do not prevent a fresh smoke test without cached evidence.
+#    Semantic errors (including `isError=false` text errors), wrong rows and inconclusive
+#    answers fail required setup. Publication remains separate from this bounded
+#    functional verification; no synthetic execution receipt is required.
 #
 # Capability policy: `ontology_data_agent_mode` is `enabled` (default), `auto`, or
 # `disabled`. This deployment is v2-only: generation 1 is rejected in every mode.
@@ -59,6 +67,8 @@
 # Draft readback verifies identity before publish; published-stage evidence is mandatory
 # before recording published status. Only an explicitly empty definition from a newly
 # created agent is a valid empty baseline; unreadable/existing empty definitions fail closed.
+# Reruns retain non-ontology sources, operational/custom instructions and custom entity
+# configuration. Defaults only fill missing configuration; runtime failure never removes sources.
 
 
 # CELL ********************
@@ -134,6 +144,7 @@ import json
 import time
 import uuid
 import base64
+import re
 from typing import Optional
 
 import requests
@@ -361,22 +372,28 @@ def agent_capability_policy(generation: int, mode: str) -> dict:
     return {"status": "allowed", "reason": ""}
 
 
-def persist_agent_status(status: str, reason: str) -> None:
+def persist_agent_status(status: str, reason: str, **details) -> None:
     global agent_deployment_result
     from delta.tables import DeltaTable
 
     values = {"data_agent_deployment_status": status, "data_agent_deployment_reason": reason}
+    for key, value in details.items():
+        values[f"data_agent_{key}"] = json.dumps(value) if isinstance(value, dict) else str(value)
     source = spark.createDataFrame(
         [{"setting_name": k, "setting_value": v} for k, v in values.items()]
     ).withColumn("updated_utc", F.current_timestamp())
     (DeltaTable.forName(spark, settings_table_name).alias("target")
      .merge(source.alias("source"), "target.setting_name = source.setting_name")
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
-    agent_deployment_result = {"status": status, "reason": reason}
+    agent_deployment_result = {"status": status, "reason": reason, **details}
 
 
 def check_agent_capability() -> tuple:
-    persist_agent_status("checking", "Checking v2-only Data Agent capability; no readiness established.")
+    persist_agent_status(
+        "checking", "Checking v2-only Data Agent capability; no readiness established.",
+        publication_status="not_checked", runtime_status="not_checked",
+        runtime_reason="", runtime_evidence="",
+    )
     try:
         mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
         ontology_id = resolve_ontology_id()
@@ -450,12 +467,241 @@ def validate_agent_ontology_sources(
         raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
 
 
-def verify_agent_source_readback(agent_id: str, ontology_id: str, published: bool = False) -> None:
+def verify_agent_source_readback(agent_id: str, ontology_id: str, published: bool = False) -> list:
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition)
     validate_agent_ontology_sources(
         parts, ontology_id, require_draft=not published, require_published=published,
     )
+    return parts
+
+
+def published_agent_sources(parts: list) -> dict:
+    return {
+        part["path"]: json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
+        for part in parts
+        if part["path"].startswith("Files/Config/published/") and part["path"].endswith("/datasource.json")
+    }
+
+
+def facility_probe_reference() -> list:
+    context = notebookutils.runtime.context
+    if (context.get("defaultLakehouseId") != lakehouse_id
+            or context.get("defaultLakehouseWorkspaceId") != workspace_id):
+        raise RuntimeError("Readiness oracle must use the configured Lakehouse and workspace.")
+    table = first_setting("silver_facilities_table", required=True)
+    if not re.fullmatch(r"(?:dbo\.)?[A-Za-z_][A-Za-z0-9_]*", table):
+        raise RuntimeError("Readiness oracle requires a local silver facilities table.")
+    rows = (spark.read.table(table).select("facility_id", "facility_name")
+            .orderBy("facility_id").limit(5).collect())
+    return normalized_facility_rows([row.asDict() for row in rows])
+
+
+def normalized_facility_rows(rows) -> list:
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 5:
+        raise ValueError("Expected one to five facility ID/name records, not a count or empty answer.")
+    if any(not isinstance(row, dict) or set(row) != {"facility_id", "facility_name"}
+           or any(not isinstance(value, str) or not value.strip() for value in row.values()) for row in rows):
+        raise ValueError("Each facility record must contain exact nonempty string facility_id and facility_name.")
+    if len({row["facility_id"] for row in rows}) != len(rows):
+        raise ValueError("Duplicate facility IDs cannot verify the ontology query.")
+    return sorted(rows, key=lambda row: row["facility_id"])
+
+
+def facility_rows_from_mcp(result: dict) -> list:
+    payload = result.get("structuredContent")
+    if payload is None:
+        text = "\n".join(
+            item.get("text", "") if item.get("type") == "text"
+            else item.get("resource", {}).get("text", "")
+            for item in result.get("content", []) if isinstance(item, dict)
+        ).strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+        payload = json.loads(text)
+    if isinstance(payload, dict) and set(payload) == {"facilities"}:
+        payload = payload["facilities"]
+    return normalized_facility_rows(payload)
+
+
+def mcp_response_result(response, request_id):
+    response.raise_for_status()
+    if response.status_code != 200:
+        raise RuntimeError(f"MCP request {request_id} returned HTTP {response.status_code} without a result.")
+    if "text/event-stream" in response.headers.get("Content-Type", "").lower():
+        messages = []
+        for event in response.text.replace("\r\n", "\n").split("\n\n"):
+            data = "\n".join(line[5:].lstrip() for line in event.splitlines() if line.startswith("data:"))
+            if data and data != "[DONE]":
+                messages.append(json.loads(data))
+    else:
+        messages = [response.json()]
+    matches = [message for message in messages
+               if isinstance(message, dict) and message.get("id") == request_id]
+    if len(matches) != 1 or matches[0].get("jsonrpc") != "2.0":
+        raise RuntimeError("MCP response has missing, mismatched, or duplicate JSON-RPC result.")
+    message = matches[0]
+    if message.get("error") is not None:
+        raise RuntimeError("MCP JSON-RPC error: " + json.dumps(message["error"])[:4000])
+    if not isinstance(message.get("result"), dict):
+        raise RuntimeError("MCP response has no result object.")
+    return message["result"]
+
+
+def mcp_semantic_error(value):
+    if isinstance(value, dict):
+        if set(value) == {"facility_id", "facility_name"}:
+            return None
+        for key in ("error", "errorMessage", "failureReason"):
+            if value.get(key):
+                return str(value[key])[:4000]
+        if value.get("isError") is True or str(value.get("status", "")).lower() in (
+            "failed", "blocked", "error", "unavailable",
+        ):
+            return json.dumps(value)[:4000]
+        for child in value.values():
+            error = mcp_semantic_error(child)
+            if error:
+                return error
+    elif isinstance(value, list):
+        for child in value:
+            error = mcp_semantic_error(child)
+            if error:
+                return error
+    elif isinstance(value, str):
+        text = value.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+        if text.startswith(("{", "[")):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                return "Malformed structured MCP response; execution cannot be verified."
+            return mcp_semantic_error(decoded)
+        if re.search(
+            r"(?i)(ontology source unavailable|api version is not supported|"
+            r"failed to (?:query|execute|access)|unable to (?:query|execute|access)|"
+            r"cannot (?:query|execute|access)|^\s*error\b)", text,
+        ):
+            return text[:4000]
+    return None
+
+
+def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=None) -> dict:
+    """Smoke-test an ontology-requested answer against independent live Lakehouse rows."""
+    endpoint = f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}/dataagents/{agent_id}/agent"
+    activity_id = str(uuid.uuid4())
+    question = (
+        f"Read-only source readiness check. Use ONLY the Ontology item {ontology_id} "
+        f"in workspace {workspace_id}. Do not use SQL, KQL databases, other sources, "
+        "cached answers, examples in instructions, or estimates. Query the facilities entity: "
+        "return the first five rows ordered by facility_id ascending (all rows if fewer than five). "
+        "Return ONLY JSON: an array of objects with exactly facility_id and facility_name. "
+        "If the ontology cannot be queried, return the exact error; do not substitute another source."
+    )
+    evidence = {
+        "endpoint": endpoint, "agent_id": agent_id, "ontology_id": ontology_id,
+        "workspace_id": workspace_id, "activity_id": activity_id, "question": question,
+        "checked_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "requests": [],
+    }
+    try:
+        if published_parts is None:
+            published_parts = definition_parts(get_item_definition(agent_id))
+        validate_agent_ontology_sources(published_parts, ontology_id, require_published=True)
+        sources = published_agent_sources(published_parts)
+        evidence.update({
+            "verification": "ontology_facilities_smoke_v1", "lakehouse_id": lakehouse_id,
+            "scope": "Source-specific functional smoke test; execution provenance is not attested.",
+            "published_sources": sources,
+        })
+        # MCP consumption uses the notebook user's context, not the provisioning SPN.
+        token = notebookutils.credentials.getToken("pbi")
+        claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))
+        if not isinstance(claims, dict) or not claims.get("scp") or claims.get("idtyp") == "app":
+            raise RuntimeError("MCP readiness requires a delegated notebook-user token.")
+        headers = {
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream", "ActivityId": activity_id,
+        }
+        next_id = 0
+
+        def call(method, params):
+            nonlocal next_id
+            next_id += 1
+            response = requests.post(
+                endpoint, headers=headers,
+                json={"jsonrpc": "2.0", "id": next_id, "method": method, "params": params},
+                timeout=(15, 180), allow_redirects=False,
+            )
+            evidence["requests"].append({
+                "method": method, "http_status": response.status_code,
+                "request_id": response.headers.get("x-ms-request-id") or response.headers.get("requestId"),
+            })
+            session_id = response.headers.get("Mcp-Session-Id")
+            if session_id:
+                headers["Mcp-Session-Id"] = session_id
+            return mcp_response_result(response, next_id)
+
+        initialized = call("initialize", {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "hydro-ontology-readiness", "version": "1.0.0"},
+        })
+        version = initialized.get("protocolVersion")
+        if not isinstance(version, str) or not version:
+            raise RuntimeError("MCP initialization returned no protocol version.")
+        headers["MCP-Protocol-Version"] = version
+        notification = requests.post(
+            endpoint, headers=headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            timeout=(15, 30), allow_redirects=False,
+        )
+        notification.raise_for_status()
+        if notification.status_code not in (200, 202, 204):
+            raise RuntimeError(f"MCP initialization notification returned HTTP {notification.status_code}.")
+        tools = call("tools/list", {})
+        if tools.get("nextCursor"):
+            raise RuntimeError("MCP tool listing is incomplete; cannot select a verified agent tool.")
+        listed = tools.get("tools")
+        if not isinstance(listed, list) or not all(isinstance(tool, dict) for tool in listed):
+            raise RuntimeError("MCP tool listing is malformed.")
+        expected_name = f"DataAgent_{data_agent_name}"
+        selected = [tool for tool in listed if tool.get("name") == expected_name]
+        if len(selected) != 1:
+            raise RuntimeError(f"Expected exactly one MCP tool {expected_name!r}.")
+        schema = selected[0].get("inputSchema", {})
+        if (not isinstance(schema, dict) or schema.get("type") != "object"
+                or not isinstance(schema.get("properties"), dict)
+                or not isinstance(schema["properties"].get("userQuestion"), dict)
+                or schema["properties"]["userQuestion"].get("type") != "string"
+                or schema.get("required") != ["userQuestion"]):
+            raise RuntimeError("MCP agent tool has an unsupported question contract.")
+        evidence["tool"] = expected_name
+        result = call("tools/call", {"name": expected_name, "arguments": {"userQuestion": question}})
+        evidence["response"] = json.dumps(result)[:8000]
+        error = mcp_semantic_error(result)
+        if error:
+            return {"status": "failed", "reason": error, "evidence": evidence}
+        expected = facility_probe_reference()
+        evidence.update({
+            "reference_table": first_setting("silver_facilities_table", required=True),
+            "expected_facilities": expected,
+        })
+        try:
+            actual = facility_rows_from_mcp(result)
+        except ValueError as exc:
+            return {"status": "inconclusive", "reason": str(exc), "evidence": evidence}
+        evidence["returned_facilities"] = actual
+        if actual != expected:
+            return {"status": "failed", "reason": "Ontology facility IDs/names do not match the live Lakehouse "
+                    "reference rows.", "evidence": evidence}
+        return {"status": "verified", "reason": "Ontology-requested MCP facility IDs/names exactly match independent "
+                "live Lakehouse rows. Source-specific functional smoke test passed; execution provenance and "
+                "other agent capabilities are not attested.", "evidence": evidence}
+    except (RuntimeError, ValueError, KeyError, IndexError, requests.RequestException) as exc:
+        reason = str(exc)[:4000]
+        evidence["failure"] = reason
+        return {"status": "failed", "reason": reason, "evidence": evidence}
 
 
 def create_data_agent(display_name: str, description: str = "") -> dict:
@@ -572,7 +818,7 @@ def upsert_part(parts: list, path: str, obj: dict) -> list:
     encoded = {"path": path, "payload": encode_payload(obj), "payloadType": "InlineBase64"}
     for i, part in enumerate(parts):
         if part.get("path") == path:
-            parts[i] = encoded
+            parts[i] = {**part, **encoded}
             return parts
     parts.append(encoded)
     return parts
@@ -646,10 +892,14 @@ ONTOLOGY_ELEMENTS = [
 
 
 def build_stage_obj(existing: dict) -> dict:
-    """Draft stage_config carrying the agent-level aiInstructions."""
+    """Initialize new agents without replacing operational or custom instructions."""
     stage = dict(existing)
-    stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
-    stage["aiInstructions"] = AI_INSTRUCTIONS
+    stage.setdefault("$schema", STAGE_CONFIG_SCHEMA_URL)
+    instructions = stage.get("aiInstructions")
+    if instructions is not None and not isinstance(instructions, str):
+        raise RuntimeError("Existing agent instructions are not a string; refusing to replace custom configuration.")
+    if not instructions:
+        stage["aiInstructions"] = AI_INSTRUCTIONS
     return stage
 
 
@@ -657,26 +907,33 @@ def build_datasource_obj(existing: dict, ontology_id: str) -> dict:
     """Ontology data source in the Fabric Data Agent shape (entity `elements`)."""
     require_v2_ontology(ontology_id)
     ds = dict(existing)
-    ds["$schema"] = DATASOURCE_SCHEMA_URL
+    ds.setdefault("$schema", DATASOURCE_SCHEMA_URL)
     ds["artifactId"] = ontology_id
     # Must be the ontology's real workspace GUID (empty/zero GUID is rejected).
     ds["workspaceId"] = workspace_id
-    ds["displayName"] = ontology_name
+    ds.setdefault("displayName", ontology_name)
     ds["type"] = DATASOURCE_TYPE
     ds.setdefault("dataSourceInstructions", None)
     ds.setdefault("userDescription", None)
     ds.setdefault("metadata", {})
-    ds["elements"] = [
-        {
+    elements = ds.get("elements", [])
+    if not isinstance(elements, list) or any(not isinstance(element, dict) for element in elements):
+        raise RuntimeError("Existing ontology elements are malformed; refusing to replace custom selections.")
+    elements = list(elements)
+    for name, cols in ONTOLOGY_ELEMENTS:
+        if any(element.get("id") == name or (
+            element.get("type") == "ontology.entity" and element.get("display_name") == name
+        ) for element in elements):
+            continue
+        elements.append({
             "id": name,
             "is_selected": True,
             "display_name": name,
             "type": "ontology.entity",
             "description": cols,
             "children": [],
-        }
-        for name, cols in ONTOLOGY_ELEMENTS
-    ]
+        })
+    ds["elements"] = elements
     return ds
 
 
@@ -732,11 +989,12 @@ try:
     # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
     enable_preview_runtime(data_agent_item_id)
     publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-    verify_agent_source_readback(data_agent_item_id, ontology_id, published=True)
+    published_parts = verify_agent_source_readback(data_agent_item_id, ontology_id, published=True)
     persist_agent_status(
         "published",
-        "REST publish completed and selected live generation 2 source identity verified by readback; "
-        "runtime answers are not verified.",
+        "REST publish and selected live generation 2 source identity verified; runtime probe pending.",
+        publication_status="published", runtime_status="checking",
+        id=data_agent_item_id, name=data_agent_name,
     )
     mcp_endpoint = (
         f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}"
@@ -744,6 +1002,18 @@ try:
     )
     print("🌐 Published — consumption endpoint:")
     print(f"   • MCP: {mcp_endpoint}")
+    try:
+        runtime = probe_data_agent_ontology(data_agent_item_id, ontology_id, published_parts)
+    except Exception as exc:
+        persist_agent_status("failed", str(exc), runtime_status="failed", runtime_reason=str(exc))
+        raise
+    persist_agent_status(
+        "ready" if runtime["status"] == "verified" else "failed", runtime["reason"],
+        publication_status="published", runtime_status=runtime["status"],
+        runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
+    )
+    if runtime["status"] != "verified":
+        raise RuntimeError(f"Data Agent published but ontology runtime {runtime['status']}: {runtime['reason']}")
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise
