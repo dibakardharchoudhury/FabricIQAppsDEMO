@@ -30,6 +30,7 @@ const LAYOUT_DESCRIPTION: Record<GraphLayout, string> = {
   concentric: 'Concentric: arrange entities in rings around the most connected hubs.',
 }
 type GraphScope = 'asset' | 'facility' | 'all'
+const GRAPH_REFRESH_POLL_MS = 5 * 60_000
 
 const graphVersion = (graph: OntologyGraph | null) => graph ? JSON.stringify({
   ontologyId: graph.ontologyId,
@@ -100,7 +101,7 @@ export function KnowledgeGraphPage() {
       finally { inFlight = false }
     }
     void refresh()
-    const interval = window.setInterval(() => void refresh(true), 30_000)
+    const interval = window.setInterval(() => void refresh(), GRAPH_REFRESH_POLL_MS)
     const handleVisibility = () => { if (!document.hidden) void refresh() }
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
@@ -191,11 +192,13 @@ export function KnowledgeGraphPage() {
 
   const counts = NODE_TYPES.map(item => ({ ...item, count: graph.nodes.filter(node => node.type === item.type).length }))
   const connectedEdges = selectedNode ? graph.edges.filter(item => item.source === selectedNode.id || item.target === selectedNode.id) : []
+  const activeOntology = ontology ?? data.ontology
+  const graphInstanceSummary = `${graph.nodes.length} materialized and operational instances · ${graph.edges.length} links`
 
   return <div className="kg-page">
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong>{graph.nodes.length} entities · {graph.edges.length} relationships{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className="kg-workspace">
