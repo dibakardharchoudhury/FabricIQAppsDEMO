@@ -40,6 +40,69 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_frontend_export_runs_the_repository_producer_on_node24(self):
+        with (
+            patch.object(DEPLOY, "node24_script", return_value=["node24", "export-env.mjs"]) as node_script,
+            patch.object(DEPLOY, "run_stream") as run,
+        ):
+            DEPLOY.export_frontend_env()
+        node_script.assert_called_once_with(DEPLOY.APP_DIR / "scripts" / "export-env.mjs")
+        run.assert_called_once_with(["node24", "export-env.mjs"], cwd=DEPLOY.APP_DIR)
+
+    def test_frontend_export_failure_prevents_deployment_success(self):
+        with (
+            patch.object(DEPLOY, "rayfin_environment", return_value={}),
+            patch.object(DEPLOY, "run_stream", return_value="hosting result"),
+            patch.object(DEPLOY, "export_frontend_env", side_effect=DEPLOY.DeployError("invalid frontend config")),
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "invalid frontend config"):
+                DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant")
+
+    def test_rayfin_commands_export_validated_configuration_on_success_and_failure(self):
+        for fails in (False, True):
+            with self.subTest(fails=fails):
+                events = []
+
+                def command_run(*_args, **_kwargs):
+                    events.append("rayfin")
+                    if fails:
+                        raise DEPLOY.DeployError("deployment failed")
+                    return "hosting result"
+
+                with (
+                    patch.object(DEPLOY, "rayfin_environment", return_value={}),
+                    patch.object(DEPLOY, "run_stream", side_effect=command_run),
+                    patch.object(DEPLOY, "export_frontend_env", side_effect=lambda: events.append("export")),
+                ):
+                    if fails:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, "deployment failed"):
+                            DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant")
+                    else:
+                        self.assertEqual(DEPLOY.run_rayfin_deployment(["rayfin", "up"], "tenant"), "hosting result")
+                self.assertEqual(events, ["rayfin", "export"])
+
+    def test_graph_binding_producer_rejects_malformed_and_over_limit_encodings(self):
+        for value in ('{"workspaceId":', '"not JSON"', "[]", "null", '{"bad":NaN}', "x" * (1024 * 1024 + 1)):
+            with self.subTest(value=value[:40]), self.assertRaises(DEPLOY.DeployError):
+                DEPLOY._public_config_value({"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": value}, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+
+    def test_repeated_rayfin_escaping_is_repaired_by_the_producer(self):
+        binding = {
+            "workspaceId": "9c73201e-b2e5-48eb-81b9-3526d320faca",
+            "ontologyId": "d0d041aa-13ea-4277-aa6e-1d3ab565a2d4",
+            "graphModelId": "87bb9ac2-4599-44b9-8014-b45c696332bd",
+            "nodeTypes": {"source#'instrument": "hydro#instrument"},
+        }
+        value = json.dumps(binding)
+        for _ in range(5):
+            value = json.dumps(value)[1:-1]
+        raw = '"' + value + '"'
+        normalized = DEPLOY._public_config_value({"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": raw}, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+        self.assertEqual(json.loads(normalized), binding)
+        rendered = DEPLOY._rebind_public_env("", {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": normalized})
+        self.assertTrue(rendered.startswith("RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='"))
+        self.assertEqual(json.loads(rendered.split("=", 1)[1].strip()[1:-1]), binding)
+
     def test_rayfin_login_uses_tenant_scoped_azure_cli_token_not_stale_msal_cache(self):
         with (
             patch.dict(os.environ, {"RAYFIN_TOKEN": "old-token", "RAYFIN_TENANT_ID": "old-tenant"}),
@@ -698,6 +761,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(DEPLOY, "export_frontend_env"),
             patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}]),
             patch.object(
                 DEPLOY,
@@ -754,6 +818,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "prepare_rayfin_env", return_value=True),
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
+            patch.object(DEPLOY, "export_frontend_env"),
             patch.object(DEPLOY, "rayfin_environment", return_value={}),
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", return_value=["setup-live-auth"]),

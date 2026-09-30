@@ -1022,8 +1022,53 @@ def validate_appbackend_cors(
         )
 
 
+def _canonical_graph_binding(raw: str) -> str:
+    value = raw.strip()
+    if value in ("", "''", '""'):
+        return ""
+    cli_quoted = value.startswith('"') and value.endswith('"')
+    if value.startswith("'") and value.endswith("'"):
+        value = value[1:-1]
+    if len(value) > 1024 * 1024:
+        raise DeployError("The operator-provided Ontology graph binding exceeds the producer size limit.")
+    # Undo only the bounded Rayfin 1.36 writer/reader mismatch, at the producer.
+    # The browser still accepts strict JSON only; identities are verified below.
+    for layer in range(16):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            if not cli_quoted or not value.startswith("{") or not value.endswith("}"):
+                break
+            try:
+                decoded = json.loads('"' + value + '"')
+            except ValueError:
+                break
+            if len(decoded) >= len(value):
+                break
+            value = decoded
+            continue
+        if isinstance(decoded, dict):
+            try:
+                encoded = json.dumps(decoded, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            except ValueError:
+                break
+            encoded = re.sub(
+                r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})',
+                lambda match: "\\u" + format(ord(json.loads('"' + match.group(0) + '"')), "04x"),
+                encoded,
+            )
+            return encoded.replace("'", r"\u0027").replace("$", r"\u0024")
+        if layer == 0 and cli_quoted and isinstance(decoded, str):
+            value = decoded
+            continue
+        break
+    raise DeployError("The operator-provided Ontology graph binding is invalid JSON.")
+
+
 def _public_config_value(values: dict[str, str], key: str) -> str:
     value = values.get(key, "").strip()
+    if key == "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING":
+        return _canonical_graph_binding(value)
     if value.startswith('"') and value.endswith('"'):
         try:
             decoded = json.loads(value)
@@ -1188,6 +1233,9 @@ def resolve_public_artifact_config(
 
 def _rebind_public_env(text: str, values: dict[str, str]) -> str:
     def line_for(key: str, value: str) -> str:
+        if key == "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING":
+            binding = _canonical_graph_binding(value)
+            return f"{key}='{binding}'" if binding else f"{key}="
         encoded = json.dumps(value, ensure_ascii=False) if re.search(r'''[\s#'"\\]''', value) else value
         return f"{key}={encoded}"
 
@@ -1451,6 +1499,22 @@ def ensure_rayfin_login(tenant: str) -> None:
     print("Rayfin is using the tenant-scoped Azure CLI identity; its separate MSAL cache is not required.", flush=True)
 
 
+def export_frontend_env() -> None:
+    run_stream(
+        node24_script(APP_DIR / "scripts" / "export-env.mjs"),
+        cwd=APP_DIR,
+    )
+
+
+def run_rayfin_deployment(command: list[str], tenant: str) -> str:
+    try:
+        return run_stream(command, cwd=APP_DIR, env=rayfin_environment(tenant))
+    finally:
+        # Rayfin also rewrites .env after the prebuild hook and on failed up runs.
+        # Regenerate through the repository producer; never patch generated files.
+        export_frontend_env()
+
+
 def current_git_push_target() -> tuple[str, str]:
     """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
@@ -1666,7 +1730,7 @@ def deploy(args: argparse.Namespace) -> None:
         command = rayfin24("up", "staticapp", "deploy")
     else:
         command = rayfin24("up", "--workspace-id", workspace_id, "--yes")
-    output = run_stream(command, cwd=APP_DIR, env=rayfin_environment(args.tenant))
+    output = run_rayfin_deployment(command, args.tenant)
     urls = HOSTING_URL_RE.findall(output)
     if not urls:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
@@ -1691,13 +1755,12 @@ def deploy(args: argparse.Namespace) -> None:
         "restarts cannot retain stale CORS state.",
         flush=True,
     )
-    run_stream(
+    run_rayfin_deployment(
         rayfin24(
             "up", "--workspace-id", workspace_id,
             "--exclude-services", "staticHosting", "--yes",
         ),
-        cwd=APP_DIR,
-        env=rayfin_environment(args.tenant),
+        args.tenant,
     )
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)

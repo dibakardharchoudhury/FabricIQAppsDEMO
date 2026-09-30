@@ -256,7 +256,9 @@ describes current entities, relationships, and optional observation snapshots.
 Current live acceptance is restricted to **ws-vteam-demoV3** in tenant
 `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace `9c73201e-b2e5-48eb-81b9-3526d320faca`.
 At the September 30, 2026 checkpoint, **74 Python ontology tests, 65 app graph tests, and
-70 deployment-orchestrator tests pass**. App typecheck, lint, environment validation, and the
+75 deployment-orchestrator tests pass**. The four environment-export tests additionally exercise
+12 real Rayfin SDK rewrite cycles, Vite loading, and the application's strict graph-binding parser.
+App typecheck, lint, environment validation, and the
 production build also passed; the existing bundle-size warning remains. Changes are published to
 `feat/dibakar`, not `main`.
 
@@ -331,6 +333,9 @@ HTTP 200, 12 rows, and no GraphQL errors.
 The canonical configuration producer now resolves public artifact metadata against the deployment
 target, rather than carrying old V6 Eventhouse/KQL/GraphQL values into V3. An explicit, verified
 native graph binding is required; discovery does not infer ownership from a GraphModel name.
+The repository's environment exporter also preserves that JSON through Rayfin rewrites and Vite
+loading, including `#` in alias maps. The browser parser remains strict; an escaped dotenv value
+is not accepted as a substitute for valid binding JSON.
 
 **Remaining interactive acceptance:** the separate Fabric/MSAL popup is outside the integrated
 browser automation's accessible pages. Hosted Fabric Connect, graph canvas/tree/filter interactions,

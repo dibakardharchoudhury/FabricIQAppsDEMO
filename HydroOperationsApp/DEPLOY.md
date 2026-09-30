@@ -52,6 +52,16 @@ RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<workspace-guid>","ontolog
 
 Keep those outer single quotes when adding alias maps: an unquoted `#` starts a dotenv comment,
 including inside JSON double quotes, and can truncate exact ontology names containing `#`.
+
+Use the repository's **`npm run env`** producer, not bare `rayfin env`, for frontend exports.
+Rayfin 1.36's environment writer escapes JSON quotes/backslashes but its reader does not undo
+them; repeated CLI rewrites otherwise corrupt the binding. The repository producer validates
+the binding and workspace, reverses only that bounded known encoding, and writes canonical
+single-quoted JSON in the primary source plus a freshly generated Vite `.env.local`. JSON Unicode
+escapes preserve alias punctuation, including `#`, apostrophes, and `$`, through dotenv/Vite.
+`prebuild`/`predev` run this producer; the canonical orchestrator also runs it after each deployment
+command, including failures, because Rayfin can rewrite configuration after the build.
+Do not repair generated `.env.local` by hand or relax the browser's strict JSON parser.
 The outer quotes are removed by dotenv and are not part of the JSON.
 Optional `nodeTypes` and
 `edgeTypes` maps resolve `getQueryableGraphType` aliases to exact ontology type names or IDs when
@@ -406,7 +416,7 @@ npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (crea
 > orchestrator from the root; they must not run this phase directly.
 
 ```powershell
-npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploys the static app
+npm run deploy      # builds (tsc + vite, repository env producer) and deploys the static app
 ```
 
 The local **Deploy app** action uses this static-only command when its saved AppBackend still exists
