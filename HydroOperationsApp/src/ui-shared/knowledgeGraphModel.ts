@@ -1,6 +1,6 @@
 import type { Equipment, Facility, Instrument, OntologyContract, OntologyGraph, System, TelemetryReading } from '../services/fabric'
 import type { Asset3DModelRecord, InspectionRecord, MaintenanceNotificationRecord, WorkOrderRecord } from '../services/rayfin'
-import { twinStatus, type TwinStatus } from '../twin'
+import { twinSignalStatus, twinStatus, type TwinStatus } from '../twin'
 
 export type KnowledgeNodeType = 'facility' | 'system' | 'equipment' | 'instrument' | 'signal' | 'ontology' | 'model' | 'work-order' | 'inspection' | 'notification'
 export type KnowledgeNode = {
@@ -246,7 +246,7 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
     }
     const node: KnowledgeNode = {
       id, entityId: entityId ?? raw.oid, type, label, subtitle,
-      status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
+      status: type === 'equipment' ? 'nodata' : type === 'instrument' || type === 'signal' ? twinSignalStatus({ id, label, nodeId: opcuaNodeId ?? '', value: reading?.value, quality: reading?.quality }) : 'ok',
       nativeOid: native ? raw.oid : undefined, ontologyEntityTypeId: entity?.id,
       facilityId: type === 'facility' ? entityId : undefined,
       equipmentId: type === 'equipment' ? entityId : undefined,
@@ -325,14 +325,15 @@ export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph 
   const equipment = new Map(nodes.filter(node => node.type === 'equipment' && node.equipmentId).map(node => [node.entityId, node]))
   const orders = input.workOrders.filter(order => equipment.has(order.equipmentId))
   const openNodeIds = new Set(orders.filter(order => !['completed', 'cancelled'].includes(order.status.toLowerCase())).map(order => `${order.equipmentId}|${order.opcuaNodeId}`))
-  for (const node of nodes) {
-    const opcuaNodeId = node.properties['OPC UA node'] ?? node.properties.opcua_node_id
-    if (opcuaNodeId && node.equipmentId && openNodeIds.has(`${node.equipmentId}|${opcuaNodeId}`)) {
-      node.status = twinStatus({ id: node.id, label: node.label, nodeId: String(opcuaNodeId), value: node.reading?.value, quality: node.reading?.quality, hasOpenIssue: true })
-    }
-  }
   for (const asset of equipment.values()) {
-    const statuses = nodes.filter(node => ['instrument', 'signal'].includes(node.type) && node.equipmentId === asset.entityId).map(node => node.status)
+    const statuses = nodes.filter(node => ['instrument', 'signal'].includes(node.type) && node.equipmentId === asset.entityId).map(node => {
+      const opcuaNodeId = String(node.properties['OPC UA node'] ?? node.properties.opcua_node_id ?? '')
+      return twinStatus({
+        id: node.id, label: node.label, nodeId: opcuaNodeId,
+        value: node.reading?.value, quality: node.reading?.quality,
+        hasOpenIssue: openNodeIds.has(`${asset.entityId}|${opcuaNodeId}`),
+      })
+    })
     asset.status = statuses.includes('crit') ? 'crit' : statuses.includes('warn') ? 'warn' : statuses.includes('ok') ? 'ok' : 'nodata'
   }
 

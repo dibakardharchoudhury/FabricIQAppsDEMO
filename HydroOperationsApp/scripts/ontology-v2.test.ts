@@ -107,7 +107,7 @@ test('retains Any primitive timeseries and complex structured timeseries metadat
   assert.equal(metadata.Weather.complexDataType?.kind, 'timeSeries')
   assert.equal((metadata.Weather.backingConfiguration?.valueBackingConfiguration as { type: string }).type, 'struct')
   assert.match(contract.warnings!.join(' '), /metadata.*not evaluated/)
-  assert.match(contract.warnings!.join(' '), /live readings still use/)
+  assert.doesNotMatch(contract.warnings!.join(' '), /Time-series bindings are metadata only/)
 })
 
 test('retains complex struct field backing metadata and rejects unknown recursive types', () => {

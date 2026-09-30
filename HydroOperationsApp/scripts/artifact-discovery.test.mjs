@@ -211,6 +211,7 @@ test('Knowledge Graph page displays available bound entities while native loadin
   assert.match(html, /Operational Knowledge Graph/)
   assert.match(html, /data-testid="canvas"/)
   assert.doesNotMatch(html, /<h1>Loading the Ontology graph<\/h1>/)
+  assert.doesNotMatch(html, /KQL.*SQL enrichments|Time-series bindings are metadata only/)
   assert.equal(canvasNodes.length, 1)
   assert.equal(canvasNodes[0].label, 'Station')
   assert.equal(canvasNodes[0].nativeOid, undefined)

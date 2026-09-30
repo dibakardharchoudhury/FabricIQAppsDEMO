@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Activity, AlertTriangle, Factory, Gauge, MapPin, Maximize2, Minimize2, Plus, Radio, Wrench } from 'lucide-react'
 import { FacilityMap, type AssetPin, type FacilityStat } from '../../components/FacilityMap'
-import { twinStatus, type TwinStatus } from '../../twin'
+import { twinSignalStatus, twinStatus, type TwinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
 import { useExpandedView } from '../hooks/useExpandedView'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
@@ -34,8 +34,9 @@ export function OverviewPage() {
     const health = { ok: 0, warn: 0, crit: 0, nodata: 0 }
     const signals = instruments.map(instrument => {
       const reading = telemetryByNode.get(instrument.opcua_node_id)
-      const status = twinStatus({ id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id) })
-      health[status]++
+      const signal = { id: instrument.instrument_id, label: instrument.tag ?? instrument.instrument_id, nodeId: instrument.opcua_node_id, value: reading?.value, quality: reading?.quality, hasOpenIssue: openOrderNodes.has(instrument.opcua_node_id) }
+      const status = twinSignalStatus(signal)
+      health[twinStatus(signal)]++
       return { label: instrument.tag ?? instrument.instrument_id, value: reading?.value, unit: instrument.unit, quality: reading?.quality, status, eventTime: reading?.eventTime }
     })
     const worst: TwinStatus = health.crit ? 'crit' : health.warn ? 'warn' : health.ok ? 'ok' : 'nodata'

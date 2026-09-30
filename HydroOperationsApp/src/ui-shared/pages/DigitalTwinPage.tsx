@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo } from 'react'
 import { Activity, Box, ExternalLink, Factory, Gauge, Maximize2, Minimize2 } from 'lucide-react'
 import type { TwinSignal, TwinStatus } from '../../twin'
-import { ageLabel, freshnessOf, twinStatus } from '../../twin'
+import { ageLabel, freshnessOf, twinSignalStatus, twinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
@@ -63,7 +63,7 @@ export function DigitalTwinPage() {
   }), [assetInstruments, readings, openOrderNodes])
   const twinHealth = useMemo<Record<TwinStatus, number>>(() => {
     const counts = { ok: 0, warn: 0, crit: 0, nodata: 0 }
-    for (const signal of twinSignals) counts[twinStatus(signal)]++
+    for (const signal of twinSignals) counts[twinSignalStatus(signal)]++
     return counts
   }, [twinSignals])
   const eventTimes = twinSignals.map(signal => signal.eventTime ? Date.parse(signal.eventTime) : NaN).filter(time => !Number.isNaN(time)).sort((a, b) => a - b)
@@ -130,7 +130,7 @@ function TwinMetric({ icon: Icon, label, value, detail, tone = 'muted' }: { icon
 }
 
 function TwinLegend({ counts }: { counts: Record<TwinStatus, number> }) {
-  return <div className="v2-twin-health"><span><i className="ok" />OK {counts.ok}</span><span><i className="warn" />UNCERTAIN {counts.warn}</span><span><i className="crit" />BAD / open work order {counts.crit}</span><span><i className="nodata" />No data {counts.nodata}</span></div>
+  return <div className="v2-twin-health"><span><i className="ok" />OK {counts.ok}</span><span><i className="warn" />UNCERTAIN {counts.warn}</span><span><i className="crit" />BAD {counts.crit}</span><span><i className="nodata" />No data {counts.nodata}</span></div>
 }
 
 function ModelFallback({ model }: { model: { modelName: string; format: string; modelUrl: string; thumbnailUrl?: string; version?: string; fileSizeMb?: number } }) {

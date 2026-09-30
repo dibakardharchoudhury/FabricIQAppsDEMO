@@ -2,7 +2,7 @@
 import '@google/model-viewer'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Asset3DModelRecord } from '../services/rayfin'
-import { twinStatus, twinValueText, ageLabel, freshnessOf, type TwinSignal } from '../twin'
+import { twinSignalStatus, twinValueText, ageLabel, freshnessOf, type TwinSignal } from '../twin'
 
 // `<model-viewer>` is a framework-agnostic web component; declare it so TSX accepts it.
 declare global {
@@ -86,7 +86,7 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
 
   const counts = useMemo(() => {
     const c = { ok: 0, warn: 0, crit: 0, nodata: 0 }
-    for (const signal of signals) c[twinStatus(signal)]++
+    for (const signal of signals) c[twinSignalStatus(signal)]++
     return c
   }, [signals])
 
@@ -130,7 +130,7 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
         <span className="twin-live-chips">
           <em className="ok" title="Healthy">{counts.ok}</em>
           <em className="warn" title="Uncertain">{counts.warn}</em>
-          <em className="crit" title="Bad / open order">{counts.crit}</em>
+          <em className="crit" title="Bad quality">{counts.crit}</em>
         </span>
         {medianSignalMs
           ? <small className={`twin-live-age ${twinFresh ? 'fresh' : 'stale'}`} title={`Median reading ${new Date(medianSignalMs).toLocaleTimeString()}`}>{twinFresh ? 'Live' : 'Stale'} · {ageLabel(medianSignalIso)}</small>
@@ -155,7 +155,7 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
       >
         {placements.map((placement, index) => {
           const signal = signals[index]
-          const status = twinStatus(signal)
+          const status = twinSignalStatus(signal)
           return (
             <button
               key={signal.id}
@@ -175,7 +175,7 @@ export function AssetModelViewer({ model, signals, assetLabel, updatedAt }: { mo
 
       {active && (
         <div className="twin-detail">
-          <span className={`twin-detail-mark ${twinStatus(active)}`} />
+          <span className={`twin-detail-mark ${twinSignalStatus(active)}`} />
           <div className="twin-detail-body">
             <strong>{active.label}</strong>
             <span className="twin-detail-val">

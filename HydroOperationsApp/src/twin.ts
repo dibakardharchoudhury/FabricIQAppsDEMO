@@ -16,8 +16,13 @@ export type TwinSignal = {
 export type TwinStatus = 'crit' | 'warn' | 'ok' | 'nodata'
 
 export function twinStatus(signal: TwinSignal): TwinStatus {
-  const quality = (signal.quality ?? '').toLowerCase()
-  if (quality === 'bad' || signal.hasOpenIssue) return 'crit'
+  return signal.hasOpenIssue ? 'crit' : twinSignalStatus(signal)
+}
+
+// Maintenance contributes to asset health, not the quality of an individual reading.
+export function twinSignalStatus(signal: TwinSignal): TwinStatus {
+  const quality = (signal.quality ?? '').trim().toLowerCase()
+  if (quality === 'bad') return 'crit'
   if (quality === 'uncertain') return 'warn'
   if (signal.value === undefined || signal.value === null || signal.value === '') return 'nodata'
   return 'ok'

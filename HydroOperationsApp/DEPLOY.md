@@ -30,7 +30,8 @@ product issues are not claimed resolved.
 NB09 `data_agent_publication_status=published` and NB10 `configured` record source/configuration
 outcomes, not the whole success gate. Required setup needs the bounded facility-record smoke check
 to set Data Agent deployment `ready` and runtime `verified`; failed or inconclusive checks must
-propagate through NB09/NB11/setup. Only explicit `disabled` allows the corresponding `skipped` path.
+propagate through NB09/setup. NB11's SQL source is configured independently of ontology runtime
+readiness and preserves NB09's status. Only explicit `disabled` allows the corresponding `skipped` path.
 NB10 leaves the agent stopped; `configured` verifies readback, not execution or delivery.
 See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
 The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
@@ -103,8 +104,9 @@ The app validates live numeric generation `2`, TMDL, graph metadata, queryable t
 native responses using GET `graphModels/{id}/getQueryableGraphType?beta=true` and POST
 `graphModels/{id}/executeQuery?beta=true` under the workspace REST path. It follows opaque string
 `result.nextPage` continuations and rejects warnings/errors, truncation, malformed/dangling results,
-or more than 2,000 nodes/4,000 edges. Native topology alone drives graph canvas/tree/scopes;
-KQL/SQL enrich actual native entities, with no GraphQL or STID/FK topology fallback.
+or more than 2,000 nodes/4,000 edges. Native results take precedence over the progressive
+Ontology-bound STID view; both retain KQL/SQL context. Only declared ontology bindings supply
+progressive relationships, never arbitrary physical foreign keys.
 See [the graph contract and acceptance checks](../docs/knowledge-graph.md).
 
 ## Agent one-shot deployment

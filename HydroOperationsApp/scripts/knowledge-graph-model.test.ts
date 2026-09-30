@@ -101,6 +101,24 @@ test('preserves main presentation for one-to-one signals and the existing inspec
   assert.ok(!graph.edges.some(edge => edge.nativeOid === 'si'))
 })
 
+test('current GOOD quality is not turned red by an open maintenance order', () => {
+  const options = input({
+    telemetry: [{ opcuaNodeId: 'node-1', eventTime: '2026-09-30T19:00:00Z', value: 326.702, quality: 'GOOD' }],
+  })
+  const graph = buildKnowledgeGraph(options)
+  const instrument = graph.nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(instrument.status, 'ok')
+  assert.equal(instrument.reading?.quality, 'GOOD')
+  assert.equal(instrument.reading?.value, 326.702)
+  assert.equal(graph.nodes.find(node => node.id === 'equipment:E1')?.status, 'crit')
+  assert.ok(graph.edges.some(edge => edge.source === 'work-order:W1' && edge.target === 'equipment:E1'))
+  options.telemetry = [{ opcuaNodeId: 'node-1', eventTime: '2026-09-30T19:00:30Z', value: 327.1, quality: 'UNCERTAIN' }]
+  const refreshed = buildKnowledgeGraph(options).nodes.find(node => node.id === 'instrument:I1')!
+  assert.equal(refreshed.status, 'warn')
+  assert.equal(refreshed.reading?.eventTime, '2026-09-30T19:00:30Z')
+  assert.equal(refreshed.reading?.value, 327.1)
+})
+
 test('renders Ontology-bound STID with KQL and SQL context before the native query completes', () => {
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null,

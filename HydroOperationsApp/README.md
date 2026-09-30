@@ -40,6 +40,10 @@ See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
 scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
 
+Individual signal colours in the graph, 3D twin, and map reflect the reading's quality.
+Open work orders remain visible and contribute to asset-level health, but do not turn a GOOD
+reading red. Freshness is separate and uses the event timestamp, not the last successful fetch.
+
 ### Ontology v2 only
 
 The app requires **v2 TMDL** definitions over the Fabric REST `/v1` endpoints (REST API version

@@ -180,7 +180,6 @@ function property(node: Node, entityName: string, warnings: Set<string>): [strin
       ...(fields !== undefined ? { fields } : {}),
     }
     validateBacking(backingConfiguration, backing)
-    if (type === 'timeSeries') warnings.add('Time-series bindings are metadata only; live readings still use the app Eventhouse OPC UA join.')
   }
   return [propertyName, { id: namedField(node, 'lineageTag') ?? `${entityName}.${propertyName}`, dataType: dataType!, complexDataType, backingConfiguration }]
 }
