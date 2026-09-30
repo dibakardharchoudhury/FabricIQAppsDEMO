@@ -90,8 +90,6 @@ The existing `ops_agent_copy_playbook=false` setting remains supported for opera
 to generate the playbook in the portal. The default is still `true`, retaining the full authored
 BAD/UNCERTAIN rules, Teams destination, and email action. Explicit manual generation is reported
 as such; an API rejection never causes the notebook to silently remove the playbook or actions.
-Copied rules have absolute time-series end dates, so RTI_010 refreshes those end dates on each
-deployment rather than preserving an expired historical monitoring window.
 
 NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
 ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.

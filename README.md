@@ -83,8 +83,6 @@ The Operations Agent is configured in a **stopped** state; `configured` does not
 run. The retained `OperationsAgentV1` business-configuration schema is not ontology generation 1.
 The latest live configuration required only restoring the action enum from `DataPipeline` to the
 original `Pipeline`; full playbook/actions/Teams/email configuration was retained, not stripped.
-RTI_010 also refreshes the copied BAD/UNCERTAIN rules' absolute time-series end dates on every
-deployment so a previously generated playbook cannot silently monitor an expired historical window.
 
 The September 29 report described generation-2 onboarding limitations and
 [Fabric known issue 1970](https://support.fabric.microsoft.com/known-issues/) covers Operations Agent

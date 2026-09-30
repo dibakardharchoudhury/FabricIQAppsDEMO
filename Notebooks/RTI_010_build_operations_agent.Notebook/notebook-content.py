@@ -154,7 +154,6 @@ import json
 import time
 import base64
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -768,48 +767,20 @@ ACTION_PARAMETERS = [
 ]
 
 
-def refresh_rule_time_ranges(config: dict, now=None) -> int:
-    """Move preserved time-series rule windows forward so copied playbooks monitor current data."""
-    rules = (config.get("playbook") or {}).get("RuleDefinitions", {})
-    if not rules:
-        return 0
-    window_end = (now or datetime.now(timezone.utc)) + timedelta(days=3650)
-    end_value = window_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-    refreshed = 0
-    for rule_id, rule in rules.items():
-        class_expression = rule.get("ClassExpression")
-        encoded = class_expression.get("Expression") if isinstance(class_expression, dict) else None
-        if not isinstance(encoded, str):
-            raise RuntimeError(f"Operations Agent rule {rule_id} has no query expression.")
-        try:
-            expression = json.loads(encoded)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Operations Agent rule {rule_id} has invalid query JSON.") from exc
-        time_range = (expression.get("TimeSeriesSelector") or {}).get("TimeRange")
-        if not isinstance(time_range, dict) or not time_range.get("Start"):
-            raise RuntimeError(f"Operations Agent rule {rule_id} has no complete time-series range.")
-        time_range["End"] = end_value
-        class_expression["Expression"] = json.dumps(expression, separators=(",", ":"))
-        refreshed += 1
-    return refreshed
-
-
 def build_configurations(should_run: Optional[bool] = None,
                          copy_playbook: Optional[bool] = None,
                          team_id: Optional[str] = None,
                          channel_id: Optional[str] = None,
                          datasource_id: Optional[str] = None,
-                         pipeline_id: Optional[str] = None,
-                         rule_window_now=None) -> dict:
+                         pipeline_id: Optional[str] = None) -> dict:
     """Configurations.json body — the byte-exact working RTI_Demo_OpsAgent_V3 definition (Fabric's
     own git commit-back), with only the per-workspace bindings injected: the Ontology data source is
     re-keyed to this workspace's ontology (the real plain item id + the REAL workspace id — the
     documented resolvable form; the encoded id + zeros ws that Fabric writes to git 404s via REST),
     the action's pipeline jobArtifactId/jobWorkspaceId point at the created Pipe_SendEmailAlert, and
     the Teams destination is overridden. The full playbook (OntologyDefinitions + BAD/UNCERTAIN
-    RuleDefinitions) is retained while its absolute time-series end dates are refreshed so copied
-    rules do not expire. `identity` is never sent — the running user's delegated token provisions
-    Run-as.
+    RuleDefinitions) is pushed verbatim. `identity` is never sent — the running user's delegated
+    token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
     keep_playbook = ops_agent_copy_playbook if copy_playbook is None else copy_playbook
@@ -858,9 +829,7 @@ def build_configurations(should_run: Optional[bool] = None,
                         "Key": f"{key_prefix}:{p['name']}",
                         "Description": p["description"],
                     })
-    if keep_playbook:
-        refresh_rule_time_ranges(config, now=rule_window_now)
-    else:
+    if not keep_playbook:
         config.pop("playbook", None)
     return config
 
