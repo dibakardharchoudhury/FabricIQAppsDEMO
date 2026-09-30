@@ -262,7 +262,11 @@ App typecheck, lint, environment validation, and the
 production build also passed; the existing bundle-size warning remains. Changes are published to
 `feat/dibakar`, not `main`.
 
-### Completed live execution
+### Earlier live execution (before the requested clean rebuild)
+
+The user subsequently requested a from-scratch rebuild of this same workspace. The IDs and
+row counts in this earlier acceptance record are historical, not the identities of the rebuilt
+resources. See **Fresh rebuild acceptance** below for the current deployment.
 
 | Execution | Completed run ID | Verified result |
 | --- | --- | --- |
@@ -337,16 +341,61 @@ The repository's environment exporter also preserves that JSON through Rayfin re
 loading, including `#` in alias maps. The browser parser remains strict; an escaped dotenv value
 is not accepted as a substitute for valid binding JSON.
 
-**Latest repair is not yet deployed:** the last verified hosted build is **1.0.614 / `05ead69`**.
-Its generated graph binding failed the actual Vite-load/strict-parser check because Rayfin rewrites
-escaped the JSON. The producer repair is committed as `ba82f68` and passes the regression tests
-above, including recovery of the real affected binding in an isolated fixture. Its canonical
-redeployment stopped at SPA discovery when Azure Continuous Access Evaluation required fresh
-interactive authentication (`InteractionRequired`, `TokenCreatedWithOutdatedPolicies`).
-The unattended sign-in was cancelled before deployment changes; no authentication policy was
-bypassed. Complete fresh Microsoft sign-in when rerunning the canonical orchestrator, then require
-`SUCCESS`, verify the Vite-loaded binding against the expected workspace/ontology IDs, and verify
-the new hosted build. **Do not treat the currently hosted graph page as repaired.**
+The earlier build **1.0.614 / `05ead69`** failed the actual Vite-load/strict-parser binding check.
+Producer repair `ba82f68` subsequently passed real deployment acceptance during the clean rebuild
+below. Fresh administrator sign-in resolved the intervening Azure Continuous Access Evaluation
+challenge (`InteractionRequired`, `TokenCreatedWithOutdatedPolicies`); no authentication policy
+was bypassed.
+
+### Fresh rebuild acceptance
+
+On September 30 the existing reset workflow removed the inspected demo resources from
+`ws-vteam-demoV3` and verified the workspace empty. Git import from `feat/dibakar` succeeded,
+the fresh Weather Environment published, and the new setup pipeline
+`009eb90e-c5ee-4488-a272-0b46644d517f` completed. The workspace, capacity, Key Vault, tenant SPA,
+local repository, and existing Entra redirects were preserved. Only the permitted local Rayfin
+state files were moved to unique backups.
+
+The new native projection was configured through the newly created ontology's Manage graph UI:
+
+- Ontology: `b95ea082-8a58-405c-a924-89a3e661f697`, verified generation **2**.
+- Managed graph: `ea642a1e-db47-4b28-8a8e-c101a08acb0d`.
+- Native refresh: `2d113fdd-2c10-418f-b849-51b49b8fd27b`, **Completed** at `04:51:42Z`.
+- Actual application contract/parser/GQL client: **111 nodes and 108 edges**, using the supported
+  four-entity/three-relationship projection without removing the ontology's TimeSeries declarations.
+
+The canonical deployment and subsequent binding redeployment both completed with `SUCCESS`:
+**https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net**.
+The new AppBackend is `3860fb61-bd8b-40da-94b2-d651f1c0a1d4`. Protected hosting, backend browser
+paths, delegated permissions, and redirect-preservation checks passed. Normal protected sign-in
+loaded hosted build **1.0.617 / `d5240a8`**. Generated-origin commit `71f9ad2` was pushed to the
+feature branch; `main` was not changed.
+
+After all deployment commands, the **actual generated Vite configuration** passed the application's
+strict `parseGraphBinding` check with the new expected workspace/ontology/graph IDs. Eventhouse
+and KQL database names resolve to V3. This verifies the JSON-escaping repair in the real deployment,
+not only a fixture.
+
+Fresh data acceptance subsequently completed:
+
+| Execution | New completed run | Evidence |
+| --- | --- | --- |
+| Weather | `ae823116-1c7e-4f8f-8958-63738a7666a2` | 516 forecasts, 391 observations, 516 area metrics; 120 forecast / 69 observation serving rows |
+| Stream | `fd35d0fa-ec35-4f81-a68a-6ccb3f8858c1` | 9,003 current-run rows across 90 signals; event timestamps `04:48:35Z` through `05:12:49Z` |
+| RTI011, executed once after streaming | `61e718b5-ef39-46a2-b363-83a5b70ac4ba` | Completed `05:19:03Z`; operational seed and GraphQL provisioning succeeded |
+
+The rebuilt SQL database `9cf6db24-754d-4ee9-ac3b-1a451699a677` contains **12 WorkOrders,
+30 Inspections, 6 Notifications, 12 SpareParts, and 15 Asset3DModels**. New STID GraphQL API
+`03e84dfd-7cd1-4566-9f8b-9106ab59fcec` returned **3 facilities, 3 systems, 15 equipment, and
+90 instruments**. The new hosted application's authenticated backend WorkOrder request returned
+**HTTP 200, 12 rows, and no GraphQL errors**.
+
+Finally, the actual application model was rerun using the postdeployment Vite binding, the fresh
+native graph, current KQL readings, and real rows exported from the rebuilt SQL database.
+It passed with **174 combined nodes / 171 edges**, **90 telemetry-enriched native instruments**,
+all **three facility scopes** (58 nodes each), and all **15 asset scopes**.
+STID topology inputs were empty throughout that check; topology remains native-ontology-owned.
+This is fresh API/model acceptance, not reused evidence from the deleted resources.
 
 **Remaining interactive acceptance:** the separate Fabric/MSAL popup is outside the integrated
 browser automation's accessible pages. Hosted Fabric Connect, graph canvas/tree/filter interactions,
