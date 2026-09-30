@@ -38,12 +38,19 @@ availability, which may be an identity-matched Fabric private-hosting sign-in ga
 the application shell. It does not verify interactive authenticated application acceptance,
 agent execution, alert delivery, or native graph readiness.
 
-The latest canonical deployment reported `SUCCESS` at 16:06 at the existing
+The last completed canonical deployment reported `SUCCESS` at 16:06 UTC at the existing
 `https://icy-twist-acc301b27a-swedencentral.webapp.fabricapps.net` host, with backend/SQL checks and
 all 32 existing SPA redirects preserved. The protected-hosting gate passed; the separate browser
 authentication popup prevented interactive app acceptance. Subsequent native/API/model checks
 passed independently, while full five-entity graph projection still returned HTTP 400.
 See the [latest V3 acceptance record](../docs/knowledge-graph.md#latest-v3-acceptance-september-30-2026).
+
+A final configuration refresh attempted at 17:27 UTC on September 30 stopped during SPA discovery
+while waiting for Azure CLI browser sign-in. With the operator unavailable, that attempt was
+cancelled before Rayfin state, build, or deployment changes. The 16:06 deployment remains in place;
+the separately applied notebook updates and their verified failure-path result remain live.
+Resume the repository's canonical deployment command after signing in with the requested tenant
+account; do not replace deployment state or work around authentication using copied token caches.
 
 For these corrections, use bounded notebook-definition updates, not another full `PreferRemote`
 Git import: an earlier full import removed generated resources, subsequently restored through setup.
