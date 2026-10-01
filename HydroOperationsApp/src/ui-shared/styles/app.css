@@ -219,7 +219,7 @@
 .kg-source-state button:hover { border-color: var(--cp-accent); color: var(--cp-accent-hover); }
 .kg-live-dot { width: 8px; height: 8px; grid-row: 1 / span 2; border-radius: 50%; background: var(--cp-success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--cp-success) 16%, transparent); }
 .kg-workspace { height: calc(100vh - 220px); min-height: 620px; display: grid; grid-template-columns: 244px minmax(520px, 1fr) 322px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--cp-accent) 12%, var(--cp-border)); border-radius: 18px; background: var(--cp-border); box-shadow: 0 24px 70px rgba(15, 23, 42, .14); }
-.kg-workspace-maximized { position: fixed; z-index: 2000; inset: 12px; width: auto; height: auto; min-height: 0; border-color: var(--cp-border-strong); border-radius: 12px; box-shadow: 0 28px 90px rgba(2, 12, 27, .34); }
+.kg-workspace.kg-workspace-maximized { position: fixed; z-index: 2000; inset: 12px; width: auto; height: auto; min-height: 0; overflow: hidden; border-color: var(--cp-border-strong); border-radius: 12px; box-shadow: 0 28px 90px rgba(2, 12, 27, .34); }
 .kg-sidebar, .kg-stage { min-width: 0; min-height: 0; background: var(--kg-glass-strong); }
 .kg-sidebar { padding: 14px; overflow: auto; backdrop-filter: blur(18px) saturate(1.2); }
 .kg-sidebar section { padding: 15px 0; border-bottom: 1px solid color-mix(in srgb, var(--cp-border) 78%, transparent); }
