@@ -1,5 +1,5 @@
 import type { Core } from 'cytoscape'
-import { Activity, Box, ChevronRight, CircleDot, Database, Focus, GitBranch, Maximize2, Radio, RefreshCw, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
+import { Activity, Box, ChevronRight, CircleDot, Database, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { queryOntologyContract, queryOntologyGraph, type OntologyContract, type OntologyGraph } from '../../services/fabric'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
@@ -7,6 +7,7 @@ import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/dig
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
 import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
+import { useExpandedView } from '../hooks/useExpandedView'
 import { useTheme } from '../hooks/useTheme'
 import { useTreeExpansion } from '../hooks/useTreeExpansion'
 
@@ -50,6 +51,7 @@ function navigateTo(tab: string) {
 export function KnowledgeGraphPage() {
   const data = useHydroOperationsData()
   const { theme } = useTheme()
+  const graphView = useExpandedView()
   const controllerRef = useRef<Core | null>(null)
   const [selection, setSelection] = useState<{ nodeId: string; assetId?: string }>()
   const [query, setQuery] = useState('')
@@ -110,6 +112,13 @@ export function KnowledgeGraphPage() {
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [cancelGraphQuery, loadOntologyGraph])
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      controllerRef.current?.resize()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [graphView.expanded])
 
   const graph = useMemo(() => buildKnowledgeGraph({
     facilities: data.stid?.facilities ?? [],
@@ -206,7 +215,7 @@ export function KnowledgeGraphPage() {
       <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
-    <div className="kg-workspace">
+    <div className={`kg-workspace${graphView.expanded ? ' kg-workspace-maximized' : ''}`}>
       <aside className="kg-sidebar kg-filters">
         <label className="kg-search"><Search size={15} /><input value={query} onChange={event => updateQuery(event.target.value)} placeholder="Find entity, ID, tag, OPC UA node…" /></label>
         <section className="kg-scope-section"><div className="kg-section-title"><span>Graph scope</span><small>{visibleNodes.length} visible</small></div><div className="kg-segmented">{([['asset', 'Selected'], ['facility', 'Facility'], ['all', 'All']] as const).map(([value, label]) => <button key={value} className={scope === value ? 'active' : ''} onClick={() => setScope(value)}>{label}</button>)}</div></section>
@@ -217,7 +226,7 @@ export function KnowledgeGraphPage() {
       <section className="kg-stage">
         <div className="kg-toolbar">
           <div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div>
-          <div className="kg-graph-actions"><button title="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button title="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button title="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Maximize2 size={16} /></button><button title="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button></div>
+          <div className="kg-graph-actions"><button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
         {visibleNodes.length ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} /> : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}
         <div className="kg-legend"><span><i className="kg-type-dot type-facility" />Facility</span><span><i className="kg-type-dot type-equipment" />Equipment</span><span><i className="kg-type-dot type-instrument" />Instrument</span><span><i className="kg-ring ring-crit" />Critical ring</span><span><i className="kg-ring ring-ok" />Healthy ring</span></div>
