@@ -114,10 +114,14 @@ export function KnowledgeGraphPage() {
   }, [cancelGraphQuery, loadOntologyGraph])
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      controllerRef.current?.resize()
+    let resizeFrame = 0
+    const layoutFrame = window.requestAnimationFrame(() => {
+      resizeFrame = window.requestAnimationFrame(() => controllerRef.current?.resize())
     })
-    return () => window.cancelAnimationFrame(frame)
+    return () => {
+      window.cancelAnimationFrame(layoutFrame)
+      window.cancelAnimationFrame(resizeFrame)
+    }
   }, [graphView.expanded])
 
   const graph = useMemo(() => buildKnowledgeGraph({
@@ -209,7 +213,7 @@ export function KnowledgeGraphPage() {
   const activeOntology = ontology ?? data.ontology
   const graphInstanceSummary = `${graph.nodes.length} materialized and operational instances · ${graph.edges.length} links`
 
-  return <div className="kg-page">
+  return <div className={`kg-page${graphView.expanded ? ' kg-page-maximized' : ''}`}>
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
       <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>

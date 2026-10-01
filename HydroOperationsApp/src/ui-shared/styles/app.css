@@ -210,6 +210,7 @@
 
 /* Knowledge graph: adaptive mission-control canvas with an operational glass inspector. */
 .kg-page { width: min(1840px, calc(100vw - 40px)); margin-left: 50%; transform: translateX(-50%); }
+.kg-page-maximized { transform: none; }
 .kg-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
 .kg-header h1 { margin: 5px 0 3px; font-family: var(--cp-font-display); font-size: 25px; letter-spacing: 0; }
 .kg-header p { margin: 0; color: var(--cp-text-muted); }
