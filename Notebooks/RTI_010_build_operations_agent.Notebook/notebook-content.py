@@ -789,12 +789,13 @@ def build_configurations(should_run: Optional[bool] = None,
     config["shouldRun"] = run_state
     if datasource_id:
         # Re-key the single Ontology data source to this workspace's ontology using the DOCUMENTED
-        # resolvable form: the ontology's real (plain) item id as key+id + the REAL workspace id.
-        # REST updateDefinition resolves {id, workspaceId} as a live entity; the encoded id + zeros
-        # ws (Fabric's git-serialization form) is NOT resolvable and returns 404 EntityNotFound.
+        # resolvable form: the ontology's real (plain) item id as key+id+connection.tableName,
+        # plus the REAL workspace id. The encoded id + zero workspace (Fabric's git-serialization
+        # form), or a source without connection.tableName, is not resolvable.
         inner = next(iter(config["configuration"]["dataSources"].values()))
         inner["id"] = datasource_id
         inner["workspaceId"] = workspace_id
+        inner["connection"] = {"tableName": datasource_id}
         config["configuration"]["dataSources"] = {datasource_id: inner}
     if pipeline_id:
         # Preserve the template's "Pipeline" action itemType; OperationsAgentV1 rejects "DataPipeline".

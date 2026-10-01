@@ -195,7 +195,12 @@ class CapabilityTests(unittest.TestCase):
         self.assertFalse(config["shouldRun"])
         conf = config["configuration"]
         self.assertEqual(conf["dataSources"], {
-            "v2-ontology": {"id": "v2-ontology", "type": "Ontology", "workspaceId": "workspace"},
+            "v2-ontology": {
+                "id": "v2-ontology",
+                "type": "Ontology",
+                "workspaceId": "workspace",
+                "connection": {"tableName": "v2-ontology"},
+            },
         })
         self.assertEqual(conf["messageDestination"], {
             "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
@@ -245,10 +250,12 @@ class CapabilityTests(unittest.TestCase):
         ns = self.operations_namespace()
         expected = ns["build_configurations"](
             datasource_id="ontology", pipeline_id="pipeline", team_id="team", channel_id="channel")
-        for changed in ("source", "playbook", "actions", "teams", "none"):
+        for changed in ("source", "source_connection", "playbook", "actions", "teams", "none"):
             actual = json.loads(json.dumps(expected))
             if changed == "source":
                 actual["configuration"]["dataSources"]["ontology"]["workspaceId"] = "other"
+            elif changed == "source_connection":
+                actual["configuration"]["dataSources"]["ontology"]["connection"]["tableName"] = "other"
             elif changed == "playbook":
                 actual["playbook"] = {}
             elif changed == "actions":
