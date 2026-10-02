@@ -121,6 +121,8 @@ test('Data Agent MCP runtime preserves session memory without inheriting UI or p
   assert.match(source, /query the complete published data source across all facilities and all assets/)
   assert.match(source, /Any scope or filters in it are context only and do not carry forward/)
   assert.match(source, /dataAgentConversation\.push/)
+  assert.match(source, /dataAgentMcpSession\?\.endpoint === endpoint/)
+  assert.match(source, /if \(dataAgentMcpSession === session\) invalidateDataAgentMcpSession\(\)/)
   assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
 })
 

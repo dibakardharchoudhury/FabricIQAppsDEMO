@@ -305,6 +305,7 @@ export function clearWorkspaceConfigCache() {
   configRevision++
   configCache = null
   configPromise = undefined
+  invalidateDataAgentMcpSession()
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -909,9 +910,25 @@ type McpContent = {
 
 type DataAgentTurn = { question: string; answer: string }
 const dataAgentConversation: DataAgentTurn[] = []
+type DataAgentMcpSession = {
+  endpoint: string
+  token: string
+  client: Client
+  toolName: string
+  questionArgument: string
+}
+let dataAgentMcpSession: DataAgentMcpSession | undefined
+let dataAgentMcpSessionPromise: Promise<DataAgentMcpSession> | undefined
 
 export function resetDataAgentConversation() {
   dataAgentConversation.length = 0
+}
+
+function invalidateDataAgentMcpSession() {
+  const session = dataAgentMcpSession
+  dataAgentMcpSession = undefined
+  dataAgentMcpSessionPromise = undefined
+  if (session) void session.client.close().catch(() => undefined)
 }
 
 function dataAgentQuestion(question: string): string {
@@ -944,20 +961,50 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   )
 }
 
-async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
-  const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
-  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },
-  })
+async function getDataAgentMcpSession(endpoint: string, token: string): Promise<DataAgentMcpSession> {
+  if (dataAgentMcpSession?.endpoint === endpoint && dataAgentMcpSession.token === token) return dataAgentMcpSession
+  if (dataAgentMcpSession && (dataAgentMcpSession.endpoint !== endpoint || dataAgentMcpSession.token !== token)) {
+    invalidateDataAgentMcpSession()
+  }
+  if (!dataAgentMcpSessionPromise) {
+    dataAgentMcpSessionPromise = (async () => {
+      const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
+      const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+        requestInit: { headers: { Authorization: 'Bearer ' + token, ActivityId: crypto.randomUUID() } },
+      })
+      try {
+        await client.connect(transport)
+        const tool = (await client.listTools()).tools[0]
+        if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
+        const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
+        if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
+        return { endpoint, token, client, toolName: tool.name, questionArgument }
+      } catch (error) {
+        await client.close().catch(() => undefined)
+        throw error
+      }
+    })()
+  }
+  const pending = dataAgentMcpSessionPromise
   try {
-    await client.connect(transport)
-    const tool = (await client.listTools()).tools[0]
-    if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
-    const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
-    if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
-    const result = await client.callTool({
-      name: tool.name,
-      arguments: { [questionArgument]: dataAgentQuestion(question) },
+    const session = await pending
+    if (dataAgentMcpSessionPromise !== pending) {
+      await session.client.close().catch(() => undefined)
+      return getDataAgentMcpSession(endpoint, token)
+    }
+    dataAgentMcpSession = session
+    return session
+  } finally {
+    if (dataAgentMcpSessionPromise === pending) dataAgentMcpSessionPromise = undefined
+  }
+}
+
+async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+  const session = await getDataAgentMcpSession(endpoint, token)
+  try {
+    const result = await session.client.callTool({
+      name: session.toolName,
+      arguments: { [session.questionArgument]: dataAgentQuestion(question) },
     }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
     const content = result.content as McpContent[]
     const text = content
@@ -983,8 +1030,9 @@ async function callDataAgentMcp(endpoint: string, token: string, question: strin
     if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
     onProgress?.(answer)
     return { text: answer, artifacts }
-  } finally {
-    await client.close().catch(() => undefined)
+  } catch (error) {
+    if (dataAgentMcpSession === session) invalidateDataAgentMcpSession()
+    throw error
   }
 }
 

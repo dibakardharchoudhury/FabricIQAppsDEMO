@@ -155,6 +155,9 @@ Invocation uses Fabric's published Data Agent MCP endpoint over the documented S
 transport. The app preserves a bounded conversation transcript for follow-up meaning, while every
 question explicitly resets data scope to all facilities and assets. It never injects the selected
 facility/asset, and scope filters from prior turns do not carry into a later question.
+Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
+and access token remain unchanged. Workspace refreshes, token/endpoint changes, or MCP failures
+invalidate that session; published generation-2 source verification still runs before every call.
 Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
 `type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
 Matching published identity plus the selected item's authoritative live generation `2` proves
