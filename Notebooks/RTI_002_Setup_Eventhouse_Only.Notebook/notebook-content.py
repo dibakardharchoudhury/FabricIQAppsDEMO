@@ -645,6 +645,34 @@ def mutate_definition_add_custom_endpoint(evt_def: dict) -> dict:
     return evt_def
 
 
+def wait_for_fabric_lro(operation_url: str, token: str,
+                        max_wait_seconds: int = 300, poll_seconds: int = 5) -> dict:
+    deadline = time.time() + max_wait_seconds
+    while time.time() <= deadline:
+        response = requests.get(
+            operation_url,
+            headers={"Authorization": "Bearer " + token},
+            timeout=60,
+        )
+        if response.status_code == 429 or response.status_code >= 500:
+            delay = int(response.headers.get("Retry-After", poll_seconds))
+            print(f"⏳ Eventstream update still provisioning ({response.status_code}); retrying in {delay}s...")
+            time.sleep(delay)
+            continue
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Eventstream update poll failed: {response.status_code} | {response.text[:3000]}"
+            )
+        result = response.json()
+        status = str(result.get("status", "")).lower()
+        if status in ("succeeded", "completed"):
+            return result
+        if status in ("failed", "cancelled"):
+            raise RuntimeError(f"Eventstream update failed: {json.dumps(result)[:3000]}")
+        time.sleep(poll_seconds)
+    raise TimeoutError("Timed out waiting for the Eventstream definition update.")
+
+
 def update_eventstream_definition(workspace_id: str, eventstream_id: str, token: str):
     evt_def, platform_part = get_eventstream_definition(workspace_id, eventstream_id, token)
     evt_def_mut = mutate_definition_add_custom_endpoint(evt_def)
@@ -671,8 +699,15 @@ def update_eventstream_definition(workspace_id: str, eventstream_id: str, token:
         raise RuntimeError(f"Failed to update Eventstream definition: {resp.status_code} | {resp.text}")
 
     if resp.status_code == 202:
-        print("⏳ Definition update accepted. Waiting 10 seconds...")
-        time.sleep(10)
+        operation_url = (
+            resp.headers.get("Location")
+            or resp.headers.get("Operation-Location")
+            or resp.headers.get("operation-location")
+        )
+        if not operation_url:
+            raise RuntimeError("Eventstream definition update returned 202 without an operation URL.")
+        print("⏳ Definition update accepted. Waiting for Fabric to finish provisioning...")
+        wait_for_fabric_lro(operation_url, token)
 
     print("✅ Eventstream definition updated.")
 
@@ -690,7 +725,8 @@ def get_eventstream_topology(workspace_id: str, eventstream_id: str, token: str)
     return topo
 
 
-def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token: str, source_name: str) -> dict:
+def _get_custom_endpoint_connection_once(workspace_id: str, eventstream_id: str,
+                                         token: str, source_name: str) -> dict:
     topo = get_eventstream_topology(workspace_id, eventstream_id, token)
     ce = next((s for s in topo.get("sources", []) if s.get("name") == source_name), None)
     if not ce:
@@ -714,12 +750,37 @@ def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token
     }
 
 
+def get_custom_endpoint_connection(workspace_id: str, eventstream_id: str, token: str,
+                                   source_name: str, max_wait_seconds: int = 300,
+                                   poll_seconds: int = 5) -> dict:
+    deadline = time.time() + max_wait_seconds
+    last_reason = f"CustomEndpoint source '{source_name}' is not ready."
+    while time.time() <= deadline:
+        try:
+            return _get_custom_endpoint_connection_once(
+                workspace_id, eventstream_id, token, source_name
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in (404, 409, 429) and (status is None or status < 500):
+                raise
+            last_reason = f"Eventstream readiness returned HTTP {status}."
+        except RuntimeError as exc:
+            if "CustomEndpoint source" not in str(exc):
+                raise
+            last_reason = str(exc)
+        print(f"⏳ {last_reason} Retrying in {poll_seconds}s...")
+        time.sleep(poll_seconds)
+    raise TimeoutError(
+        f"Timed out waiting for Eventstream source connection readiness. Last result: {last_reason}"
+    )
+
+
 eventstream_id = get_eventstream_by_name(workspace_id, fabric_eventstream_name, access_token)
 if not eventstream_id:
     eventstream_id = create_eventstream(workspace_id, fabric_eventstream_name, access_token)
 
 update_eventstream_definition(workspace_id, eventstream_id, access_token)
-time.sleep(10)
 
 custom_ep_info = get_custom_endpoint_connection(
     workspace_id,
