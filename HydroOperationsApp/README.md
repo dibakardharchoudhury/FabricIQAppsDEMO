@@ -47,9 +47,10 @@ queryable: missing, deleted, or failed sources clear the corresponding UI data r
 a persisted snapshot.
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
-and CSS. Normal navigation pages are available without page-level lazy-loading delays. Heavyweight
-interactive 3D asset-model code is fetched only after the operator explicitly requests it. The
-bootstrap uses local system fonts and does not wait on a third-party font stylesheet.
+and CSS. Normal navigation pages are available without page-level lazy-loading delays. The
+interactive Digital Twin model remains lazy-loaded when a selected asset supports it, then renders
+automatically without an additional operator action. The bootstrap uses local system fonts and does
+not wait on a third-party font stylesheet.
 
 The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
 Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a

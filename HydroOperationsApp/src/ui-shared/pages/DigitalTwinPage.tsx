@@ -1,6 +1,5 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { Activity, Box, ExternalLink, Factory, Gauge, Maximize2, Minimize2, Radio } from 'lucide-react'
-import type { Asset3DModelRecord } from '../../services/rayfin'
 import type { TwinSignal, TwinStatus } from '../../twin'
 import { ageLabel, freshnessOf, twinSignalStatus, twinStatus } from '../../twin'
 import { FacilityContext } from '../components/FacilityContext'
@@ -107,7 +106,9 @@ export function DigitalTwinPage() {
           : !canRenderModel(selectedModel.format) ? <ModelFallback model={selectedModel} />
             : !assetInstruments.length ? <EmptyTwin title="No instruments for selected asset" text="This asset has no STID instruments to render as live hotspots." compact />
               : <>
-                <OnDemandAssetModel key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selectedAsset?.tag ?? selectedAsset?.equipment_id} />
+                <Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading interactive model...</div></div>}>
+                  <AssetModelViewer key={selectedModel.modelUrl} model={selectedModel} signals={twinSignals} assetLabel={selectedAsset?.tag ?? selectedAsset?.equipment_id} />
+                </Suspense>
                 <div className="v2-twin-stage-footer"><TwinLegend counts={twinHealth} /><div className="v2-twin-model-meta"><strong>{selectedModel.modelName}</strong><small>{selectedModel.format}{selectedModel.version ? ` · ${selectedModel.version}` : ''}{selectedModel.fileSizeMb ? ` · ${selectedModel.fileSizeMb} MB` : ''}</small><a href={selectedModel.modelUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />Open model</a></div></div>
               </>}
     </section>
@@ -133,20 +134,6 @@ export function DigitalTwinPage() {
           </div>
         : detail}
   </div>
-}
-
-function OnDemandAssetModel({ model, signals, assetLabel }: {
-  model: Asset3DModelRecord
-  signals: TwinSignal[]
-  assetLabel?: string
-}) {
-  const [enabled, setEnabled] = useState(false)
-  if (!enabled) {
-    return <div className="v2-twin-fallback"><div className="twin-thumb">{model.thumbnailUrl ? <img src={model.thumbnailUrl} alt={model.modelName} loading="lazy" /> : <Box size={40} />}</div><div className="twin-meta"><strong>{model.modelName}</strong><small>The operational twin is ready. Load the interactive model only when needed.</small><button type="button" onClick={() => setEnabled(true)}>Load interactive 3D model</button></div></div>
-  }
-  return <Suspense fallback={<div className="twin-stage"><div className="twin-loading">Loading interactive model...</div></div>}>
-    <AssetModelViewer model={model} signals={signals} assetLabel={assetLabel} />
-  </Suspense>
 }
 
 function TwinMetric({ icon: Icon, label, value, detail, tone = 'muted' }: { icon: typeof Factory; label: string; value: string; detail?: string; tone?: 'good' | 'warn' | 'muted' }) {
