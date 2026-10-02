@@ -7,23 +7,17 @@ navigable operational context. It is designed for an operator who starts with a 
 and needs to move quickly between the affected facility, system, equipment, instruments, current
 readings, inspections, notifications, work orders, and 3D model.
 
-## Fluid 2D and on-demand 3D presentation
+## Fluid 2D presentation
 
 The graph opens in the performant 2D analysis view. Directed arrowheads preserve the native
 Ontology relationship orientation, while animated cyan/status-colored dashes show current
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
 relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
 
-The **3D** toolbar option lazy-loads a WebGL renderer only when selected. It uses instanced node
-and health-halo meshes, one batched edge geometry, instanced direction arrows, and a maximum of
-240 telemetry particles. Orbit, pan, zoom, hover, selection, fit, and focus controls remain
-available. The renderer lowers pixel density and geometry detail for dense graphs, pauses work
-while hidden or offscreen, and observes the same 2,000-node/4,000-edge fail-closed limits as the
-2D view. Reduced-motion preferences disable moving telemetry particles and animated 2D flow.
-
-Both modes consume the same verified native topology and operational enrichment model. The 3D
-view is a presentation mode only: it does not synthesize relationships, change direction, or
-alter Ontology, GraphModel, KQL, or SQL provenance.
+The graph intentionally provides only the 2D Cytoscape presentation. Removing the optional WebGL
+mode avoids Three.js startup, download, GPU, animation-loop, and memory costs while preserving the
+hierarchy, semantic-network, and concentric layouts. Reduced-motion preferences disable animated
+telemetry flow.
 
 The graph is not a replacement for the Fabric IQ Ontology, Real-Time Dashboard, or SQL system of
 record. It is an application view that composes those governed sources and preserves their

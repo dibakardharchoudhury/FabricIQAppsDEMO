@@ -181,7 +181,7 @@ fail setup.
 >
 > Building or extending the application Knowledge Graph? See
 > [`docs/knowledge-graph.md`](docs/knowledge-graph.md) for its Ontology relationship, source
-> federation, operational scenarios, fluid 2D/on-demand 3D presentation, health semantics, and
+> federation, operational scenarios, performant 2D presentation, health semantics, and
 > RDF/OWL path.
 
 ## Prerequisites (one‑time)

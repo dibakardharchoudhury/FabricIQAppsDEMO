@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 import type { KnowledgeEdge, KnowledgeNode } from '../src/ui-shared/knowledgeGraphModel.ts'
-import { buildKnowledgeGraph3DLayout, telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
+import { telemetryFlowEdgeIds } from '../src/ui-shared/knowledgeGraphVisuals.ts'
 
 const node = (id: string, type: KnowledgeNode['type'], reading = false): KnowledgeNode => ({
   id,
@@ -37,20 +37,6 @@ test('telemetry flow follows only governed topology toward the facility', () => 
   ])
 })
 
-test('3D layouts are deterministic, finite, and distinct', () => {
-  const nodes = Array.from({ length: 40 }, (_, index) =>
-    node(`node-${index}`, (['facility', 'system', 'equipment', 'instrument'] as const)[index % 4]))
-  const hierarchy = buildKnowledgeGraph3DLayout(nodes, 'breadthfirst')
-  const repeated = buildKnowledgeGraph3DLayout(nodes, 'breadthfirst')
-  const network = buildKnowledgeGraph3DLayout(nodes, 'cose')
-  assert.deepEqual([...hierarchy.positions], [...repeated.positions])
-  assert.notDeepEqual([...hierarchy.positions], [...network.positions])
-  assert.ok(hierarchy.radius > 0)
-  for (const point of hierarchy.positions.values()) {
-    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z))
-  }
-})
-
 test('maximum supported graph visual preparation stays within an interactive budget', () => {
   const nodes = Array.from({ length: 2000 }, (_, index) =>
     node(`node-${index}`, (['facility', 'system', 'equipment', 'instrument'] as const)[index % 4], index % 80 === 0))
@@ -62,10 +48,8 @@ test('maximum supported graph visual preparation stays within an interactive bud
     label: 'contains',
   }))
   const started = performance.now()
-  const layout = buildKnowledgeGraph3DLayout(nodes, 'concentric')
   const flowing = telemetryFlowEdgeIds(nodes, edges)
   const elapsed = performance.now() - started
-  assert.equal(layout.positions.size, 2000)
   assert.ok(flowing.size > 0)
   assert.ok(elapsed < 250, `visual preparation took ${elapsed.toFixed(1)} ms`)
 })

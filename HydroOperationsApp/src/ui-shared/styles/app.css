@@ -275,10 +275,6 @@
 .kg-toolbar { position: absolute; z-index: 3; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; pointer-events: none; }
 .kg-toolbar > * { pointer-events: auto; }
 .kg-view-controls { display: flex; align-items: center; gap: 7px; }
-.kg-view-toggle { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--cp-border); border-radius: 11px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .14); backdrop-filter: blur(14px); }
-.kg-view-toggle button { height: 29px; display: flex; align-items: center; gap: 4px; border: 0; border-radius: 7px; padding: 0 9px; background: transparent; color: var(--cp-text-muted); font-size: 10px; font-weight: 750; cursor: pointer; }
-.kg-view-toggle button:hover { color: var(--cp-accent); }
-.kg-view-toggle button.active { background: linear-gradient(145deg, color-mix(in srgb, var(--cp-accent) 18%, var(--cp-surface)), var(--cp-surface)); color: var(--cp-accent-hover); box-shadow: 0 2px 8px rgba(2, 12, 27, .12); }
 .kg-layout-control { width: 178px; display: flex; align-items: center; gap: 6px; padding-left: 10px; border: 1px solid var(--cp-border); border-radius: 11px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .14); backdrop-filter: blur(14px); }
 .kg-layout-control select { border: 0; }
 .kg-graph-actions { display: flex; padding: 3px; border: 1px solid var(--cp-border); border-radius: 11px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .14); backdrop-filter: blur(14px); }
@@ -288,12 +284,6 @@
 .kg-graph-actions button:hover { color: var(--cp-accent); background: var(--cp-accent-soft); }
 .kg-graph-actions button:disabled { opacity: .4; }
 .kg-canvas { position: relative; z-index: 1; width: 100%; height: 100%; }
-.kg-canvas-3d canvas { display: block; width: 100%; height: 100%; outline: none; }
-.kg-3d-tooltip { position: absolute; z-index: 4; left: 0; top: 0; max-width: 240px; pointer-events: none; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--cp-cyan) 42%, var(--cp-border)); border-radius: 8px; background: var(--kg-glass-strong); color: var(--cp-text); box-shadow: 0 10px 28px rgba(2, 12, 27, .2); backdrop-filter: blur(12px); font-size: 10px; font-weight: 700; }
-.kg-3d-hint { position: absolute; z-index: 2; top: 58px; left: 50%; transform: translateX(-50%); pointer-events: none; color: color-mix(in srgb, var(--cp-text-muted) 72%, transparent); font-size: 9px; letter-spacing: .03em; }
-.kg-3d-error, .kg-render-loading { height: 100%; display: grid; place-items: center; padding: 24px; color: var(--cp-text-muted); text-align: center; }
-.kg-render-loading { align-content: center; gap: 10px; }
-.kg-render-loading span { width: 24px; height: 24px; border: 2px solid var(--cp-border-strong); border-top-color: var(--cp-cyan); border-radius: 50%; animation: kg-spin .8s linear infinite; }
 .kg-legend { position: absolute; z-index: 3; bottom: 12px; left: 50%; display: flex; align-items: center; gap: 12px; transform: translateX(-50%); padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 999px; background: var(--kg-glass); box-shadow: 0 10px 28px rgba(2, 12, 27, .12); backdrop-filter: blur(14px); color: var(--cp-text-muted); font-size: 9px; white-space: nowrap; }
 .kg-legend span { display: flex; align-items: center; gap: 5px; }
 .kg-relationship-swatch { width: 23px; height: 2px; border-radius: 999px; background: var(--kg-edge-rest); }
@@ -348,9 +338,8 @@
 }
 @keyframes kg-critical-pulse { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--cp-danger) 7%, transparent), 0 12px 28px rgba(15, 23, 42, .22); } }
 @keyframes kg-flow { to { background-position: 11px 0; } }
-@keyframes kg-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .kg-flow-swatch, .kg-render-loading span { animation: none; }
+  .kg-flow-swatch { animation: none; }
 }
 @media (max-width: 1100px) { .kg-workspace { grid-template-columns: 210px minmax(430px, 1fr) 270px; } .kg-legend { display: none; } }
 @media (max-width: 800px) { .kg-page { width: 100%; transform: none; margin-left: 0; } .kg-header { align-items: flex-start; flex-direction: column; } .kg-workspace { height: auto; min-height: 0; grid-template-columns: 1fr; overflow: visible; } .kg-filters, .kg-inspector { border: 0; } .kg-stage { height: 68vh; min-height: 480px; border-block: 1px solid var(--cp-border); } .kg-toolbar { gap: 6px; } .kg-layout-control { display: none; } .kg-graph-actions select { display: none; } .kg-asset-tree .v2-tree-panel { max-height: 280px; overflow: auto; } }

@@ -46,16 +46,15 @@ discovery. The live GraphQL/KQL requests still determine whether those sources e
 queryable: missing, deleted, or failed sources clear the corresponding UI data rather than displaying
 a persisted snapshot.
 
-The entry point loads only the selected UI shell and active page. Weather/Leaflet, telemetry,
-Copilot, Digital Twin, Knowledge Graph, maintenance, and administration code are fetched on demand.
-The initial HTML includes a lightweight branded fallback, uses local system fonts, and does not wait
-on a third-party font stylesheet before showing application-owned content.
+The initial HTML stays small and references browser-compressible, cacheable application JavaScript
+and CSS. Normal navigation pages are available without page-level lazy-loading delays. Heavyweight
+interactive 3D asset-model code is fetched only after the operator explicitly requests it. The
+bootstrap uses local system fonts and does not wait on a third-party font stylesheet.
 
 The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
-Cytoscape 2D analysis view is the default; an optional, lazy-loaded WebGL 3D view adds orbit controls,
-instanced nodes, directional arrows, and bounded live-telemetry particles without increasing the
-initial app bundle. It defaults to the selected turbine and synchronizes that selection with
-Overview, Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
+Cytoscape 2D analysis view provides hierarchy, force-directed, and concentric layouts without a
+WebGL dependency. It defaults to the selected turbine and synchronizes that selection with Overview,
+Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
 **generation-2 Ontology** and an explicitly bound,
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
 Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.

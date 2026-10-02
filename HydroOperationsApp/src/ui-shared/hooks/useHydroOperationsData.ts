@@ -39,6 +39,8 @@ const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
 const STID_POLL_MS = 30_000
 const TELEMETRY_POLL_MS = 30_000
+const TELEMETRY_AGE_TICK_MS = 15_000
+const JOB_PROGRESS_TICK_MS = 1_000
 
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
@@ -573,7 +575,7 @@ function useHydroOperationsDataController() {
 
   useEffect(() => {
     if (!telemetryLive) return
-    const id = window.setInterval(() => setNow(Date.now()), 1_000)
+    const id = window.setInterval(() => setNow(Date.now()), TELEMETRY_AGE_TICK_MS)
     return () => window.clearInterval(id)
   }, [telemetryLive])
 
@@ -605,7 +607,7 @@ function useHydroOperationsDataController() {
       })
     }
     tick()
-    const id = window.setInterval(tick, 500)
+    const id = window.setInterval(tick, JOB_PROGRESS_TICK_MS)
     return () => window.clearInterval(id)
   }, [jobKeys])
 
