@@ -76,7 +76,7 @@ class OntologySetupContractTests(unittest.TestCase):
         exec(compile(ast.Module(body=[assignment], type_ignores=[]), ORCHESTRATOR, "exec"), namespace)
         activities = {activity["name"]: activity for activity in namespace["setup_dag"]["activities"]}
         self.assertEqual(activities["NB09_dataagent"]["dependencies"], ["NB06_tsbind"])
-        self.assertEqual(activities["NB10_opsagent"]["dependencies"], ["NB09_dataagent"])
+        self.assertEqual(activities["NB10_opsagent"]["dependencies"], ["NB06_tsbind"])
         for name in ("NB09_dataagent", "NB10_opsagent"):
             self.assertTrue(activities[name]["args"]["useRootDefaultLakehouse"])
         self.assertEqual(activities["NBW01_weather"]["dependencies"], [])
