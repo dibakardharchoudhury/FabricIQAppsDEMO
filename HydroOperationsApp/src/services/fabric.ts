@@ -1,4 +1,6 @@
 import { PublicClientApplication } from '@azure/msal-browser'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { type AgentAnswer } from './assistantStream'
 import { invokeVerifiedDataAgent, requireDataAgentEndpoint, selectDataAgent } from './artifactDiscovery'
 import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
@@ -945,10 +947,6 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
 }
 
 async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
-  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
-    import('@modelcontextprotocol/sdk/client/index.js'),
-    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
-  ])
   const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
     requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },

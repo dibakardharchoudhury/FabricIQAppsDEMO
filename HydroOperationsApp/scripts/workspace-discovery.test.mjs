@@ -18,11 +18,16 @@ const graphDefinition = { definition: { parts: [{
   path: 'entities/facilities.tmdl', payloadType: 'InlineBase64',
   payload: Buffer.from('entity facilities\n    backingTable: silver_facilities\n    keyProperty: facility_id\n    property facility_id\n        dataType: string\n').toString('base64'),
 }] } }
+const mcpDependencies = {
+  '@modelcontextprotocol/sdk/client/index.js': { Client: class {} },
+  '@modelcontextprotocol/sdk/client/streamableHttp.js': { StreamableHTTPClientTransport: class {} },
+}
 
 function graphService(onRequest = async () => undefined) {
   const requests = []
   const dependencies = {
     ...serviceDependencies,
+    ...mcpDependencies,
     './artifactDiscovery': { selectDataAgent: () => undefined },
     '@azure/msal-browser': { PublicClientApplication: class {
       async initialize() {}
@@ -72,6 +77,7 @@ function weatherService() {
   const requests = []
   const dependencies = {
     ...serviceDependencies,
+    ...mcpDependencies,
     './artifactDiscovery': { selectDataAgent: () => undefined },
     '@azure/msal-browser': { PublicClientApplication: class {
       async initialize() {}
@@ -107,6 +113,12 @@ function weatherService() {
   )
   return { service: exports, requests }
 }
+
+test('Data Agent MCP runtime is statically bundled for deployment-safe queries', () => {
+  assert.match(source, /import \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
+  assert.match(source, /import \{ StreamableHTTPClientTransport \} from '@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'/)
+  assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
+})
 
 test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {
   const { service, requests } = weatherService()
@@ -204,7 +216,7 @@ test('failed contract refresh prevents reuse of both discovery data and cached n
   assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
 })
 
-test('changed ontology selection cannot reuse the previous ontology native graph', async () => {
+test('workspace refresh cannot replace the explicit ontology binding with discovery', async () => {
   const replacement = '44444444-4444-4444-4444-444444444444'
   let changed = false
   const { service, requests } = graphService(async url => {
@@ -216,8 +228,9 @@ test('changed ontology selection cannot reuse the previous ontology native graph
   await service.queryOntologyGraph()
   changed = true
   service.clearWorkspaceConfigCache()
-  await assert.rejects(service.queryOntologyGraph(), /different workspace or ontology/)
-  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
+  assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
+  assert.equal((await service.queryOntologyContract()).id, ontologyId)
+  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0)
 })
 // Execute the production discovery and environment readers without browser MSAL or service writes.
 const constants = source.slice(source.indexOf('const clientId ='), source.indexOf('const msal ='))
