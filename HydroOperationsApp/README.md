@@ -158,9 +158,9 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
 
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
-- **Agent provisioning defaults to enabled.** `auto` also attempts the real capability; only
-  `disabled` opts out. RTI_010 retains Operations Agent, playbook/actions, Teams, and
-  `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. Required failures propagate
+- **Agent provisioning is always attempted; there are no agent mode or skip flags.** RTI_010
+  retains both Operations Agents, their separate playbooks/actions, Teams, and
+  `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. Real failures propagate
   through RTI_009/010/011 and setup. Review deployment status/reasons and validate playbook execution
   and alert delivery; an Outlook connection, item creation, or completed job alone does not prove
   runtime readiness. The latest live NB10 attempt retained the full configuration after restoring
@@ -171,11 +171,11 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
   facility-record smoke check sets `data_agent_deployment_status=ready` and
   `data_agent_runtime_status=verified`; execution provenance is not attested, and this does not
   certify SQL/combined-source answers or the whole agent. NB10 remains `configured`/stopped.
-  NB11 checks the matching smoke evidence and exact ontology-source subset, allowing added SQL
-  without invalidating evidence when the ontology configuration is retained. Failed or inconclusive
-  required checks fail NB09/NB11/setup. The revised NB09 was run once and correctly failed on the
-  actual unsupported-Ontology-API semantic error despite HTTP 200 / `isError: false`. Persisted
-  deployment/runtime are `failed`, while publication and SQL-source status remain `published`.
+  NB11 always attempts to extend the live Data Agent with SQL, preserves existing sources and
+  custom configuration, and requires exact draft/published SQL-source readback; it does not treat
+  NB09 runtime evidence as proof of SQL or combined-source execution. Failed or inconclusive NB09
+  checks fail setup except for the exact temporary unsupported-Ontology-v2 product response.
+  That response is persisted as `known_product_limitation`, while publication remains `published`.
   Both draft and published configurations retained all five SQL tables, all five ontology
   elements, and custom instructions/selections; a subsequent SQL-only MCP query still returned
   exactly `{"workOrderCount":12}`. This validates failure handling and preservation, not healthy

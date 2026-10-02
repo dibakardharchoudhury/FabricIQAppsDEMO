@@ -37,11 +37,12 @@
 # rejected, not migrated or deleted. Binding reruns preserve live TMDL/custom parts
 # and verify service readback. REST `/v1` and suffixes such as `_V9` are not generations.
 #
-# Agent notebook completion is not runtime readiness. `enabled` (default) and `auto`
-# require actual provisioning; only explicit `disabled` skips. NB09 verifies its v2
-# draft/published identity and attempts a delegated MCP ontology-only query. Publication,
-# semantic errors returned as text, and inconclusive functional smoke results cannot
-# pass the runtime gate. NB10 restores the full playbook, Teams/action and email
+# Agent provisioning is always attempted; there are no mode or skip flags. Notebook
+# completion is not runtime readiness. NB09 verifies its v2 draft/published identity
+# and attempts a delegated MCP ontology-only query. Only Fabric's exact documented
+# temporary unsupported-Ontology-v2 response is reported as a non-ready known product
+# limitation; other semantic errors and inconclusive results fail. NB10 restores the
+# full playbook, Teams/action and email
 # pipeline with definition readback. Both reject v1 and propagate actual API failures.
 # NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
 # independent of Data Agent availability. The Knowledge Graph uses native

@@ -42,10 +42,11 @@
 # Lakehouse. Its children use `useRootDefaultLakehouse`; do not rename the notebooks.
 # Ontology creation/binding is v2-only (live integer `properties.generation == 2`).
 # Existing v1 is rejected, not migrated/deleted. `_V9`, REST `/v1`, and ADLS Gen2
-# are not ontology generation indicators. Agent modes default to `enabled`; `auto`
-# also attempts full provisioning. Data Agent publication verifies source identity.
+# are not ontology generation indicators. Agent provisioning is always attempted;
+# there are no agent mode or skip flags. Data Agent publication verifies source identity.
 # Operations Agent provisions the playbook, Teams destination and email pipeline.
-# Explicit `disabled` skips integration. Required failures abort setup.
+# Real failures abort setup; NB09 alone reports the exact documented temporary
+# unsupported-Ontology-v2 product response without claiming runtime readiness.
 
 
 # CELL ********************

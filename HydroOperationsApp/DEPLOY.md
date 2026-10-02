@@ -16,24 +16,22 @@ an unused `env_suffix` through the RTI setup workflow, then resolve the new onto
 sources. REST `/v1` URLs and environment suffixes such as `V9` are not ontology generations.
 
 Core ontology, SQL/GraphQL, dashboard, weather, and app-hosting completion do not establish agent
-readiness. Both agent modes default to `enabled`; `auto` is a backward-compatible alias that also
-attempts real provisioning, not a static blocked result. Data Agent provisioning verifies v2
-source identity/readback. Operations Agent provisioning retains playbook/actions, Teams, and
-email-alert setup against the verified v2 ontology. Only explicit `disabled` skips an agent.
-Required failures propagate through RTI_009/010/011 and setup. Latest live attempts verified source
+readiness. Agent provisioning is always attempted; there are no agent mode or skip flags. Data
+Agent provisioning verifies v2 source identity/readback. Operations Agent provisioning retains
+separate Ontology/Eventhouse playbooks/actions, Teams, and email-alert setup. Real failures
+propagate through RTI_009/010/011 and setup. Latest live attempts verified source
 publication and stopped-agent configuration, not complete capability readiness: the ontology MCP
 question failed with an unsupported API version even though its envelope said `isError: false`.
-The revised NB09 was executed once and correctly failed at required readiness on the real semantic
-error. Persisted deployment/runtime status is `failed`; publication and SQL-source status remain
-`published`. This is passed failure-path validation, not a healthy ontology smoke test. External
-product issues are not claimed resolved.
+NB09 records only that exact temporary product response as `known_product_limitation`; publication
+remains `published`. This is not healthy ontology runtime evidence. External product issues are not
+claimed resolved.
 NB09 `data_agent_publication_status=published` and NB10 `configured` record source/configuration
-outcomes, not the whole success gate. Required setup needs the bounded facility-record smoke check
-to set Data Agent deployment `ready` and runtime `verified`; failed or inconclusive checks must
-propagate through NB09/setup. NB11's SQL source is configured independently of ontology runtime
-readiness and preserves NB09's status. Only explicit `disabled` allows the corresponding `skipped` path.
+outcomes, not runtime execution. A successful bounded facility-record smoke check sets Data Agent
+deployment `ready` and runtime `verified`; unrelated failed or inconclusive checks propagate through
+NB09/setup. NB11's SQL source is configured independently of ontology runtime readiness and
+preserves NB09's status.
 NB10 leaves the agent stopped; `configured` verifies readback, not execution or delivery.
-See the [mode/status contract](../README.md#ontology-generations-and-optional-agents).
+See the [ontology and agent policy](../README.md#ontology-generations-and-optional-agents).
 The deployment orchestrator's `SUCCESS` verifies deployment/backend checks and hosting
 availability, which may be an identity-matched Fabric private-hosting sign-in gate rather than
 the application shell. It does not verify interactive authenticated application acceptance,
@@ -318,7 +316,9 @@ Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner
 
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
 run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and attempts Data Agent
-and Operations Agent provisioning by default. Required-agent failures fail setup. It does **not**
+and both Operations Agent deployments without mode or skip flags. Real failures fail setup; NB09
+alone reports the exact documented temporary unsupported-Ontology-v2 product response without
+claiming runtime readiness. It does **not**
 create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
 
 > **Operations Agent provisioning includes playbook/actions, Teams, and email-alert wiring.**
@@ -512,17 +512,13 @@ through Step 7; hosting success does not establish native graph readiness.
 2. Click **"Seed & provision"** in the header.
 
 It runs `RTI_011` in your workspace, which upserts the operational tables, creates + **auto‑binds**
-the STID **GraphQL API** to the Lakehouse SQL endpoint. It also adds SQL to the required Data Agent
-whose ontology source matches the selected live v2 item, verifying retained draft and published
-ontology/SQL sources. Only explicit `ontology_data_agent_mode=disabled` omits this extension.
-Missing/ineligible agents and extension failures fail the notebook in `enabled`/`auto` mode, even
-if SQL/GraphQL writes already succeeded. Successful configuration does not certify agent runtime.
-RTI_011 requires prior RTI_009 deployment/publication/runtime statuses `ready`/`published`/`verified`
-and matching smoke evidence for the agent/workspace/ontology and exact ontology source. It filters
-the ontology subset from multi-source evidence, so adding SQL alone does not invalidate evidence
-if that source configuration is unchanged. Changed ontology configuration is inconclusive and
-fails required execution. The smoke check does not attest execution provenance or SQL/combined
-source readiness. The revised NB09 live failure path was validated once with full multi-source
+the STID **GraphQL API** to the Lakehouse SQL endpoint. It also always adds SQL to the live Data
+Agent, preserving existing sources and custom configuration and verifying exact draft and published
+SQL-source readback. Missing agents and extension failures fail the notebook even if SQL/GraphQL
+writes already succeeded. Successful configuration does not certify agent runtime. RTI_011 does
+not require or reinterpret NB09's ontology runtime status; the bounded NB09 smoke check does not
+attest execution provenance or SQL/combined-source readiness. The revised NB09 live limitation
+path was validated once with full multi-source
 preservation; neither NB11 nor full setup was executed in that bounded run. See the
 [authorized failure-path evidence](../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
 The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.

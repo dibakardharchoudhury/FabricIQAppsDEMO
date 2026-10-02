@@ -18,16 +18,15 @@ Use the [RTI setup workflow](../../README.md#deploy) with a fresh workspace or u
 suffix when a replacement is needed. REST `/v1` and suffixes such as `V9` are unrelated to the
 ontology generation.
 
-Report core setup, app hosting/auth, and agent execution/delivery separately. Both agent modes
-default to `enabled`; backward-compatible `auto` also attempts actual provisioning, and only
-explicit `disabled` opts out. Retain Operations Agent playbook/actions, Teams, and email-alert
-provisioning against the verified v2 ontology. Required failures propagate through RTI_009/010/011
-and setup. Require Data Agent deployment/publication/runtime `ready`/`published`/`verified` with
-generation 2 and matching source-specific functional smoke evidence, not historical publication
-alone. NB11 must retain the exact ontology source; compatible added SQL does not invalidate the
-evidence. The bounded smoke does not attest execution provenance or certify SQL/combined-source
-answers. SQL/GraphQL-only success requires explicit Data Agent disablement. No product issue
-resolution or full end-to-end acceptance follows from restoring the implementation. The orchestrator's
+Report core setup, app hosting/auth, and agent execution/delivery separately. Agent provisioning is
+always attempted; there are no agent mode or skip flags. Retain both Operations Agents, their
+separate playbook/actions, Teams, and email-alert provisioning. Real failures propagate through
+RTI_009/010/011 and setup. NB09 alone records Fabric's exact temporary unsupported-Ontology-v2
+response as `known_product_limitation` after verified v2 publication, without claiming runtime
+readiness. NB11 must preserve existing sources and custom content while adding SQL with exact
+draft/published readback. The bounded smoke does not attest execution provenance or certify
+SQL/combined-source answers. No product issue resolution or full end-to-end acceptance follows
+from restoring the implementation. The orchestrator's
 `SUCCESS` marker certifies its deployment checks, not ontology provisioning, native graph readiness,
 or agent execution.
 

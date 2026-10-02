@@ -466,10 +466,10 @@
 # Existing v1 sources are rejected, never reused, migrated, or deleted.
 #
 # ### 10. RTI_010 – Complete Operations Agent provisioning
-# `enabled` (default) and `auto` attempt the selected live v2 ontology source, authored
+# Provisioning always attempts the selected live v2 ontology source, authored
 # BAD/UNCERTAIN playbook, Teams destination, parameterized email action and
-# `Pipe_SendEmailAlert` pipeline. Only explicit `disabled` skips. No static product
-# issue gate or fallback that drops business components can report success.
+# `Pipe_SendEmailAlert` pipeline; there is no mode or skip flag. No fallback that
+# drops business components can report success.
 # Actual HTTP/LRO/readback failures persist failure and raise. Missing Outlook OAuth2
 # connection requires interactive sign-in and fails setup after scaffolding creation.
 # Success means `configured`, STOPPED by default; queries, monitoring, Teams and email

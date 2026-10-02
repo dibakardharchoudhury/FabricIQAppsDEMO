@@ -557,7 +557,7 @@ class CapabilityTests(unittest.TestCase):
         )
         for mismatch_at in (
             "submission", "before_publish", "after_publish", "draft_only",
-            "none", "known_product_limitation", "healthy",
+            "none", "known_product_result", "known_product_exception", "healthy",
         ):
             matching = {"definition": {"parts": [ontology_part()]}}
             published = {"definition": {"parts": [ontology_part(), ontology_part("published")]}}
@@ -569,8 +569,26 @@ class CapabilityTests(unittest.TestCase):
                 responses += [matching, unrelated]
             elif mismatch_at == "draft_only":
                 responses += [matching, matching]
-            elif mismatch_at in ("none", "known_product_limitation", "healthy"):
+            elif mismatch_at in ("none", "known_product_result", "known_product_exception", "healthy"):
                 responses += [matching, published]
+            known_product_reason = (
+                "This API version is not supported for the specified Ontology item."
+            )
+            runtime_probe = (
+                Mock(side_effect=RuntimeError(
+                    f'MCP JSON-RPC error: {{"message": "{known_product_reason}"}}'
+                ))
+                if mismatch_at == "known_product_exception"
+                else Mock(return_value={
+                    "status": "verified" if mismatch_at == "healthy" else "inconclusive",
+                    "reason": (
+                        known_product_reason
+                        if mismatch_at == "known_product_result"
+                        else "Functional probe result"
+                    ),
+                    "evidence": {},
+                })
+            )
             ns = functions(
                 "009", "upsert_part", "encode_payload", "validate_agent_ontology_sources",
                 "require_v2_ontology", "verify_agent_source_readback",
@@ -593,15 +611,7 @@ class CapabilityTests(unittest.TestCase):
                 is_known_ontology_v2_product_limitation=lambda reason: (
                     "api version is not supported" in reason.lower()
                 ),
-                probe_data_agent_ontology=Mock(return_value={
-                    "status": "verified" if mismatch_at == "healthy" else "inconclusive",
-                    "reason": (
-                        "This API version is not supported for the specified Ontology item."
-                        if mismatch_at == "known_product_limitation"
-                        else "Functional probe result"
-                    ),
-                    "evidence": {},
-                }),
+                probe_data_agent_ontology=runtime_probe,
             )
             if mismatch_at == "healthy":
                 exec(compile(ast.Module(body=[deploy], type_ignores=[]), "readback", "exec"), ns)
@@ -610,7 +620,7 @@ class CapabilityTests(unittest.TestCase):
                 self.assertEqual(final.kwargs["runtime_status"], "verified")
                 self.assertEqual(final.kwargs["publication_status"], "published")
                 continue
-            if mismatch_at == "known_product_limitation":
+            if mismatch_at in ("known_product_result", "known_product_exception"):
                 exec(compile(ast.Module(body=[deploy], type_ignores=[]), "known-product", "exec"), ns)
                 final = ns["persist_agent_status"].call_args
                 self.assertEqual(final.args[0], "known_product_limitation")
