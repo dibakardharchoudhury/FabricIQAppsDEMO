@@ -70,6 +70,13 @@
               },
               "type": "string"
             },
+            "alert_email_to": {
+              "value": {
+                "value": "@pipeline().parameters.alert_email_to",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
             "ontology_data_agent_mode": {
               "value": {
                 "value": "@pipeline().parameters.ontology_data_agent_mode",
@@ -198,15 +205,19 @@
       },
       "ops_agent_teams_team_id": {
         "type": "string",
-        "defaultValue": "c480320e-9204-474b-9b2c-54a53e94f220"
+        "defaultValue": ""
       },
       "ops_agent_teams_channel_id": {
         "type": "string",
-        "defaultValue": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
+        "defaultValue": ""
       },
       "ops_agent_run_as_user": {
         "type": "string",
-        "defaultValue": "admin@mngenvmcap218279.onmicrosoft.com"
+        "defaultValue": ""
+      },
+      "alert_email_to": {
+        "type": "string",
+        "defaultValue": ""
       },
       "per_notebook_timeout_secs": {
         "type": "int",

@@ -691,7 +691,7 @@ async function loadPipelineParams() {
   }
   $("pipelineFields").innerHTML = pipelineSpec.map((p) => {
     // A couple of long-value fields span the full width for readability.
-    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user");
+    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user" || p.name === "alert_email_to");
     const numeric = p.type === "int";
     return `<div class="param${wide ? " wide" : ""}">
       <span class="plabel">${escapeHtml(p.label)}</span>

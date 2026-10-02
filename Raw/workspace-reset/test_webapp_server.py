@@ -81,6 +81,16 @@ class WorkspaceActionTests(unittest.TestCase):
             self.assertIn("disabled: skip", specs[name]["help"])
         self.assertIn("runtime smoke check", specs["ontology_data_agent_mode"]["help"])
 
+    def test_launcher_separates_alert_recipient_from_run_as_and_teams(self):
+        response = self.client.get("/api/pipeline-params")
+        self.assertEqual(response.status_code, 200)
+        specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
+        self.assertEqual(specs["alert_email_to"]["default"], "")
+        self.assertIn("independent", specs["alert_email_to"]["help"])
+        for name in ("ops_agent_run_as_user", "ops_agent_teams_team_id",
+                     "ops_agent_teams_channel_id"):
+            self.assertEqual(specs[name]["default"], "")
+
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
         for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
             with self.subTest(state=state):

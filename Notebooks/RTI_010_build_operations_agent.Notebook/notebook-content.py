@@ -33,8 +33,8 @@
 # Product/API failures are persisted and raised, never inferred from a static issue gate.
 #
 # The existing agent retains its Ontology v2 source and instructions. A separate Operations
-# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`; Fabric generates
-# its KQL rules in the Build page. Both agents remain STOPPED by default. Successful definition
+# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`; its generated
+# BAD/UNCERTAIN KQL playbook is preserved. Both agents remain STOPPED by default. Successful definition
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
@@ -164,6 +164,7 @@ print("   Copy playbook     :", ops_agent_copy_playbook)
 import json
 import time
 import base64
+import zlib
 from copy import deepcopy
 from typing import Optional
 
@@ -341,8 +342,7 @@ def resolve_kql_database_id() -> str:
 # time (resolve_email_connection_id + ALERT_EMAIL_TO) and injected via build_email_pipeline_content.
 PIPELINE_NAME = settings.get("alert_pipeline_name", "Pipe_SendEmailAlert")
 PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be triggered from Ops Agent!")
-# Alert email recipient. Per-tenant: override with the `alert_email_to` setting; when blank the deploy
-# defaults it to the signed-in (deploying) user so the demo email has a valid, in-tenant recipient.
+# Alert email recipient is distinct from the agent execution identity and Teams destination.
 ALERT_EMAIL_TO = first_setting("alert_email_to", "alert_recipient", default="")
 # Office365 email connection. The Office365Email ACTIVITY only accepts an OAuth2 (user-mailbox)
 # connection; a Service Principal connection is accepted by the connection API but the activity
@@ -778,6 +778,9 @@ EVENTHOUSE_INSTRUCTIONS = '''*** Goals ***
 5. "event_time" is the event timestamp.
 6. Use only columns available in "OPCUAEvents" when creating alert context.'''
 
+# Fabric-generated KQL playbook captured from the configured Eventhouse Operations Agent.
+EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64 = "eNrtWW1PIkkQ/it1k0u4TQBFlFV8SVh1E3Ib13Xx7oMQ0sz0QN823djTI7K7/ver7hlgZgAFzzOu4hdhurq66qmqp7qGH85noSWX3dEJ9ZlgmkkRONUfzufz48vaV9YVhJ/eUKHbbTlwQ9K+DglnetTuEK9NOFXaCP+uRwPqVB2XkyBw8k79oo7fsipw4US6YR8/1j1cx+9npE8XSNLAVWxg7DECgoKSQxhQBSgMlzUIrDhQIw++kn2wWuz+IA9Eg+5R6CrCBEgfmPDYDfPQ+vFORYnHRDeAIdM9ENKjwLw8xA6iBuHF2jXr06KxiWjyiYlvSZe/hYGWXSVDYZRp0uEUJRvmf9K5yCzn7i6/PLJFg9L0JA9Pn2CLSwvRjNZS+F0Kdh0a/1Ca+QxR9KWyAM1BMw+BDJVLvRlYi5GlBqs28ywkso8AH5u4Lwz6BRFdarBrRI4EWiFUuPAnBsWpbi4DrCs5bjiWPOyL2M2ULSsi28CIBpr0BwsBnkosxDklkoL7dJI2dn0B2HEC3gO3DUd7kn6PwBp9omb/BO2tR6I9NWVFqCOhL9HzBr3VCyGflVwI/VzRNGOkoI7NAo2ik2g8lOzxpn34UDux/OEimAH4hHEUT2t+olooPTI6sRVLhSYULsYFLX1G/j5fmrdlgunTdfLSeDqD4xOydRqpOaT9umk6C+yzkbW5J7wtms5C/cuT9YvhYQT/IuQ0c6vepdt75ZK7U9gtl8qFbX+nU9itbFUK7uaWVyZuyd/ae2/kLIJLCU852AQWYpThA/GgZuk9i/XfPSqQM+fSMRNJTKFHgkkwqPkAWppmiGGgSLqohCLSHGzu4GaXh5aoUyWfYOobwkOaIGybp3kIg5lNgCfjiWxg0sl+xz2ckhsj6ROX2eyNn4cIMFoyiKJv4356O1A0CKzHifBdc5PDeBNWI5RMCjkbG5BNE+hjVSqGxn8nBrzqnPFj3Juy+dgUHsVuqijY09oDojBMqC74A1lIaUNH1XHV5wHhTD15t98UnOpZkw6bAvDvKpc4K9eKHqILRgn2SeFhBx0yzqFDYXI0+46Fw41P+7asBAopykfYc6GB5Fj4Ykw9UcTX4FGfhNz4AfHfTxj2KPpzlZvGLtfCA/SQYkZN3YJicezPu2j7Txgo+Q919VRb3YNDVJUKeq6VnwpM+NrKJY9MCM0wixWO8y3XQhAfvJm89nI4j5CnXsRTyEJX0ZUj2RBnGbqFAop1u1RFBInd/8IlXy37ZkpKuSRiZaPIfrC3quyNCiuzZzIELTM5mFHimjU9Xss7fxlsPjLKvQUNZKznVNxQLq2aA6ukPdYCCvkXQTlsLsWkTScKSNs3p+KmmVNRQkeYtI3hKFLT+KATahpj1XSODmy9Hx38dnV8UmvUrhbSABOIPrbfuleNmg+m0XLMoJoiW//4aFqfmaKCw0OYHpYWXaWU7ca4kO8rT7CxS1diq3V0sBEjs5EO05Ez7pXHEtuqznC2uQSgtYIFtuTi2z1mNXKxHt1zw7BW4BoWqEm+T9IlfPyua94LrvV7rBXno/XbqdXGnvU7p/84zKzfJD3vBIOQu3vljl/2tgqVSrmEjfN9qUDoJi1s7myTSsUl23TXn8wrSwkvmFcux4Po/zS1XJ4dn140avWzNzK7VFdoMfR2IK0bigzT+Y2euOOmjBgNQl18gsFmZnh55GiRGSvuHSkeHCceGCXMaVJ5iGlnlFBGAveNpup6rsD7/zKMt54rXudcMSnTlzNd/Iq/sqx/NXlp48Pr+xVk/avG080Ed3f/Ajakbsk="
+
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
 # The ontology data source below is a placeholder; at deploy time it is replaced by the ontology
@@ -884,7 +887,6 @@ def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
         pipeline_id=pipeline_id,
     )
     config["configuration"]["instructions"] = EVENTHOUSE_INSTRUCTIONS
-    config["configuration"].pop("messageDestination", None)
     config["configuration"]["dataSources"] = {
         kql_database_id: {
             "id": kql_database_id,
@@ -892,6 +894,8 @@ def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
             "workspaceId": workspace_id,
         }
     }
+    config["playbook"] = json.loads(zlib.decompress(
+        base64.b64decode(EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64)))
     return config
 
 
@@ -1032,6 +1036,13 @@ def verify_eventhouse_operations_readback(agent_id: str, kql_database_id: str,
         raise RuntimeError("Eventhouse Operations Agent readback changed the KQL database source.")
     if actual.get("shouldRun") is not False:
         raise RuntimeError("Eventhouse Operations Agent must remain stopped after deployment.")
+    rules = (actual.get("playbook") or {}).get("RuleDefinitions") or {}
+    conditions = {rule.get("RuleCondition", {}).get("Value") for rule in rules.values()}
+    if len(rules) != 2 or conditions != {"BAD", "UNCERTAIN"}:
+        raise RuntimeError("Eventhouse Operations Agent must retain its BAD and UNCERTAIN KQL rules.")
+    if any(rule.get("ClassExpression", {}).get("$type") != "kqldataquery"
+           for rule in rules.values()):
+        raise RuntimeError("Eventhouse Operations Agent readback changed its KQL rules.")
     require_retained(configuration, actual)
 
 
@@ -1045,9 +1056,9 @@ def deploy_operations_agent(ontology_id: str) -> dict:
     get_access_token_for_fabric()
     check_run_as(ops_agent_run_as_user)
     connection_id = resolve_email_connection_id()
-    recipient = ALERT_EMAIL_TO or get_signed_in_upn()
+    recipient = ALERT_EMAIL_TO.strip()
     if not recipient:
-        raise RuntimeError("Configure alert_email_to or sign in with a mailbox user.")
+        raise RuntimeError("Configure alert_email_to for Pipe_SendEmailAlert.")
     pipeline_definition = build_email_pipeline_content(connection_id or "", recipient)
     pipeline_id = create_data_pipeline(PIPELINE_NAME, pipeline_definition, PIPELINE_DESCRIPTION).get("id")
     if not pipeline_id:
@@ -1108,8 +1119,8 @@ try:
     (DeltaTable.forName(spark, settings_table_name).alias("target")
      .merge(source.alias("source"), "target.setting_name = source.setting_name")
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
-    reason = ("Ontology configuration/playbook and Eventhouse configuration retained by readback; "
-              "both agents stopped. Generate the Eventhouse playbook in the Build page; runtime actions not tested."
+    reason = ("Ontology and Eventhouse configurations/playbooks retained by readback; "
+              "both agents stopped. Runtime actions not tested."
               if ops_agent_copy_playbook else
               "Ontology and Eventhouse configurations retained by readback; generate both playbooks in the portal as requested. Runtime actions not tested.")
     persist_agent_status("configured", reason)

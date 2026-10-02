@@ -8,6 +8,7 @@ import re
 import time
 import unittest
 import uuid
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -29,7 +30,7 @@ def source(number):
 
 
 def functions(number, *names, **overrides):
-    namespace = {"Optional": Optional, "json": json, "base64": base64}
+    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib}
     namespace.update(overrides)
     tree = ast.parse(source(number))
     included = set(names) | {"definition_parts"}
@@ -181,7 +182,10 @@ class CapabilityTests(unittest.TestCase):
 
     def operations_namespace(self):
         ns = functions("010", "build_configurations", "build_eventhouse_configurations")
-        names = {"EMBEDDED_OPS_CONFIG_B64", "ACTION_PARAMETERS"}
+        names = {
+            "EMBEDDED_OPS_CONFIG_B64", "EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64",
+            "ACTION_PARAMETERS",
+        }
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "operations-template", "exec"), ns)
@@ -227,7 +231,16 @@ class CapabilityTests(unittest.TestCase):
         config = ns["build_eventhouse_configurations"](
             "kql-database", "email-pipeline", "team", "channel")
         self.assertFalse(config["shouldRun"])
-        self.assertNotIn("playbook", config)
+        rules = config["playbook"]["RuleDefinitions"]
+        self.assertEqual(len(rules), 2)
+        self.assertEqual(
+            {rule["RuleCondition"]["Value"] for rule in rules.values()},
+            {"BAD", "UNCERTAIN"},
+        )
+        self.assertTrue(all(
+            rule["ClassExpression"]["$type"] == "kqldataquery"
+            for rule in rules.values()
+        ))
         self.assertEqual(config["configuration"]["instructions"], "Monitor OPCUAEvents.")
         self.assertEqual(config["configuration"]["dataSources"], {
             "kql-database": {
@@ -236,7 +249,11 @@ class CapabilityTests(unittest.TestCase):
                 "workspaceId": "workspace",
             },
         })
-        self.assertNotIn("messageDestination", config["configuration"])
+        self.assertEqual(config["configuration"]["messageDestination"], {
+            "kind": "TeamsChannel",
+            "teamId": "team",
+            "channelId": "channel",
+        })
         action = next(iter(config["configuration"]["actions"].values()))
         self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
 
@@ -321,6 +338,20 @@ class CapabilityTests(unittest.TestCase):
                 ns["verify_operations_readback"].assert_not_called()
             else:
                 ns["verify_operations_readback"].assert_called_once()
+
+    def test_operations_requires_explicit_alert_recipient(self):
+        ns = functions(
+            "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
+            get_ontology_generation=Mock(return_value=2),
+            ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+            ops_agent_run_as_user="", get_access_token_for_fabric=Mock(), check_run_as=Mock(),
+            resolve_email_connection_id=Mock(return_value="mailbox"), ALERT_EMAIL_TO=" ",
+            create_data_pipeline=Mock(), create_operations_agent=Mock(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "Configure alert_email_to"):
+            ns["deploy_operations_agent"]("ontology")
+        ns["create_data_pipeline"].assert_not_called()
+        ns["create_operations_agent"].assert_not_called()
 
     def test_operations_outer_failure_is_persisted_and_reraised(self):
         attempt = next(node for node in ast.parse(source("010")).body

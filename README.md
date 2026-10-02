@@ -248,11 +248,12 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
    | `ontology_operations_agent_mode` | `enabled` | Default; `auto` also attempts agent/playbook/actions/alert provisioning; only `disabled` skips. |
    | `ops_agent_teams_team_id` | `c480320e-…` | Target team for Operations Agent Teams delivery. |
    | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Target channel for Operations Agent Teams delivery. |
-   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Run-as identity used to configure Operations Agent execution. |
+   | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Optional guard for the delegated run-as identity; blank uses the deploying user. |
+   | `alert_email_to` | `operations@contoso.com` | Required `To` recipient for `Pipe_SendEmailAlert`; independent of run-as and Teams delivery. |
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
    > [!IMPORTANT]
-   > The pipeline ships with the author's **example defaults** — replace **every** value for a new tenant. Enter each **full** name (the UI truncates long names visually); the child notebooks' own parameter cells ship blank and fail fast if a required value is missing.
+   > Tenant-specific Operations Agent values ship blank. Enter the Team ID, channel ID, and alert email recipient for each environment; run-as may remain blank to use the deploying user. Enter each **full** name (the UI truncates long names visually); the child notebooks fail fast if a required value is missing.
 
 2. **Run `Pipe_Setup`.** Stage 1 (`RTI_001`) creates the Lakehouse and exits its name; Stage 2 (orchestrator) attaches it and runs the rest — no manual lakehouse pinning. Use a fresh workspace or unused suffix if the target ontology is v1. Agents are required unless explicitly disabled; inspect status/reasons and verify execution/delivery separately from configuration.
 3. **Run `Pipe_Stream`** whenever you want a burst of live telemetry.

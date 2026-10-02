@@ -109,6 +109,7 @@ eventhouse_table_name = "OPCUAEvents"
 ops_agent_run_as_user = ""      # UPN the agent runs as; blank => the deploying user (optional)
 ops_agent_teams_team_id = ""
 ops_agent_teams_channel_id = ""
+alert_email_to = ""             # Required recipient for Pipe_SendEmailAlert
 # Whether to copy the playbook; false leaves generation to the portal. (STATIC, NOT injected.)
 ops_agent_copy_playbook = "true"
 ontology_data_agent_mode = "enabled"
@@ -169,6 +170,7 @@ _required_injected = {
     "connection_name": connection_name,
     "ops_agent_teams_team_id": ops_agent_teams_team_id,
     "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
+    "alert_email_to": alert_email_to,
 }
 _missing = [name for name, value in _required_injected.items() if not str(value).strip()]
 if _missing:
@@ -256,6 +258,7 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "ops_agent_run_as_user": ops_agent_run_as_user,
         "ops_agent_teams_team_id": ops_agent_teams_team_id,
         "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
+        "alert_email_to": alert_email_to,
         "ops_agent_copy_playbook": ops_agent_copy_playbook,
         "ontology_data_agent_mode": ontology_data_agent_mode,
         "ontology_operations_agent_mode": ontology_operations_agent_mode,

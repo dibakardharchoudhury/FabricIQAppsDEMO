@@ -138,6 +138,22 @@ class OntologySetupContractTests(unittest.TestCase):
                 self.assertLess(text.index('must be auto, enabled, or disabled'),
                                 text.index("lakehouse_id = ensure_lakehouse("))
 
+    def test_alert_recipient_is_injected_and_persisted_separately(self):
+        path = ROOT / "Orchestrator_Pipelines" / "01_Pipe_Setup.DataPipeline" / "pipeline-content.json"
+        pipeline = json.loads(path.read_text(encoding="utf-8"))["properties"]
+        stage_one = next(activity for activity in pipeline["activities"]
+                         if activity["name"] == SETUP_NAMES[0])
+        self.assertEqual(pipeline["parameters"]["alert_email_to"]["defaultValue"], "")
+        self.assertEqual(
+            stage_one["typeProperties"]["parameters"]["alert_email_to"]["value"]["value"],
+            "@pipeline().parameters.alert_email_to",
+        )
+        for name in SETUP_NAMES:
+            text = source(name)
+            self.assertIn('alert_email_to = ""', text)
+            self.assertIn('"alert_email_to": alert_email_to', text)
+            self.assertIn('"alert_email_to": alert_email_to,', text)
+
     def test_required_capabilities_fail_closed_and_disabled_is_explicit(self):
         report = load_function(ORCHESTRATOR, "_report_agent_capabilities", {"json": json})
         output = io.StringIO()
