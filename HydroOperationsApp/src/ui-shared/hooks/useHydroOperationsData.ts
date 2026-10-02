@@ -495,6 +495,7 @@ function useHydroOperationsDataController() {
           if (!isStidConfigured()) { clearStid(); setStidState('unavailable'); return }
           setStidState(current => current === 'connected' ? current : 'loading')
           try {
+            void refreshOntology()
             const data = await queryStid()
             if (cancelled) return
             if (data) { applyStid(data); setStidState('connected'); writePersistedSetup({ stidConnected: true }) }
@@ -519,7 +520,7 @@ function useHydroOperationsDataController() {
           }
         }
 
-        await Promise.all([initializeStid(), initializeTelemetry(), refreshOntology()])
+        await Promise.all([initializeStid(), initializeTelemetry()])
       }
 
       await Promise.all([initializeOperations(), initializeFabricData()])

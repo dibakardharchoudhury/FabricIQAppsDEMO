@@ -122,8 +122,8 @@ test('graph loading reuses one definition and coalesces concurrent native reques
   const graphs = await Promise.all([service.queryOntologyGraph(), service.queryOntologyGraph()])
   assert.equal(graphs[0].nodes.length, 1)
   assert.deepEqual(graphs[0], graphs[1])
-  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0, 'Explicit graph binding must bypass workspace discovery')
   assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
+  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0, 'Explicit graph lineage must bypass workspace discovery')
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
   const coldRequests = requests.length
   await service.queryOntologyGraph()
@@ -204,7 +204,7 @@ test('failed contract refresh prevents reuse of both discovery data and cached n
   assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
 })
 
-test('explicit graph binding remains pinned when workspace discovery would select another ontology', async () => {
+test('changed ontology selection cannot reuse the previous ontology native graph', async () => {
   const replacement = '44444444-4444-4444-4444-444444444444'
   let changed = false
   const { service, requests } = graphService(async url => {
@@ -216,8 +216,7 @@ test('explicit graph binding remains pinned when workspace discovery would selec
   await service.queryOntologyGraph()
   changed = true
   service.clearWorkspaceConfigCache()
-  assert.equal((await service.queryOntologyGraph()).ontologyId, ontologyId)
-  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0)
+  await assert.rejects(service.queryOntologyGraph(), /different workspace or ontology/)
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
 })
 // Execute the production discovery and environment readers without browser MSAL or service writes.

@@ -59,6 +59,9 @@ Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
 **generation-2 Ontology** and an explicitly bound,
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
 Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
+The explicit graph binding lets startup read the exact Ontology directly—without enumerating the
+workspace—so verified Ontology-bound STID entities render progressively while the authoritative
+native GraphModel query completes in the background.
 No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.
 When the native graph is loaded, the toolbar exports its verified Ontology schema and materialized
 instances as either **OWL 2 in Turtle** or **RDF 1.1 in Turtle**. Compatibility-mode and operational
