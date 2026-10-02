@@ -29,6 +29,7 @@ const graphqlId = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_ID as string | undefi
 const graphqlName = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_NAME as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
+const configuredGraphBinding = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
 const configuredGraphqlUrl = graphqlUrlOverride || (workspaceId && graphqlId
   ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${graphqlId}/graphql`
@@ -510,7 +511,27 @@ async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Pro
   }
 }
 
+async function queryConfiguredOntologyContract(force: boolean): Promise<OntologyContract | null> {
+  const binding = parseGraphBinding(configuredGraphBinding, requireWorkspaceId())
+  return ontologyContractCache.read(`${requireWorkspaceId()}:${binding.ontologyId}`, force, async () => {
+    const token = await fabricToken(false)
+    if (!token) throw new Error('Sign in with Fabric item read access to refresh the Ontology definition.')
+    const signal = AbortSignal.timeout(30_000)
+    const headers = new Headers({ Authorization: `Bearer ${token}` })
+    const metadataResponse = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${binding.ontologyId}`, { headers, signal })
+    if (!metadataResponse.ok) throw new Error(`Live ontology generation verification failed (${metadataResponse.status}).`)
+    const metadata = await metadataResponse.json() as { properties?: { generation?: unknown } }
+    requireV2Generation(metadata.properties?.generation)
+    const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${binding.ontologyId}/getDefinition`, {
+      method: 'POST', headers, signal,
+    })
+    const definition = await waitForDefinitionResult(response, token, signal)
+    return parseOntologyContract(binding.ontologyId, configuredOntologyName ?? 'Fabric Ontology', definition, metadata.properties?.generation)
+  })
+}
+
 export async function queryOntologyContract(force = false): Promise<OntologyContract | null> {
+  if (configuredGraphBinding?.trim()) return queryConfiguredOntologyContract(force)
   return withCurrentConfig(async config => {
     if (config?.ontologyError) {
       ontologyContractCache.clear()
@@ -545,7 +566,24 @@ export async function queryOntologyContract(force = false): Promise<OntologyCont
   })
 }
 
+async function queryConfiguredOntologyGraph(force: boolean): Promise<OntologyGraph | null> {
+  const binding = parseGraphBinding(configuredGraphBinding, requireWorkspaceId())
+  const ontology = await queryConfiguredOntologyContract(false)
+  if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
+  return ontologyGraphCache.read(JSON.stringify([binding, ontology]), force, async () => {
+    const token = await fabricToken(false)
+    if (!token) throw new Error('Sign in with Fabric graph read access before querying the ontology graph.')
+    const request = (url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      headers.set('Authorization', `Bearer ${token}`)
+      return fetch(url, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(120_000) })
+    }
+    return queryBoundOntologyGraph(binding, ontology, request)
+  })
+}
+
 export async function queryOntologyGraph(force = false): Promise<OntologyGraph | null> {
+  if (configuredGraphBinding?.trim()) return queryConfiguredOntologyGraph(force)
   return withCurrentConfig(async config => {
     if (config?.ontologyError) throw new Error(config.ontologyError)
     if (!config?.ontologyId) throw new Error('Sign in and select an Ontology v2 before querying its graph.')

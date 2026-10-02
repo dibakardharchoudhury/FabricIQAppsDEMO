@@ -122,6 +122,7 @@ test('graph loading reuses one definition and coalesces concurrent native reques
   const graphs = await Promise.all([service.queryOntologyGraph(), service.queryOntologyGraph()])
   assert.equal(graphs[0].nodes.length, 1)
   assert.deepEqual(graphs[0], graphs[1])
+  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0, 'Explicit graph binding must bypass workspace discovery')
   assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
   const coldRequests = requests.length

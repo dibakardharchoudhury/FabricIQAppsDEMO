@@ -16,7 +16,7 @@ export const GRAPH_SETUP_REQUIRED = 'Materialize the graph from the selected Ont
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
-export function parseGraphBinding(value: string | undefined, workspaceId: string, ontologyId: string): OntologyGraphBinding {
+export function parseGraphBinding(value: string | undefined, workspaceId: string, ontologyId?: string): OntologyGraphBinding {
   if (!value?.trim()) throw new Error(GRAPH_SETUP_REQUIRED)
   let binding: unknown
   try { binding = JSON.parse(value) }
@@ -26,7 +26,8 @@ export function parseGraphBinding(value: string | undefined, workspaceId: string
     || typeof binding.graphModelId !== 'string' || !GUID.test(binding.graphModelId)) {
     throw new Error(`Ontology graph binding requires three valid GUIDs. ${GRAPH_SETUP_REQUIRED}`)
   }
-  if (binding.workspaceId.toLowerCase() !== workspaceId.toLowerCase() || binding.ontologyId.toLowerCase() !== ontologyId.toLowerCase()) {
+  if (binding.workspaceId.toLowerCase() !== workspaceId.toLowerCase()
+    || (ontologyId && binding.ontologyId.toLowerCase() !== ontologyId.toLowerCase())) {
     throw new Error('The configured graph binding belongs to a different workspace or ontology. Verify the selected v2 ontology and its materialized graph before updating the binding.')
   }
   const mappings = (key: 'nodeTypes' | 'edgeTypes'): Record<string, string> | undefined => {
