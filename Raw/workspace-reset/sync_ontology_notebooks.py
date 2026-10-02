@@ -46,8 +46,15 @@ def synchronize(root=ROOT, check=False):
         compile(content, str(canonical), "exec")
         notebook = json.loads(raw.read_text(encoding="utf-8"))
         raw_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
-        if len(raw_cells) != len(cells):
-            raise RuntimeError(f"Cell-count mismatch in {raw}; refusing to replace metadata")
+        if len(raw_cells) > len(cells):
+            raise RuntimeError(f"Raw notebook has extra code cells in {raw}; refusing to delete metadata")
+        for _ in range(len(cells) - len(raw_cells)):
+            cell = {
+                "cell_type": "code", "execution_count": None,
+                "metadata": {}, "outputs": [], "source": [],
+            }
+            notebook["cells"].append(cell)
+            raw_cells.append(cell)
         for index, (cell, code) in enumerate(zip(raw_cells, cells)):
             compile(code, f"{raw} cell {index}", "exec")
             cell["source"] = code.splitlines(keepends=True)

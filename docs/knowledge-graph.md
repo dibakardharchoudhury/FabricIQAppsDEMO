@@ -39,7 +39,7 @@ The authoritative semantic asset is built before the app runs:
 2. `RTI_005_entity_DataBinding_rti_structured` adds static Lakehouse data bindings and relationship
    contextualizations.
 3. `RTI_006_TimeSeriesBinding_RTI_signal` binds Eventhouse `OPCUAEvents` observations to
-   `signal_master`.
+   `signal_master`, then repairs, refreshes, and verifies the attached static GraphModel projection.
 4. `RTI_009_build_data_agent` attempts to publish the verified v2 Ontology as a Data Agent source
    by default. `auto` also attempts provisioning; only `disabled` opts out. Required failures propagate.
 5. `RTI_011_seed_sql_wire_graphql_agent` creates the app-facing GraphQL API and adds Rayfin SQL as
@@ -54,15 +54,36 @@ signal_master -> instruments -> equipment -> systems -> facilities
 
 **This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
 a legacy parser or used as agent sources. Graph materialization is required for native GQL reads,
-but does not block the existing progressive view of Ontology-bound STID entities. Open the selected ontology,
-choose **Manage graph → select eligible entities and relationships → Continue → Materialize**.
-Use the resulting ontology-managed GraphModel, not an independently created look-alike graph.
+but does not block the progressive view of Ontology-bound STID entities.
 
-Eligible graph sources require an entity key and a Delta or mirrored backing-table binding.
-The multi-backing-table `signal_master` entity may be ineligible; select only eligible types.
-Native instrument nodes can still receive KQL telemetry without materializing `signal_master`.
-No published ontology-owned projection/materialization REST endpoint is established here: the
-portal operation is a manual prerequisite, not an unattended deployment promise.
+Fabric does not document a REST endpoint for the initial Ontology **Manage graph** selection that
+creates its semantic GraphModel child. For a fresh Ontology, open the selected item and choose
+**Manage graph → select eligible entities and relationships → Continue → Materialize** once. Use
+that ontology-managed GraphModel, not an independently created look-alike.
+
+After the child relation exists, the final phase of `RTI_006` is automated and idempotent:
+
+1. Require live Ontology generation 2 and follow the exact downstream
+   `CascadeDelete` Ontology-to-`GraphIndex` relation cross-checked against the workspace
+   `GraphModel` identity.
+2. Round-trip the complete GraphModel definition and preserve unknown parts.
+3. Add or repair the Delta-backed static `signal_master` node and
+   `signals_from_instruments` edge.
+4. Exclude only `event_time`, `value`, and `quality` from GraphModel property mappings; those remain
+   Ontology time-series properties backed by Eventhouse.
+5. Update and read back the same attached GraphModel, run the public `refreshGraph` job while
+   honoring `Retry-After`, verify queryable node/edge types, and execute the exact static GQL selector
+   used by the Operations Agent.
+
+Missing or ambiguous lineage, a conflicting source, failed readback, refresh, or GQL result fails
+NB06 and therefore setup. No graph is selected by name, graph count, or structural similarity.
+
+Official references:
+
+- [Use the graph in an ontology](https://learn.microsoft.com/fabric/iq/ontology/how-to-use-ontology-graph)
+- [Get GraphModel definition](https://learn.microsoft.com/rest/api/fabric/graphmodel/items/get-graph-model-definition)
+- [Update GraphModel definition](https://learn.microsoft.com/rest/api/fabric/graphmodel/items/update-graph-model-definition)
+- [Run an on-demand GraphModel refresh](https://learn.microsoft.com/rest/api/fabric/graphmodel/background-jobs/run-on-demand-refresh-graph)
 
 ### Explicit graph binding
 
@@ -227,12 +248,13 @@ or operational record, source timestamp, quality, and provenance.
 
 This reuses the deployed v2 contract without silently substituting an unrelated graph or a v1 ontology.
 
-## RDF and OWL export (design guidance)
+## RDF and OWL export
 
-This is an interoperability design direction, not an implemented export feature or a promise that
-all advanced v2 constructs are evaluated. An exporter should use the v2 TMDL contract plus resolved
-instances, never canvas
-position or transient filter state:
+The Knowledge Graph toolbar exports a successfully verified native graph as either **OWL 2 in
+Turtle** (`.owl.ttl`) or **RDF 1.1 in Turtle** (`.rdf.ttl`). Fabric's portal also exports the
+Ontology schema, but Microsoft documents no REST export API for materialized GraphModel instances.
+The app therefore applies an explicit standards mapping to its already validated v2 contract and
+native GQL results:
 
 | Fabric concept | RDF/OWL representation |
 | --- | --- |
@@ -240,13 +262,19 @@ position or transient filter state:
 | Relationship type | `owl:ObjectProperty` |
 | Scalar property | `owl:DatatypeProperty` |
 | Entity instance | RDF resource with a stable IRI |
-| Source/binding lineage | Named graph and PROV-O assertions |
-| Sensor observation | SOSA/SSN observation where interoperability is required |
+| Graph relationship instance | Direct object-property triple plus an `rdf:Statement` retaining the native edge identity |
 
-Use a stable namespace based on environment, Ontology, entity type, and entity ID. Keep Rayfin
-operational extensions in a separate namespace. Turtle is the preferred review format; JSON-LD is
-the preferred web interchange format. OWL export describes the schema, while RDF instance export
-describes current entities, relationships, and optional observation snapshots.
+Stable URNs include the Ontology ID, GraphModel ID, native OID, and semantic type/property identity.
+Scalar values use XSD datatypes where the verified contract or native JSON value establishes one.
+Compatibility-mode topology, current Eventhouse readings, Rayfin SQL overlays, canvas positions,
+and transient filters are excluded. Export therefore never upgrades app-composed context into
+governed Ontology assertions. The output is deterministic and the in-memory operation issues no
+additional Fabric query; completeness remains bounded by the app's fail-closed native limits of
+2,000 nodes and 4,000 relationships.
+
+Microsoft's separate portal-level Ontology import/export behavior is documented in
+[Import and export an ontology](https://learn.microsoft.com/fabric/iq/ontology/how-to-import-export).
+It does not provide a GraphModel-instance REST export contract.
 
 ## Validation
 
@@ -266,6 +294,31 @@ describes current entities, relationships, and optional observation snapshots.
    `npm run typecheck`, `npm run lint`, `npm run validate-env`, and `npm run build`.
 8. Test opaque continuation strings, query warnings/errors, malformed/dangling results, and the
    2,000-node/4,000-edge boundaries. Verify native canvas/tree/scopes work with GraphQL unavailable.
+9. Run the NB06 graph helper regressions, verify definition round-trip preservation and idempotency,
+   then confirm live `refreshGraph` timing and the Operations Agent `signal_master` GQL selector.
+10. Export both OWL Turtle and RDF Turtle, confirm compatibility mode cannot export, and benchmark
+    the 2,000-node/4,000-edge client-side boundary.
+
+### Automated materialization acceptance (October 2, 2026)
+
+The existing ontology-owned GraphModel was repaired through its public definition API and completed
+an automatic refresh. Read-only verification returned:
+
+- **5** queryable node types and **4** queryable edge types.
+- Exactly one `signal_master` node type and one `signals_from_instruments` edge type.
+- GQL status `00000` and one row containing `opcua_node_id`, `equipment_id`, `facility_id`, and
+  `unit` from the exact static selector used by the Operations Agent.
+- Latest refresh end-to-end duration (including queue time): **426.067 seconds**.
+- Queryable-schema read: **1,842.8 ms**; `signal_master LIMIT 1` GQL: **3,067.6 ms**.
+- Maximum app export fixture (2,000 nodes / 4,000 edges): **85.5 ms** in the final Node 24
+  validation run.
+
+Testing also established that `updateDefinition` starts its own GraphModel refresh. An early test
+submitted redundant on-demand refresh requests; Fabric correctly marked them
+`JobInstanceStatusDeduped` because the same job type was already active. The final implementation
+does not submit another refresh after a definition change: it observes that automatic job and
+requires its successful completion. It calls `refreshGraph` only on an unchanged definition, after
+waiting for any existing refresh to finish.
 
 Current live acceptance is restricted to **ws-vteam-demoV3** in tenant
 `ad340c84-1886-4202-a483-2da2cb9168eb`, workspace `9c73201e-b2e5-48eb-81b9-3526d320faca`.
@@ -573,4 +626,4 @@ another workspace reset or import.
 - [`Notebooks/RTI_005_entity_DataBinding_rti_structured.Notebook/notebook-content.py`](../Notebooks/RTI_005_entity_DataBinding_rti_structured.Notebook/notebook-content.py):
   static bindings and relationship contextualizations.
 - [`Notebooks/RTI_006_TimeSeriesBinding_RTI_signal.Notebook/notebook-content.py`](../Notebooks/RTI_006_TimeSeriesBinding_RTI_signal.Notebook/notebook-content.py):
-  Eventhouse time-series binding.
+  Eventhouse time-series binding plus attached static GraphModel repair, refresh, and GQL verification.

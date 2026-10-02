@@ -1,7 +1,8 @@
 import type { Core } from 'cytoscape'
-import { Activity, Box, ChevronRight, CircleDot, Database, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
+import { Activity, Box, ChevronRight, CircleDot, Database, Download, Focus, GitBranch, Maximize2, Minimize2, Radio, RefreshCw, Scan, Search, ShieldCheck, Wrench, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { queryOntologyContract, queryOntologyGraph, type OntologyContract, type OntologyGraph } from '../../services/fabric'
+import { knowledgeGraphExportFileName, serializeNativeKnowledgeGraph, type KnowledgeGraphExportFormat } from '../../services/knowledgeGraphExport'
 import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
@@ -65,6 +66,8 @@ export function KnowledgeGraphPage() {
   const [graphLoading, setGraphLoading] = useState(true)
   const [graphQueriedAt, setGraphQueriedAt] = useState<number>()
   const [graphError, setGraphError] = useState<string>()
+  const [exportFormat, setExportFormat] = useState<KnowledgeGraphExportFormat>('owl-turtle')
+  const [exportError, setExportError] = useState<string>()
   const graphRefreshVersion = useRef(0)
   const cancelGraphQuery = useCallback(() => { graphRefreshVersion.current++ }, [])
 
@@ -199,6 +202,26 @@ export function KnowledgeGraphPage() {
     }
     navigateTo(tab)
   }
+  const exportNativeGraph = () => {
+    setExportError(undefined)
+    if (!ontology || !ontologyGraph) {
+      setExportError('RDF/OWL export requires the verified native Ontology graph; compatibility-mode topology is not exported.')
+      return
+    }
+    try {
+      const content = serializeNativeKnowledgeGraph(ontology, ontologyGraph, exportFormat)
+      const url = URL.createObjectURL(new Blob([content], { type: 'text/turtle;charset=utf-8' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = knowledgeGraphExportFileName(ontology, exportFormat)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Knowledge Graph export failed.')
+    }
+  }
 
   if (!graph.nodes.length && graphLoading) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Loading the Ontology graph</h1><p className="v2-empty-copy">Querying the Fabric Graph Model for governed entities and relationships.</p></section>
   if (graph.error || !graph.nodes.length) return <section className="v2-placeholder-card"><span className="v2-eyebrow">Knowledge Graph</span><h1>Ontology graph is unavailable</h1><p className="v2-empty-copy" role="alert">{graphError ?? graph.error ?? 'Sign in with Fabric item read and execute access, then refresh the graph.'}</p><button type="button" onClick={() => void refreshAll()}>Retry graph query</button></section>
@@ -230,8 +253,9 @@ export function KnowledgeGraphPage() {
       <section className="kg-stage">
         <div className="kg-toolbar">
           <div className="kg-layout-control"><GitBranch size={14} /><select value={layout} title={LAYOUT_DESCRIPTION[layout]} aria-label={`Graph layout. ${LAYOUT_DESCRIPTION[layout]}`} onChange={event => setLayout(event.target.value as GraphLayout)}><option value="breadthfirst">Hierarchy</option><option value="cose">Semantic network</option><option value="concentric">Concentric</option></select></div>
-          <div className="kg-graph-actions"><button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
+          <div className="kg-graph-actions"><select value={exportFormat} aria-label="Knowledge Graph export format" title="Export the verified native graph schema and instances" onChange={event => setExportFormat(event.target.value as KnowledgeGraphExportFormat)}><option value="owl-turtle">OWL 2 · Turtle</option><option value="rdf-turtle">RDF 1.1 · Turtle</option></select><button type="button" title="Export verified native Knowledge Graph" aria-label="Export verified native Knowledge Graph" disabled={!ontologyGraph} onClick={exportNativeGraph}><Download size={16} /></button><button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * .8)}><ZoomOut size={16} /></button><button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => controllerRef.current?.zoom(controllerRef.current.zoom() * 1.2)}><ZoomIn size={16} /></button><button type="button" title="Fit graph" aria-label="Fit graph" onClick={() => controllerRef.current?.fit(undefined, 48)}><Scan size={16} /></button><button type="button" title="Focus selected entity" aria-label="Focus selected entity" disabled={!effectiveSelectedId} onClick={() => effectiveSelectedId && controllerRef.current?.animate({ center: { eles: controllerRef.current.getElementById(effectiveSelectedId) }, zoom: 1.25 }, { duration: 300 })}><Focus size={16} /></button><button type="button" title={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-label={graphView.expanded ? 'Restore Knowledge Graph' : 'Maximize Knowledge Graph'} aria-pressed={graphView.expanded} onClick={graphView.toggleExpanded}>{graphView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
+        {exportError && <div className="kg-no-results" role="alert"><p>{exportError}</p></div>}
         {visibleNodes.length ? <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} /> : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}
         <div className="kg-legend"><span><i className="kg-type-dot type-facility" />Facility</span><span><i className="kg-type-dot type-equipment" />Equipment</span><span><i className="kg-type-dot type-instrument" />Instrument</span><span><i className="kg-ring ring-crit" />Critical ring</span><span><i className="kg-ring ring-ok" />Healthy ring</span></div>
       </section>

@@ -51,6 +51,10 @@ Twin, and Maintenance. It requires a verified **generation-2 Ontology** and an e
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
 Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
 No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.
+When the native graph is loaded, the toolbar exports its verified Ontology schema and materialized
+instances as either **OWL 2 in Turtle** or **RDF 1.1 in Turtle**. Compatibility-mode and operational
+SQL/KQL overlays are intentionally excluded so an export never claims synthesized topology is
+governed Ontology data.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
 scenarios, historical screenshots, freshness behavior, and native graph prerequisites.
@@ -90,8 +94,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
 - A v2 materialized GraphModel is required for **native GQL results**, not for displaying already
   available Ontology-bound STID entities with KQL/SQL enrichment.
-  In the selected ontology use **Manage graph → select eligible entities/relationships → Continue
-  → Materialize**, then configure the `.env` binding with single-quoted JSON:
+  On a fresh Ontology, use **Manage graph → select eligible entities/relationships → Continue
+  → Materialize** once to establish the service-owned child relation. `RTI_006` then maintains the
+  static `signal_master` projection, runs the documented GraphModel refresh job, and verifies the
+  Operations Agent GQL query. Configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
   Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
   `#`, including inside JSON double quotes, so exact ontology names containing `#` require quoting.
@@ -100,9 +106,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Public REST metadata does not expose ownership: names, sole-graph discovery, and structural
   similarity are not proof. The explicit operator binding records the association established in
   the portal; live metadata/contract/type/endpoint checks establish consistency.
-  Graph sources require keys and Delta/mirrored bindings. Multi-backing-table `signal_master`
-  may be ineligible, but native instruments still receive KQL telemetry. No published ontology-owned
-  materialization endpoint is established, so this portal prerequisite is not automated.
+  Graph sources require keys and Delta/mirrored bindings. Fabric does not document an API for the
+  initial Manage graph entity/relationship selection. Once the child exists, `RTI_006` uses the
+  public GraphModel definition and `refreshGraph` APIs; only static Delta-backed `signal_master`
+  properties enter the graph, while `event_time`, `value`, and `quality` remain Eventhouse-bound.
   Native GQL reads use GET `getQueryableGraphType?beta=true` and POST `executeQuery?beta=true`
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges

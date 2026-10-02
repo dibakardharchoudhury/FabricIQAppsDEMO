@@ -81,6 +81,31 @@ class OntologySetupContractTests(unittest.TestCase):
         self.assertEqual(activities["NBW01_weather"]["dependencies"], [])
         self.assertGreater(namespace["setup_dag"]["concurrency"], 1)
 
+    def test_graph_definition_update_observes_automatic_refresh_without_duplicate_submit(self):
+        tree = ast.parse(source("RTI_006_TimeSeriesBinding_RTI_signal"))
+        branch = next(
+            node for node in tree.body
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "graph_changed"
+        )
+        changed_calls = [
+            node.func.id for node in ast.walk(ast.Module(body=branch.body, type_ignores=[]))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        unchanged_calls = [
+            node.func.id for node in ast.walk(ast.Module(body=branch.orelse, type_ignores=[]))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        self.assertIn("_wait_for_automatic_graph_refresh", changed_calls)
+        self.assertNotIn("_refresh_graph", changed_calls)
+        self.assertIn("_refresh_graph", unchanged_calls)
+        refresh = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_refresh_graph"
+        )
+        self.assertIn("JobInstanceStatusDeduped", ast.unparse(refresh))
+
     def test_rebinding_replaces_all_foreign_lakehouse_references(self):
         for name in SETUP_NAMES:
             with self.subTest(name=name):

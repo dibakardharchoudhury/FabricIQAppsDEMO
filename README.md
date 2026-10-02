@@ -28,15 +28,19 @@ and Eventhouse time-series backing configurations. Definition updates preserve u
 parts and existing bindings; incompatible changes must be resolved explicitly rather than silently
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
 Graph materialization is optional in the Fabric generation-2 experience but required for the app's
-native graph canvas, tree, and scopes. In the selected ontology choose **Manage graph → select eligible
-entities/relationships → Continue → Materialize**. The canonical deployment orchestrator follows
-Fabric's authoritative Ontology-to-GraphIndex item lineage and generates the explicit
+native graph canvas, tree, scopes, and Ontology Operations Agent GQL selectors. Fabric exposes no
+public REST operation for the initial **Manage graph** selection that creates the semantic child, so
+on a fresh Ontology use **Manage graph → select eligible entities/relationships → Continue →
+Materialize** once. After that association exists, `RTI_006_TimeSeriesBinding_RTI_signal`
+automatically discovers the child through authoritative lineage, preserves its complete definition,
+adds the static `signal_master`/`signals_from_instruments` projection without the three Eventhouse
+time-series properties, runs `refreshGraph`, verifies readback/queryable schema, and executes the
+Operations Agent's GQL selector. The canonical deployment orchestrator then generates the explicit
 `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
 An operator may supply the same verified binding as a fallback when lineage is unavailable.
 Ownership is never inferred from names, a sole graph, or sampled structure.
-No published ontology-owned materialization REST endpoint is established; this remains a manual
-portal prerequisite. Missing graph data is an error, not an empty successful query or a reason to
-fabricate STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).
+Missing lineage or graph data is an error, not an empty successful query or a reason to fabricate
+STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).
 
 | V2 definition part | Purpose |
 | --- | --- |
@@ -151,7 +155,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_003_ingest_transform_medallion_SelfContained** | Bronze → Silver → Gold transforms; builds `silver_signal_master`. | ✅ |
 | **RTI_004_build_ontology_mapping_rti_structured** | Creates/verifies Ontology v2 TMDL (5 entities, 4 semantic relationships) + time‑series properties; preserves existing bindings on safe reruns. | ✅ |
 | **RTI_005_entity_DataBinding_rti_structured** | Direct Lake backing tables, scalar-property bindings, and physical joins referenced by semantic relationships. | ✅ |
-| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including the standalone `event_time` property. | ✅ |
+| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including standalone `event_time`; repairs and refreshes the attached static GraphModel projection and verifies the Operations Agent GQL selector. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |

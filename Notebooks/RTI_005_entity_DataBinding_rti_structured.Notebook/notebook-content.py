@@ -180,6 +180,7 @@ parts are retained, not interpreted or regenerated. Ambiguous edits fail closed.
 import base64
 import json
 import re
+import uuid
 from collections import Counter
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -478,6 +479,293 @@ def _verify_definition(expected, actual):
                 raise RuntimeError(f"Fabric did not retain submitted JSON in {path}")
         elif before != after:
             raise RuntimeError(f"Fabric changed unmanaged part {path}")
+
+
+def _select_attached_graph_model(ontology_id, workspace_id, lineage, workspace_items):
+    related_items = lineage.get("items") if isinstance(lineage, dict) else None
+    relations = lineage.get("relations") if isinstance(lineage, dict) else None
+    if not isinstance(related_items, list) or not isinstance(relations, list):
+        raise RuntimeError("Ontology downstream lineage response is malformed")
+    related_by_id = {
+        str(item["id"]): item for item in related_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    workspace_by_id = {
+        str(item["id"]): item for item in workspace_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    graph_ids = {
+        str(relation["itemId"])
+        for relation in relations
+        if isinstance(relation, dict)
+        and str(relation.get("dependentOnItemId", "")).casefold() == ontology_id.casefold()
+        and relation.get("relationType") == "CascadeDelete"
+        and related_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphIndex"
+        and str(related_by_id[str(relation["itemId"])].get("workspaceId", "")).casefold()
+        == workspace_id.casefold()
+        and workspace_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphModel"
+    }
+    if len(graph_ids) > 1:
+        raise RuntimeError("Ontology lineage identifies multiple attached GraphModels")
+    if not graph_ids:
+        raise RuntimeError(
+            "The generation-2 Ontology has no attached GraphModel. Use Manage graph once to "
+            "establish the service-owned Ontology-to-GraphIndex lineage, then rerun RTI_006. "
+            "Graph ownership is never inferred from names or a sole workspace graph."
+        )
+    return next(iter(graph_ids))
+
+
+def _graph_json_parts(parts):
+    required = {"graphType.json", "dataSources.json", "graphDefinition.json"}
+    by_path = _parts_by_path(parts)
+    missing = required - set(by_path)
+    if missing:
+        raise RuntimeError(f"GraphModel definition is missing required parts: {sorted(missing)}")
+    decoded = {}
+    for path, part in by_path.items():
+        if not (path.endswith(".json") or path == ".platform"):
+            continue
+        try:
+            value = json.loads(_decode_part(part))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError(f"GraphModel definition part {path} is invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"GraphModel definition part {path} must contain a JSON object")
+        decoded[path] = value
+    return by_path, decoded
+
+
+def _unique_graph_entry(values, predicate, description):
+    matches = [value for value in values if isinstance(value, dict) and predicate(value)]
+    if len(matches) > 1:
+        raise RuntimeError(f"GraphModel contains multiple {description} entries")
+    return matches[0] if matches else None
+
+
+def _graph_uuid(graph_model_id, role):
+    try:
+        namespace = uuid.UUID(graph_model_id)
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError("GraphModel identity must be a GUID") from exc
+    return str(uuid.uuid5(namespace, role))
+
+
+def _ensure_static_graph_projection(
+    parts,
+    graph_model_id,
+    source_name,
+    source_path,
+    entity_name,
+    key_name,
+    property_types,
+    relationship_name,
+    target_entity_name,
+    target_key_name,
+    excluded_properties,
+):
+    by_path, decoded = _graph_json_parts(parts)
+    graph_type = decoded["graphType.json"]
+    data_sources = decoded["dataSources.json"]
+    graph_definition = decoded["graphDefinition.json"]
+    node_types = graph_type.get("nodeTypes")
+    edge_types = graph_type.get("edgeTypes")
+    sources = data_sources.get("dataSources")
+    node_tables = graph_definition.get("nodeTables")
+    edge_tables = graph_definition.get("edgeTables")
+    for name, value in (
+        ("graphType.nodeTypes", node_types), ("graphType.edgeTypes", edge_types),
+        ("dataSources.dataSources", sources), ("graphDefinition.nodeTables", node_tables),
+        ("graphDefinition.edgeTables", edge_tables),
+    ):
+        if not isinstance(value, list):
+            raise RuntimeError(f"GraphModel {name} must be an array")
+    if not isinstance(property_types, dict) or key_name not in property_types:
+        raise RuntimeError("Static graph property types must include the entity key")
+    if set(property_types) & set(excluded_properties):
+        raise RuntimeError("Time-series exclusions cannot also be static graph properties")
+
+    changed = False
+    source = _unique_graph_entry(sources, lambda value: value.get("name") == source_name,
+                                 f"data source named {source_name!r}")
+    expected_source = {"path": source_path}
+    if source:
+        if source.get("type") != "DeltaTable" or source.get("properties") != expected_source:
+            raise RuntimeError(f"Existing graph data source {source_name!r} points elsewhere")
+    else:
+        sources.append({"name": source_name, "type": "DeltaTable", "properties": expected_source})
+        changed = True
+
+    node = _unique_graph_entry(
+        node_types,
+        lambda value: entity_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"node type labelled {entity_name!r}",
+    )
+    if node:
+        alias = node.get("alias")
+        if not isinstance(alias, str) or not alias:
+            raise RuntimeError(f"Graph node type {entity_name!r} has no alias")
+        if node.get("primaryKeyProperties") != [key_name]:
+            raise RuntimeError(f"Graph node type {entity_name!r} has a different primary key")
+    else:
+        alias = _graph_uuid(graph_model_id, f"node-type:{entity_name}")
+        node = {
+            "primaryKeyProperties": [key_name],
+            "alias": alias,
+            "labels": [entity_name],
+            "properties": [],
+        }
+        node_types.append(node)
+        changed = True
+    properties = node.get("properties")
+    if not isinstance(properties, list):
+        raise RuntimeError(f"Graph node type {entity_name!r} properties must be an array")
+    names = [value.get("name") for value in properties if isinstance(value, dict)]
+    if len(names) != len(set(names)):
+        raise RuntimeError(f"Graph node type {entity_name!r} contains duplicate properties")
+    retained = [
+        value for value in properties
+        if not isinstance(value, dict) or value.get("name") not in excluded_properties
+    ]
+    if len(retained) != len(properties):
+        node["properties"] = properties = retained
+        changed = True
+    existing_properties = {
+        value.get("name"): value for value in properties if isinstance(value, dict)
+    }
+    for name, data_type in property_types.items():
+        current = existing_properties.get(name)
+        if current:
+            if current.get("type") != data_type:
+                raise RuntimeError(
+                    f"Graph property {entity_name}.{name} has type {current.get('type')!r}, "
+                    f"expected {data_type!r}"
+                )
+        else:
+            properties.append({"name": name, "type": data_type})
+            changed = True
+
+    node_table = _unique_graph_entry(
+        node_tables, lambda value: value.get("nodeTypeAlias") == alias,
+        f"node table for {entity_name!r}",
+    )
+    if node_table:
+        if node_table.get("dataSourceName") != source_name:
+            raise RuntimeError(f"Graph node table {entity_name!r} uses another data source")
+    else:
+        node_table = {
+            "nodeTypeAlias": alias,
+            "id": _graph_uuid(graph_model_id, f"node-table:{entity_name}"),
+            "dataSourceName": source_name,
+            "propertyMappings": [],
+        }
+        node_tables.append(node_table)
+        changed = True
+    mappings = node_table.get("propertyMappings")
+    if not isinstance(mappings, list):
+        raise RuntimeError(f"Graph node table {entity_name!r} propertyMappings must be an array")
+    mapping_names = [
+        value.get("propertyName") for value in mappings if isinstance(value, dict)
+    ]
+    if len(mapping_names) != len(set(mapping_names)):
+        raise RuntimeError(f"Graph node table {entity_name!r} contains duplicate mappings")
+    retained = [
+        value for value in mappings
+        if not isinstance(value, dict) or value.get("propertyName") not in excluded_properties
+    ]
+    if len(retained) != len(mappings):
+        node_table["propertyMappings"] = mappings = retained
+        changed = True
+    existing_mappings = {
+        value.get("propertyName"): value for value in mappings if isinstance(value, dict)
+    }
+    for name in property_types:
+        current = existing_mappings.get(name)
+        expected = {"propertyName": name, "sourceColumn": name}
+        if current:
+            if current != expected:
+                raise RuntimeError(f"Graph property mapping {entity_name}.{name} points elsewhere")
+        else:
+            mappings.append(expected)
+            changed = True
+
+    target = _unique_graph_entry(
+        node_types,
+        lambda value: target_entity_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"target node type labelled {target_entity_name!r}",
+    )
+    if not target or not isinstance(target.get("alias"), str):
+        raise RuntimeError(
+            f"GraphModel must already project target entity {target_entity_name!r}"
+        )
+    target_alias = target["alias"]
+    if target.get("primaryKeyProperties") != [target_key_name]:
+        raise RuntimeError(f"Graph target {target_entity_name!r} has a different primary key")
+    edge = _unique_graph_entry(
+        edge_types,
+        lambda value: relationship_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"edge type labelled {relationship_name!r}",
+    )
+    if edge:
+        edge_alias = edge.get("alias")
+        if not isinstance(edge_alias, str) or not edge_alias:
+            raise RuntimeError(f"Graph edge type {relationship_name!r} has no alias")
+        if (edge.get("sourceNodeType") != {"alias": alias}
+                or edge.get("destinationNodeType") != {"alias": target_alias}):
+            raise RuntimeError(f"Graph edge {relationship_name!r} has different endpoints")
+    else:
+        edge_alias = _graph_uuid(graph_model_id, f"edge-type:{relationship_name}")
+        edge = {
+            "additionalKeyProperties": [],
+            "alias": edge_alias,
+            "sourceNodeType": {"alias": alias},
+            "labels": [relationship_name],
+            "destinationNodeType": {"alias": target_alias},
+            "properties": [],
+        }
+        edge_types.append(edge)
+        changed = True
+    edge_table = _unique_graph_entry(
+        edge_tables, lambda value: value.get("edgeTypeAlias") == edge_alias,
+        f"edge table for {relationship_name!r}",
+    )
+    expected_edge = {
+        "edgeTypeAlias": edge_alias,
+        "id": _graph_uuid(graph_model_id, f"edge-table:{relationship_name}"),
+        "edgeIdMapping": [],
+        "dataSourceName": source_name,
+        "sourceNodeKeyColumns": [key_name],
+        "propertyMappings": [],
+        "destinationNodeKeyColumns": [target_key_name],
+    }
+    if edge_table:
+        for field in (
+            "edgeIdMapping", "dataSourceName", "sourceNodeKeyColumns",
+            "propertyMappings", "destinationNodeKeyColumns",
+        ):
+            if edge_table.get(field) != expected_edge[field]:
+                raise RuntimeError(f"Graph edge table {relationship_name!r} has incompatible {field}")
+    else:
+        edge_tables.append(expected_edge)
+        changed = True
+
+    replacements = {}
+    if changed:
+        for path in ("graphType.json", "dataSources.json", "graphDefinition.json"):
+            content = json.dumps(decoded[path], ensure_ascii=False, separators=(",", ":"))
+            replacements[path] = _encode_part(path, content)
+    updated = [
+        replacements.get(part["path"], part)
+        for part in parts
+    ]
+    return updated, changed, {
+        "nodeAlias": alias,
+        "edgeAlias": edge_alias,
+        "staticPropertyCount": len(property_types),
+    }
 
 
 def _merge_gen2_structure(live_parts, desired_parts):

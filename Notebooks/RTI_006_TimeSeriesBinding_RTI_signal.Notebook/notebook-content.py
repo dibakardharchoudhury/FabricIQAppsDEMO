@@ -44,7 +44,11 @@
 # Complete service readback must verify the definition before output parts persist.
 # Query/ingest endpoints are validated separately. RTI_007 generates telemetry
 # on demand through `Pipe_Stream`; this setup step does not start streaming.
-# Binding success does not prove native v2 graph association or agent runtime readiness.
+# After binding readback, the existing ontology-owned GraphModel is discovered from
+# authoritative lineage, repaired to project static `signal_master` fields without
+# Eventhouse time-series values, refreshed, and verified with the Operations Agent
+# GQL selector. Fabric's initial Manage graph child association remains a one-time
+# portal prerequisite because no public REST API creates it.
 
 # CELL ********************
 
@@ -187,6 +191,7 @@ parts are retained, not interpreted or regenerated. Ambiguous edits fail closed.
 import base64
 import json
 import re
+import uuid
 from collections import Counter
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -485,6 +490,293 @@ def _verify_definition(expected, actual):
                 raise RuntimeError(f"Fabric did not retain submitted JSON in {path}")
         elif before != after:
             raise RuntimeError(f"Fabric changed unmanaged part {path}")
+
+
+def _select_attached_graph_model(ontology_id, workspace_id, lineage, workspace_items):
+    related_items = lineage.get("items") if isinstance(lineage, dict) else None
+    relations = lineage.get("relations") if isinstance(lineage, dict) else None
+    if not isinstance(related_items, list) or not isinstance(relations, list):
+        raise RuntimeError("Ontology downstream lineage response is malformed")
+    related_by_id = {
+        str(item["id"]): item for item in related_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    workspace_by_id = {
+        str(item["id"]): item for item in workspace_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    graph_ids = {
+        str(relation["itemId"])
+        for relation in relations
+        if isinstance(relation, dict)
+        and str(relation.get("dependentOnItemId", "")).casefold() == ontology_id.casefold()
+        and relation.get("relationType") == "CascadeDelete"
+        and related_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphIndex"
+        and str(related_by_id[str(relation["itemId"])].get("workspaceId", "")).casefold()
+        == workspace_id.casefold()
+        and workspace_by_id.get(str(relation.get("itemId")), {}).get("type") == "GraphModel"
+    }
+    if len(graph_ids) > 1:
+        raise RuntimeError("Ontology lineage identifies multiple attached GraphModels")
+    if not graph_ids:
+        raise RuntimeError(
+            "The generation-2 Ontology has no attached GraphModel. Use Manage graph once to "
+            "establish the service-owned Ontology-to-GraphIndex lineage, then rerun RTI_006. "
+            "Graph ownership is never inferred from names or a sole workspace graph."
+        )
+    return next(iter(graph_ids))
+
+
+def _graph_json_parts(parts):
+    required = {"graphType.json", "dataSources.json", "graphDefinition.json"}
+    by_path = _parts_by_path(parts)
+    missing = required - set(by_path)
+    if missing:
+        raise RuntimeError(f"GraphModel definition is missing required parts: {sorted(missing)}")
+    decoded = {}
+    for path, part in by_path.items():
+        if not (path.endswith(".json") or path == ".platform"):
+            continue
+        try:
+            value = json.loads(_decode_part(part))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError(f"GraphModel definition part {path} is invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"GraphModel definition part {path} must contain a JSON object")
+        decoded[path] = value
+    return by_path, decoded
+
+
+def _unique_graph_entry(values, predicate, description):
+    matches = [value for value in values if isinstance(value, dict) and predicate(value)]
+    if len(matches) > 1:
+        raise RuntimeError(f"GraphModel contains multiple {description} entries")
+    return matches[0] if matches else None
+
+
+def _graph_uuid(graph_model_id, role):
+    try:
+        namespace = uuid.UUID(graph_model_id)
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError("GraphModel identity must be a GUID") from exc
+    return str(uuid.uuid5(namespace, role))
+
+
+def _ensure_static_graph_projection(
+    parts,
+    graph_model_id,
+    source_name,
+    source_path,
+    entity_name,
+    key_name,
+    property_types,
+    relationship_name,
+    target_entity_name,
+    target_key_name,
+    excluded_properties,
+):
+    by_path, decoded = _graph_json_parts(parts)
+    graph_type = decoded["graphType.json"]
+    data_sources = decoded["dataSources.json"]
+    graph_definition = decoded["graphDefinition.json"]
+    node_types = graph_type.get("nodeTypes")
+    edge_types = graph_type.get("edgeTypes")
+    sources = data_sources.get("dataSources")
+    node_tables = graph_definition.get("nodeTables")
+    edge_tables = graph_definition.get("edgeTables")
+    for name, value in (
+        ("graphType.nodeTypes", node_types), ("graphType.edgeTypes", edge_types),
+        ("dataSources.dataSources", sources), ("graphDefinition.nodeTables", node_tables),
+        ("graphDefinition.edgeTables", edge_tables),
+    ):
+        if not isinstance(value, list):
+            raise RuntimeError(f"GraphModel {name} must be an array")
+    if not isinstance(property_types, dict) or key_name not in property_types:
+        raise RuntimeError("Static graph property types must include the entity key")
+    if set(property_types) & set(excluded_properties):
+        raise RuntimeError("Time-series exclusions cannot also be static graph properties")
+
+    changed = False
+    source = _unique_graph_entry(sources, lambda value: value.get("name") == source_name,
+                                 f"data source named {source_name!r}")
+    expected_source = {"path": source_path}
+    if source:
+        if source.get("type") != "DeltaTable" or source.get("properties") != expected_source:
+            raise RuntimeError(f"Existing graph data source {source_name!r} points elsewhere")
+    else:
+        sources.append({"name": source_name, "type": "DeltaTable", "properties": expected_source})
+        changed = True
+
+    node = _unique_graph_entry(
+        node_types,
+        lambda value: entity_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"node type labelled {entity_name!r}",
+    )
+    if node:
+        alias = node.get("alias")
+        if not isinstance(alias, str) or not alias:
+            raise RuntimeError(f"Graph node type {entity_name!r} has no alias")
+        if node.get("primaryKeyProperties") != [key_name]:
+            raise RuntimeError(f"Graph node type {entity_name!r} has a different primary key")
+    else:
+        alias = _graph_uuid(graph_model_id, f"node-type:{entity_name}")
+        node = {
+            "primaryKeyProperties": [key_name],
+            "alias": alias,
+            "labels": [entity_name],
+            "properties": [],
+        }
+        node_types.append(node)
+        changed = True
+    properties = node.get("properties")
+    if not isinstance(properties, list):
+        raise RuntimeError(f"Graph node type {entity_name!r} properties must be an array")
+    names = [value.get("name") for value in properties if isinstance(value, dict)]
+    if len(names) != len(set(names)):
+        raise RuntimeError(f"Graph node type {entity_name!r} contains duplicate properties")
+    retained = [
+        value for value in properties
+        if not isinstance(value, dict) or value.get("name") not in excluded_properties
+    ]
+    if len(retained) != len(properties):
+        node["properties"] = properties = retained
+        changed = True
+    existing_properties = {
+        value.get("name"): value for value in properties if isinstance(value, dict)
+    }
+    for name, data_type in property_types.items():
+        current = existing_properties.get(name)
+        if current:
+            if current.get("type") != data_type:
+                raise RuntimeError(
+                    f"Graph property {entity_name}.{name} has type {current.get('type')!r}, "
+                    f"expected {data_type!r}"
+                )
+        else:
+            properties.append({"name": name, "type": data_type})
+            changed = True
+
+    node_table = _unique_graph_entry(
+        node_tables, lambda value: value.get("nodeTypeAlias") == alias,
+        f"node table for {entity_name!r}",
+    )
+    if node_table:
+        if node_table.get("dataSourceName") != source_name:
+            raise RuntimeError(f"Graph node table {entity_name!r} uses another data source")
+    else:
+        node_table = {
+            "nodeTypeAlias": alias,
+            "id": _graph_uuid(graph_model_id, f"node-table:{entity_name}"),
+            "dataSourceName": source_name,
+            "propertyMappings": [],
+        }
+        node_tables.append(node_table)
+        changed = True
+    mappings = node_table.get("propertyMappings")
+    if not isinstance(mappings, list):
+        raise RuntimeError(f"Graph node table {entity_name!r} propertyMappings must be an array")
+    mapping_names = [
+        value.get("propertyName") for value in mappings if isinstance(value, dict)
+    ]
+    if len(mapping_names) != len(set(mapping_names)):
+        raise RuntimeError(f"Graph node table {entity_name!r} contains duplicate mappings")
+    retained = [
+        value for value in mappings
+        if not isinstance(value, dict) or value.get("propertyName") not in excluded_properties
+    ]
+    if len(retained) != len(mappings):
+        node_table["propertyMappings"] = mappings = retained
+        changed = True
+    existing_mappings = {
+        value.get("propertyName"): value for value in mappings if isinstance(value, dict)
+    }
+    for name in property_types:
+        current = existing_mappings.get(name)
+        expected = {"propertyName": name, "sourceColumn": name}
+        if current:
+            if current != expected:
+                raise RuntimeError(f"Graph property mapping {entity_name}.{name} points elsewhere")
+        else:
+            mappings.append(expected)
+            changed = True
+
+    target = _unique_graph_entry(
+        node_types,
+        lambda value: target_entity_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"target node type labelled {target_entity_name!r}",
+    )
+    if not target or not isinstance(target.get("alias"), str):
+        raise RuntimeError(
+            f"GraphModel must already project target entity {target_entity_name!r}"
+        )
+    target_alias = target["alias"]
+    if target.get("primaryKeyProperties") != [target_key_name]:
+        raise RuntimeError(f"Graph target {target_entity_name!r} has a different primary key")
+    edge = _unique_graph_entry(
+        edge_types,
+        lambda value: relationship_name in value.get("labels", [])
+        if isinstance(value.get("labels"), list) else False,
+        f"edge type labelled {relationship_name!r}",
+    )
+    if edge:
+        edge_alias = edge.get("alias")
+        if not isinstance(edge_alias, str) or not edge_alias:
+            raise RuntimeError(f"Graph edge type {relationship_name!r} has no alias")
+        if (edge.get("sourceNodeType") != {"alias": alias}
+                or edge.get("destinationNodeType") != {"alias": target_alias}):
+            raise RuntimeError(f"Graph edge {relationship_name!r} has different endpoints")
+    else:
+        edge_alias = _graph_uuid(graph_model_id, f"edge-type:{relationship_name}")
+        edge = {
+            "additionalKeyProperties": [],
+            "alias": edge_alias,
+            "sourceNodeType": {"alias": alias},
+            "labels": [relationship_name],
+            "destinationNodeType": {"alias": target_alias},
+            "properties": [],
+        }
+        edge_types.append(edge)
+        changed = True
+    edge_table = _unique_graph_entry(
+        edge_tables, lambda value: value.get("edgeTypeAlias") == edge_alias,
+        f"edge table for {relationship_name!r}",
+    )
+    expected_edge = {
+        "edgeTypeAlias": edge_alias,
+        "id": _graph_uuid(graph_model_id, f"edge-table:{relationship_name}"),
+        "edgeIdMapping": [],
+        "dataSourceName": source_name,
+        "sourceNodeKeyColumns": [key_name],
+        "propertyMappings": [],
+        "destinationNodeKeyColumns": [target_key_name],
+    }
+    if edge_table:
+        for field in (
+            "edgeIdMapping", "dataSourceName", "sourceNodeKeyColumns",
+            "propertyMappings", "destinationNodeKeyColumns",
+        ):
+            if edge_table.get(field) != expected_edge[field]:
+                raise RuntimeError(f"Graph edge table {relationship_name!r} has incompatible {field}")
+    else:
+        edge_tables.append(expected_edge)
+        changed = True
+
+    replacements = {}
+    if changed:
+        for path in ("graphType.json", "dataSources.json", "graphDefinition.json"):
+            content = json.dumps(decoded[path], ensure_ascii=False, separators=(",", ":"))
+            replacements[path] = _encode_part(path, content)
+    updated = [
+        replacements.get(part["path"], part)
+        for part in parts
+    ]
+    return updated, changed, {
+        "nodeAlias": alias,
+        "edgeAlias": edge_alias,
+        "staticPropertyCount": len(property_types),
+    }
 
 
 def _merge_gen2_structure(live_parts, desired_parts):
@@ -2068,6 +2360,426 @@ else:
 verified_parts = get_ontology_definition(ontology_id).get("definition", {}).get("parts", [])
 _verify_definition(updated_parts, verified_parts)
 print("Verified Eventhouse time-series binding and all preserved ontology content")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# Final phase — repair and refresh the attached static GraphModel projection.
+#
+# Fabric's initial Manage graph selection remains the one-time operation that
+# establishes the service-owned Ontology-to-GraphIndex lineage. Once that child
+# exists, this phase is idempotent: it preserves the full GraphModel definition,
+# projects signal_master from its Delta table, excludes only Eventhouse
+# time-series properties, refreshes all graph data, and verifies the exact GQL
+# shape used by the Operations Agent.
+
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+GRAPH_RELATIONSHIP_NAME = "signals_from_instruments"
+GRAPH_TARGET_ENTITY_NAME = "instruments"
+GRAPH_TARGET_KEY_NAME = "instrument_id"
+GRAPH_EXCLUDED_TIMESERIES_PROPERTIES = {
+    TIMESTAMP_COLUMN_NAME,
+    VALUE_COLUMN_NAME,
+    QUALITY_COLUMN_NAME,
+}
+GRAPH_JOB_MAX_WAIT_SECONDS = 3600
+
+
+def _graph_definition(graph_model_id: str) -> dict:
+    url = (
+        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}"
+        f"/graphModels/{quote(graph_model_id, safe='')}/getDefinition"
+    )
+    response = api_request("POST", url, timeout=300)
+    if response.status_code == 202:
+        operation_url = _fabric_operation_url(response, FABRIC_BASE_URL)
+        wait_for_lro(operation_url)
+        response = api_request("GET", _fabric_result_url(operation_url), timeout=300)
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"GraphModel getDefinition failed: HTTP {response.status_code} "
+            f"{response.text[:1000]}"
+        )
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError("GraphModel getDefinition returned invalid JSON") from exc
+    parts = body.get("definition", {}).get("parts", [])
+    _graph_json_parts(parts)
+    return body
+
+
+def _update_graph_definition(graph_model_id: str, parts: list) -> None:
+    url = (
+        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}"
+        f"/graphModels/{quote(graph_model_id, safe='')}/updateDefinition"
+    )
+    response = api_request(
+        "POST", url, data={"definition": {"parts": parts}}, timeout=300
+    )
+    if response.status_code == 202:
+        wait_for_lro(_fabric_operation_url(response, FABRIC_BASE_URL))
+        return
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"GraphModel updateDefinition failed: HTTP {response.status_code} "
+            f"{response.text[:1000]}"
+        )
+
+
+def _graph_refresh_jobs(graph_model_id: str) -> list:
+    return _list_fabric_values(
+        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/items/"
+        f"{quote(graph_model_id, safe='')}/jobs/instances?jobType=Refresh"
+    )
+
+
+def _wait_for_no_active_graph_refresh(
+    graph_model_id: str,
+    started: float,
+) -> None:
+    active_statuses = {"notstarted", "inprogress", "running", "queued"}
+    while time.perf_counter() - started < GRAPH_JOB_MAX_WAIT_SECONDS:
+        active = [
+            job for job in _graph_refresh_jobs(graph_model_id)
+            if isinstance(job, dict)
+            and str(job.get("status", "")).casefold() in active_statuses
+        ]
+        if not active:
+            return
+        time.sleep(5)
+    raise TimeoutError("A prior GraphModel refresh did not leave its active state")
+
+
+def _wait_for_automatic_graph_refresh(
+    graph_model_id: str,
+    not_before: datetime,
+) -> float:
+    started = time.perf_counter()
+    active_statuses = {"notstarted", "inprogress", "running", "queued"}
+    threshold = not_before.timestamp() - 5
+    while time.perf_counter() - started < GRAPH_JOB_MAX_WAIT_SECONDS:
+        candidates = []
+        for job in _graph_refresh_jobs(graph_model_id):
+            if not isinstance(job, dict) or not isinstance(job.get("startTimeUtc"), str):
+                continue
+            try:
+                began = datetime.fromisoformat(
+                    job["startTimeUtc"].replace("Z", "+00:00")
+                ).timestamp()
+            except ValueError:
+                raise RuntimeError("Graph refresh job has an invalid startTimeUtc")
+            status = str(job.get("status", "")).casefold()
+            reason = job.get("failureReason") or {}
+            if (
+                began >= threshold
+                and not (
+                    status == "deduped"
+                    and isinstance(reason, dict)
+                    and reason.get("errorCode") == "JobInstanceStatusDeduped"
+                )
+            ):
+                candidates.append((began, status, job))
+        if candidates:
+            _, status, job = max(candidates, key=lambda value: value[0])
+            if status in {"completed", "succeeded"}:
+                return time.perf_counter() - started
+            if status in {"failed", "cancelled", "canceled"}:
+                raise RuntimeError(
+                    "Automatic graph refresh failed: "
+                    + json.dumps(job.get("failureReason") or job)
+                )
+            if status not in active_statuses:
+                raise RuntimeError(
+                    f"Automatic graph refresh returned unknown status {status!r}"
+                )
+        time.sleep(5)
+    raise TimeoutError(
+        "No successful automatic GraphModel refresh followed updateDefinition"
+    )
+
+
+def _refresh_graph(graph_model_id: str) -> float:
+    url = (
+        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}"
+        f"/graphModels/{quote(graph_model_id, safe='')}"
+        "/jobs/refreshGraph/instances"
+    )
+    started = time.perf_counter()
+    active_statuses = {"notstarted", "inprogress", "running", "queued"}
+    _wait_for_no_active_graph_refresh(graph_model_id, started)
+    for attempt in range(3):
+        response = api_request("POST", url, timeout=300)
+        if response.status_code == 200:
+            return time.perf_counter() - started
+        if response.status_code != 202:
+            raise RuntimeError(
+                f"Graph refresh failed to start: HTTP {response.status_code} "
+                f"{response.text[:1000]}"
+            )
+        job_url = _fabric_operation_url(response, FABRIC_BASE_URL)
+        time.sleep(max(1, int(response.headers.get("Retry-After", 5))))
+        deduped = False
+        while time.perf_counter() - started < GRAPH_JOB_MAX_WAIT_SECONDS:
+            status_response = api_request("GET", job_url, timeout=120)
+            if status_response.status_code != 200:
+                raise RuntimeError(
+                    f"Graph refresh status failed: HTTP {status_response.status_code}"
+                )
+            try:
+                status_body = status_response.json()
+            except ValueError as exc:
+                raise RuntimeError("Graph refresh status returned invalid JSON") from exc
+            status = str(status_body.get("status", "")).casefold()
+            if status in {"completed", "succeeded"}:
+                return time.perf_counter() - started
+            if status == "deduped":
+                reason = status_body.get("failureReason") or {}
+                if not isinstance(reason, dict) or reason.get("errorCode") != "JobInstanceStatusDeduped":
+                    raise RuntimeError(
+                        "Graph refresh returned an unrecognized deduplication result: "
+                        + json.dumps(status_body)
+                    )
+                deduped = True
+                break
+            if status in {"failed", "cancelled", "canceled"}:
+                raise RuntimeError(
+                    "Graph refresh failed: "
+                    + json.dumps(status_body.get("failureReason") or status_body)
+                )
+            if status not in active_statuses:
+                raise RuntimeError(f"Graph refresh returned unknown status {status!r}")
+            time.sleep(max(1, int(status_response.headers.get("Retry-After", 5))))
+        if not deduped:
+            raise TimeoutError(
+                f"Graph refresh exceeded {GRAPH_JOB_MAX_WAIT_SECONDS} seconds"
+            )
+        # A deduped instance was explicitly skipped because another refresh was
+        # already running. Wait for that job to leave its active state, then
+        # submit a new refresh so this definition version is definitely loaded.
+        _wait_for_no_active_graph_refresh(graph_model_id, started)
+        print(
+            f"Graph refresh request {attempt + 1} was deduped behind an active "
+            "job; submitting a fresh request for the current definition."
+        )
+    raise RuntimeError(
+        "Graph refresh was deduped three times; retry after current graph jobs complete"
+    )
+
+
+def _verify_graph_runtime(graph_model_id: str) -> tuple[int, float]:
+    base = (
+        f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}"
+        f"/graphModels/{quote(graph_model_id, safe='')}"
+    )
+    schema_response = api_request(
+        "GET", f"{base}/getQueryableGraphType?beta=true", timeout=120
+    )
+    if schema_response.status_code != 200:
+        raise RuntimeError(
+            f"Queryable graph schema failed: HTTP {schema_response.status_code}"
+        )
+    try:
+        schema = schema_response.json()
+    except ValueError as exc:
+        raise RuntimeError("Queryable graph schema returned invalid JSON") from exc
+    signal_types = [
+        item for item in schema.get("nodeTypes", [])
+        if isinstance(item, dict)
+        and STATIC_ENTITY_NAME in item.get("labels", [])
+    ]
+    relationship_types = [
+        item for item in schema.get("edgeTypes", [])
+        if isinstance(item, dict)
+        and GRAPH_RELATIONSHIP_NAME in item.get("labels", [])
+    ]
+    if len(signal_types) != 1 or len(relationship_types) != 1:
+        raise RuntimeError(
+            "Refreshed graph schema does not contain exactly one signal_master "
+            "node type and signals_from_instruments edge type"
+        )
+    gql = (
+        f"MATCH (node_signal_master:`{STATIC_ENTITY_NAME}`) "
+        f"RETURN node_signal_master.`{KEY_COLUMN_NAME}` AS `{KEY_COLUMN_NAME}`, "
+        "node_signal_master.`equipment_id` AS `equipment_id`, "
+        "node_signal_master.`facility_id` AS `facility_id`, "
+        "node_signal_master.`unit` AS `unit` LIMIT 1"
+    )
+    started = time.perf_counter()
+    query_response = api_request(
+        "POST",
+        f"{base}/executeQuery?beta=true",
+        data={"query": gql},
+        timeout=120,
+    )
+    if query_response.status_code != 200:
+        raise RuntimeError(
+            f"Graph GQL verification failed: HTTP {query_response.status_code}"
+        )
+    try:
+        payload = query_response.json()
+    except ValueError as exc:
+        raise RuntimeError("Graph GQL verification returned invalid JSON") from exc
+    code = str(payload.get("status", {}).get("code", ""))
+    rows = payload.get("result", {}).get("data")
+    if code != "00000" or not isinstance(rows, list) or len(rows) != 1:
+        raise RuntimeError(
+            "Graph GQL verification did not return one signal_master row: "
+            + json.dumps(payload.get("status") or payload)
+        )
+    required = {
+        KEY_COLUMN_NAME, "equipment_id", "facility_id", "unit",
+    }
+    if not isinstance(rows[0], dict) or not required.issubset(rows[0]):
+        raise RuntimeError(
+            "Graph GQL verification row does not match the Operations Agent selector"
+        )
+    return len(rows), time.perf_counter() - started
+
+
+graph_phase_started = time.perf_counter()
+lineage_response = api_request(
+    "GET",
+    f"{FABRIC_BASE_URL}/workspaces/{WORKSPACE_ID}/items/"
+    f"{quote(ontology_id, safe='')}/relations/downstream?beta=true",
+    timeout=120,
+)
+if lineage_response.status_code != 200:
+    raise RuntimeError(
+        f"Ontology downstream lineage failed: HTTP {lineage_response.status_code}"
+    )
+try:
+    lineage = lineage_response.json()
+except ValueError as exc:
+    raise RuntimeError("Ontology downstream lineage returned invalid JSON") from exc
+
+workspace_items = list_workspace_items()
+graph_model_id = _select_attached_graph_model(
+    ontology_id, WORKSPACE_ID, lineage, workspace_items
+)
+graph_item = next(
+    (
+        item for item in workspace_items
+        if item.get("id") == graph_model_id
+        and item.get("type") == "GraphModel"
+    ),
+    None,
+)
+if graph_item is None:
+    raise RuntimeError("Attached GraphModel identity is absent from the workspace")
+
+lakehouse_id = first_setting("lakehouse_id", required=True)
+signal_table_name = first_setting("silver_signal_master_table", required=True)
+signal_source_path = (
+    f"abfss://{WORKSPACE_ID}@onelake.pbidedicated.windows.net/"
+    f"{lakehouse_id}/Tables/{signal_table_name}"
+)
+spark_to_graph = {
+    "string": "STRING",
+    "boolean": "BOOLEAN",
+    "tinyint": "INT",
+    "smallint": "INT",
+    "int": "INT",
+    "bigint": "INT",
+    "float": "DOUBLE",
+    "double": "DOUBLE",
+    "date": "ZONED DATETIME",
+    "timestamp": "ZONED DATETIME",
+    "timestamp_ntz": "ZONED DATETIME",
+}
+property_types = {}
+for field in spark.table(signal_table_name).schema.fields:
+    source_type = field.dataType.simpleString().casefold()
+    graph_type = spark_to_graph.get(source_type)
+    if graph_type is None:
+        raise RuntimeError(
+            f"Graph projection does not support Spark type {source_type!r} "
+            f"for {signal_table_name}.{field.name}"
+        )
+    property_types[field.name] = graph_type
+if KEY_COLUMN_NAME not in property_types:
+    raise RuntimeError(
+        f"Static signal table {signal_table_name!r} lacks key {KEY_COLUMN_NAME!r}"
+    )
+
+definition_started = time.perf_counter()
+graph_definition = _graph_definition(graph_model_id)
+current_graph_parts = graph_definition["definition"]["parts"]
+projected_parts, graph_changed, projection = _ensure_static_graph_projection(
+    parts=current_graph_parts,
+    graph_model_id=graph_model_id,
+    source_name=STATIC_ENTITY_NAME,
+    source_path=signal_source_path,
+    entity_name=STATIC_ENTITY_NAME,
+    key_name=KEY_COLUMN_NAME,
+    property_types=property_types,
+    relationship_name=GRAPH_RELATIONSHIP_NAME,
+    target_entity_name=GRAPH_TARGET_ENTITY_NAME,
+    target_key_name=GRAPH_TARGET_KEY_NAME,
+    excluded_properties=GRAPH_EXCLUDED_TIMESERIES_PROPERTIES,
+)
+definition_seconds = time.perf_counter() - definition_started
+if graph_changed:
+    automatic_refresh_not_before = datetime.now(timezone.utc)
+    _update_graph_definition(graph_model_id, projected_parts)
+    persisted_parts = _graph_definition(graph_model_id)["definition"]["parts"]
+    _verify_definition(projected_parts, persisted_parts)
+    print("Updated and verified the attached GraphModel static projection")
+    refresh_seconds = _wait_for_automatic_graph_refresh(
+        graph_model_id, automatic_refresh_not_before
+    )
+else:
+    print("Attached GraphModel static projection already matches the Ontology")
+    refresh_seconds = _refresh_graph(graph_model_id)
+
+verified_row_count, gql_seconds = _verify_graph_runtime(graph_model_id)
+graph_total_seconds = time.perf_counter() - graph_phase_started
+
+graph_status_rows = [
+    ("ontology_graph_status", "verified"),
+    ("ontology_graph_workspace_id", WORKSPACE_ID),
+    ("ontology_graph_ontology_id", ontology_id),
+    ("ontology_graph_model_id", graph_model_id),
+    ("ontology_graph_node_alias", projection["nodeAlias"]),
+    ("ontology_graph_edge_alias", projection["edgeAlias"]),
+    ("ontology_graph_static_property_count", str(projection["staticPropertyCount"])),
+    ("ontology_graph_refresh_seconds", f"{refresh_seconds:.3f}"),
+    ("ontology_graph_gql_seconds", f"{gql_seconds:.3f}"),
+    (
+        "ontology_graph_verified_at",
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    ),
+]
+spark.createDataFrame(
+    graph_status_rows, ["setting_name", "setting_value"]
+).createOrReplaceTempView("ontology_graph_status_updates")
+spark.sql(
+    f"""
+    MERGE INTO {settings_table_name} AS target
+    USING ontology_graph_status_updates AS source
+    ON target.setting_name = source.setting_name
+    WHEN MATCHED THEN UPDATE SET target.setting_value = source.setting_value
+    WHEN NOT MATCHED THEN INSERT (setting_name, setting_value)
+      VALUES (source.setting_name, source.setting_value)
+    """
+)
+
+print("Verified attached Ontology v2 GraphModel:", graph_item.get("displayName"))
+print("GraphModel ID:", graph_model_id)
+print("Static signal properties:", projection["staticPropertyCount"])
+print("Verified GQL rows:", verified_row_count)
+print(f"Graph definition phase: {definition_seconds:.3f}s")
+print(f"Graph refresh: {refresh_seconds:.3f}s")
+print(f"Graph GQL verification: {gql_seconds:.3f}s")
+print(f"Graph materialization total: {graph_total_seconds:.3f}s")
 
 # METADATA ********************
 

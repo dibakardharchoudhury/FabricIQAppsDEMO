@@ -959,5 +959,210 @@ class DefinitionReadSafetyTests(unittest.TestCase):
             read_mock.assert_not_called()
 
 
+class GraphMaterializationTests(unittest.TestCase):
+    graph_id = "33333333-3333-3333-3333-333333333333"
+
+    def graph_parts(self, include_signal=False, include_timeseries=False):
+        instrument_alias = "44444444-4444-4444-4444-444444444444"
+        node_types = [{
+            "primaryKeyProperties": ["instrument_id"], "alias": instrument_alias,
+            "labels": ["instruments"],
+            "properties": [{"name": "instrument_id", "type": "STRING"}],
+        }]
+        sources = [{
+            "name": "instruments", "type": "DeltaTable",
+            "properties": {"path": "abfss://workspace@onelake.pbidedicated.windows.net/lakehouse/Tables/silver_instruments"},
+        }]
+        node_tables = [{
+            "nodeTypeAlias": instrument_alias,
+            "id": "55555555-5555-5555-5555-555555555555",
+            "dataSourceName": "instruments",
+            "propertyMappings": [{"propertyName": "instrument_id", "sourceColumn": "instrument_id"}],
+        }]
+        if include_signal:
+            signal_alias = support._graph_uuid(self.graph_id, "node-type:signal_master")
+            properties = [
+                {"name": "opcua_node_id", "type": "STRING"},
+                {"name": "instrument_id", "type": "STRING"},
+            ]
+            mappings = [
+                {"propertyName": "opcua_node_id", "sourceColumn": "opcua_node_id"},
+                {"propertyName": "instrument_id", "sourceColumn": "instrument_id"},
+            ]
+            if include_timeseries:
+                properties.extend([
+                    {"name": "event_time", "type": "INVALID"},
+                    {"name": "value", "type": "INVALID"},
+                    {"name": "quality", "type": "INVALID"},
+                ])
+                mappings.extend([
+                    {"propertyName": name, "sourceColumn": name}
+                    for name in ("event_time", "value", "quality")
+                ])
+            node_types.append({
+                "primaryKeyProperties": ["opcua_node_id"], "alias": signal_alias,
+                "labels": ["signal_master"], "properties": properties,
+            })
+            sources.append({
+                "name": "signal_master", "type": "DeltaTable",
+                "properties": {"path": "abfss://workspace@onelake.pbidedicated.windows.net/lakehouse/Tables/silver_signal_master"},
+            })
+            node_tables.append({
+                "nodeTypeAlias": signal_alias,
+                "id": support._graph_uuid(self.graph_id, "node-table:signal_master"),
+                "dataSourceName": "signal_master", "propertyMappings": mappings,
+            })
+        payloads = {
+            "graphType.json": {
+                "$schema": "graph-type-schema", "nodeTypes": node_types, "edgeTypes": [],
+            },
+            "dataSources.json": {
+                "$schema": "data-source-schema", "dataSources": sources,
+            },
+            "graphDefinition.json": {
+                "$schema": "graph-definition-schema",
+                "nodeTables": node_tables, "edgeTables": [],
+            },
+            "graphSettings.json": {
+                "$schema": "settings-schema",
+                "scalingConfiguration": {"sku": {"tier": "small"}},
+            },
+        }
+        return [
+            support._encode_part(path, json.dumps(value, separators=(",", ":")))
+            for path, value in payloads.items()
+        ]
+
+    def repair(self, parts):
+        return support._ensure_static_graph_projection(
+            parts=parts,
+            graph_model_id=self.graph_id,
+            source_name="signal_master",
+            source_path="abfss://workspace@onelake.pbidedicated.windows.net/lakehouse/Tables/silver_signal_master",
+            entity_name="signal_master",
+            key_name="opcua_node_id",
+            property_types={
+                "opcua_node_id": "STRING", "instrument_id": "STRING",
+                "equipment_id": "STRING", "is_active": "BOOLEAN",
+            },
+            relationship_name="signals_from_instruments",
+            target_entity_name="instruments",
+            target_key_name="instrument_id",
+            excluded_properties={"event_time", "value", "quality"},
+        )
+
+    @staticmethod
+    def decoded(parts, path):
+        return json.loads(support._decode_part(
+            next(part for part in parts if part["path"] == path)
+        ))
+
+    def test_lineage_requires_service_owned_ontology_graph_relation(self):
+        ontology_id = "11111111-1111-1111-1111-111111111111"
+        workspace_id = "22222222-2222-2222-2222-222222222222"
+        graph_id = self.graph_id
+        lineage = {
+            "items": [{"id": graph_id, "type": "GraphIndex", "workspaceId": workspace_id}],
+            "relations": [{
+                "itemId": graph_id, "dependentOnItemId": ontology_id,
+                "relationType": "CascadeDelete",
+            }],
+        }
+        items = [{"id": graph_id, "type": "GraphModel"}]
+        self.assertEqual(
+            support._select_attached_graph_model(ontology_id, workspace_id, lineage, items),
+            graph_id,
+        )
+        for changed in (
+            {"items": []},
+            {"relations": [{**lineage["relations"][0], "relationType": "Datasource"}]},
+            {"items": [{**lineage["items"][0], "type": "GraphModel"}]},
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                RuntimeError, "no attached GraphModel"
+            ):
+                support._select_attached_graph_model(
+                    ontology_id, workspace_id, {**lineage, **changed}, items
+                )
+        second_id = "66666666-6666-6666-6666-666666666666"
+        ambiguous = {
+            "items": lineage["items"] + [{
+                "id": second_id, "type": "GraphIndex", "workspaceId": workspace_id,
+            }],
+            "relations": lineage["relations"] + [{
+                "itemId": second_id, "dependentOnItemId": ontology_id,
+                "relationType": "CascadeDelete",
+            }],
+        }
+        with self.assertRaisesRegex(RuntimeError, "multiple attached"):
+            support._select_attached_graph_model(
+                ontology_id, workspace_id, ambiguous,
+                items + [{"id": second_id, "type": "GraphModel"}],
+            )
+
+    def test_static_signal_projection_is_added_and_unknown_parts_are_preserved(self):
+        original = self.graph_parts()
+        updated, changed, summary = self.repair(original)
+        self.assertTrue(changed)
+        self.assertEqual(summary["staticPropertyCount"], 4)
+        graph_type = self.decoded(updated, "graphType.json")
+        signal = next(node for node in graph_type["nodeTypes"]
+                      if node["labels"] == ["signal_master"])
+        self.assertEqual(signal["primaryKeyProperties"], ["opcua_node_id"])
+        self.assertEqual(
+            {item["name"]: item["type"] for item in signal["properties"]},
+            {
+                "opcua_node_id": "STRING", "instrument_id": "STRING",
+                "equipment_id": "STRING", "is_active": "BOOLEAN",
+            },
+        )
+        edge = next(item for item in graph_type["edgeTypes"]
+                    if item["labels"] == ["signals_from_instruments"])
+        self.assertEqual(edge["sourceNodeType"], {"alias": signal["alias"]})
+        before = next(part for part in original if part["path"] == "graphSettings.json")
+        after = next(part for part in updated if part["path"] == "graphSettings.json")
+        self.assertIs(before, after)
+        rerun, rerun_changed, rerun_summary = self.repair(updated)
+        self.assertFalse(rerun_changed)
+        self.assertEqual(rerun_summary, summary)
+        self.assertEqual(rerun, updated)
+
+    def test_only_invalid_timeseries_graph_properties_are_removed(self):
+        updated, changed, _ = self.repair(self.graph_parts(
+            include_signal=True, include_timeseries=True,
+        ))
+        self.assertTrue(changed)
+        graph_type = self.decoded(updated, "graphType.json")
+        signal = next(node for node in graph_type["nodeTypes"]
+                      if node["labels"] == ["signal_master"])
+        self.assertFalse(
+            {"event_time", "value", "quality"}
+            & {item["name"] for item in signal["properties"]}
+        )
+        definition = self.decoded(updated, "graphDefinition.json")
+        table = next(item for item in definition["nodeTables"]
+                     if item["nodeTypeAlias"] == signal["alias"])
+        self.assertFalse(
+            {"event_time", "value", "quality"}
+            & {item["propertyName"] for item in table["propertyMappings"]}
+        )
+        self.assertIn(
+            "instrument_id",
+            {item["propertyName"] for item in table["propertyMappings"]},
+        )
+
+    def test_conflicting_static_source_fails_closed(self):
+        parts = self.graph_parts(include_signal=True)
+        sources = self.decoded(parts, "dataSources.json")
+        sources["dataSources"][-1]["properties"]["path"] = "abfss://different"
+        parts = [
+            support._encode_part(part["path"], json.dumps(sources, separators=(",", ":")))
+            if part["path"] == "dataSources.json" else part
+            for part in parts
+        ]
+        with self.assertRaisesRegex(RuntimeError, "points elsewhere"):
+            self.repair(parts)
+
+
 if __name__ == "__main__":
     unittest.main()

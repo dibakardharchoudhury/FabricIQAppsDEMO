@@ -486,7 +486,8 @@
 # verified ontology source is unchanged on the same agent/workspace, and invalidated
 # when that configuration changes. SQL and combined-source runtime remain unverified.
 #
-# Setup retains NB06 -> NB09 -> NB10 ordering. Before enabling Weather it requires
+# Setup runs both agents only after NB06 has verified Ontology bindings and the native graph.
+# Before enabling Weather it requires
 # NB09 `ready` with separate `published`/runtime `verified` evidence and NB10 `configured`,
 # or each capability's explicit disabled/skipped
 # result. Missing, blocked or failed evidence cannot become green setup success.
@@ -495,11 +496,15 @@
 # HydroOperationsApp reads v2 TMDL and queries the ontology-managed GraphModel
 # using native GQL. Its native nodes and relationships define the Knowledge Graph;
 # Eventhouse KQL telemetry and operational SQL enrich those existing entities.
-# Materialize through the selected ontology's **Manage graph** workflow, then set
-# `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` to the verified workspace, ontology and
-# graph IDs. Ownership is not inferred from names or similar schemas.
-# These notebooks do not automate graph materialization. Missing setup or failed
-# native queries show an explicit error, never a GraphQL/Lakehouse topology fallback.
+# Use the selected ontology's **Manage graph** workflow once to establish its
+# service-owned GraphModel child; Fabric exposes no public API for that initial
+# selection/association. The final NB06 phase then preserves and repairs the attached
+# definition, excludes only Eventhouse time-series fields from the static projection,
+# invokes `refreshGraph`, verifies readback/queryable types, and executes the Operations
+# Agent GQL selector. The deployment orchestrator generates
+# `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from authoritative lineage. Ownership is not
+# inferred from names or similar schemas. Missing setup or failed native queries show
+# an explicit error, never a GraphQL/Lakehouse topology fallback.
 # See [Knowledge Graph setup](../../docs/knowledge-graph.md) for alias mapping and limits.
 # 
 # ---
