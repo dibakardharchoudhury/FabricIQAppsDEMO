@@ -171,6 +171,10 @@ test('guided setup retains its original copy and layout without migration panels
 
 test('Knowledge Graph page displays available bound entities while native loading is pending', async () => {
   const pageSource = await readFile(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
+  assert.ok(pageSource.indexOf('await queryOntologyContract()') < pageSource.indexOf('loadNativeGraphSnapshot('),
+    'The verified contract must be published before the native graph query begins')
+  assert.doesNotMatch(pageSource, /setOntologyGraph\(null\)\s*setOntology\(null\)/,
+    'A native query failure must not discard the verified progressive contract')
   const { outputText } = ts.transpileModule(pageSource, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   })

@@ -77,6 +77,9 @@ export function KnowledgeGraphPage() {
     setGraphLoading(true)
     let timeoutId: number | undefined
     try {
+      const progressiveContract = await queryOntologyContract()
+      if (version !== graphRefreshVersion.current) return
+      setOntology(progressiveContract)
       const load = loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
       const timeout = new Promise<never>((_, reject) => {
         timeoutId = window.setTimeout(() => reject(new Error('Ontology graph loading exceeded 30 seconds. Retry after the Fabric graph refresh completes.')), GRAPH_LOAD_TIMEOUT_MS)
@@ -91,7 +94,6 @@ export function KnowledgeGraphPage() {
       if (version !== graphRefreshVersion.current) return
       console.warn('Native ontology graph query failed; Ontology-bound Lakehouse data remains available.', error)
       setOntologyGraph(null)
-      setOntology(null)
       setGraphQueriedAt(undefined)
       setGraphError(error instanceof Error ? error.message : 'Ontology graph query failed. Refresh and check Fabric access.')
     }
