@@ -30,6 +30,11 @@ const graphqlName = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_NAME as string | un
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
+const configuredGraphqlUrl = graphqlUrlOverride || (workspaceId && graphqlId
+  ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${graphqlId}/graphql`
+  : undefined)
+const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
+const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
@@ -120,13 +125,13 @@ function requireWorkspaceId(): string {
   return workspaceId
 }
 
-/** Build-time selections and last-known-good endpoints for unavailable live discovery. */
+/** Deployment-verified selections and endpoints used before slower live workspace discovery. */
 function envConfig(): ResolvedConfig {
   return {
     pipelineId: import.meta.env.VITE_RAYFIN_STREAM_PIPELINE_ID as string | undefined,
     postseedNotebookId: import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_ID as string | undefined,
-    eventhouseQueryUri: import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined,
-    kqlDatabase: import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined,
+    eventhouseQueryUri: configuredEventhouseQueryUri,
+    kqlDatabase: configuredKqlDatabase,
     graphqlUrl: graphqlUrlOverride,
     kqlDashboardId: import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_ID as string | undefined,
   }
@@ -652,8 +657,8 @@ type WeatherPayload = {
 export function isStidConfigured() { return Boolean(msal) }
 
 export async function queryStid(): Promise<StidData | null> {
-  const config = await ensureConfig(false)
-  if (!config?.graphqlUrl) return null
+  const graphqlUrl = configuredGraphqlUrl ?? (await ensureConfig(false))?.graphqlUrl
+  if (!graphqlUrl) return null
   const token = await silentToken([GRAPHQL_SCOPE])
   if (!token) return null
   // Aliases map to the real Lakehouse tables exposed by the
@@ -662,7 +667,7 @@ export async function queryStid(): Promise<StidData | null> {
     equipment: silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
     instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
   const execute = async (query: string) => {
-    const response = await fetch(config.graphqlUrl!, {
+    const response = await fetch(graphqlUrl, {
       method: 'POST', cache: 'no-store',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
@@ -959,15 +964,19 @@ function kqlString(value: string): string {
 export function isTelemetryConfigured() { return Boolean(msal) }
 
 export async function queryLatestTelemetry(): Promise<TelemetryReading[] | null> {
-  const config = await ensureConfig(false)
-  if (!config?.eventhouseQueryUri || !config.kqlDatabase) return null
-  const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
+  const discovered = configuredEventhouseQueryUri && configuredKqlDatabase
+    ? undefined
+    : await ensureConfig(false)
+  const eventhouseQueryUri = configuredEventhouseQueryUri ?? discovered?.eventhouseQueryUri
+  const kqlDatabase = configuredKqlDatabase ?? discovered?.kqlDatabase
+  if (!eventhouseQueryUri || !kqlDatabase) return null
+  const cluster = eventhouseQueryUri.replace(/\/$/, '')
   const token = await silentToken([kustoScope(cluster)])
   if (!token) return null
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ db: config.kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(24h) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
+    body: JSON.stringify({ db: kqlDatabase, csl: 'OPCUAEvents | where event_time > ago(24h) | summarize arg_max(event_time, value, quality) by opcua_node_id | take 500' }),
   })
   const text = await response.text()
   if (!response.ok) {

@@ -40,6 +40,11 @@ cache with concurrent-request coalescing, forced-refresh bypass, and failure inv
 definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
 analytical caches survive a full page reload.
 
+On a full reload, STID and latest telemetry use the exact GraphQL URL, Eventhouse query URI, and KQL
+database injected by the verified deployment before attempting slower workspace discovery. The live
+GraphQL/KQL requests still determine whether those sources exist and are queryable: missing, deleted,
+or failed sources clear the corresponding UI data rather than displaying a persisted snapshot.
+
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
 Twin, and Maintenance. It requires a verified **generation-2 Ontology** and an explicitly bound,
