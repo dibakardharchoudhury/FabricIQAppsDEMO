@@ -47,6 +47,7 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
+      - https://raven-plum-1975d8ccab-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist

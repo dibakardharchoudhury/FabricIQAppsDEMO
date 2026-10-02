@@ -33,10 +33,10 @@
 # Product/API failures are persisted and raised, never inferred from a static issue gate.
 #
 # The existing agent retains its Ontology v2 source and instructions. A separate Operations
-# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`. Fabric's public API
-# cannot generate or import its KQL playbook, so first-time setup stops after source/action
-# provisioning and requires the portal's Generate playbook flow. A rerun verifies and preserves
-# the generated BAD/UNCERTAIN rules and Teams destination. Both agents remain STOPPED by default. Successful definition
+# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`. NB10 imports its
+# separate, API-verified KQL playbook, enriches events from the OneLake-backed
+# `silver_instruments` external table, and binds the resulting context to the same Teams/email
+# delivery architecture. Both agents remain STOPPED by default. Successful definition
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
@@ -165,6 +165,7 @@ print("   Copy playbook     :", ops_agent_copy_playbook)
 import json
 import time
 import base64
+import zlib
 from copy import deepcopy
 from typing import Optional
 
@@ -758,29 +759,28 @@ INSTRUCTIONS = '''*** Goals ***
 9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
 EVENTHOUSE_INSTRUCTIONS = '''*** Goals ***
-- Monitor OPC UA signal quality by using the "OPCUAEvents" Eventhouse table.
+- Monitor OPC UA signal quality using the `OPCUAEvents` Eventhouse table.
 - Notify operations when an OPC UA signal has failed or degraded.
-- Recommend an email alert containing the available signal context.
+- Provide complete signal and instrument context and recommend the configured email action.
 
 *** Operational Instructions ***
-1. Monitor the "OPCUAEvents" table, using "opcua_node_id" to identify each signal.
-2. Create an alert when the current value of "quality" equals "BAD".
-3. Create an alert when the current value of "quality" equals "UNCERTAIN".
-4. Include "opcua_node_id", "quality", "value", and "event_time" in the alert context.
-5. For the email action, use "opcua_node_id" as "equipment_id" and leave unavailable
-   "facility_id" and "unit" values empty.
-6. For every generated alert, recommend the "Send Email Alert!" action.
+1. Monitor `OPCUAEvents`, using `opcua_node_id` to identify each signal.
+2. Create an alert for any row where `quality` is `"BAD"` or `"UNCERTAIN"`.
+3. Join `silver_instruments` on `opcua_node_id` to resolve `equipment_id`, `facility_id`, and `unit`.
+4. Include `opcua_node_id`, `equipment_id`, `facility_id`, `unit`, `quality`, `value`, and `event_time` in the alert context.
+5. Bind all six configured email action parameters from the matched event and instrument metadata.
+6. For every generated alert, trigger a Teams alert and recommend the configured email action.
 
 *** Semantic Instructions ***
-1. Each "OPCUAEvents" row represents an OPC UA signal event.
-2. "opcua_node_id" identifies the signal.
-3. "quality" is the OPC UA signal quality.
-4. "value" is the measured value.
-5. "event_time" is the event timestamp.
-6. Use only columns available in "OPCUAEvents" when creating alert context.'''
+1. Each `OPCUAEvents` row represents an OPC UA signal event.
+2. `opcua_node_id` identifies the signal and joins to `silver_instruments.opcua_node_id`.
+3. `equipment_id`, `facility_id`, and `unit` come from the matching `silver_instruments` row.
+4. `quality`, `value`, and `event_time` come from `OPCUAEvents`.
+5. Use only `OPCUAEvents` and `silver_instruments` for alert context.'''
 
-# Fabric-generated KQL playbook captured from the configured Eventhouse Operations Agent.
-EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64 = "eNrtWW1PIkkQ/it1k0u4TQBFlFV8SVh1E3Ib13Xx7oMQ0sz0QN823djTI7K7/ver7hlgZgAFzzOu4hdhurq66qmqp7qGH85noSWX3dEJ9ZlgmkkRONUfzufz48vaV9YVhJ/eUKHbbTlwQ9K+DglnetTuEK9NOFXaCP+uRwPqVB2XkyBw8k79oo7fsipw4US6YR8/1j1cx+9npE8XSNLAVWxg7DECgoKSQxhQBSgMlzUIrDhQIw++kn2wWuz+IA9Eg+5R6CrCBEgfmPDYDfPQ+vFORYnHRDeAIdM9ENKjwLw8xA6iBuHF2jXr06KxiWjyiYlvSZe/hYGWXSVDYZRp0uEUJRvmf9K5yCzn7i6/PLJFg9L0JA9Pn2CLSwvRjNZS+F0Kdh0a/1Ca+QxR9KWyAM1BMw+BDJVLvRlYi5GlBqs28ywkso8AH5u4Lwz6BRFdarBrRI4EWiFUuPAnBsWpbi4DrCs5bjiWPOyL2M2ULSsi28CIBpr0BwsBnkosxDklkoL7dJI2dn0B2HEC3gO3DUd7kn6PwBp9omb/BO2tR6I9NWVFqCOhL9HzBr3VCyGflVwI/VzRNGOkoI7NAo2ik2g8lOzxpn34UDux/OEimAH4hHEUT2t+olooPTI6sRVLhSYULsYFLX1G/j5fmrdlgunTdfLSeDqD4xOydRqpOaT9umk6C+yzkbW5J7wtms5C/cuT9YvhYQT/IuQ0c6vepdt75ZK7U9gtl8qFbX+nU9itbFUK7uaWVyZuyd/ae2/kLIJLCU852AQWYpThA/GgZuk9i/XfPSqQM+fSMRNJTKFHgkkwqPkAWppmiGGgSLqohCLSHGzu4GaXh5aoUyWfYOobwkOaIGybp3kIg5lNgCfjiWxg0sl+xz2ckhsj6ROX2eyNn4cIMFoyiKJv4356O1A0CKzHifBdc5PDeBNWI5RMCjkbG5BNE+hjVSqGxn8nBrzqnPFj3Juy+dgUHsVuqijY09oDojBMqC74A1lIaUNH1XHV5wHhTD15t98UnOpZkw6bAvDvKpc4K9eKHqILRgn2SeFhBx0yzqFDYXI0+46Fw41P+7asBAopykfYc6GB5Fj4Ykw9UcTX4FGfhNz4AfHfTxj2KPpzlZvGLtfCA/SQYkZN3YJicezPu2j7Txgo+Q919VRb3YNDVJUKeq6VnwpM+NrKJY9MCM0wixWO8y3XQhAfvJm89nI4j5CnXsRTyEJX0ZUj2RBnGbqFAop1u1RFBInd/8IlXy37ZkpKuSRiZaPIfrC3quyNCiuzZzIELTM5mFHimjU9Xss7fxlsPjLKvQUNZKznVNxQLq2aA6ukPdYCCvkXQTlsLsWkTScKSNs3p+KmmVNRQkeYtI3hKFLT+KATahpj1XSODmy9Hx38dnV8UmvUrhbSABOIPrbfuleNmg+m0XLMoJoiW//4aFqfmaKCw0OYHpYWXaWU7ca4kO8rT7CxS1diq3V0sBEjs5EO05Ez7pXHEtuqznC2uQSgtYIFtuTi2z1mNXKxHt1zw7BW4BoWqEm+T9IlfPyua94LrvV7rBXno/XbqdXGnvU7p/84zKzfJD3vBIOQu3vljl/2tgqVSrmEjfN9qUDoJi1s7myTSsUl23TXn8wrSwkvmFcux4Po/zS1XJ4dn140avWzNzK7VFdoMfR2IK0bigzT+Y2euOOmjBgNQl18gsFmZnh55GiRGSvuHSkeHCceGCXMaVJ5iGlnlFBGAveNpup6rsD7/zKMt54rXudcMSnTlzNd/Iq/sqx/NXlp48Pr+xVk/avG080Ed3f/Ajakbsk="
+# Fabric-generated one-rule KQL playbook, enriched from the existing silver_instruments table so
+# every required Teams/email action parameter is bound without changing the app telemetry path.
+EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64 = "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"
 
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
@@ -811,6 +811,18 @@ ACTION_PARAMETERS = [
     {"name": "unit", "description": "The measurement unit of the signal_master signal."},
     {"name": "quality", "description": "The current OPC UA signal quality (BAD or UNCERTAIN)."},
     {"name": "event_time", "description": "The event_time timestamp of the latest signal_master reading."},
+]
+
+EVENTHOUSE_ACTION_PARAMETERS = [
+    {"name": "equipment_id",
+     "description": "The equipment_id from silver_instruments matched by opcua_node_id."},
+    {"name": "facility_id",
+     "description": "The facility_id from silver_instruments matched by opcua_node_id."},
+    {"name": "value", "description": "The current measured value from the OPCUAEvents row."},
+    {"name": "unit",
+     "description": "The measurement unit from silver_instruments matched by opcua_node_id."},
+    {"name": "quality", "description": "The current OPC UA quality from the OPCUAEvents row."},
+    {"name": "event_time", "description": "The event_time timestamp from the OPCUAEvents row."},
 ]
 
 
@@ -895,6 +907,12 @@ def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
             "workspaceId": workspace_id,
         }
     }
+    for action in config["configuration"]["actions"].values():
+        if action.get("kind") == "FabricJobAction":
+            action["parameters"] = [dict(parameter) for parameter in EVENTHOUSE_ACTION_PARAMETERS]
+    config["playbook"] = json.loads(zlib.decompress(
+        base64.b64decode(EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64)
+    ))
     return config
 
 
@@ -1057,12 +1075,33 @@ def verify_eventhouse_operations_readback(agent_id: str, kql_database_id: str,
     if actual.get("shouldRun") is not False:
         raise RuntimeError("Eventhouse Operations Agent must remain stopped after deployment.")
     rules = (actual.get("playbook") or {}).get("RuleDefinitions") or {}
-    conditions = {rule.get("RuleCondition", {}).get("Value") for rule in rules.values()}
-    if len(rules) != 2 or conditions != {"BAD", "UNCERTAIN"}:
-        raise RuntimeError("Eventhouse Operations Agent must retain its BAD and UNCERTAIN KQL rules.")
-    if any(rule.get("ClassExpression", {}).get("$type") != "kqldataquery"
-           for rule in rules.values()):
+    if len(rules) != 1:
+        raise RuntimeError("Eventhouse Operations Agent must retain its combined BAD/UNCERTAIN KQL rule.")
+    rule = next(iter(rules.values()))
+    if (rule.get("ClassExpression", {}).get("$type") != "kqldataquery"
+            or rule.get("RuleCondition") != {
+                "$type": "propertywhenistrue",
+                "DataPropertyName": "QualityIsBadOrUncertain",
+            }):
         raise RuntimeError("Eventhouse Operations Agent readback changed its KQL rules.")
+    expected_bindings = {
+        "equipment_id": "agent:operationalSet:OPCUASignalEvent:EquipmentId",
+        "facility_id": "agent:operationalSet:OPCUASignalEvent:FacilityId",
+        "unit": "agent:operationalSet:OPCUASignalEvent:Unit",
+        "value": "agent:operationalSet:OPCUASignalEvent:Value",
+        "quality": "agent:operationalSet:OPCUASignalEvent:Quality",
+        "event_time": "agent:operationalSet:OPCUASignalEvent:Timestamp",
+    }
+    actual_bindings = {
+        binding.get("Name"): binding.get("Key")
+        for binding in rule.get("ActionBinding", {}).get("ParameterBindings", [])
+    }
+    if actual_bindings != expected_bindings:
+        raise RuntimeError("Eventhouse Operations Agent changed its email action bindings.")
+    expression = rule.get("ClassExpression", {}).get("Expression", "")
+    if ("['OPCUAEvents']" not in expression
+            or "external_table('silver_instruments')" not in expression):
+        raise RuntimeError("Eventhouse Operations Agent lost its event/instrument enrichment.")
     require_retained(configuration, actual)
 
 
@@ -1121,29 +1160,9 @@ def deploy_eventhouse_operations_agent(pipeline_id: str) -> dict:
         raise RuntimeError("Eventhouse Operations Agent creation returned no id.")
     configuration = build_eventhouse_configurations(
         kql_database_id, pipeline_id, ops_agent_teams_team_id, ops_agent_teams_channel_id)
-    actual = read_json_part(
-        get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
-    rules = (actual.get("playbook") or {}).get("RuleDefinitions") or {}
-    if rules:
-        verify_eventhouse_operations_readback(
-            agent_id, kql_database_id, {**configuration, "playbook": actual["playbook"]})
-    else:
-        expected_scaffolding = json.loads(json.dumps(configuration))
-        expected_scaffolding["configuration"].pop("messageDestination", None)
-        if (actual.get("configuration", {}).get("dataSources") !=
-                expected_scaffolding["configuration"]["dataSources"]):
-            update_operations_agent_definition(agent_id, configuration)
-            actual = read_json_part(
-                get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
-        require_retained(expected_scaffolding, actual)
-        if actual.get("shouldRun") is not False:
-            raise RuntimeError("Eventhouse Operations Agent scaffolding must remain stopped.")
-        raise RuntimeError(
-            "Eventhouse Operations Agent source/action scaffolding is configured and stopped, "
-            "but Fabric's public API cannot generate or import its KQL playbook. In the agent "
-            "Build page select Generate playbook, then set Agent behavior > Message delivery to "
-            "the configured Teams channel, stop the agent, and rerun RTI_010 for verified readback."
-        )
+    update_operations_agent_definition(agent_id, configuration)
+    verify_eventhouse_operations_readback(
+        agent_id, kql_database_id, configuration)
     return {
         "eventhouse_ops_agent_id": agent_id,
         "eventhouse_ops_agent_name": eventhouse_ops_agent_name,

@@ -86,10 +86,16 @@ Setup requires all three Data Agent statuses and NB10 `configured`, or the corre
 `disabled`/`skipped` exception. By default NB10 leaves the agent stopped; configuration does not
 prove delivery.
 
-The existing `ops_agent_copy_playbook=false` setting remains supported for operators who choose
-to generate the playbook in the portal. The default is still `true`, retaining the full authored
-BAD/UNCERTAIN rules, Teams destination, and email action. Explicit manual generation is reported
-as such; an API rejection never causes the notebook to silently remove the playbook or actions.
+The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
+agent when an operator chooses portal generation. The default remains `true`. RTI_010 also deploys
+the Eventhouse-backed agent with its separately generated and verified OPCUAEvents KQL playbook:
+one combined BAD/UNCERTAIN rule, the same parameterized Teams destination, and the same
+`Pipe_SendEmailAlert` action. The KQL rule enriches each `OPCUAEvents` row from the existing
+`silver_instruments` OneLake external table by `opcua_node_id`, binding `equipment_id`,
+`facility_id`, and `unit` along with the event value, quality, and timestamp. This does not alter
+the app's telemetry path.
+Both agents remain stopped by default, and API/readback failures never cause the notebook to
+silently remove the playbook, Teams delivery, or actions.
 
 NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
 ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.
