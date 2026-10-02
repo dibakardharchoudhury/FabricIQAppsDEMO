@@ -782,7 +782,11 @@ function useHydroOperationsDataController() {
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
         )
-        : await askDataAgent(text, partial => { liveText = partial; paint() })
+        : await askDataAgent(
+          text,
+          partial => { liveText = partial; paint() },
+          steps => { liveSteps = steps; paint() },
+        )
       liveText = answer.text
       liveSteps = answer.steps ?? liveSteps
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)

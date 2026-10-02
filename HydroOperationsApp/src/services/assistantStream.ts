@@ -12,7 +12,7 @@ export type AgentVisualization = {
   sortOrder?: string
   inlineCsvData: string
 }
-export type AgentAnswer = { text: string; usage?: AgentUsage; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[] }
+export type AgentAnswer = { text: string; usage?: AgentUsage; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; steps?: AgentStep[] }
 
 type StreamEvent = {
   object?: string
@@ -62,3 +62,4 @@ export async function readAssistantStream(body: ReadableStream<Uint8Array>, onPr
   if (buffer.trim()) consumeEvent(buffer)
   return { text: answer, usage }
 }
+import type { AgentStep } from './agentSteps'

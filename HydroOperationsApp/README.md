@@ -157,7 +157,21 @@ question explicitly resets data scope to all facilities and assets. It never inj
 facility/asset, and scope filters from prior turns do not carry into a later question.
 Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
 and access token remain unchanged. Workspace refreshes, token/endpoint changes, or MCP failures
-invalidate that session; published generation-2 source verification still runs before every call.
+invalidate that session. A two-minute verification lease is keyed to the exact workspace, Data
+Agent, Ontology, live generation and access token; every call requires that verified identity, and
+workspace/config changes invalidate it immediately.
+Opening Hydro Intelligence silently warms the MCP connection when an existing Fabric token is
+available and obtains the exact verification lease. On a cold request, source verification and MCP
+connection setup run in parallel, but the tool call cannot start until verification succeeds.
+Prompts use a concise all-facilities/all-assets scope reset; benchmarked source-routing hints were
+slower and are not injected.
+The chat shows the outer published Data Agent MCP tool immediately and maps Fabric's real
+`notifications/progress` tool lifecycle into expandable steps. Fabric currently batches those
+notifications near completion and exposes internal tool names/statuses, but not their generated SQL,
+arguments, intermediate rows, or reasoning. Foundry steps appear earlier because those tools execute
+inside this browser and the app owns their arguments/results; the remote Data Agent owns its internal
+orchestration. Experimental MCP task invocation was not enabled because the live Fabric endpoint
+either rejected the SDK's automatic task shape or timed out with explicit task parameters.
 Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
 `type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
 Matching published identity plus the selected item's authoritative live generation `2` proves

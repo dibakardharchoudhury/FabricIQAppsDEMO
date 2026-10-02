@@ -1,8 +1,13 @@
+import { useEffect } from 'react'
 import { CopilotExperience } from '../../components/CopilotExperience'
+import { warmDataAgentMcp } from '../../services/fabric'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
 export function CopilotPage() {
   const data = useHydroOperationsData()
+  useEffect(() => {
+    if (data.copilotEngine === 'data-agent') void warmDataAgentMcp().catch(error => console.warn('Data Agent MCP warm-up failed.', error))
+  }, [data.copilotEngine])
   return <CopilotExperience
     messages={data.messages}
     busy={data.copilotBusy}

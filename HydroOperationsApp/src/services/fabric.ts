@@ -1,6 +1,7 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { AgentStep } from './agentSteps'
 import { type AgentAnswer } from './assistantStream'
 import { invokeVerifiedDataAgent, requireDataAgentEndpoint, selectDataAgent } from './artifactDiscovery'
 import { discoverOntology, type OntologyDiscovery } from './ontologyDiscovery'
@@ -11,6 +12,7 @@ import type { OntologyGraph } from './ontologyGraph'
 import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery'
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
+import { applyDataAgentProgress } from './dataAgentProgress'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -305,6 +307,7 @@ export function clearWorkspaceConfigCache() {
   configRevision++
   configCache = null
   configPromise = undefined
+  invalidateDataAgentVerification()
   invalidateDataAgentMcpSession()
 }
 
@@ -919,6 +922,10 @@ type DataAgentMcpSession = {
 }
 let dataAgentMcpSession: DataAgentMcpSession | undefined
 let dataAgentMcpSessionPromise: Promise<DataAgentMcpSession> | undefined
+const DATA_AGENT_VERIFICATION_TTL_MS = 2 * 60_000
+type DataAgentVerification = { key: string; token: string; expiresAt: number }
+let dataAgentVerification: DataAgentVerification | undefined
+let dataAgentVerificationPromise: { key: string; token: string; value: Promise<void> } | undefined
 
 export function resetDataAgentConversation() {
   dataAgentConversation.length = 0
@@ -931,34 +938,81 @@ function invalidateDataAgentMcpSession() {
   if (session) void session.client.close().catch(() => undefined)
 }
 
+function invalidateDataAgentVerification() {
+  dataAgentVerification = undefined
+  dataAgentVerificationPromise = undefined
+}
+
 function dataAgentQuestion(question: string): string {
-  const scope = 'For the latest question, query the complete published data source across all facilities and all assets. Do not infer or inherit any facility, asset, turbine, or equipment filter from the application UI or earlier turns. Apply a narrower scope only when the latest question explicitly names one.'
-  if (!dataAgentConversation.length) return `${scope}\n\nLatest question: ${question}`
+  const scope = 'Answer across all facilities and all assets. Ignore application UI selections and earlier-turn filters; narrow the scope only when the latest question explicitly asks.'
+  if (!dataAgentConversation.length) return `${scope}\n\n${question}`
   const transcript = dataAgentConversation
     .slice(-4)
     .map(turn => `User: ${turn.question}\nAssistant: ${turn.answer}`)
     .join('\n\n')
     .slice(-12_000)
-  return `Use this recent conversation only to resolve follow-up meaning. Any scope or filters in it are context only and do not carry forward.\n\n${transcript}\n\n${scope}\n\nLatest question: ${question}`
+  return `Conversation memory for follow-up meaning only; its scope and filters do not carry forward.\n\n${transcript}\n\n${scope}\n\n${question}`
 }
 
-export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+async function verifyDataAgentSource(dataAgentId: string, ontologyId: string, generation: unknown, token: string): Promise<void> {
+  const key = `${requireWorkspaceId()}:${dataAgentId}:${ontologyId}:${String(generation)}`
+  if (dataAgentVerification?.key === key && dataAgentVerification.token === token && dataAgentVerification.expiresAt > Date.now()) return
+  if (dataAgentVerificationPromise?.key === key && dataAgentVerificationPromise.token === token) {
+    return dataAgentVerificationPromise.value
+  }
+  const value = invokeVerifiedDataAgent(
+    { generation, workspaceId: requireWorkspaceId(), ontologyId },
+    async () => {
+      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/dataAgents/${dataAgentId}/getDefinition`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token },
+      })
+      return waitForDefinitionResult(response, token)
+    },
+    async () => undefined,
+  ).then(() => {
+    dataAgentVerification = { key, token, expiresAt: Date.now() + DATA_AGENT_VERIFICATION_TTL_MS }
+  })
+  dataAgentVerificationPromise = { key, token, value }
+  try {
+    await value
+  } finally {
+    if (dataAgentVerificationPromise?.value === value) dataAgentVerificationPromise = undefined
+  }
+}
+
+export async function askDataAgent(question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void): Promise<AgentAnswer> {
   const config = await ensureConfig(true)
   if (config?.ontologyError) throw new Error(config.ontologyError)
   const endpoint = requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
   if (!config?.ontologyId || !config.dataAgentId) throw new Error('Data Agent source identity is unavailable. Refresh Ontology v2 discovery before asking the agent.')
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
-  return invokeVerifiedDataAgent(
-    { generation: config.ontologyGeneration, workspaceId: requireWorkspaceId(), ontologyId: config.ontologyId },
-    async () => {
-      const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/dataAgents/${config.dataAgentId}/getDefinition`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-      })
-      return waitForDefinitionResult(response, token)
-    },
-    () => callDataAgentMcp(endpoint, token, question, onProgress),
-  )
+  const verification = verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
+  try {
+    await Promise.all([verification, getDataAgentMcpSession(endpoint, token)])
+  } catch (error) {
+    invalidateDataAgentMcpSession()
+    throw error
+  }
+  return callDataAgentMcp(endpoint, token, question, onProgress, onSteps)
+}
+
+export async function warmDataAgentMcp(): Promise<void> {
+  const config = await ensureConfig(false)
+  if (!config || config.ontologyError || !config.dataAgentUrl || !config.dataAgentId || !config.ontologyId) return
+  const endpoint = requireDataAgentEndpoint(config.dataAgentUrl, config.ontologyGeneration)
+  const token = await fabricToken(false)
+  if (!token) return
+  try {
+    await Promise.all([
+      verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token),
+      getDataAgentMcpSession(endpoint, token),
+    ])
+  } catch (error) {
+    invalidateDataAgentMcpSession()
+    throw error
+  }
 }
 
 async function getDataAgentMcpSession(endpoint: string, token: string): Promise<DataAgentMcpSession> {
@@ -999,13 +1053,29 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
   }
 }
 
-async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void): Promise<AgentAnswer> {
   const session = await getDataAgentMcpSession(endpoint, token)
+  const startedAt = Date.now()
+  const steps: AgentStep[] = [{
+    tool: session.toolName,
+    status: 'running',
+    detail: 'Published Fabric Data Agent MCP tool',
+    summary: 'running...',
+    elapsedMs: 0,
+  }]
+  const publishSteps = () => onSteps?.(steps.map(step => ({ ...step })))
+  publishSteps()
   try {
     const result = await session.client.callTool({
       name: session.toolName,
       arguments: { [session.questionArgument]: dataAgentQuestion(question) },
-    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
+    }, undefined, {
+      timeout: 5 * 60_000,
+      maxTotalTimeout: 5 * 60_000,
+      onprogress: progress => {
+        if (applyDataAgentProgress(steps, progress.message, Date.now())) publishSteps()
+      },
+    })
     const content = result.content as McpContent[]
     const text = content
       .flatMap(part => [part.text, part.resource?.text])
@@ -1028,9 +1098,18 @@ async function callDataAgentMcp(endpoint: string, token: string, question: strin
     const answer = text || 'The Data Agent returned no answer.'
     dataAgentConversation.push({ question, answer })
     if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
+    Object.assign(steps[0], { status: 'done', summary: 'completed', elapsedMs: Date.now() - startedAt })
+    publishSteps()
     onProgress?.(answer)
-    return { text: answer, artifacts }
+    return { text: answer, artifacts, steps }
   } catch (error) {
+    Object.assign(steps[0], {
+      status: 'error',
+      summary: 'failed',
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : 'The Data Agent MCP call failed.',
+    })
+    publishSteps()
     if (dataAgentMcpSession === session) invalidateDataAgentMcpSession()
     throw error
   }

@@ -3,23 +3,12 @@ import { foundryToken } from '../fabric.ts'
 import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
 import { readResponsesStream } from './chatStream.ts'
+import type { AgentStep } from '../agentSteps'
 import { appendCompletedTurn, buildResponsesRequest, type ChatMessage } from './responsesProtocol.ts'
 import { loadCopilotSettings, renderSystemPrompt, type CopilotSettings } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 
-export type AgentStepStatus = 'running' | 'done' | 'error'
-export type AgentStep = {
-  tool: string
-  status: AgentStepStatus
-  detail: string
-  summary: string
-  query?: string
-  args?: string
-  // Kept for the chat's Copy action; already capped by truncateForModel.
-  result?: string
-  elapsedMs: number
-  error?: string
-}
+export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & { steps?: AgentStep[]; models?: Asset3DModelRecord[] }
 
 const MAX_TOOL_ROUNDS = 6

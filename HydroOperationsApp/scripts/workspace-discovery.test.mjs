@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import ts from 'typescript'
+import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
-  'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight',
+  'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
 ].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
 const serviceCode = ts.transpileModule(source.replaceAll('import.meta.env', 'testEnv'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -118,12 +119,32 @@ test('Data Agent MCP runtime preserves session memory without inheriting UI or p
   assert.match(source, /import \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
   assert.match(source, /import \{ StreamableHTTPClientTransport \} from '@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'/)
   assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
-  assert.match(source, /query the complete published data source across all facilities and all assets/)
-  assert.match(source, /Any scope or filters in it are context only and do not carry forward/)
+  assert.match(source, /Answer across all facilities and all assets/)
+  assert.match(source, /its scope and filters do not carry forward/)
   assert.match(source, /dataAgentConversation\.push/)
   assert.match(source, /dataAgentMcpSession\?\.endpoint === endpoint/)
   assert.match(source, /if \(dataAgentMcpSession === session\) invalidateDataAgentMcpSession\(\)/)
+  assert.match(source, /Promise\.all\(\[verification, getDataAgentMcpSession\(endpoint, token\)\]\)/)
+  assert.match(source, /DATA_AGENT_VERIFICATION_TTL_MS = 2 \* 60_000/)
+  assert.match(source, /dataAgentVerification\.token === token/)
+  assert.match(source, /invalidateDataAgentVerification\(\)\s+invalidateDataAgentMcpSession\(\)/)
+  assert.match(source, /onprogress: progress/)
   assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
+})
+
+test('Data Agent progress maps real Fabric tool lifecycle without inventing arguments', () => {
+  const steps = []
+  assert.equal(applyDataAgentProgress(steps, 'Run step created: tool_calls (Tools: trace.analyze_sql_database)', 100), true)
+  assert.equal(applyDataAgentProgress(steps, 'Run step in progress: tool_calls (Tools: trace.analyze_sql_database)', 110), false)
+  assert.equal(applyDataAgentProgress(steps, 'Run step completed: tool_calls (Tools: trace.analyze_sql_database)', 160), true)
+  assert.deepEqual(steps, [{
+    tool: 'trace.analyze_sql_database',
+    status: 'done',
+    detail: 'Fabric Data Agent internal tool',
+    summary: 'completed',
+    elapsedMs: 60,
+  }])
+  assert.equal(applyDataAgentProgress(steps, 'Message completed msg-1', 170), false)
 })
 
 test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {
