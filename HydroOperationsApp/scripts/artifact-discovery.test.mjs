@@ -191,6 +191,10 @@ test('Knowledge Graph page displays available bound entities while native loadin
       queryOntologyGraph: () => { throw new Error('Rendering must not wait for a graph request') },
       queryOntologyContract: () => { throw new Error('Rendering must use the available contract') },
     },
+    '../../services/knowledgeGraphExport': {
+      knowledgeGraphExportFileName: () => 'graph.ttl',
+      serializeNativeKnowledgeGraph: () => '',
+    },
     '../knowledgeGraphModel': await import('../src/ui-shared/knowledgeGraphModel.ts'),
     '../components/digitalTwin/digitalTwinTreeModel': await import('../src/ui-shared/components/digitalTwin/digitalTwinTreeModel.ts'),
     '../components/digitalTwin/DigitalTwinTree': { DigitalTwinTree: () => null },
@@ -199,6 +203,7 @@ test('Knowledge Graph page displays available bound entities while native loadin
       return createElement('div', { 'data-testid': 'canvas' })
     } },
     '../hooks/useHydroOperationsData': { useHydroOperationsData: () => data },
+    '../hooks/useExpandedView': { useExpandedView: () => ({ expanded: false, toggleExpanded: () => {} }) },
     '../hooks/useTheme': { useTheme: () => ({ theme: 'light' }) },
     '../hooks/useTreeExpansion': { useTreeExpansion: () => ({ isExpanded: () => true, toggle: () => {} }) },
   }

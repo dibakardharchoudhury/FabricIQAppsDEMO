@@ -34,6 +34,7 @@ const LAYOUT_DESCRIPTION: Record<GraphLayout, string> = {
 }
 type GraphScope = 'asset' | 'facility' | 'all'
 const GRAPH_REFRESH_POLL_MS = 5 * 60_000
+const GRAPH_LOAD_TIMEOUT_MS = 30_000
 const KnowledgeGraph3DCanvas = lazy(() => import('../components/knowledgeGraph/KnowledgeGraph3DCanvas')
   .then(module => ({ default: module.KnowledgeGraph3DCanvas })))
 type GraphViewMode = '2d' | '3d'
@@ -80,8 +81,13 @@ export function KnowledgeGraphPage() {
   const loadOntologyGraph = useCallback(async (force = false) => {
     const version = ++graphRefreshVersion.current
     setGraphLoading(true)
+    let timeoutId: number | undefined
     try {
-      const { ontology: contract, ontologyGraph: next } = await loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
+      const load = loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error('Ontology graph loading exceeded 30 seconds. Retry after the Fabric graph refresh completes.')), GRAPH_LOAD_TIMEOUT_MS)
+      })
+      const { ontology: contract, ontologyGraph: next } = await Promise.race([load, timeout])
       if (version !== graphRefreshVersion.current) return
       setOntology(contract)
       setOntologyGraph(current => graphVersion(current) === graphVersion(next) ? current : next)
@@ -95,7 +101,10 @@ export function KnowledgeGraphPage() {
       setGraphQueriedAt(undefined)
       setGraphError(error instanceof Error ? error.message : 'Ontology graph query failed. Refresh and check Fabric access.')
     }
-    finally { if (version === graphRefreshVersion.current) setGraphLoading(false) }
+    finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+      if (version === graphRefreshVersion.current) setGraphLoading(false)
+    }
   }, [])
 
   const refreshAll = async () => {
