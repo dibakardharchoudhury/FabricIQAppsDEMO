@@ -221,8 +221,7 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
     const graphqlUrl = graphqlUrlOverride || (gql
       ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/graphqlapis/${gql.id}/graphql`
       : undefined)
-    // Published Data Agents are invoked through Fabric's MCP endpoint. The retired Assistants
-    // endpoint can route or execute agent tools differently from the Fabric Data Agent UI.
+    // Published Data Agents use Fabric's official MCP-over-Streamable-HTTP endpoint.
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
     const semantic = await discoverOntology(items, configuredOntologyName, {
       metadata: async id => {
@@ -900,15 +899,6 @@ export async function resumePostSeedNotebook(onStatus: JobProgress | undefined, 
   return status
 }
 
-// MCP intentionally has no server-side conversation threads. Keep a bounded transcript locally
-// and include it only after the first turn; a new conversation still sends the question unchanged.
-type DataAgentTurn = { question: string; answer: string }
-const dataAgentConversation: DataAgentTurn[] = []
-
-export function resetDataAgentConversation() {
-  dataAgentConversation.length = 0
-}
-
 type McpContent = {
   type: string
   text?: string
@@ -917,14 +907,22 @@ type McpContent = {
   resource?: { text?: string; blob?: string; mimeType?: string; uri?: string }
 }
 
+type DataAgentTurn = { question: string; answer: string }
+const dataAgentConversation: DataAgentTurn[] = []
+
+export function resetDataAgentConversation() {
+  dataAgentConversation.length = 0
+}
+
 function dataAgentQuestion(question: string): string {
-  if (!dataAgentConversation.length) return question
+  const scope = 'For the latest question, query the complete published data source across all facilities and all assets. Do not infer or inherit any facility, asset, turbine, or equipment filter from the application UI or earlier turns. Apply a narrower scope only when the latest question explicitly names one.'
+  if (!dataAgentConversation.length) return `${scope}\n\nLatest question: ${question}`
   const transcript = dataAgentConversation
     .slice(-4)
     .map(turn => `User: ${turn.question}\nAssistant: ${turn.answer}`)
     .join('\n\n')
     .slice(-12_000)
-  return `Use this recent conversation only to resolve follow-up references. Re-query the live data when needed.\n\n${transcript}\n\nUser's latest question: ${question}`
+  return `Use this recent conversation only to resolve follow-up meaning. Any scope or filters in it are context only and do not carry forward.\n\n${transcript}\n\n${scope}\n\nLatest question: ${question}`
 }
 
 export async function askDataAgent(question: string, onProgress?: (text: string) => void): Promise<AgentAnswer> {

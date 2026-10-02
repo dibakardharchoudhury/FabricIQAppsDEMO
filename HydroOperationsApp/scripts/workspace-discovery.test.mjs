@@ -114,10 +114,14 @@ function weatherService() {
   return { service: exports, requests }
 }
 
-test('Data Agent MCP runtime is statically bundled for deployment-safe queries', () => {
+test('Data Agent MCP runtime preserves session memory without inheriting UI or prior scope', () => {
   assert.match(source, /import \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
   assert.match(source, /import \{ StreamableHTTPClientTransport \} from '@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'/)
   assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
+  assert.match(source, /query the complete published data source across all facilities and all assets/)
+  assert.match(source, /Any scope or filters in it are context only and do not carry forward/)
+  assert.match(source, /dataAgentConversation\.push/)
+  assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
 })
 
 test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {

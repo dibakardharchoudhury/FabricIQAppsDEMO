@@ -151,6 +151,10 @@ reads the candidate's real `getDefinition` response and verifies **published** o
 `artifactId` and `workspaceId` against the selected, verified generation-2 Ontology. Draft sources,
 agent names, and notebook completion are insufficient. A different/legacy ontology source, an
 unreadable or malformed definition, or no matching published source blocks invocation explicitly.
+Invocation uses Fabric's published Data Agent MCP endpoint over the documented Streamable HTTP
+transport. The app preserves a bounded conversation transcript for follow-up meaning, while every
+question explicitly resets data scope to all facilities and assets. It never injects the selected
+facility/asset, and scope filters from prior turns do not carry into a later question.
 Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
 `type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.
 Matching published identity plus the selected item's authoritative live generation `2` proves
