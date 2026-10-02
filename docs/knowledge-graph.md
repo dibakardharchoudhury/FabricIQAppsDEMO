@@ -14,6 +14,12 @@ Ontology relationship orientation, while animated cyan/status-colored dashes sho
 telemetry moving from a reading-bearing instrument through equipment, system, and facility
 relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
 
+Solid arrows are governed relationships without a telemetry-path highlight. Static dashed arrows
+are governed signal bindings; they do not mean that a relationship is broken. Thicker moving
+dashes identify topology carrying a loaded reading toward its governed context. Their color follows
+the source node's health. A loaded stale reading still produces a telemetry-bearing path, so
+freshness must be read from the telemetry status and timestamps rather than inferred from dashing.
+
 The graph intentionally provides only the 2D Cytoscape presentation. Removing the optional WebGL
 mode avoids Three.js startup, download, GPU, animation-loop, and memory costs while preserving the
 hierarchy, semantic-network, and concentric layouts. Reduced-motion preferences disable animated

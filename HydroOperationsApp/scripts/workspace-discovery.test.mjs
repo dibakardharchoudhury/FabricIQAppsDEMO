@@ -204,7 +204,7 @@ test('failed contract refresh prevents reuse of both discovery data and cached n
   assert.equal((await service.queryOntologyGraph()).nodes.length, 1)
 })
 
-test('changed ontology selection cannot reuse the previous ontology native graph', async () => {
+test('explicit graph binding remains pinned when workspace discovery would select another ontology', async () => {
   const replacement = '44444444-4444-4444-4444-444444444444'
   let changed = false
   const { service, requests } = graphService(async url => {
@@ -216,7 +216,8 @@ test('changed ontology selection cannot reuse the previous ontology native graph
   await service.queryOntologyGraph()
   changed = true
   service.clearWorkspaceConfigCache()
-  await assert.rejects(service.queryOntologyGraph(), /different workspace or ontology/)
+  assert.equal((await service.queryOntologyGraph()).ontologyId, ontologyId)
+  assert.equal(requests.filter(url => url.endsWith('/items')).length, 0)
   assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
 })
 // Execute the production discovery and environment readers without browser MSAL or service writes.
