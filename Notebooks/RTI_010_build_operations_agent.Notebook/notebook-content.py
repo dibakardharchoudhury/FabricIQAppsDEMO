@@ -76,8 +76,9 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (byte-exact from the
 # working New_RTI_Demo_OpsAgent_V3 agent, recovered from git history — no live agent is read).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
+env_suffix = first_setting("env_suffix", required=True)
 eventhouse_ops_agent_name = first_setting(
-    "eventhouse_ops_agent_name", default="RTI_Demo_OpsAgent_Eventhouse")
+    "eventhouse_ops_agent_name", default=f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}")
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
 # `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name and
 # binds it as the Knowledge data source ({id: plain, workspaceId: real}) — no id is hard-coded. Set

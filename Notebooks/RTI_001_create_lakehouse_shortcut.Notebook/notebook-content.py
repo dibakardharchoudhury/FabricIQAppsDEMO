@@ -194,6 +194,7 @@ eventstream_name = f"RTI_Demo_Eventstream_{env_suffix}"
 data_agent_name = f"RTI_Demo_Agent_{env_suffix}"
 dashboard_name = f"RTI_Demo_OPCUA_TelemetryStats_{env_suffix}"
 ops_agent_name = f"RTI_Demo_OpsAgent_{env_suffix}"
+eventhouse_ops_agent_name = f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}"
 
 # Data Pipeline names — NOT versioned (one pipeline per workspace, no env_suffix).
 alert_pipeline_name = "Pipe_SendEmailAlert"   # NB10 alert pipeline
@@ -242,6 +243,7 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "data_agent_name": data_agent_name,
         "dashboard_name": dashboard_name,
         "ops_agent_name": ops_agent_name,
+        "eventhouse_ops_agent_name": eventhouse_ops_agent_name,
 
         # Canonical fabric_* aliases so downstream first_setting() primary keys
         # resolve straight from NB01 (no fallback dependency, no name drift).
