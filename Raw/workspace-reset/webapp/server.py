@@ -4,6 +4,7 @@
 Thin Flask backend that drives the workflow CLI scripts (kept as the single
 source of truth) as background jobs:
     - sync_workspace_from_git.py  -> POST /api/sync
+    - sync + pipeline + deploy    -> POST /api/full-workflow
     - delete_workspace_items.py   -> POST /api/delete
     - deploy_fabric_app.py        -> POST /api/deploy-app
 
@@ -107,6 +108,14 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (8, ("[8/8]",)),
 ]
 
+WORKFLOW_PHASES = [
+    "Queued",
+    *[f"Sync · {phase}" for phase in SYNC_PHASES[1:-1]],
+    *[f"Pipeline · {phase}" for phase in PIPELINE_PHASES[1:-1]],
+    *[f"Deploy · {phase}" for phase in DEPLOY_PHASES[1:-1]],
+    "Done",
+]
+
 # Interactive `az login` run from the UI so sign-in is the app's first step
 # (no tenant/az-login prerequisite before launch). Gives the user 5 minutes to
 # finish in the browser.
@@ -168,6 +177,8 @@ class Job:
         self.exclusive = exclusive
         self.process: subprocess.Popen[str] | None = None
         self.cancel_requested = False
+        self.component: str | None = None
+        self.failed_component: str | None = None
 
 
 JOBS: dict[str, Job] = {}
@@ -250,7 +261,14 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
     if cancel_requested:
         _terminate_owned_process(proc)
 
-    timer = threading.Timer(timeout, _terminate_owned_process, args=(proc,))
+    timed_out = threading.Event()
+
+    def terminate_for_timeout() -> None:
+        if proc.poll() is None:
+            timed_out.set()
+            _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, terminate_for_timeout)
     timer.start()
     try:
         assert proc.stdout is not None
@@ -276,6 +294,124 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
             job.phase_index = len(job.phases) - 1
 
 
+def _run_workflow_step(
+    job: Job,
+    name: str,
+    argv: list[str],
+    env_extra: dict[str, str] | None,
+    timeout: int,
+    markers: list[tuple[int, tuple[str, ...]]],
+    phase_offset: int,
+) -> int:
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    if env_extra:
+        env.update(env_extra)
+    cmd = [sys.executable, "-u", *argv]
+    with job.lock:
+        job.phase_index = phase_offset
+        job.component = name
+        job.lines.extend(("", f"===== {name} ====="))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(SCRIPT_DIR),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=NO_WINDOW,
+            start_new_session=os.name != "nt",
+        )
+    except OSError as exc:
+        with job.lock:
+            job.lines.append(f"[{name} failed to start: {exc}]")
+        return -1
+
+    with job.lock:
+        job.process = proc
+        cancel_requested = job.cancel_requested
+    if cancel_requested:
+        _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, _terminate_owned_process, args=(proc,))
+    timer.start()
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            with job.lock:
+                job.lines.append(f"[{name}] {line}")
+                for idx, subs in markers:
+                    target = phase_offset + idx - 1
+                    if target > job.phase_index and any(marker in line for marker in subs):
+                        job.phase_index = target
+        proc.wait()
+    finally:
+        timer.cancel()
+        with job.lock:
+            job.process = None
+            if timed_out.is_set():
+                job.lines.append(f"[{name} timed out after {timeout} seconds]")
+    return proc.returncode
+
+
+def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
+    for step in steps:
+        if job.cancel_requested:
+            break
+        name = str(step["name"])
+        returncode = _run_workflow_step(
+            job,
+            name,
+            step["argv"],
+            step.get("env"),
+            int(step["timeout"]),
+            step["markers"],
+            int(step["phase_offset"]),
+        )
+        if returncode != 0:
+            with job.lock:
+                job.returncode = returncode
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                else:
+                    job.status = "failed"
+                    job.failed_component = name
+                    job.lines.append(
+                        f"[workflow stopped] {name} failed with exit code {returncode}; "
+                        "later steps were not started."
+                    )
+            return
+        with job.lock:
+            job.lines.append(f"[workflow] {name} completed successfully.")
+
+    with job.lock:
+        if job.cancel_requested:
+            job.status = "cancelled"
+            job.returncode = job.returncode if job.returncode is not None else -1
+        else:
+            job.status = "succeeded"
+            job.returncode = 0
+            job.component = None
+            job.phase_index = len(job.phases) - 1
+            job.lines.append("[workflow] Sync, pipeline, and app deployment completed successfully.")
+
+
+def _start_workflow(steps: list[dict[str, object]]) -> str | None:
+    job = Job(WORKFLOW_PHASES, exclusive=True)
+    with JOBS_LOCK:
+        running = [existing for existing in JOBS.values() if existing.status == "running"]
+        if running:
+            return None
+        JOBS[job.id] = job
+    threading.Thread(target=_workflow_worker, args=(job, steps), daemon=True).start()
+    return job.id
+
+
 def _start(argv: list[str], env_extra: dict[str, str] | None, timeout: int,
            phases: list[str], markers: list[tuple[int, tuple[str, ...]]],
            python: bool = True, exclusive: bool = True) -> str | None:
@@ -297,47 +433,41 @@ def job_response(job_id: str | None):
     return jsonify(jobId=job_id)
 
 
-@app.post("/api/sync")
-def api_sync():
-    data = request.get_json(silent=True) or {}
+def _sync_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
-    repository = (data.get("repository") or "").strip()
+    raw_repository = (data.get("repository") or "").strip()
     branch = (data.get("branch") or "main").strip() or "main"
     directory = (data.get("directory") or "/").strip() or "/"
     connection_id = (data.get("connectionId") or "").strip()
-    keep_connected = bool(data.get("keepConnected"))
     pat = (data.get("pat") or "").strip()
-
-    if not tenant or not workspace or not repository:
-        return jsonify(error="tenant, workspace and repository are required."), 400
-    # Accept a pasted GitHub URL (incl. /tree/<branch>) as well as 'owner/repo'.
-    repository = clean_repo(repository)
+    if not tenant or not workspace or not raw_repository:
+        raise ValueError("tenant, workspace and repository are required.")
+    repository = clean_repo(raw_repository)
     if not repository:
-        return jsonify(error="repository must be 'owner/repo' or a GitHub repo URL."), 400
+        raise ValueError("repository must be 'owner/repo' or a GitHub repo URL.")
     if not connection_id and not pat:
-        return jsonify(error="a PAT is required unless a connection id is reused."), 400
-
+        raise ValueError("a PAT is required unless a connection id is reused.")
     owner, repo = (part.strip() for part in repository.split("/", 1))
     argv = [
-        str(SYNC_SCRIPT),
-        "--tenant", tenant,
-        "--workspace", workspace,
-        "--owner", owner,
-        "--repository", repo,
-        "--branch", branch,
-        "--directory", directory,
-        "--yes",
+        str(SYNC_SCRIPT), "--tenant", tenant, "--workspace", workspace,
+        "--owner", owner, "--repository", repo, "--branch", branch,
+        "--directory", directory, "--yes",
     ]
-    env_extra: dict[str, str] = {}
     if connection_id:
         argv += ["--connection-id", connection_id]
-    # Pass the PAT whenever supplied: it's the create-new secret, and also the
-    # fallback that lets auto-reuse ("yes") make a new connection if none works.
-    if pat:
-        env_extra["FABRIC_GIT_PAT"] = pat
-    if keep_connected:
+    if data.get("keepConnected"):
         argv += ["--keep-connected"]
+    return argv, {"FABRIC_GIT_PAT": pat} if pat else {}
+
+
+@app.post("/api/sync")
+def api_sync():
+    data = request.get_json(silent=True) or {}
+    try:
+        argv, env_extra = _sync_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
     job_id = _start(
         argv, env_extra, SYNC_TIMEOUT_S, SYNC_PHASES, SYNC_MARKERS, exclusive=True
@@ -456,25 +586,19 @@ def api_pipeline_params():
     return jsonify(pipeline="01_Pipe_Setup", parameters=PIPELINE_PARAM_SPEC)
 
 
-@app.post("/api/run-pipeline")
-def api_run_pipeline():
-    data = request.get_json(silent=True) or {}
+def _pipeline_invocation(data: dict) -> tuple[list[str], dict[str, str]]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     pipeline = (data.get("pipeline") or "01_Pipe_Setup").strip() or "01_Pipe_Setup"
     raw_params = data.get("parameters") or {}
-
     if not tenant or not workspace:
-        return jsonify(error="tenant and workspace are required."), 400
+        raise ValueError("tenant and workspace are required.")
     if not isinstance(raw_params, dict):
-        return jsonify(error="parameters must be an object of name -> value."), 400
+        raise ValueError("parameters must be an object of name -> value.")
     if not str(raw_params.get("key_vault_uri") or "").strip():
-        return jsonify(error="Key Vault URI is required for connectivity preflight."), 400
+        raise ValueError("Key Vault URI is required for connectivity preflight.")
     if not str(raw_params.get("alert_email_to") or "").strip():
-        return jsonify(error="Alert email recipient is required."), 400
-
-    # Keep only known parameters, drop blanks (so pipeline defaults apply), and
-    # coerce ints so they travel as JSON numbers.
+        raise ValueError("Alert email recipient is required.")
     params: dict[str, object] = {}
     for spec in PIPELINE_PARAM_SPEC:
         name = spec["name"]
@@ -486,25 +610,25 @@ def api_run_pipeline():
         if spec["type"] == "int":
             try:
                 params[name] = int(str(value).strip())
-            except ValueError:
-                return jsonify(error=f"{spec['label']} must be a whole number."), 400
+            except ValueError as exc:
+                raise ValueError(f"{spec['label']} must be a whole number.") from exc
         else:
             params[name] = str(value).strip()
-
-    # run_pipeline.py resolves the target workspace and replaces this value with
-    # its canonical GUID. Keep the display value here only for transparent input.
     params["workspace_id"] = workspace
-
     argv = [
-        str(PIPELINE_SCRIPT),
-        "--tenant", tenant,
-        "--workspace", workspace,
-        "--pipeline", pipeline,
-        "--yes",
+        str(PIPELINE_SCRIPT), "--tenant", tenant, "--workspace", workspace,
+        "--pipeline", pipeline, "--yes",
     ]
-    # Pass parameters as JSON through the environment so values with @ and : (a
-    # Teams channel id) never need shell escaping and stay off the command line.
-    env_extra = {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
+    return argv, {"FABRIC_PIPELINE_PARAMS": json.dumps(params)}
+
+
+@app.post("/api/run-pipeline")
+def api_run_pipeline():
+    data = request.get_json(silent=True) or {}
+    try:
+        argv, env_extra = _pipeline_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     job_id = _start(
         argv,
         env_extra,
@@ -519,20 +643,31 @@ def api_run_pipeline():
 @app.post("/api/deploy-app")
 def api_deploy_app():
     data = request.get_json(silent=True) or {}
+    try:
+        argv = _deploy_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    job_id = _start(
+        argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
+    )
+    return job_response(job_id)
+
+
+def _deploy_invocation(data: dict) -> list[str]:
     tenant = (data.get("tenant") or "").strip()
     workspace = (data.get("workspace") or "").strip()
     client_id = (data.get("clientId") or "").strip()
 
     if not tenant or not workspace:
-        return jsonify(error="tenant and workspace are required."), 400
+        raise ValueError("tenant and workspace are required.")
     if not TENANT_RE.fullmatch(tenant):
-        return jsonify(error="tenant must be a GUID or a domain like contoso.onmicrosoft.com."), 400
+        raise ValueError("tenant must be a GUID or a domain like contoso.onmicrosoft.com.")
     if client_id and not re.fullmatch(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
         r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         client_id,
     ):
-        return jsonify(error="SPA client id must be a GUID."), 400
+        raise ValueError("SPA client id must be a GUID.")
 
     argv = [
         str(DEPLOY_SCRIPT),
@@ -541,9 +676,39 @@ def api_deploy_app():
     ]
     if client_id:
         argv += ["--client-id", client_id]
-    job_id = _start(
-        argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
-    )
+    return argv
+
+
+@app.post("/api/full-workflow")
+def api_full_workflow():
+    data = request.get_json(silent=True) or {}
+    try:
+        sync_argv, sync_env = _sync_invocation(data)
+        pipeline_argv, pipeline_env = _pipeline_invocation(data)
+        deploy_argv = _deploy_invocation(data)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    sync_offset = 1
+    pipeline_offset = sync_offset + len(SYNC_PHASES) - 2
+    deploy_offset = pipeline_offset + len(PIPELINE_PHASES) - 2
+    steps = [
+        {
+            "name": "GitHub sync", "argv": sync_argv, "env": sync_env,
+            "timeout": SYNC_TIMEOUT_S, "markers": SYNC_MARKERS, "phase_offset": sync_offset,
+        },
+        {
+            "name": "Setup pipeline", "argv": pipeline_argv, "env": pipeline_env,
+            "timeout": PIPELINE_TIMEOUT_S, "markers": PIPELINE_MARKERS,
+            "phase_offset": pipeline_offset,
+        },
+        {
+            "name": "Fabric app deploy", "argv": deploy_argv, "env": None,
+            "timeout": DEPLOY_TIMEOUT_S, "markers": DEPLOY_MARKERS,
+            "phase_offset": deploy_offset,
+        },
+    ]
+    job_id = _start_workflow(steps)
     return job_response(job_id)
 
 
@@ -563,6 +728,8 @@ def api_job(job_id: str):
         phases = job.phases
         status = job.status
         returncode = job.returncode
+        component = job.component
+        failed_component = job.failed_component
     return jsonify(
         status=status,
         returncode=returncode,
@@ -570,6 +737,8 @@ def api_job(job_id: str):
         phases=phases,
         phaseIndex=phase_index,
         phase=phases[phase_index],
+        component=component,
+        failedComponent=failed_component,
         lines=new_lines,
         nextSince=total,
     )

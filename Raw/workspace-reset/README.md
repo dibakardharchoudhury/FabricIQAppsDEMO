@@ -21,6 +21,8 @@ Two ways to run everything:
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
+- **Full workflow** — the local web UI can run GitHub sync, `01_Pipe_Setup`, and
+  the approved Fabric app deploy orchestrator in one monitored serial job.
 
 ## Easiest start — just launch it (no commands to type)
 
@@ -231,6 +233,22 @@ verify actual playbook execution and delivery separately from app-deployment suc
 The **Run pipeline** tab accepts either the target workspace display name or GUID in
 the sidebar. Its workspace parameter mirrors that value, and the runner resolves it
 to the canonical GUID before starting `01_Pipe_Setup`.
+
+The **Full workflow** tab composes the existing actions without replacing their
+implementations:
+
+1. **Sync from GitHub** using the Sync tab's repository, branch, directory, and
+   reusable connection/PAT settings.
+2. **Run `01_Pipe_Setup`** using the Pipeline tab's complete parameter set.
+3. **Deploy the Fabric app** using `deploy_fabric_app.py` and the Deploy tab's
+   optional SPA client ID.
+
+The steps run strictly in order under one exclusive job. Each child keeps its
+existing validation, timeout, environment-only secrets, and live output. If a
+step exits unsuccessfully, the combined log identifies the failed component and
+records that later steps were not started. The progress display exposes detailed
+Sync, Pipeline, and Deploy subphases, and **Cancel running jobs** terminates the
+currently active child process.
 
 Before the pipeline starts, the app resolves the Key Vault URI against Azure resources
 visible to the current `az login` identity. If public network access is enabled with a

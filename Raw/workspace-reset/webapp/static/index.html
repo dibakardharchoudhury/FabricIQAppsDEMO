@@ -204,6 +204,10 @@
 
   /* pipeline parameter fields (dynamically rendered) */
   .params { display:grid; grid-template-columns:repeat(2,1fr); gap:1.15rem 1.2rem; }
+  .workflow-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin:1rem 0 0; }
+  .workflow-step { padding:.8rem .9rem; border:1px solid var(--border); border-radius:10px;
+    background:rgba(148,163,184,.06); color:var(--muted); font-size:.8rem; line-height:1.45; }
+  .workflow-step strong { display:block; color:var(--text); margin-bottom:.2rem; }
   .param { display:flex; flex-direction:column; gap:.4rem; }
   .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
@@ -233,6 +237,7 @@
   @media (max-width:640px) {
     .grid { grid-template-columns:1fr; }
     .params { grid-template-columns:1fr; }
+    .workflow-steps { grid-template-columns:1fr; }
     .page { padding:1.6rem 1rem 2.5rem; }
   }
 </style>
@@ -272,9 +277,10 @@
 
       <nav class="nav" role="tablist">
         <div class="nav-group"><span class="tag"></span> Actions</div>
-        <button id="tabSync" class="tab active" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
+        <button id="tabSync" class="tab" data-tab="sync" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg> Sync from GitHub</button>
         <button id="tabPipeline" class="tab run" data-tab="pipeline" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5v15M5 6.5h9a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2H8"/><circle cx="5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><path d="m16.5 15 3 2.5-3 2.5"/></svg> Run pipeline</button>
         <button id="tabDeploy" class="tab deploy" data-tab="deploy" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M5 17h14"/></svg> Deploy app</button>
+        <button id="tabWorkflow" class="tab active" data-tab="workflow" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg> Full workflow</button>
         <button id="tabDelete" class="tab danger" data-tab="delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4.2A1.2 1.2 0 0 1 9.2 3h5.6A1.2 1.2 0 0 1 16 4.2V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/></svg> Delete items</button>
       </nav>
 
@@ -292,7 +298,28 @@
 
     <main class="main">
 
-  <section id="paneSync" class="pane active">
+  <section id="paneWorkflow" class="pane active">
+    <div class="card">
+      <div class="card-head">
+        <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
+        <h2>Initialize everything in one serial workflow</h2>
+      </div>
+      <p class="hint">Uses the values configured in the Sync, Run pipeline, and Deploy app tabs. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
+      <div class="workflow-steps">
+        <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
+        <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
+        <div class="workflow-step"><strong>3. Deploy Fabric app</strong>Runs the approved deploy orchestrator and endpoint/CORS verification.</div>
+      </div>
+      <aside class="notice">
+        Configure all required fields in the other tabs first. The GitHub PAT remains environment-only,
+        pipeline parameters remain environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
+      </aside>
+      <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Sync, run pipeline &amp; deploy app</button>
+      <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
+    </div>
+  </section>
+
+  <section id="paneSync" class="pane">
     <div class="card">
       <div class="card-head">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M18 10.4a6 6 0 0 1-6 6H8.4"/></svg></span>
@@ -408,7 +435,7 @@ function renderPanel(el, job) {
     : job.status === "succeeded" ? "Succeeded"
     : job.status === "cancelled" ? "Cancelled"
     : job.status === "interrupted" ? "Monitoring interrupted"
-    : "Failed";
+    : job.failedComponent ? `Failed \u00b7 ${job.failedComponent}` : "Failed";
   const phases = (job.phases || []).map((p, i) => {
     const cls = (job.status === "succeeded" || i < job.phaseIndex) ? "done"
       : (i === job.phaseIndex && job.status === "running") ? "active" : "";
@@ -483,6 +510,8 @@ async function runJob(startUrl, body, panelEl, onDone) {
     job.status = j.status; job.phases = j.phases || job.phases;
     job.phaseIndex = j.phaseIndex != null ? j.phaseIndex : job.phaseIndex;
     job.phase = j.phase || job.phase; job.returncode = j.returncode;
+    job.component = j.component || job.component;
+    job.failedComponent = j.failedComponent || job.failedComponent;
     if (j.lines && j.lines.length) job.lines = job.lines.concat(j.lines);
     renderPanel(panelEl, job);
     if (!j.done) setTimeout(poll, 1000); else if (onDone) onDone(job);
@@ -542,6 +571,7 @@ function refresh() {
   $("testBtn").disabled = !testValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
+  $("workflowBtn").disabled = !(syncValid() && pipelineValid() && deployValid());
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -618,6 +648,23 @@ $("deployBtn").addEventListener("click", async () => {
   }, $("deployPanel"), () => refresh());
 });
 
+$("workflowBtn").addEventListener("click", async () => {
+  $("workflowBtn").disabled = true;
+  await runJob("/api/full-workflow", {
+    tenant: $("tenant").value,
+    workspace: $("workspace").value,
+    repository: $("repository").value,
+    branch: $("branch").value,
+    directory: $("directory").value,
+    connectionId: connValue(),
+    keepConnected: $("keepConnected").checked,
+    pat: $("pat").value,
+    pipeline: "01_Pipe_Setup",
+    parameters: collectPipelineParams(),
+    clientId: $("deployClientId").value,
+  }, $("workflowPanel"), () => { $("pat").value = ""; refresh(); });
+});
+
 $("restartBtn").addEventListener("click", async () => {
   if (!confirm("Restart the local server to pick up code changes?")) return;
   const btn = $("restartBtn");
@@ -665,6 +712,7 @@ $("stopBtn").addEventListener("click", async () => {
 // ---- tab switching ----
 function activateTab(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $("paneWorkflow").classList.toggle("active", name === "workflow");
   $("paneSync").classList.toggle("active", name === "sync");
   $("panePipeline").classList.toggle("active", name === "pipeline");
   $("paneDeploy").classList.toggle("active", name === "deploy");

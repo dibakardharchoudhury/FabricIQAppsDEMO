@@ -23,11 +23,16 @@ class WorkspaceActionTests(unittest.TestCase):
         self.client = SERVER.app.test_client()
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
-        with patch.object(SERVER, "_start", return_value="job-id") as start:
+        starter = "_start_workflow" if endpoint == "/api/full-workflow" else "_start"
+        with patch.object(SERVER, starter, return_value="job-id") as start:
             response = self.client.post(endpoint, json=payload)
 
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertTrue(start.call_args.kwargs.get("exclusive"))
+        if starter == "_start":
+            self.assertTrue(start.call_args.kwargs.get("exclusive"))
+        else:
+            self.assertEqual(start.call_count, 1)
+            self.assertTrue(SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True).exclusive)
 
     def test_all_workspace_mutations_are_exclusive(self):
         target = {"tenant": "tenant.example", "workspace": "Demo Workspace"}
@@ -52,6 +57,18 @@ class WorkspaceActionTests(unittest.TestCase):
                 },
             ),
             ("/api/deploy-app", target),
+            (
+                "/api/full-workflow",
+                {
+                    **target,
+                    "repository": "owner/repository",
+                    "connectionId": "yes",
+                    "parameters": {
+                        "key_vault_uri": "https://vault.vault.azure.net/",
+                        "alert_email_to": "operations@example.test",
+                    },
+                },
+            ),
         ]
         for endpoint, payload in actions:
             with self.subTest(endpoint=endpoint):
@@ -224,6 +241,127 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_deploy_progress_exposes_backend_sync_and_cors_readiness(self):
         self.assertIn("Syncing backend settings", SERVER.DEPLOY_PHASES)
         self.assertIn("Checking endpoint and CORS readiness", SERVER.DEPLOY_PHASES)
+
+    def test_full_workflow_builds_existing_commands_in_serial_order(self):
+        payload = {
+            "tenant": "tenant.example",
+            "workspace": "Demo Workspace",
+            "repository": "owner/repository",
+            "branch": "feature/demo",
+            "directory": "/",
+            "connectionId": "yes",
+            "pat": "test-pat",
+            "parameters": {
+                "key_vault_uri": "https://vault.vault.azure.net/",
+                "alert_email_to": "operations@example.test",
+                "per_notebook_timeout_secs": "3600",
+            },
+            "clientId": "11111111-1111-1111-1111-111111111111",
+        }
+        with patch.object(SERVER, "_start_workflow", return_value="workflow-id") as start:
+            response = self.client.post("/api/full-workflow", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        self.assertEqual([step["name"] for step in steps], [
+            "GitHub sync", "Setup pipeline", "Fabric app deploy",
+        ])
+        self.assertEqual(Path(steps[0]["argv"][0]).name, "sync_workspace_from_git.py")
+        self.assertEqual(Path(steps[1]["argv"][0]).name, "run_pipeline.py")
+        self.assertEqual(Path(steps[2]["argv"][0]).name, "deploy_fabric_app.py")
+        self.assertNotIn("test-pat", " ".join(steps[0]["argv"]))
+        self.assertEqual(steps[0]["env"]["FABRIC_GIT_PAT"], "test-pat")
+        self.assertEqual(
+            json.loads(steps[1]["env"]["FABRIC_PIPELINE_PARAMS"])["workspace_id"],
+            "Demo Workspace",
+        )
+        self.assertEqual(steps[2]["argv"][-2:], [
+            "--client-id", "11111111-1111-1111-1111-111111111111",
+        ])
+
+    def test_full_workflow_stops_at_failed_component_and_reports_it(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        steps = [
+            {"name": name, "argv": [name], "env": None, "timeout": 1,
+             "markers": [], "phase_offset": index + 1}
+            for index, name in enumerate(("GitHub sync", "Setup pipeline", "Fabric app deploy"))
+        ]
+        with patch.object(SERVER, "_run_workflow_step", side_effect=[0, 23]) as run:
+            SERVER._workflow_worker(job, steps)
+
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.returncode, 23)
+        self.assertEqual(job.failed_component, "Setup pipeline")
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("Setup pipeline failed with exit code 23", "\n".join(job.lines))
+        self.assertNotIn("Fabric app deploy completed", "\n".join(job.lines))
+
+    def test_full_workflow_success_reports_all_components(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        steps = [
+            {"name": name, "argv": [name], "env": None, "timeout": 1,
+             "markers": [], "phase_offset": index + 1}
+            for index, name in enumerate(("GitHub sync", "Setup pipeline", "Fabric app deploy"))
+        ]
+        with patch.object(SERVER, "_run_workflow_step", return_value=0) as run:
+            SERVER._workflow_worker(job, steps)
+
+        self.assertEqual(job.status, "succeeded")
+        self.assertEqual(job.returncode, 0)
+        self.assertEqual(job.phase_index, len(SERVER.WORKFLOW_PHASES) - 1)
+        self.assertEqual(run.call_count, 3)
+        log = "\n".join(job.lines)
+        for name in ("GitHub sync", "Setup pipeline", "Fabric app deploy"):
+            self.assertIn(f"{name} completed successfully", log)
+
+    def test_job_api_exposes_failed_workflow_component(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        job.status = "failed"
+        job.returncode = 9
+        job.component = "Setup pipeline"
+        job.failed_component = "Setup pipeline"
+        SERVER.JOBS[job.id] = job
+        try:
+            response = self.client.get(f"/api/jobs/{job.id}")
+            self.assertEqual(response.status_code, 200, response.get_json())
+            body = response.get_json()
+            self.assertEqual(body["component"], "Setup pipeline")
+            self.assertEqual(body["failedComponent"], "Setup pipeline")
+            self.assertTrue(body["done"])
+        finally:
+            SERVER.JOBS.clear()
+
+    def test_full_workflow_validates_every_step_before_starting(self):
+        base = {
+            "tenant": "tenant.example",
+            "workspace": "Demo Workspace",
+            "repository": "owner/repository",
+            "connectionId": "yes",
+            "parameters": {
+                "key_vault_uri": "https://vault.vault.azure.net/",
+                "alert_email_to": "operations@example.test",
+            },
+        }
+        cases = (
+            ({**base, "repository": ""}, "repository"),
+            ({**base, "parameters": {**base["parameters"], "alert_email_to": ""}}, "Alert email"),
+            ({**base, "clientId": "not-a-guid"}, "SPA client id"),
+        )
+        for payload, message in cases:
+            with self.subTest(message=message), patch.object(SERVER, "_start_workflow") as start:
+                response = self.client.post("/api/full-workflow", json=payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.get_json()["error"])
+                start.assert_not_called()
+
+    def test_full_workflow_page_explains_serial_failure_boundary(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="workflowBtn"', page)
+        self.assertIn('"/api/full-workflow"', page)
+        self.assertIn("Each step starts only after the previous step succeeds", page)
+        self.assertIn("later changes", page)
+        self.assertLess(page.index('id="tabDeploy"'), page.index('id="tabWorkflow"'))
+        self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
     def test_deploy_page_explains_portable_backend_readiness_contract(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
