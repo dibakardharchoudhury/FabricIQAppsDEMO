@@ -30,6 +30,11 @@ browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows 
 data is synthetic but each record lives where it would in production (no reference or telemetry rows
 are copied into Rayfin SQL).
 
+Lakehouse STID and Eventhouse telemetry are live-only browser state. The app does not persist either
+source in local storage, removes legacy STID/telemetry browser caches on startup, and clears the
+corresponding UI data when a refresh fails or the source is unavailable. Rayfin SQL remains
+independent and can continue serving operational records while Fabric analytical sources are rebuilt.
+
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
 Twin, and Maintenance. It requires a verified **generation-2 Ontology** and an explicitly bound,
