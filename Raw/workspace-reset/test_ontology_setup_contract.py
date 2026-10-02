@@ -154,6 +154,22 @@ class OntologySetupContractTests(unittest.TestCase):
             self.assertIn('"alert_email_to": alert_email_to', text)
             self.assertIn('"alert_email_to": alert_email_to,', text)
 
+    def test_pipeline_restores_demo_operations_agent_defaults(self):
+        path = ROOT / "Orchestrator_Pipelines" / "01_Pipe_Setup.DataPipeline" / "pipeline-content.json"
+        parameters = json.loads(path.read_text(encoding="utf-8"))["properties"]["parameters"]
+        self.assertEqual(
+            parameters["ops_agent_teams_team_id"]["defaultValue"],
+            "c480320e-9204-474b-9b2c-54a53e94f220",
+        )
+        self.assertEqual(
+            parameters["ops_agent_teams_channel_id"]["defaultValue"],
+            "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+        )
+        self.assertEqual(
+            parameters["ops_agent_run_as_user"]["defaultValue"],
+            "admin@mngenvmcap218279.onmicrosoft.com",
+        )
+
     def test_required_capabilities_fail_closed_and_disabled_is_explicit(self):
         report = load_function(ORCHESTRATOR, "_report_agent_capabilities", {"json": json})
         output = io.StringIO()

@@ -431,24 +431,18 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
     {"name": "key_vault_client_secret_name", "type": "string", "default": "clientsecret",
      "label": "KV secret · client secret",
      "help": "Name of the Key Vault secret that stores the client secret."},
-    {"name": "ops_agent_teams_team_id", "type": "string", "default": "",
+    {"name": "ops_agent_teams_team_id", "type": "string", "default": "c480320e-9204-474b-9b2c-54a53e94f220",
      "label": "Teams team id",
      "help": "GUID of the Microsoft Teams team targeted by Operations Agent alert configuration."},
-    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "",
+    {"name": "ops_agent_teams_channel_id", "type": "string", "default": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
      "label": "Teams channel id",
      "help": "Target Teams channel (thread) id, e.g. 19:...@thread.tacv2. Delivery requires verified agent configuration and permissions."},
-    {"name": "ops_agent_run_as_user", "type": "string", "default": "",
+    {"name": "ops_agent_run_as_user", "type": "string", "default": "admin@mngenvmcap218279.onmicrosoft.com",
      "label": "Agent run-as user",
      "help": "Optional UPN guard for the delegated user that provisions and runs the Operations Agents; blank uses the signed-in deploying user."},
     {"name": "alert_email_to", "type": "string", "default": "",
      "label": "Alert email recipient",
      "help": "Required by this launcher. This independent To address is used by Pipe_SendEmailAlert; direct notebook runs fall back to the run-as/deploying user when blank."},
-    {"name": "ontology_data_agent_mode", "type": "string", "default": "enabled",
-     "label": "Ontology Data Agent mode",
-     "help": "enabled: require matching v2 source publication and a successful ontology runtime smoke check; auto: alias for enabled; disabled: skip agent configuration. Required failures fail setup."},
-    {"name": "ontology_operations_agent_mode", "type": "string", "default": "enabled",
-     "label": "Ontology Operations Agent mode",
-     "help": "enabled: attempt Operations Agent configuration for the selected v2 ontology and verify the result; auto: alias for enabled; disabled: skip. Product or permission failures remain explicit."},
     {"name": "per_notebook_timeout_secs", "type": "int", "default": "3600",
      "label": "Per-notebook timeout (secs)",
      "help": "Seconds the orchestrator waits for each notebook before giving up (e.g. 3600)."},
@@ -496,9 +490,6 @@ def api_run_pipeline():
                 return jsonify(error=f"{spec['label']} must be a whole number."), 400
         else:
             params[name] = str(value).strip()
-        if name in {"ontology_data_agent_mode", "ontology_operations_agent_mode"}:
-            if params[name] not in {"auto", "enabled", "disabled"}:
-                return jsonify(error=f"{spec['label']} must be auto, enabled, or disabled."), 400
 
     # run_pipeline.py resolves the target workspace and replaces this value with
     # its canonical GUID. Keep the display value here only for transparent input.

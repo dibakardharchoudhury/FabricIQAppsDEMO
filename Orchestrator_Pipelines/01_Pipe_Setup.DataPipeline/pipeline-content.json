@@ -205,15 +205,15 @@
       },
       "ops_agent_teams_team_id": {
         "type": "string",
-        "defaultValue": ""
+        "defaultValue": "c480320e-9204-474b-9b2c-54a53e94f220"
       },
       "ops_agent_teams_channel_id": {
         "type": "string",
-        "defaultValue": ""
+        "defaultValue": "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2"
       },
       "ops_agent_run_as_user": {
         "type": "string",
-        "defaultValue": ""
+        "defaultValue": "admin@mngenvmcap218279.onmicrosoft.com"
       },
       "alert_email_to": {
         "type": "string",

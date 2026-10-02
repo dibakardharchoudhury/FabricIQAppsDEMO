@@ -57,33 +57,12 @@ class WorkspaceActionTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assert_exclusive_action(endpoint, payload)
 
-    def test_pipeline_forwards_ontology_capability_modes(self):
-        for mode in ("enabled", "auto", "disabled"):
-            with self.subTest(mode=mode):
-                parameters = {
-                    "key_vault_uri": "https://vault.vault.azure.net/",
-                    "alert_email_to": "operations@example.test",
-                    "ontology_data_agent_mode": mode,
-                    "ontology_operations_agent_mode": mode,
-                }
-                with patch.object(SERVER, "_start", return_value="job-id") as start:
-                    response = self.client.post("/api/run-pipeline", json={
-                        "tenant": "tenant.example", "workspace": "DEV", "parameters": parameters,
-                    })
-                self.assertEqual(response.status_code, 200, response.get_json())
-                forwarded = json.loads(start.call_args.args[1]["FABRIC_PIPELINE_PARAMS"])
-                for name in ("ontology_data_agent_mode", "ontology_operations_agent_mode"):
-                    self.assertEqual(forwarded[name], mode)
-
-    def test_launcher_defaults_attempt_both_ontology_agents(self):
+    def test_launcher_does_not_expose_agent_mode_flags(self):
         response = self.client.get("/api/pipeline-params")
         self.assertEqual(response.status_code, 200)
         specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
         for name in ("ontology_data_agent_mode", "ontology_operations_agent_mode"):
-            self.assertEqual(specs[name]["default"], "enabled")
-            self.assertIn("auto: alias for enabled", specs[name]["help"])
-            self.assertIn("disabled: skip", specs[name]["help"])
-        self.assertIn("runtime smoke check", specs["ontology_data_agent_mode"]["help"])
+            self.assertNotIn(name, specs)
 
     def test_launcher_separates_alert_recipient_from_run_as_and_teams(self):
         response = self.client.get("/api/pipeline-params")
@@ -91,9 +70,18 @@ class WorkspaceActionTests(unittest.TestCase):
         specs = {spec["name"]: spec for spec in response.get_json()["parameters"]}
         self.assertEqual(specs["alert_email_to"]["default"], "")
         self.assertIn("independent", specs["alert_email_to"]["help"])
-        for name in ("ops_agent_run_as_user", "ops_agent_teams_team_id",
-                     "ops_agent_teams_channel_id"):
-            self.assertEqual(specs[name]["default"], "")
+        self.assertEqual(
+            specs["ops_agent_teams_team_id"]["default"],
+            "c480320e-9204-474b-9b2c-54a53e94f220",
+        )
+        self.assertEqual(
+            specs["ops_agent_teams_channel_id"]["default"],
+            "19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2",
+        )
+        self.assertEqual(
+            specs["ops_agent_run_as_user"]["default"],
+            "admin@mngenvmcap218279.onmicrosoft.com",
+        )
 
     def test_pipeline_rejects_blank_alert_recipient(self):
         with patch.object(SERVER, "_start") as start:
@@ -107,6 +95,15 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Alert email recipient is required", response.get_json()["error"])
         start.assert_not_called()
+
+    def test_alert_recipient_uses_the_standard_styled_input(self):
+        html = (Path(SERVER.__file__).with_name("static") / "index.html").read_text(encoding="utf-8")
+        self.assertIn(
+            '<input id="pp_${p.name}" type="text"',
+            html,
+        )
+        self.assertIn('${p.name === "alert_email_to" ? "required" : ""}', html)
+        self.assertNotIn('type="${p.name === "alert_email_to" ? "email" : "text"}"', html)
 
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
         for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
@@ -153,7 +150,8 @@ class WorkspaceActionTests(unittest.TestCase):
                     self.assertTrue(job["done"])
                     parameters = fabric.start_pipeline.call_args.args[2]
                     self.assertEqual(parameters["workspace_id"], "canonical-workspace")
-                    self.assertEqual(parameters["ontology_data_agent_mode"], "enabled")
+                    self.assertNotIn("ontology_data_agent_mode", parameters)
+                    self.assertNotIn("ontology_operations_agent_mode", parameters)
                     log = "\n".join(job["lines"])
                     if state == "Failed":
                         self.assertIn(reason, log)
@@ -163,18 +161,21 @@ class WorkspaceActionTests(unittest.TestCase):
                 finally:
                     SERVER.JOBS.clear()
 
-    def test_pipeline_rejects_invalid_ontology_capability_mode(self):
-        with patch.object(SERVER, "_start") as start:
+    def test_pipeline_does_not_forward_hidden_agent_mode_flags(self):
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
             response = self.client.post("/api/run-pipeline", json={
                 "tenant": "tenant.example", "workspace": "DEV",
                 "parameters": {
                     "key_vault_uri": "https://vault.vault.azure.net/",
                     "alert_email_to": "operations@example.test",
                     "ontology_data_agent_mode": "force",
+                    "ontology_operations_agent_mode": "disabled",
                 },
             })
-        self.assertEqual(response.status_code, 400)
-        start.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        forwarded = json.loads(start.call_args.args[1]["FABRIC_PIPELINE_PARAMS"])
+        self.assertNotIn("ontology_data_agent_mode", forwarded)
+        self.assertNotIn("ontology_operations_agent_mode", forwarded)
 
     def test_background_jobs_are_exclusive_by_default(self):
         with patch.object(SERVER.threading, "Thread"):
