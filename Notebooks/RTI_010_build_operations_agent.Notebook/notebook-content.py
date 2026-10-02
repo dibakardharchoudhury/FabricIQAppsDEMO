@@ -342,7 +342,8 @@ def resolve_kql_database_id() -> str:
 # time (resolve_email_connection_id + ALERT_EMAIL_TO) and injected via build_email_pipeline_content.
 PIPELINE_NAME = settings.get("alert_pipeline_name", "Pipe_SendEmailAlert")
 PIPELINE_DESCRIPTION = settings.get("alert_pipeline_description", "This will be triggered from Ops Agent!")
-# Alert email recipient is distinct from the agent execution identity and Teams destination.
+# Alert email recipient is distinct from Teams delivery. When omitted, use the configured run-as
+# user, or the signed-in deploying user when run-as is also omitted.
 ALERT_EMAIL_TO = first_setting("alert_email_to", "alert_recipient", default="")
 # Office365 email connection. The Office365Email ACTIVITY only accepts an OAuth2 (user-mailbox)
 # connection; a Service Principal connection is accepted by the connection API but the activity
@@ -1054,9 +1055,13 @@ def deploy_operations_agent(ontology_id: str) -> dict:
     get_access_token_for_fabric()
     check_run_as(ops_agent_run_as_user)
     connection_id = resolve_email_connection_id()
-    recipient = ALERT_EMAIL_TO.strip()
+    recipient = (ALERT_EMAIL_TO.strip() or ops_agent_run_as_user.strip()
+                 or get_signed_in_upn().strip())
     if not recipient:
-        raise RuntimeError("Configure alert_email_to for Pipe_SendEmailAlert.")
+        raise RuntimeError(
+            "Could not resolve a Pipe_SendEmailAlert recipient from alert_email_to, "
+            "ops_agent_run_as_user, or the signed-in deploying user."
+        )
     pipeline_definition = build_email_pipeline_content(connection_id or "", recipient)
     pipeline_id = create_data_pipeline(PIPELINE_NAME, pipeline_definition, PIPELINE_DESCRIPTION).get("id")
     if not pipeline_id:

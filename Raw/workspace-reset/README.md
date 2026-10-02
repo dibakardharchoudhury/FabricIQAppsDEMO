@@ -219,7 +219,8 @@ suffixes such as `V6` and `V9` are environment names, not ontology generations. 
 or unused suffix when an existing target ontology is v1: setup rejects it without migration.
 `ops_agent_run_as_user`, `ops_agent_teams_team_id`, and `ops_agent_teams_channel_id` configure the
 restored Operations Agent run-as identity and Teams delivery. `alert_email_to` separately configures
-the required `Pipe_SendEmailAlert` recipient; it never inherits the run-as identity. Email alerts
+the `Pipe_SendEmailAlert` recipient and is required by the local launcher. A direct RTI_010 run
+falls back to the configured run-as user, or the deploying user when both fields are blank. Email alerts
 also require the Office 365 Outlook OAuth2 connection described in the root README. Review status/reasons and
 verify actual playbook execution and delivery separately from app-deployment success.
 

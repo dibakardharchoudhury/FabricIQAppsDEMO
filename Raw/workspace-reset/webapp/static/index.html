@@ -696,7 +696,7 @@ async function loadPipelineParams() {
     return `<div class="param${wide ? " wide" : ""}">
       <span class="plabel">${escapeHtml(p.label)}</span>
       <span class="phelp">${escapeHtml(p.help)}</span>
-      <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
+      <input id="pp_${p.name}" type="${p.name === "alert_email_to" ? "email" : "text"}" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${p.name === "alert_email_to" ? "required" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
     </div>`;
   }).join("");
   syncPipelineWorkspace();
@@ -711,7 +711,10 @@ function collectPipelineParams() {
 }
 function pipelineValid() {
   const keyVault = $("pp_key_vault_uri");
-  return $("tenant").value.trim() && $("workspace").value.trim() && keyVault && keyVault.value.trim();
+  const alertEmail = $("pp_alert_email_to");
+  return $("tenant").value.trim() && $("workspace").value.trim()
+    && keyVault && keyVault.value.trim()
+    && alertEmail && alertEmail.value.trim() && alertEmail.checkValidity();
 }
 
 $("workspace").addEventListener("input", () => { syncPipelineWorkspace(); refresh(); });

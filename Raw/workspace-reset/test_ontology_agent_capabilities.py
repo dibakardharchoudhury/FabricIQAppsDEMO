@@ -397,19 +397,36 @@ class CapabilityTests(unittest.TestCase):
             else:
                 ns["verify_operations_readback"].assert_called_once()
 
-    def test_operations_requires_explicit_alert_recipient(self):
-        ns = functions(
-            "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
-            get_ontology_generation=Mock(return_value=2),
-            ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
-            ops_agent_run_as_user="", get_access_token_for_fabric=Mock(), check_run_as=Mock(),
-            resolve_email_connection_id=Mock(return_value="mailbox"), ALERT_EMAIL_TO=" ",
-            create_data_pipeline=Mock(), create_operations_agent=Mock(),
-        )
-        with self.assertRaisesRegex(RuntimeError, "Configure alert_email_to"):
-            ns["deploy_operations_agent"]("ontology")
-        ns["create_data_pipeline"].assert_not_called()
-        ns["create_operations_agent"].assert_not_called()
+    def test_operations_alert_recipient_falls_back_to_run_as_then_deployer(self):
+        for run_as, deploying_user, expected in (
+            ("run-as@example.test", "deployer@example.test", "run-as@example.test"),
+            ("", "deployer@example.test", "deployer@example.test"),
+        ):
+            with self.subTest(run_as=run_as):
+                build_pipeline = Mock(return_value={"properties": {}})
+                ns = functions(
+                    "010", "deploy_operations_agent", ops_agent_ontology_datasource_id="",
+                    get_ontology_generation=Mock(return_value=2),
+                    ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+                    ops_agent_copy_playbook=True, ops_agent_should_run=False,
+                    ops_agent_run_as_user=run_as, ops_agent_name="agent",
+                    OPS_AGENT_DESCRIPTION="description", get_access_token_for_fabric=Mock(),
+                    check_run_as=Mock(), resolve_email_connection_id=Mock(return_value="mailbox"),
+                    ALERT_EMAIL_TO=" ", get_signed_in_upn=Mock(return_value=deploying_user),
+                    PIPELINE_NAME="Pipe_SendEmailAlert", PIPELINE_DESCRIPTION="alerts",
+                    build_email_pipeline_content=build_pipeline,
+                    create_data_pipeline=Mock(return_value={"id": "pipeline"}),
+                    get_definition_parts=Mock(), read_json_part=Mock(return_value={"properties": {}}),
+                    require_retained=Mock(), create_operations_agent=Mock(return_value={"id": "agent"}),
+                    build_configurations=Mock(return_value={"configuration": {}, "playbook": {}}),
+                    update_operations_agent_definition=Mock(), verify_operations_readback=Mock(),
+                )
+                ns["deploy_operations_agent"]("ontology")
+                build_pipeline.assert_called_once_with("mailbox", expected)
+                if run_as:
+                    ns["get_signed_in_upn"].assert_not_called()
+                else:
+                    ns["get_signed_in_upn"].assert_called_once()
 
     def test_operations_outer_failure_is_persisted_and_reraised(self):
         attempt = next(node for node in ast.parse(source("010")).body

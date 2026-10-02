@@ -442,7 +442,7 @@ PIPELINE_PARAM_SPEC: list[dict[str, str]] = [
      "help": "Optional UPN guard for the delegated user that provisions and runs the Operations Agents; blank uses the signed-in deploying user."},
     {"name": "alert_email_to", "type": "string", "default": "",
      "label": "Alert email recipient",
-     "help": "Required To address used by Pipe_SendEmailAlert. This is independent of the agent run-as user and Teams destination."},
+     "help": "Required by this launcher. This independent To address is used by Pipe_SendEmailAlert; direct notebook runs fall back to the run-as/deploying user when blank."},
     {"name": "ontology_data_agent_mode", "type": "string", "default": "enabled",
      "label": "Ontology Data Agent mode",
      "help": "enabled: require matching v2 source publication and a successful ontology runtime smoke check; auto: alias for enabled; disabled: skip agent configuration. Required failures fail setup."},
@@ -476,6 +476,8 @@ def api_run_pipeline():
         return jsonify(error="parameters must be an object of name -> value."), 400
     if not str(raw_params.get("key_vault_uri") or "").strip():
         return jsonify(error="Key Vault URI is required for connectivity preflight."), 400
+    if not str(raw_params.get("alert_email_to") or "").strip():
+        return jsonify(error="Alert email recipient is required."), 400
 
     # Keep only known parameters, drop blanks (so pipeline defaults apply), and
     # coerce ints so they travel as JSON numbers.

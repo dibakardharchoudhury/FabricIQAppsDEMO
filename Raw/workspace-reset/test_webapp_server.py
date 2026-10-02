@@ -45,7 +45,10 @@ class WorkspaceActionTests(unittest.TestCase):
                 "/api/run-pipeline",
                 {
                     **target,
-                    "parameters": {"key_vault_uri": "https://vault.vault.azure.net/"},
+                    "parameters": {
+                        "key_vault_uri": "https://vault.vault.azure.net/",
+                        "alert_email_to": "operations@example.test",
+                    },
                 },
             ),
             ("/api/deploy-app", target),
@@ -59,6 +62,7 @@ class WorkspaceActionTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 parameters = {
                     "key_vault_uri": "https://vault.vault.azure.net/",
+                    "alert_email_to": "operations@example.test",
                     "ontology_data_agent_mode": mode,
                     "ontology_operations_agent_mode": mode,
                 }
@@ -90,6 +94,19 @@ class WorkspaceActionTests(unittest.TestCase):
         for name in ("ops_agent_run_as_user", "ops_agent_teams_team_id",
                      "ops_agent_teams_channel_id"):
             self.assertEqual(specs[name]["default"], "")
+
+    def test_pipeline_rejects_blank_alert_recipient(self):
+        with patch.object(SERVER, "_start") as start:
+            response = self.client.post("/api/run-pipeline", json={
+                "tenant": "tenant.example", "workspace": "DEV",
+                "parameters": {
+                    "key_vault_uri": "https://vault.vault.azure.net/",
+                    "alert_email_to": " ",
+                },
+            })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Alert email recipient is required", response.get_json()["error"])
+        start.assert_not_called()
 
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
         for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
@@ -125,6 +142,7 @@ class WorkspaceActionTests(unittest.TestCase):
                         response = self.client.post("/api/run-pipeline", json={
                             "tenant": "tenant.example", "workspace": "DEV",
                             "parameters": {"key_vault_uri": "https://mock.vault.azure.net/",
+                                           "alert_email_to": "operations@example.test",
                                            "ontology_data_agent_mode": "enabled",
                                            "ontology_operations_agent_mode": "enabled"},
                         })
@@ -151,6 +169,7 @@ class WorkspaceActionTests(unittest.TestCase):
                 "tenant": "tenant.example", "workspace": "DEV",
                 "parameters": {
                     "key_vault_uri": "https://vault.vault.azure.net/",
+                    "alert_email_to": "operations@example.test",
                     "ontology_data_agent_mode": "force",
                 },
             })

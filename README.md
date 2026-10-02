@@ -249,7 +249,7 @@ executing **Service Principal (SPN)** access and flip a couple of tenant switche
    | `ops_agent_teams_team_id` | `c480320e-…` | Target team for Operations Agent Teams delivery. |
    | `ops_agent_teams_channel_id` | `19:…@thread.tacv2` | Target channel for Operations Agent Teams delivery. |
    | `ops_agent_run_as_user` | `admin@…onmicrosoft.com` | Optional guard for the delegated run-as identity; blank uses the deploying user. |
-   | `alert_email_to` | `operations@contoso.com` | Required `To` recipient for `Pipe_SendEmailAlert`; independent of run-as and Teams delivery. |
+   | `alert_email_to` | `operations@contoso.com` | `To` recipient for `Pipe_SendEmailAlert`. Required by the local launcher; RTI_010 falls back to run-as/deploying user when blank. |
    | `per_notebook_timeout_secs` | `3600` | Per‑child DAG timeout. |
 
    > [!IMPORTANT]
