@@ -1051,6 +1051,52 @@ class GraphMaterializationTests(unittest.TestCase):
             excluded_properties={"event_time", "value", "quality"},
         )
 
+    def complete_repair(self, parts):
+        base = "abfss://workspace@onelake.pbidedicated.windows.net/lakehouse/Tables"
+        entities = [
+            {
+                "name": "facilities", "sourceName": "facilities",
+                "sourcePath": f"{base}/silver_facilities", "keyName": "facility_id",
+                "propertyTypes": {"facility_id": "STRING", "facility_name": "STRING"},
+                "excludedProperties": [],
+            },
+            {
+                "name": "systems", "sourceName": "systems",
+                "sourcePath": f"{base}/silver_systems", "keyName": "system_id",
+                "propertyTypes": {"system_id": "STRING", "facility_id": "STRING"},
+                "excludedProperties": [],
+            },
+            {
+                "name": "equipment", "sourceName": "equipment",
+                "sourcePath": f"{base}/silver_equipment", "keyName": "equipment_id",
+                "propertyTypes": {"equipment_id": "STRING", "system_id": "STRING"},
+                "excludedProperties": [],
+            },
+            {
+                "name": "instruments", "sourceName": "instruments",
+                "sourcePath": f"{base}/silver_instruments", "keyName": "instrument_id",
+                "propertyTypes": {"instrument_id": "STRING", "equipment_id": "STRING"},
+                "excludedProperties": [],
+            },
+            {
+                "name": "signal_master", "sourceName": "signal_master",
+                "sourcePath": f"{base}/silver_signal_master", "keyName": "opcua_node_id",
+                "propertyTypes": {
+                    "opcua_node_id": "STRING", "instrument_id": "STRING",
+                },
+                "excludedProperties": ["value"],
+            },
+        ]
+        relationships = [
+            {"name": "systems_in_facilities", "source": "systems", "target": "facilities"},
+            {"name": "equipment_in_systems", "source": "equipment", "target": "systems"},
+            {"name": "instruments_on_equipment", "source": "instruments", "target": "equipment"},
+            {"name": "signals_from_instruments", "source": "signal_master", "target": "instruments"},
+        ]
+        return support._ensure_complete_static_graph_projection(
+            parts, self.graph_id, entities, relationships
+        )
+
     @staticmethod
     def decoded(parts, path):
         return json.loads(support._decode_part(
@@ -1126,6 +1172,63 @@ class GraphMaterializationTests(unittest.TestCase):
         self.assertFalse(rerun_changed)
         self.assertEqual(rerun_summary, summary)
         self.assertEqual(rerun, updated)
+
+    def test_fresh_empty_graph_model_gets_complete_static_projection(self):
+        empty_payloads = {
+            "graphType.json": {"$schema": "graph-type-schema", "nodeTypes": None, "edgeTypes": None},
+            "dataSources.json": {"$schema": "data-source-schema", "dataSources": None},
+            "graphDefinition.json": {
+                "$schema": "graph-definition-schema", "nodeTables": None, "edgeTables": None,
+            },
+            "graphSettings.json": {"serviceOwned": {"future": True}},
+        }
+        parts = [
+            support._encode_part(path, json.dumps(value))
+            for path, value in empty_payloads.items()
+        ]
+        updated, changed, summary = self.complete_repair(parts)
+        self.assertTrue(changed)
+        self.assertEqual(summary, {
+            "nodeTypeCount": 5, "edgeTypeCount": 4, "staticPropertyCount": 10,
+        })
+        graph_type = self.decoded(updated, "graphType.json")
+        self.assertEqual(
+            {node["labels"][0] for node in graph_type["nodeTypes"]},
+            {"facilities", "systems", "equipment", "instruments", "signal_master"},
+        )
+        self.assertEqual(
+            {edge["labels"][0] for edge in graph_type["edgeTypes"]},
+            {
+                "systems_in_facilities", "equipment_in_systems",
+                "instruments_on_equipment", "signals_from_instruments",
+            },
+        )
+        signal = next(
+            node for node in graph_type["nodeTypes"]
+            if node["labels"] == ["signal_master"]
+        )
+        self.assertNotIn("value", {item["name"] for item in signal["properties"]})
+        before = next(part for part in parts if part["path"] == "graphSettings.json")
+        after = next(part for part in updated if part["path"] == "graphSettings.json")
+        self.assertIs(before, after)
+        rerun, rerun_changed, rerun_summary = self.complete_repair(updated)
+        self.assertFalse(rerun_changed)
+        self.assertEqual(rerun_summary, summary)
+        self.assertEqual(rerun, updated)
+
+    def test_complete_projection_rejects_nonempty_invalid_collection_shape(self):
+        parts = self.graph_parts()
+        graph_type = self.decoded(parts, "graphType.json")
+        graph_type["nodeTypes"] = {"unexpected": []}
+        parts = [
+            support._encode_part(part["path"], json.dumps(graph_type))
+            if part["path"] == "graphType.json" else part
+            for part in parts
+        ]
+        with self.assertRaisesRegex(
+            RuntimeError, "graphType.nodeTypes must be an array or null"
+        ):
+            self.complete_repair(parts)
 
     def test_only_invalid_timeseries_graph_properties_are_removed(self):
         updated, changed, _ = self.repair(self.graph_parts(

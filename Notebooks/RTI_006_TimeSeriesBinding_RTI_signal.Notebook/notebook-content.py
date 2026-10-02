@@ -779,6 +779,258 @@ def _ensure_static_graph_projection(
     }
 
 
+def _ensure_complete_static_graph_projection(
+    parts,
+    graph_model_id,
+    entity_projections,
+    relationship_projections,
+):
+    by_path, decoded = _graph_json_parts(parts)
+    graph_type = decoded["graphType.json"]
+    data_sources = decoded["dataSources.json"]
+    graph_definition = decoded["graphDefinition.json"]
+    collections = (
+        (graph_type, "nodeTypes", "graphType.nodeTypes"),
+        (graph_type, "edgeTypes", "graphType.edgeTypes"),
+        (data_sources, "dataSources", "dataSources.dataSources"),
+        (graph_definition, "nodeTables", "graphDefinition.nodeTables"),
+        (graph_definition, "edgeTables", "graphDefinition.edgeTables"),
+    )
+    changed = False
+    for owner, field, description in collections:
+        value = owner.get(field)
+        if value is None:
+            owner[field] = []
+            changed = True
+        elif not isinstance(value, list):
+            raise RuntimeError(f"GraphModel {description} must be an array or null")
+
+    node_types = graph_type["nodeTypes"]
+    edge_types = graph_type["edgeTypes"]
+    sources = data_sources["dataSources"]
+    node_tables = graph_definition["nodeTables"]
+    edge_tables = graph_definition["edgeTables"]
+    if not isinstance(entity_projections, list) or not entity_projections:
+        raise RuntimeError("Complete graph projection requires at least one entity")
+    if not isinstance(relationship_projections, list):
+        raise RuntimeError("Complete graph relationships must be an array")
+
+    aliases = {}
+    keys = {}
+    for spec in entity_projections:
+        if not isinstance(spec, dict):
+            raise RuntimeError("Graph entity projection must be an object")
+        name = spec.get("name")
+        source_name = spec.get("sourceName")
+        source_path = spec.get("sourcePath")
+        key_name = spec.get("keyName")
+        property_types = spec.get("propertyTypes")
+        excluded = set(spec.get("excludedProperties") or [])
+        if not all(isinstance(value, str) and value for value in (
+            name, source_name, source_path, key_name,
+        )):
+            raise RuntimeError("Graph entity projection has incomplete identity")
+        if not isinstance(property_types, dict) or key_name not in property_types:
+            raise RuntimeError(f"Graph entity {name!r} must include its key property")
+        if set(property_types) & excluded:
+            raise RuntimeError(
+                f"Graph entity {name!r} time-series exclusions cannot be static properties"
+            )
+
+        expected_source = {"path": source_path}
+        source = _unique_graph_entry(
+            sources, lambda value, expected=source_name: value.get("name") == expected,
+            f"data source named {source_name!r}",
+        )
+        if source:
+            if source.get("type") != "DeltaTable" or source.get("properties") != expected_source:
+                raise RuntimeError(f"Existing graph data source {source_name!r} points elsewhere")
+        else:
+            sources.append({
+                "name": source_name, "type": "DeltaTable", "properties": expected_source,
+            })
+            changed = True
+
+        node = _unique_graph_entry(
+            node_types,
+            lambda value, expected=name: expected in value.get("labels", [])
+            if isinstance(value.get("labels"), list) else False,
+            f"node type labelled {name!r}",
+        )
+        if node:
+            alias = node.get("alias")
+            if not isinstance(alias, str) or not alias:
+                raise RuntimeError(f"Graph node type {name!r} has no alias")
+            if node.get("primaryKeyProperties") != [key_name]:
+                raise RuntimeError(f"Graph node type {name!r} has a different primary key")
+        else:
+            alias = _graph_uuid(graph_model_id, f"node-type:{name}")
+            node = {
+                "primaryKeyProperties": [key_name],
+                "alias": alias,
+                "labels": [name],
+                "properties": [],
+            }
+            node_types.append(node)
+            changed = True
+        aliases[name] = alias
+        keys[name] = key_name
+
+        properties = node.get("properties")
+        if not isinstance(properties, list):
+            raise RuntimeError(f"Graph node type {name!r} properties must be an array")
+        property_names = [
+            value.get("name") for value in properties if isinstance(value, dict)
+        ]
+        if len(property_names) != len(set(property_names)):
+            raise RuntimeError(f"Graph node type {name!r} contains duplicate properties")
+        retained = [
+            value for value in properties
+            if not isinstance(value, dict) or value.get("name") not in excluded
+        ]
+        if len(retained) != len(properties):
+            node["properties"] = properties = retained
+            changed = True
+        existing_properties = {
+            value.get("name"): value for value in properties if isinstance(value, dict)
+        }
+        for property_name, data_type in property_types.items():
+            current = existing_properties.get(property_name)
+            if current:
+                if current.get("type") != data_type:
+                    raise RuntimeError(
+                        f"Graph property {name}.{property_name} has type "
+                        f"{current.get('type')!r}, expected {data_type!r}"
+                    )
+            else:
+                properties.append({"name": property_name, "type": data_type})
+                changed = True
+
+        node_table = _unique_graph_entry(
+            node_tables, lambda value, expected=alias: value.get("nodeTypeAlias") == expected,
+            f"node table for {name!r}",
+        )
+        if node_table:
+            if node_table.get("dataSourceName") != source_name:
+                raise RuntimeError(f"Graph node table {name!r} uses another data source")
+        else:
+            node_table = {
+                "nodeTypeAlias": alias,
+                "id": _graph_uuid(graph_model_id, f"node-table:{name}"),
+                "dataSourceName": source_name,
+                "propertyMappings": [],
+            }
+            node_tables.append(node_table)
+            changed = True
+        mappings = node_table.get("propertyMappings")
+        if not isinstance(mappings, list):
+            raise RuntimeError(f"Graph node table {name!r} propertyMappings must be an array")
+        mapping_names = [
+            value.get("propertyName") for value in mappings if isinstance(value, dict)
+        ]
+        if len(mapping_names) != len(set(mapping_names)):
+            raise RuntimeError(f"Graph node table {name!r} contains duplicate mappings")
+        retained = [
+            value for value in mappings
+            if not isinstance(value, dict) or value.get("propertyName") not in excluded
+        ]
+        if len(retained) != len(mappings):
+            node_table["propertyMappings"] = mappings = retained
+            changed = True
+        existing_mappings = {
+            value.get("propertyName"): value for value in mappings if isinstance(value, dict)
+        }
+        for property_name in property_types:
+            expected = {"propertyName": property_name, "sourceColumn": property_name}
+            current = existing_mappings.get(property_name)
+            if current:
+                if current != expected:
+                    raise RuntimeError(
+                        f"Graph property mapping {name}.{property_name} points elsewhere"
+                    )
+            else:
+                mappings.append(expected)
+                changed = True
+
+    for spec in relationship_projections:
+        if not isinstance(spec, dict):
+            raise RuntimeError("Graph relationship projection must be an object")
+        name = spec.get("name")
+        source_name = spec.get("source")
+        target_name = spec.get("target")
+        if not all(isinstance(value, str) and value for value in (
+            name, source_name, target_name,
+        )):
+            raise RuntimeError("Graph relationship projection has incomplete identity")
+        if source_name not in aliases or target_name not in aliases:
+            raise RuntimeError(f"Graph relationship {name!r} has an unknown endpoint")
+        source_alias, target_alias = aliases[source_name], aliases[target_name]
+        edge = _unique_graph_entry(
+            edge_types,
+            lambda value, expected=name: expected in value.get("labels", [])
+            if isinstance(value.get("labels"), list) else False,
+            f"edge type labelled {name!r}",
+        )
+        if edge:
+            edge_alias = edge.get("alias")
+            if not isinstance(edge_alias, str) or not edge_alias:
+                raise RuntimeError(f"Graph edge type {name!r} has no alias")
+            if (edge.get("sourceNodeType") != {"alias": source_alias}
+                    or edge.get("destinationNodeType") != {"alias": target_alias}):
+                raise RuntimeError(f"Graph edge {name!r} has different endpoints")
+        else:
+            edge_alias = _graph_uuid(graph_model_id, f"edge-type:{name}")
+            edge_types.append({
+                "additionalKeyProperties": [],
+                "alias": edge_alias,
+                "sourceNodeType": {"alias": source_alias},
+                "labels": [name],
+                "destinationNodeType": {"alias": target_alias},
+                "properties": [],
+            })
+            changed = True
+        expected_edge = {
+            "edgeTypeAlias": edge_alias,
+            "id": _graph_uuid(graph_model_id, f"edge-table:{name}"),
+            "edgeIdMapping": [],
+            "dataSourceName": source_name,
+            "sourceNodeKeyColumns": [keys[source_name]],
+            "propertyMappings": [],
+            "destinationNodeKeyColumns": [keys[target_name]],
+        }
+        edge_table = _unique_graph_entry(
+            edge_tables,
+            lambda value, expected=edge_alias: value.get("edgeTypeAlias") == expected,
+            f"edge table for {name!r}",
+        )
+        if edge_table:
+            for field in (
+                "edgeIdMapping", "dataSourceName", "sourceNodeKeyColumns",
+                "propertyMappings", "destinationNodeKeyColumns",
+            ):
+                if edge_table.get(field) != expected_edge[field]:
+                    raise RuntimeError(
+                        f"Graph edge table {name!r} has incompatible {field}"
+                    )
+        else:
+            edge_tables.append(expected_edge)
+            changed = True
+
+    replacements = {}
+    if changed:
+        for path in ("graphType.json", "dataSources.json", "graphDefinition.json"):
+            content = json.dumps(decoded[path], ensure_ascii=False, separators=(",", ":"))
+            replacements[path] = _encode_part(path, content)
+    updated = [replacements.get(part["path"], part) for part in parts]
+    return updated, changed, {
+        "nodeTypeCount": len(aliases),
+        "edgeTypeCount": len(relationship_projections),
+        "staticPropertyCount": sum(
+            len(spec["propertyTypes"]) for spec in entity_projections
+        ),
+    }
+
+
 def _merge_gen2_structure(live_parts, desired_parts):
     result = _parts_by_path(live_parts)
     for path, desired in _parts_by_path(desired_parts).items():
@@ -2677,11 +2929,13 @@ if graph_item is None:
     raise RuntimeError("Attached GraphModel identity is absent from the workspace")
 
 lakehouse_id = first_setting("lakehouse_id", required=True)
-signal_table_name = first_setting("silver_signal_master_table", required=True)
-signal_source_path = (
-    f"abfss://{WORKSPACE_ID}@onelake.pbidedicated.windows.net/"
-    f"{lakehouse_id}/Tables/{signal_table_name}"
-)
+static_tables = [
+    ("facilities", first_setting("silver_facilities_table", required=True), "facility_id"),
+    ("systems", first_setting("silver_systems_table", required=True), "system_id"),
+    ("equipment", first_setting("silver_equipment_table", required=True), "equipment_id"),
+    ("instruments", first_setting("silver_instruments_table", required=True), "instrument_id"),
+    (STATIC_ENTITY_NAME, first_setting("silver_signal_master_table", required=True), KEY_COLUMN_NAME),
+]
 spark_to_graph = {
     "string": "STRING",
     "boolean": "BOOLEAN",
@@ -2695,36 +2949,60 @@ spark_to_graph = {
     "timestamp": "ZONED DATETIME",
     "timestamp_ntz": "ZONED DATETIME",
 }
-property_types = {}
-for field in spark.table(signal_table_name).schema.fields:
-    source_type = field.dataType.simpleString().casefold()
-    graph_type = spark_to_graph.get(source_type)
-    if graph_type is None:
-        raise RuntimeError(
-            f"Graph projection does not support Spark type {source_type!r} "
-            f"for {signal_table_name}.{field.name}"
-        )
-    property_types[field.name] = graph_type
-if KEY_COLUMN_NAME not in property_types:
-    raise RuntimeError(
-        f"Static signal table {signal_table_name!r} lacks key {KEY_COLUMN_NAME!r}"
+entity_projections = []
+for entity_name, table_name, key_name in static_tables:
+    property_types = {}
+    for field in spark.table(table_name).schema.fields:
+        source_type = field.dataType.simpleString().casefold()
+        graph_type = spark_to_graph.get(source_type)
+        if graph_type is None:
+            raise RuntimeError(
+                f"Graph projection does not support Spark type {source_type!r} "
+                f"for {table_name}.{field.name}"
+            )
+        property_types[field.name] = graph_type
+    excluded = (
+        GRAPH_EXCLUDED_TIMESERIES_PROPERTIES
+        if entity_name == STATIC_ENTITY_NAME else set()
     )
+    static_properties = {
+        name: data_type for name, data_type in property_types.items()
+        if name not in excluded
+    }
+    if key_name not in static_properties:
+        raise RuntimeError(
+            f"Static graph table {table_name!r} lacks key {key_name!r}"
+        )
+    entity_projections.append({
+        "name": entity_name,
+        "sourceName": entity_name,
+        "sourcePath": (
+            f"abfss://{WORKSPACE_ID}@onelake.pbidedicated.windows.net/"
+            f"{lakehouse_id}/Tables/{table_name}"
+        ),
+        "keyName": key_name,
+        "propertyTypes": static_properties,
+        "excludedProperties": sorted(excluded),
+    })
+relationship_projections = [
+    {"name": "systems_in_facilities", "source": "systems", "target": "facilities"},
+    {"name": "equipment_in_systems", "source": "equipment", "target": "systems"},
+    {"name": "instruments_on_equipment", "source": "instruments", "target": "equipment"},
+    {
+        "name": GRAPH_RELATIONSHIP_NAME,
+        "source": STATIC_ENTITY_NAME,
+        "target": GRAPH_TARGET_ENTITY_NAME,
+    },
+]
 
 definition_started = time.perf_counter()
 graph_definition = _graph_definition(graph_model_id)
 current_graph_parts = graph_definition["definition"]["parts"]
-projected_parts, graph_changed, projection = _ensure_static_graph_projection(
+projected_parts, graph_changed, projection = _ensure_complete_static_graph_projection(
     parts=current_graph_parts,
     graph_model_id=graph_model_id,
-    source_name=STATIC_ENTITY_NAME,
-    source_path=signal_source_path,
-    entity_name=STATIC_ENTITY_NAME,
-    key_name=KEY_COLUMN_NAME,
-    property_types=property_types,
-    relationship_name=GRAPH_RELATIONSHIP_NAME,
-    target_entity_name=GRAPH_TARGET_ENTITY_NAME,
-    target_key_name=GRAPH_TARGET_KEY_NAME,
-    excluded_properties=GRAPH_EXCLUDED_TIMESERIES_PROPERTIES,
+    entity_projections=entity_projections,
+    relationship_projections=relationship_projections,
 )
 definition_seconds = time.perf_counter() - definition_started
 if graph_changed:
