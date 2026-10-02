@@ -65,26 +65,24 @@ situation.
 
 ## Prerequisites
 
-The setup pipeline and **Run pipeline** form expose `ontology_data_agent_mode` and
-`ontology_operations_agent_mode` (`auto`, `enabled`, or `disabled`, default `enabled`).
-The project requires Ontology v2; existing v1 items are rejected rather than reused.
-`auto` is a backward-compatible alias for `enabled`; both attempt actual agent provisioning.
-Only `disabled` opts out. The original Data Agent, Operations Agent, playbook/actions, Teams, and
-email-alert provisioning are retained against the verified v2 ontology, never a v1 source.
-Required failures propagate through RTI_009/010/011 and setup. Product support and execution must
-still be checked in the target tenant; restored implementation is not live certification. See
+The setup pipeline and **Run pipeline** form have no Data Agent or Operations Agent mode flags.
+The project always attempts agent provisioning against Ontology v2; existing v1 items are rejected
+rather than reused. The original Data Agent, Operations Agents, separate playbooks/actions, Teams,
+and email-alert provisioning are retained. Real failures propagate through RTI_009/010/011 and
+setup. Product support and execution must still be checked in the target tenant; restored
+implementation is not live certification. See
 [ontology generation policies](../../README.md#ontology-generations-and-optional-agents).
 
-Required Data Agent completion is **deployment `ready`, publication `published`, runtime
-`verified`**, with generation `2`; publication-only success is insufficient. The real NB09 smoke
+Healthy Data Agent completion is **deployment `ready`, publication `published`, runtime
+`verified`**, with generation `2`; publication-only success is not reported as readiness. The real NB09 smoke
 check requests the selected ontology's first five facility IDs/names, compares exact records with
 independently read Lakehouse rows, and does not put expected values in the prompt. Multi-source
 agents are allowed, with SQL/custom content and selections retained and no cached proof required.
 Evidence is a source-specific functional smoke test; **execution provenance is not attested**, and
-SQL/combined-source answers are not certified. Failed or inconclusive checks fail required modes.
-Setup requires all three Data Agent statuses and NB10 `configured`, or the corresponding explicit
-`disabled`/`skipped` exception. By default NB10 leaves the agent stopped; configuration does not
-prove delivery.
+SQL/combined-source answers are not certified. Failed or inconclusive checks fail, except for the
+exact temporary `This API version is not supported for the specified Ontology item` response after
+verified publication. That response is recorded as `known_product_limitation`, not readiness.
+NB10 leaves both Operations Agents stopped; configuration does not prove delivery.
 
 The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
 agent when an operator chooses portal generation. The default remains `true`. RTI_010 also deploys
@@ -100,8 +98,8 @@ silently remove the playbook, Teams delivery, or actions.
 NB11 extends a live Data Agent with the operational SQL Database independently of NB09's
 ontology result. No ontology lookup, attachment, generation check, or runtime proof is required.
 Existing sources, custom settings, instructions, and selections are retained. Exact SQL-source
-draft and published readback is required; publication is not runtime verification. Only explicit
-`disabled` skips the extension; missing agents and real SQL/API failures still fail it. NB11
+draft and published readback is required; publication is not runtime verification. Missing agents
+and real SQL/API failures still fail the always-attempted extension. NB11
 writes only its SQL-source status/reason, leaving NB09's deployment/publication/runtime results
 untouched. Independent SQL/GraphQL results are preserved before required failure is raised.
 

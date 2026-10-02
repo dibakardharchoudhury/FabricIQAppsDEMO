@@ -10,21 +10,16 @@
   bindings and unknown parts on reruns, and verify readback before publication.
 - REST `/v1`, definition schema versions, and `env_suffix` values such as `V9` are not
   ontology generations. Do not globally rename them to `v2`.
-- Agent modes default to `enabled`; `auto` is a backward-compatible alias that attempts actual
-  provisioning, not a static skip. Only explicit `disabled` opts out. Preserve Data Agent,
-  Operations Agent, playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
-  binding. Required-agent failures propagate through RTI_009/010/011 and setup.
-  Setup requires NB09 deployment/publication/runtime `ready`/`published`/`verified` and generation 2,
-  plus NB10 `configured`, unless the respective agent is explicitly `disabled` with `skipped`.
-  NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained business
-  configuration schema, not ontology generation. NB11 requires all three Data Agent statuses and
-  source-specific smoke evidence matching agent/workspace/ontology and exact ontology source.
-  Added SQL alone does not invalidate retained ontology evidence. The bounded smoke test does not
-  attest execution provenance or certify SQL/combined-source runtime. Failed/inconclusive checks
-  fail required completion. The live NB09 failure path was verified, not healthy ontology runtime;
-  full setup/NB11 were not rerun after the new gate.
-- SQL/GraphQL can be provisioned with the Data Agent explicitly disabled; otherwise RTI_011 must
-  propagate agent-extension failures. The app requires an explicitly bound ontology-managed
+- Always provision the Data Agent and both Operations Agents; there are no agent mode flags or skip
+  branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
+  binding. NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained
+  business configuration schema, not ontology generation. NB09 reports only the exact temporary
+  Fabric response `This API version is not supported for the specified Ontology item` as a known
+  product limitation after verified v2 publication; all other failures propagate. NB11 preserves
+  compatible added SQL/custom content. The bounded smoke test does not attest execution provenance
+  or certify SQL/combined-source runtime.
+- RTI_011 always attempts the Data Agent SQL-source extension and propagates real extension failures.
+  The app requires an explicitly bound ontology-managed
   native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK
   graph fabrication or GraphQL dependency for canvas/tree/scopes. Materialize through the selected
   ontology's Manage graph flow. Generate `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from authoritative

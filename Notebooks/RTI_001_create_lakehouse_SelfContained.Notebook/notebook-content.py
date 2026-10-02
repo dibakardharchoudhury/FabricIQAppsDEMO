@@ -129,8 +129,6 @@ ops_agent_teams_channel_id = ""
 alert_email_to = ""             # Required recipient for Pipe_SendEmailAlert
 # Whether to copy the playbook; false leaves generation to the portal. (STATIC, NOT injected.)
 ops_agent_copy_playbook = "true"
-ontology_data_agent_mode = "enabled"
-ontology_operations_agent_mode = "enabled"
 
 # Structured table names used by the ontology.
 silver_facilities_table = "silver_facilities"
@@ -193,13 +191,6 @@ if _missing:
         ". These are injected by the Pipe_Setup pipeline (orchestrator nb01_args). "
         "Run via Pipe_Setup, or fill them in the parameters cell for a standalone run."
     )
-
-for name, mode in (
-    ("ontology_data_agent_mode", ontology_data_agent_mode),
-    ("ontology_operations_agent_mode", ontology_operations_agent_mode),
-):
-    if mode not in {"auto", "enabled", "disabled"}:
-        raise ValueError(f"{name} must be auto, enabled, or disabled; got {mode!r}")
 
 lakehouse_name = f"Energy_IQ_LakehouseRTI_{env_suffix}"
 workspace_folder_path = f"RTI_DEMO_{env_suffix}"  # Fabric workspace folder, not a Lakehouse path
@@ -269,8 +260,6 @@ def build_rti_demo_settings_rows(extra_settings: dict | None = None) -> list:
         "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
         "alert_email_to": alert_email_to,
         "ops_agent_copy_playbook": ops_agent_copy_playbook,
-        "ontology_data_agent_mode": ontology_data_agent_mode,
-        "ontology_operations_agent_mode": ontology_operations_agent_mode,
 
         "silver_facilities_table": silver_facilities_table,
         "silver_systems_table": silver_systems_table,

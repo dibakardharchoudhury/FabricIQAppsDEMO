@@ -15,7 +15,6 @@ SETUP_NAMES = (
     "RTI_001_create_lakehouse_shortcut",
 )
 ORCHESTRATOR = "RTI_Orchestrator_Setup"
-MODES = ("ontology_data_agent_mode", "ontology_operations_agent_mode")
 
 
 def source(name):
@@ -122,21 +121,16 @@ class OntologySetupContractTests(unittest.TestCase):
                         "binding_failures": [("RTI_004", "access denied")],
                     })
 
-    def test_capability_modes_are_injected_and_persisted(self):
+    def test_agent_mode_flags_are_absent(self):
         path = ROOT / "Orchestrator_Pipelines" / "01_Pipe_Setup.DataPipeline" / "pipeline-content.json"
         pipeline = json.loads(path.read_text(encoding="utf-8"))["properties"]
         stage_one = next(activity for activity in pipeline["activities"]
                          if activity["name"] == SETUP_NAMES[0])
-        for mode in MODES:
-            self.assertEqual(pipeline["parameters"][mode]["defaultValue"], "enabled")
-            self.assertEqual(stage_one["typeProperties"]["parameters"][mode]["value"]["value"],
-                             f"@pipeline().parameters.{mode}")
+        for mode in ("ontology_data_agent_mode", "ontology_operations_agent_mode"):
+            self.assertNotIn(mode, pipeline["parameters"])
+            self.assertNotIn(mode, stage_one["typeProperties"]["parameters"])
             for name in SETUP_NAMES:
-                text = source(name)
-                self.assertIn(f'{mode} = "enabled"', text)
-                self.assertIn(f'"{mode}": {mode}', text)
-                self.assertLess(text.index('must be auto, enabled, or disabled'),
-                                text.index("lakehouse_id = ensure_lakehouse("))
+                self.assertNotIn(mode, source(name))
 
     def test_alert_recipient_is_injected_and_persisted_separately(self):
         path = ROOT / "Orchestrator_Pipelines" / "01_Pipe_Setup.DataPipeline" / "pipeline-content.json"
@@ -170,36 +164,10 @@ class OntologySetupContractTests(unittest.TestCase):
             "admin@mngenvmcap218279.onmicrosoft.com",
         )
 
-    def test_required_capabilities_fail_closed_and_disabled_is_explicit(self):
-        report = load_function(ORCHESTRATOR, "_report_agent_capabilities", {"json": json})
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            report({
-                "NB09_dataagent": {"exitVal": json.dumps({
-                    "status": "ready", "publication_status": "published", "runtime_status": "verified",
-                    "mode": "enabled", "generation": 2, "reason": "Source verified"})},
-                "NB10_opsagent": {"exitVal": json.dumps({
-                    "status": "configured", "mode": "auto", "generation": 2, "reason": "Definition verified"})},
-            })
-        self.assertIn("NB09_dataagent: ready - Source verified", output.getvalue())
-        self.assertIn("NB10_opsagent: configured - Definition verified", output.getvalue())
-        for mode in ("auto", "enabled", None):
-            for status in ("published", "ready", "blocked", "failed", "skipped", None):
-                with self.subTest(mode=mode, status=status), self.assertRaises(RuntimeError):
-                    report({"NB09_dataagent": {"exitVal": {
-                        "status": status, "mode": mode, "generation": 2}}, "NB10_opsagent": {}})
-        for runtime in ("failed", "inconclusive", "checking", None):
-            with self.subTest(runtime=runtime), self.assertRaises(RuntimeError):
-                report({"NB09_dataagent": {"exitVal": {
-                    "status": "ready", "mode": "enabled", "generation": 2,
-                    "publication_status": "published", "runtime_status": runtime}}, "NB10_opsagent": {}})
-        with contextlib.redirect_stdout(output):
-            report({name: {"exitVal": {"status": "skipped", "mode": "disabled", "generation": 2}}
-                    for name in ("NB09_dataagent", "NB10_opsagent")})
-        with self.assertRaises(RuntimeError):
-            report({"NB09_dataagent": {"exitVal": "{}"}, "NB10_opsagent": {}})
-        with self.assertRaises(RuntimeError):
-            report({"NB09_dataagent": {}, "NB10_opsagent": {}})
+    def test_orchestrator_uses_notebook_outcomes_without_agent_contract_parser(self):
+        text = source(ORCHESTRATOR)
+        self.assertNotIn("_report_agent_capabilities", text)
+        self.assertIn("_require_successful_dag(results)\n_activate_weather_schedule()", text)
 
     def test_raw_notebook_code_matches_canonical_sources(self):
         for name in (*SETUP_NAMES, ORCHESTRATOR):

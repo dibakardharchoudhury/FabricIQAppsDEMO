@@ -302,13 +302,6 @@ def resolve_ontology_id() -> str:
     return candidates[0]["id"]
 
 
-def validate_agent_mode(value: str) -> str:
-    mode = str(value).strip().lower()
-    if mode not in ("auto", "enabled", "disabled"):
-        raise ValueError(f"Invalid ontology_data_agent_mode {value!r}; use auto, enabled, or disabled.")
-    return mode
-
-
 def get_ontology_generation(ontology_id: str) -> int:
     response = api_request(
         "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}"
@@ -323,8 +316,7 @@ def get_ontology_generation(ontology_id: str) -> int:
     )
 
 
-def agent_capability_policy(generation: int, mode: str) -> dict:
-    mode = validate_agent_mode(mode)
+def agent_capability_policy(generation: int) -> dict:
     if type(generation) is not int or generation not in (1, 2):
         raise ValueError(f"Unsupported live ontology generation: {generation!r}")
     if generation != 2:
@@ -333,8 +325,6 @@ def agent_capability_policy(generation: int, mode: str) -> dict:
             "reason": "This deployment is v2-only. Replace the generation 1 ontology and agent sources "
                       "through an explicit migration before retrying; no legacy agent writes are allowed.",
         }
-    if mode == "disabled":
-        return {"status": "skipped", "reason": "Ontology v2 Data Agent deployment explicitly disabled."}
     return {"status": "allowed", "reason": ""}
 
 
@@ -383,25 +373,23 @@ def check_agent_capability() -> tuple:
         runtime_reason="", runtime_evidence="",
     )
     try:
-        mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
         ontology_id = resolve_ontology_id()
         generation = get_ontology_generation(ontology_id)
-        policy = agent_capability_policy(generation, mode)
+        policy = agent_capability_policy(generation)
     except Exception as exc:
         persist_agent_status("failed", str(exc))
         raise
     if policy["status"] != "allowed":
         persist_agent_status(policy["status"], policy["reason"])
-        if generation != 2:
-            raise RuntimeError(policy["reason"])
-        notebookutils.notebook.exit(json.dumps({
-            "capability": "data_agent", "agent": "data_agent",
-            "generation": generation, "mode": mode, **policy,
-            "data_agent_deployment_status": policy["status"],
-            "data_agent_deployment_reason": policy["reason"],
-        }))
-        raise RuntimeError("Notebook exit unexpectedly returned; refusing agent writes.")
+        raise RuntimeError(policy["reason"])
     return ontology_id, generation
+
+
+def is_known_ontology_v2_product_limitation(reason: str) -> bool:
+    return (
+        "this api version is not supported for the specified ontology item"
+        in str(reason).strip().lower()
+    )
 
 
 def require_v2_ontology(ontology_id: str) -> None:
@@ -993,15 +981,25 @@ try:
     try:
         runtime = probe_data_agent_ontology(data_agent_item_id, ontology_id, published_parts)
     except Exception as exc:
-        persist_agent_status("failed", str(exc), runtime_status="failed", runtime_reason=str(exc))
-        raise
-    persist_agent_status(
-        "ready" if runtime["status"] == "verified" else "failed", runtime["reason"],
-        publication_status="published", runtime_status=runtime["status"],
-        runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
-    )
-    if runtime["status"] != "verified":
-        raise RuntimeError(f"Data Agent published but ontology runtime {runtime['status']}: {runtime['reason']}")
+        if not is_known_ontology_v2_product_limitation(str(exc)):
+            persist_agent_status("failed", str(exc), runtime_status="failed", runtime_reason=str(exc))
+            raise
+        runtime = {"status": "known_product_limitation", "reason": str(exc), "evidence": {}}
+    if is_known_ontology_v2_product_limitation(runtime["reason"]):
+        persist_agent_status(
+            "known_product_limitation", runtime["reason"],
+            publication_status="published", runtime_status="known_product_limitation",
+            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
+        )
+        print("⚠️ Data Agent published, but Fabric currently rejects the verified Ontology v2 source.")
+    else:
+        persist_agent_status(
+            "ready" if runtime["status"] == "verified" else "failed", runtime["reason"],
+            publication_status="published", runtime_status=runtime["status"],
+            runtime_reason=runtime["reason"], runtime_evidence=runtime["evidence"],
+        )
+        if runtime["status"] != "verified":
+            raise RuntimeError(f"Data Agent published but ontology runtime {runtime['status']}: {runtime['reason']}")
 except Exception as exc:
     persist_agent_status("failed", str(exc))
     raise
@@ -1020,7 +1018,6 @@ if data_agent_item_id:
 notebookutils.notebook.exit(json.dumps({
     "capability": "data_agent",
     "generation": ontology_generation,
-    "mode": validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled")),
     **agent_deployment_result,
     "data_agent_deployment_status": agent_deployment_result["status"],
     "data_agent_deployment_reason": agent_deployment_result["reason"],

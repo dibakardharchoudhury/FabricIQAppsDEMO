@@ -207,32 +207,9 @@ def _activate_weather_schedule() -> None:
     update_response.raise_for_status()
 
 
-def _report_agent_capabilities(results_by_activity: dict) -> None:
-    for name in ("NB09_dataagent", "NB10_opsagent"):
-        exit_value = results_by_activity[name].get("exitVal")
-        if not exit_value:
-            raise RuntimeError(f"{name} returned no capability evidence.")
-        capability = json.loads(exit_value) if isinstance(exit_value, str) else exit_value
-        if not isinstance(capability, dict) or not capability.get("status"):
-            raise RuntimeError(f"{name} returned an invalid capability result: {capability!r}")
-        expected = "ready" if name == "NB09_dataagent" else "configured"
-        mode = capability.get("mode")
-        if mode == "disabled":
-            valid = capability["status"] == "skipped"
-        else:
-            valid = mode in ("auto", "enabled") and capability["status"] == expected
-            if name == "NB09_dataagent":
-                valid = (valid and capability.get("publication_status") == "published"
-                         and capability.get("runtime_status") == "verified")
-        if not valid or capability.get("generation") != 2:
-            raise RuntimeError(f"{name} did not fulfill its required deployment contract: {capability!r}")
-        print(f"{name}: {capability['status']} - {capability.get('reason', '')}")
-
-
 _require_successful_dag(results)
-_report_agent_capabilities(results)
 _activate_weather_schedule()
-print("✅ Setup contracts complete; Weather schedule enabled. Agent runtime actions remain untested.")
+print("✅ Setup notebooks complete; Weather schedule enabled. Agent runtime actions remain untested.")
 results
 
 # METADATA ********************

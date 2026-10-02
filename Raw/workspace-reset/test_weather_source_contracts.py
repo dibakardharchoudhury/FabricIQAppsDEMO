@@ -59,7 +59,7 @@ class WeatherSourceContractTests(unittest.TestCase):
             self.assertIn("set(results_by_activity) != expected", source)
             self.assertIn('outcome.get("exception")', source)
             self.assertIn(
-                '_require_successful_dag(results)\n_report_agent_capabilities(results)\n_activate_weather_schedule()',
+                '_require_successful_dag(results)\n_activate_weather_schedule()',
                 source,
             )
             self.assertGreater(

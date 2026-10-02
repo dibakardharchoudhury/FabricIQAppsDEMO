@@ -39,8 +39,7 @@
 #    independent of NB09's ontology result and requires no ontology source or runtime proof.
 #
 # SQL seed and GraphQL run independently of Data Agent availability. The SQL source step
-# honors `ontology_data_agent_mode`: `enabled` (default) and `auto` attempt the extension;
-# only `disabled` skips it. Real failures are surfaced after saving the per-step results.
+# always extends the provisioned Data Agent with the SQL source. Real failures are surfaced after saving the per-step results.
 # Exact SQL draft/published readback confirms publication, not runtime verification.
 # 
 # Settings are read from / written back to `rti_demo_settings`.
@@ -1009,13 +1008,6 @@ def resolve_data_agent_id() -> Optional[str]:
     return None
 
 
-def validate_agent_mode(value: str) -> str:
-    mode = str(value).strip().lower()
-    if mode not in ("auto", "enabled", "disabled"):
-        raise ValueError(f"Invalid ontology_data_agent_mode {value!r}; use auto, enabled, or disabled.")
-    return mode
-
-
 def verify_agent_source_readback(
     agent_id: str, submitted_sql_source: dict, published: bool = False,
 ) -> list:
@@ -1031,9 +1023,6 @@ def verify_agent_source_readback(
 
 
 def resolve_agent_extension_target() -> tuple:
-    mode = validate_agent_mode(first_setting("ontology_data_agent_mode", default="enabled"))
-    if mode == "disabled":
-        return None, {"status": "skipped", "reason": "Data Agent SQL extension explicitly disabled."}
     if not data_agent_id and not data_agent_name:
         raise RuntimeError("No Data Agent configured; configure a live Data Agent before SQL extension.")
     agent_id = resolve_data_agent_id()
@@ -1196,7 +1185,7 @@ def persist_sql_extension_status(result: dict) -> None:
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
 
 
-print("\n=== STEP C — Data Agent SQL source (required unless disabled) ===")
+print("\n=== STEP C — Data Agent SQL source ===")
 step_results["data_agent_sql_source"] = {
     "status": "failed", "reason": "SQL source step did not complete; inspect the raised exception.",
 }
@@ -1254,7 +1243,7 @@ if step_errors:
     raise RuntimeError("Operational setup failed; inspect the per-step results above.") from step_errors[0]
 notebookutils.notebook.exit(json.dumps({
     "status": "completed",
-    "reason": "Operational steps completed; Data Agent SQL source published or explicitly disabled.",
+    "reason": "Operational steps completed; Data Agent SQL source published.",
     "capability": "operational_setup",
     "agent_ready": False,
     "steps": step_results,

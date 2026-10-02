@@ -67,26 +67,32 @@ def json_part(path, value):
 
 
 class CapabilityTests(unittest.TestCase):
-    def test_generation_mode_matrix(self):
+    def test_generation_policy(self):
         for number in ("009", "010"):
-            ns = functions(number, "validate_agent_mode", "agent_capability_policy")
-            for generation in (1, 2):
-                for mode in ("auto", "enabled", "disabled"):
-                    expected = "allowed"
-                    if generation == 1:
-                        expected = "blocked"
-                    elif mode == "disabled":
-                        expected = "skipped"
-                    with self.subTest(number=number, generation=generation, mode=mode):
-                        result = ns["agent_capability_policy"](generation, mode)
-                        self.assertEqual(result["status"], expected)
-                        if expected != "allowed":
-                            self.assertTrue(result["reason"])
-            for invalid in ("", "enable", "maybe", None):
-                with self.assertRaises(ValueError):
-                    ns["validate_agent_mode"](invalid)
+            ns = functions(number, "agent_capability_policy")
+            self.assertEqual(ns["agent_capability_policy"](2)["status"], "allowed")
+            blocked = ns["agent_capability_policy"](1)
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertTrue(blocked["reason"])
             with self.assertRaises(ValueError):
-                ns["agent_capability_policy"](3, "enabled")
+                ns["agent_capability_policy"](3)
+
+    def test_only_exact_known_ontology_v2_product_limitation_is_tolerated(self):
+        ns = functions("009", "is_known_ontology_v2_product_limitation")
+        self.assertTrue(ns["is_known_ontology_v2_product_limitation"](
+            "This API version is not supported for the specified Ontology item."
+        ))
+        self.assertTrue(ns["is_known_ontology_v2_product_limitation"](
+            "ERROR: THIS API VERSION IS NOT SUPPORTED FOR THE SPECIFIED ONTOLOGY ITEM"
+        ))
+        for reason in (
+            "permission denied",
+            "ontology source unavailable",
+            "This API version is not supported for another item",
+            "",
+        ):
+            with self.subTest(reason=reason):
+                self.assertFalse(ns["is_known_ontology_v2_product_limitation"](reason))
 
     def test_generation_is_read_from_live_ontology_api(self):
         for number in ("009", "010"):
@@ -108,40 +114,10 @@ class CapabilityTests(unittest.TestCase):
                 )
                 response.raise_for_status.assert_called_once()
 
-    def test_policy_guard_exits_before_any_agent_or_pipeline_writes(self):
-        for number in ("009", "010"):
-            for generation, mode in ((2, "disabled"),):
-                status = Mock()
-                exit_mock = Mock(side_effect=NotebookExit)
-                ns = functions(
-                    number, "validate_agent_mode", "agent_capability_policy", "check_agent_capability",
-                    first_setting=lambda *args, **kwargs: mode,
-                    resolve_ontology_id=Mock(return_value="live-id"),
-                    get_ontology_generation=Mock(return_value=generation),
-                    ops_agent_ontology_datasource_id="",
-                    persist_agent_status=status,
-                    notebookutils=SimpleNamespace(notebook=SimpleNamespace(exit=exit_mock)),
-                )
-                ns.update(create_data_agent=Mock(), create_operations_agent=Mock(), create_data_pipeline=Mock())
-                tree = ast.parse(source(number))
-                start_name = "data_agent_item_id" if number == "009" else "result"
-                start = next(i for i, node in enumerate(tree.body) if assign_to(node, start_name))
-                with self.assertRaises(NotebookExit):
-                    exec(compile(ast.Module(body=tree.body[start:], type_ignores=[]), number, "exec"), ns)
-                ns["create_data_agent"].assert_not_called()
-                ns["create_operations_agent"].assert_not_called()
-                ns["create_data_pipeline"].assert_not_called()
-                payload = json.loads(exit_mock.call_args.args[0])
-                self.assertEqual(payload["generation"], generation)
-                self.assertEqual(payload["status"], status.call_args.args[0])
-                self.assertEqual(payload["capability"], "data_agent" if number == "009" else "operations_agent")
-                self.assertTrue(payload["reason"])
-
     def test_required_v2_operations_attempts_instead_of_static_product_gate(self):
         status = Mock()
         ns = functions(
-            "010", "validate_agent_mode", "agent_capability_policy", "check_agent_capability",
-            first_setting=lambda *args, **kwargs: "enabled",
+            "010", "agent_capability_policy", "check_agent_capability",
             resolve_ontology_id=lambda: "live-id",
             get_ontology_generation=lambda _: 2,
             ops_agent_ontology_datasource_id="",
@@ -165,8 +141,6 @@ class CapabilityTests(unittest.TestCase):
                 "json": json,
                 "notebookutils": SimpleNamespace(notebook=SimpleNamespace(exit=exit_mock)),
                 "ontology_generation": 2,
-                "validate_agent_mode": lambda value: value,
-                "first_setting": lambda *args, **kwargs: "auto",
                 "agent_deployment_result": {
                     "status": "published" if number == "009" else "blocked",
                     "reason": "Runtime behavior has not been verified.",
@@ -464,34 +438,31 @@ class CapabilityTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "OAuth2"):
                     ns["resolve_email_connection_id"]()
 
-    def test_generation1_is_blocked_before_agent_writes_in_every_mode(self):
+    def test_generation1_is_blocked_before_agent_writes(self):
         for number in ("009", "010"):
-            for mode in ("auto", "enabled", "disabled"):
-                status = Mock()
-                ns = functions(
-                    number, "validate_agent_mode", "agent_capability_policy", "check_agent_capability",
-                    first_setting=lambda *args, **kwargs: mode,
-                    resolve_ontology_id=Mock(return_value="legacy-id"),
-                    get_ontology_generation=Mock(return_value=1),
-                    persist_agent_status=status,
-                    create_data_agent=Mock(), create_operations_agent=Mock(),
-                    create_data_pipeline=Mock(), update_item_definition=Mock(),
-                )
-                tree = ast.parse(source(number))
-                start_name = "data_agent_item_id" if number == "009" else "result"
-                start = next(i for i, node in enumerate(tree.body) if assign_to(node, start_name))
-                with self.assertRaisesRegex(RuntimeError, "v2-only"):
-                    exec(compile(ast.Module(body=tree.body[start:], type_ignores=[]), number, "exec"), ns)
-                for name in ("create_data_agent", "create_operations_agent", "create_data_pipeline", "update_item_definition"):
-                    ns[name].assert_not_called()
-                self.assertEqual(status.call_args.args[0], "blocked")
+            status = Mock()
+            ns = functions(
+                number, "agent_capability_policy", "check_agent_capability",
+                resolve_ontology_id=Mock(return_value="legacy-id"),
+                get_ontology_generation=Mock(return_value=1),
+                persist_agent_status=status,
+                create_data_agent=Mock(), create_operations_agent=Mock(),
+                create_data_pipeline=Mock(), update_item_definition=Mock(),
+            )
+            tree = ast.parse(source(number))
+            start_name = "data_agent_item_id" if number == "009" else "result"
+            start = next(i for i, node in enumerate(tree.body) if assign_to(node, start_name))
+            with self.assertRaisesRegex(RuntimeError, "v2-only"):
+                exec(compile(ast.Module(body=tree.body[start:], type_ignores=[]), number, "exec"), ns)
+            for name in ("create_data_agent", "create_operations_agent", "create_data_pipeline", "update_item_definition"):
+                ns[name].assert_not_called()
+            self.assertEqual(status.call_args.args[0], "blocked")
 
     def test_failed_generation_check_clears_old_success_status(self):
         for number in ("009", "010"):
             status = Mock()
             ns = functions(
-                number, "validate_agent_mode", "check_agent_capability",
-                first_setting=lambda *args, **kwargs: "enabled",
+                number, "check_agent_capability",
                 resolve_ontology_id=Mock(return_value="ontology"),
                 get_ontology_generation=Mock(side_effect=PermissionError("denied")),
                 persist_agent_status=status,
@@ -584,7 +555,10 @@ class CapabilityTests(unittest.TestCase):
             node for node in tree.body if isinstance(node, ast.Try)
             and "create_data_agent" in ast.unparse(node)
         )
-        for mismatch_at in ("submission", "before_publish", "after_publish", "draft_only", "none", "healthy"):
+        for mismatch_at in (
+            "submission", "before_publish", "after_publish", "draft_only",
+            "none", "known_product_limitation", "healthy",
+        ):
             matching = {"definition": {"parts": [ontology_part()]}}
             published = {"definition": {"parts": [ontology_part(), ontology_part("published")]}}
             unrelated = {"definition": {"parts": [ontology_part(ontology_id="unrelated-v2")]}}
@@ -595,7 +569,7 @@ class CapabilityTests(unittest.TestCase):
                 responses += [matching, unrelated]
             elif mismatch_at == "draft_only":
                 responses += [matching, matching]
-            elif mismatch_at in ("none", "healthy"):
+            elif mismatch_at in ("none", "known_product_limitation", "healthy"):
                 responses += [matching, published]
             ns = functions(
                 "009", "upsert_part", "encode_payload", "validate_agent_ontology_sources",
@@ -616,9 +590,17 @@ class CapabilityTests(unittest.TestCase):
                 }),
                 update_item_definition=Mock(), enable_preview_runtime=Mock(),
                 publish_data_agent=Mock(), persist_agent_status=Mock(),
+                is_known_ontology_v2_product_limitation=lambda reason: (
+                    "api version is not supported" in reason.lower()
+                ),
                 probe_data_agent_ontology=Mock(return_value={
                     "status": "verified" if mismatch_at == "healthy" else "inconclusive",
-                    "reason": "Functional probe result", "evidence": {},
+                    "reason": (
+                        "This API version is not supported for the specified Ontology item."
+                        if mismatch_at == "known_product_limitation"
+                        else "Functional probe result"
+                    ),
+                    "evidence": {},
                 }),
             )
             if mismatch_at == "healthy":
@@ -626,6 +608,13 @@ class CapabilityTests(unittest.TestCase):
                 final = ns["persist_agent_status"].call_args
                 self.assertEqual(final.args[0], "ready")
                 self.assertEqual(final.kwargs["runtime_status"], "verified")
+                self.assertEqual(final.kwargs["publication_status"], "published")
+                continue
+            if mismatch_at == "known_product_limitation":
+                exec(compile(ast.Module(body=[deploy], type_ignores=[]), "known-product", "exec"), ns)
+                final = ns["persist_agent_status"].call_args
+                self.assertEqual(final.args[0], "known_product_limitation")
+                self.assertEqual(final.kwargs["runtime_status"], "known_product_limitation")
                 self.assertEqual(final.kwargs["publication_status"], "published")
                 continue
             if mismatch_at == "none":
@@ -731,6 +720,7 @@ class CapabilityTests(unittest.TestCase):
             get_item_definition=Mock(side_effect=lambda _id: {"definition": {"parts": copy.deepcopy(state["parts"])}}),
             update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
             enable_preview_runtime=Mock(), persist_agent_status=Mock(),
+            is_known_ontology_v2_product_limitation=lambda reason: False,
             probe_data_agent_ontology=Mock(return_value={
                 "status": "failed", "reason": "Ontology source unavailable", "evidence": {},
             }),
@@ -861,8 +851,8 @@ class CapabilityTests(unittest.TestCase):
             response = Mock()
             response.json.return_value = {"value": [outside]}
             ns = functions(
-                number, "check_agent_capability", "validate_agent_mode", "resolve_ontology_id",
-                first_setting=lambda *args, **kwargs: "enabled", ontology_name="ontology",
+                number, "check_agent_capability", "resolve_ontology_id",
+                ontology_name="ontology",
                 target_folder_id="target", workspace_id="ws", FABRIC_API_BASE="base",
                 api_request=Mock(return_value=response), persist_agent_status=Mock(),
                 get_ontology_generation=Mock(return_value=2),
@@ -1098,19 +1088,9 @@ class CapabilityTests(unittest.TestCase):
                     ns["publish_data_agent"]("agent")
                 ns["wait_for_lro"].assert_not_called()
 
-    def extension_namespace(self, mode="auto", prior="ready", agents=None, generation=2,
-                            runtime="verified", publication="published"):
-        values = {
-            "ontology_data_agent_mode": mode, "data_agent_deployment_status": prior,
-            "ontology_name": "ontology",
-            "data_agent_runtime_status": runtime, "data_agent_publication_status": publication,
-        }
+    def extension_namespace(self, agents=None):
         return functions(
-            "011", "validate_agent_mode",
-            "resolve_data_agent_id", "resolve_agent_extension_target",
-            first_setting=lambda *names, default=None, **kwargs: next(
-                (values[name] for name in names if name in values), default
-            ),
+            "011", "resolve_data_agent_id", "resolve_agent_extension_target",
             data_agent_id=None, data_agent_name="agent", target_folder_id="folder",
             DATA_AGENT_ITEM_TYPE="DataAgent",
             list_items_of_type=Mock(side_effect=lambda kind: (
@@ -1118,18 +1098,11 @@ class CapabilityTests(unittest.TestCase):
                     "id": "ontology-id", "displayName": "ontology", "folderId": "folder",
                 }]
             )),
-            get_ontology_generation=Mock(return_value=generation),
         )
 
     def test_sql_graphql_scaffolding_runs_but_required_agent_failure_is_recorded(self):
-        for mode, prior, generation, agents in (
-            ("auto", "", 1, []),
-            ("disabled", "", 1, [{"id": "agent-id", "displayName": "agent"}]),
-            ("auto", "blocked", 2, []),
-            ("auto", "", 2, [{"id": "agent-id", "displayName": "agent"}]),
-            ("enabled", "", 1, [{"id": "agent-id", "displayName": "agent"}]),
-        ):
-            ns = self.extension_namespace(mode, prior, agents, generation)
+        for agents in ([], [{"id": "agent-id", "displayName": "agent"}]):
+            ns = self.extension_namespace(agents)
             ns.update({
                 "resolve_sql_database": Mock(return_value=("sql-id", "server", "database")),
                 "sql_db_item_name": "sql", "seed_sql_database": Mock(),
@@ -1152,15 +1125,14 @@ class CapabilityTests(unittest.TestCase):
             ns["seed_sql_database"].assert_called_once()
             ns["create_graphql_api"].assert_called_once()
             ns["update_item_definition"].assert_called_once_with("graphql-id", {"parts": []})
-            succeeds = bool(agents) and mode != "disabled"
+            succeeds = bool(agents)
             if succeeds:
                 ns["extend_data_agent_sql_source"].assert_called_once_with("agent-id")
             else:
                 ns["extend_data_agent_sql_source"].assert_not_called()
             result = ns["step_results"]["data_agent_sql_source"]
-            self.assertEqual(result["status"],
-                             "skipped" if mode == "disabled" else "published" if succeeds else "failed")
-            self.assertEqual(bool(ns["step_errors"]), mode != "disabled" and not succeeds)
+            self.assertEqual(result["status"], "published" if succeeds else "failed")
+            self.assertEqual(bool(ns["step_errors"]), not succeeds)
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
         tree = ast.parse(source("011"))
@@ -1195,43 +1167,38 @@ class CapabilityTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             ns["resolve_agent_extension_target"]()
         ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
-        ns["get_ontology_generation"].side_effect = RuntimeError("unknown generation")
         self.assertEqual(ns["resolve_agent_extension_target"]()[0], "agent-id")
-        ns["get_ontology_generation"].assert_not_called()
 
-    def test_enabled_sql_extension_requires_only_live_agent(self):
-        ns = self.extension_namespace(
-            mode="enabled", generation=2, agents=[{"id": "agent-id", "displayName": "agent"}]
-        )
+    def test_sql_extension_requires_only_live_agent(self):
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
         agent_id, policy = ns["resolve_agent_extension_target"]()
         self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
         self.assertEqual(policy, {"status": "allowed", "reason": ""})
         ns["list_items_of_type"].assert_called_once_with("DataAgent")
-        ns["get_ontology_generation"].assert_not_called()
 
-    def test_auto_and_enabled_sql_extension_fail_on_unavailable_agent(self):
-        for mode in ("auto", "enabled"):
-            for prior, agents in (("published", []), ("blocked", []), ("failed", []), ("", [])):
-                with self.subTest(mode=mode, prior=prior):
-                    ns = self.extension_namespace(mode=mode, prior=prior, agents=agents)
-                    with self.assertRaises(RuntimeError):
-                        ns["resolve_agent_extension_target"]()
-            ns = self.extension_namespace(mode=mode)
-            ns["data_agent_name"] = ""
-            with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
-                ns["resolve_agent_extension_target"]()
+    def test_sql_extension_fails_on_unavailable_agent(self):
+        ns = self.extension_namespace(agents=[])
+        with self.assertRaises(RuntimeError):
+            ns["resolve_agent_extension_target"]()
+        ns = self.extension_namespace()
+        ns["data_agent_name"] = ""
+        with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
+            ns["resolve_agent_extension_target"]()
 
-    def test_sql_extension_allows_failed_nb09(self):
-        for mode in ("auto", "enabled"):
-            with self.subTest(mode=mode):
-                ns = self.extension_namespace(
-                    mode=mode, prior="failed", runtime="failed", publication="published",
-                    agents=[{"id": "agent-id", "displayName": "agent"}],
-                )
-                agent_id, policy = ns["resolve_agent_extension_target"]()
-                self.assertEqual((agent_id, policy["status"]), ("agent-id", "allowed"))
-                ns["list_items_of_type"].assert_called_once_with("DataAgent")
-                ns["get_ontology_generation"].assert_not_called()
+    def test_sql_extension_does_not_read_nb09_status_settings(self):
+        ns = self.extension_namespace(agents=[{"id": "agent-id", "displayName": "agent"}])
+        ns["first_setting"] = Mock(side_effect=AssertionError("must not read NB09 status settings"))
+        self.assertEqual(ns["resolve_agent_extension_target"](),
+                         ("agent-id", {"status": "allowed", "reason": ""}))
+        ns["list_items_of_type"].assert_called_once_with("DataAgent")
+
+    def test_sql_extension_missing_name_fails_before_live_read(self):
+        ns = self.extension_namespace()
+        ns["data_agent_name"] = ""
+        ns["list_items_of_type"].side_effect = AssertionError("must not read without configuration")
+        with self.assertRaisesRegex(RuntimeError, "No Data Agent configured"):
+            ns["resolve_agent_extension_target"]()
+        ns["list_items_of_type"].assert_not_called()
 
     def test_sql_status_preserves_nb09_result_on_every_outcome(self):
         for status in ("published", "failed", "skipped"):
@@ -1250,33 +1217,6 @@ class CapabilityTests(unittest.TestCase):
                     "data_agent_sql_source_status": status,
                     "data_agent_sql_source_reason": "SQL step result",
                 })
-
-    def test_sql_extension_ignores_all_nb09_statuses_and_settings(self):
-        for mode in ("auto", "enabled"):
-            for prior in ("failed", "blocked", "inconclusive", "checking", ""):
-                with self.subTest(mode=mode, prior=prior):
-                    ns = self.extension_namespace(
-                        mode=mode, prior=prior, runtime=prior, publication=prior,
-                        agents=[{"id": "agent-id", "displayName": "agent"}])
-                    ns["first_setting"] = Mock(side_effect=lambda name, **kwargs: (
-                        mode if name == "ontology_data_agent_mode" else
-                        self.fail(f"SQL must not read {name}")
-                    ))
-                    self.assertEqual(ns["resolve_agent_extension_target"](),
-                                     ("agent-id", {"status": "allowed", "reason": ""}))
-                    ns["list_items_of_type"].assert_called_once_with("DataAgent")
-                    ns["get_ontology_generation"].assert_not_called()
-
-    def test_sql_extension_disabled_skips_live_reads_and_invalid_modes_fail(self):
-        ns = self.extension_namespace(mode="disabled")
-        ns["list_items_of_type"].side_effect = AssertionError("disabled must not read live items")
-        self.assertEqual(ns["resolve_agent_extension_target"]()[1]["status"], "skipped")
-        ns["list_items_of_type"].assert_not_called()
-        for mode in ("", "invalid"):
-            ns = self.extension_namespace(mode=mode)
-            with self.assertRaises(ValueError):
-                ns["resolve_agent_extension_target"]()
-            ns["list_items_of_type"].assert_not_called()
 
     def test_sql_final_step_completes_without_ontology_runtime_proof(self):
         tree = ast.parse(source("011"))

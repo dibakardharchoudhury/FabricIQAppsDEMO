@@ -8,16 +8,14 @@ readback. Never restore generation-1 ontology or agent-source fallbacks. Retain 
 Operations Agent playbook/actions capabilities against the verified v2 ontology. REST `/v1`, app layout names,
 and environment suffixes are not ontology generations.
 
-Agent modes default to `enabled`; backward-compatible `auto` also attempts actual provisioning,
-and only explicit `disabled` opts out. Preserve Data Agent, Operations Agent, playbook/actions,
-Teams, email-alert provisioning, and standalone `event_time` binding. Required failures propagate
-through RTI_009/010/011 and setup. Data Agent sources require matching verified v2 identity.
-Required NB09 success is deployment/publication/runtime `ready`/`published`/`verified` with generation
-2, not publication alone. NB11 requires matching evidence for the exact ontology source, preserving
-compatible added SQL/custom content. The bounded smoke does not attest execution provenance or
-certify SQL/combined-source answers. Actual failed/inconclusive results fail required execution.
-SQL/GraphQL-only success requires explicit Data Agent disablement; configuration or hosted-page
-success does not certify agent execution or delivery. The app's native graph
+Always provision the Data Agent and both Operations Agents; there are no agent mode flags or skip
+branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
+binding. Data Agent sources require matching verified v2 identity. NB09 reports the exact temporary
+Fabric response `This API version is not supported for the specified Ontology item` as a known
+product limitation after verified v2 publication; every other deployment, publication, runtime, and
+readback failure propagates. NB11 preserves compatible added SQL/custom content. The bounded smoke
+does not attest execution provenance or certify SQL/combined-source answers. Configuration or
+hosted-page success does not certify agent execution or delivery. The app's native graph
 requires the selected ontology's **Manage graph → select eligible entities/relationships → Continue
 → Materialize** flow and explicit `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON generated from
 authoritative Ontology-to-GraphIndex item lineage or supplied as an operator-verified fallback.

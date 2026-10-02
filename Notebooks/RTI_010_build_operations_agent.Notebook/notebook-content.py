@@ -917,12 +917,6 @@ def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
 
 
 # -------------------------------------------------------------------------
-def validate_agent_mode(value: str) -> str:
-    mode = str(value).strip().lower()
-    if mode not in ("auto", "enabled", "disabled"):
-        raise ValueError(f"Invalid ontology_operations_agent_mode {value!r}; use auto, enabled, or disabled.")
-    return mode
-
 def get_ontology_generation(ontology_id: str) -> int:
     response = api_request(
         "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/ontologies/{ontology_id}"
@@ -970,36 +964,28 @@ def persist_agent_status(status: str, reason: str) -> None:
 
 # Required deployment: full configuration only; failures remain failures.
 
-def agent_capability_policy(generation: int, mode: str) -> dict:
-    mode = validate_agent_mode(mode)
+def agent_capability_policy(generation: int) -> dict:
     if type(generation) is not int or generation not in (1, 2):
         raise ValueError(f"Unsupported live ontology generation: {generation!r}")
     if generation != 2:
         return {"status": "blocked", "reason": "This deployment is v2-only; Operations Agent requires the selected live generation 2 ontology."}
-    if mode == "disabled":
-        return {"status": "skipped", "reason": "Operations Agent deployment explicitly disabled."}
     return {"status": "allowed", "reason": ""}
 
 
 def check_agent_capability() -> dict:
     persist_agent_status("checking", "Checking the selected live v2 ontology.")
     try:
-        mode = validate_agent_mode(first_setting("ontology_operations_agent_mode", default="enabled"))
         ontology_id = resolve_ontology_id()
         generation = get_ontology_generation(ontology_id)
-        policy = agent_capability_policy(generation, mode)
+        policy = agent_capability_policy(generation)
     except Exception as exc:
         persist_agent_status("failed", str(exc))
         raise
     if generation != 2:
         persist_agent_status(policy["status"], policy["reason"])
         raise RuntimeError(policy["reason"])
-    result = {"capability": "operations_agent", "generation": generation, "mode": mode,
+    result = {"capability": "operations_agent", "generation": generation,
               "ontology_id": ontology_id, **policy}
-    if policy["status"] == "skipped":
-        persist_agent_status(policy["status"], policy["reason"])
-        notebookutils.notebook.exit(json.dumps(result))
-        raise RuntimeError("Notebook exit unexpectedly returned; refusing agent writes.")
     return result
 
 

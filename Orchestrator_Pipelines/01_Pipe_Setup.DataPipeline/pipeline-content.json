@@ -76,20 +76,6 @@
                 "type": "Expression"
               },
               "type": "string"
-            },
-            "ontology_data_agent_mode": {
-              "value": {
-                "value": "@pipeline().parameters.ontology_data_agent_mode",
-                "type": "Expression"
-              },
-              "type": "string"
-            },
-            "ontology_operations_agent_mode": {
-              "value": {
-                "value": "@pipeline().parameters.ontology_operations_agent_mode",
-                "type": "Expression"
-              },
-              "type": "string"
             }
           }
         },
@@ -222,14 +208,6 @@
       "per_notebook_timeout_secs": {
         "type": "int",
         "defaultValue": 3600
-      },
-      "ontology_data_agent_mode": {
-        "type": "string",
-        "defaultValue": "enabled"
-      },
-      "ontology_operations_agent_mode": {
-        "type": "string",
-        "defaultValue": "enabled"
       }
     }
   }
