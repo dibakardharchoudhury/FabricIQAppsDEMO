@@ -338,9 +338,33 @@ def agent_capability_policy(generation: int, mode: str) -> dict:
     return {"status": "allowed", "reason": ""}
 
 
+def merge_settings_with_retry(source, attempts: int = 6) -> None:
+    from delta.tables import DeltaTable
+
+    for attempt in range(attempts):
+        try:
+            (DeltaTable.forName(spark, settings_table_name).alias("target")
+             .merge(source.alias("source"), "target.setting_name = source.setting_name")
+             .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+            return
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}"
+            concurrent = any(marker in text for marker in (
+                "ConcurrentAppendException", "ConcurrentWriteException",
+                "MetadataChangedException", "ProtocolChangedException",
+                "DELTA_CONCURRENT_",
+            ))
+            if not concurrent or attempt == attempts - 1:
+                raise
+            delay = 1.0 * (2 ** attempt)
+            print(f"⚠️ Settings update conflicted with another notebook; retrying in {delay:.0f}s.")
+            time.sleep(delay)
+            spark.catalog.clearCache()
+            spark.sql(f"REFRESH TABLE {settings_table_name}")
+
+
 def persist_agent_status(status: str, reason: str, **details) -> None:
     global agent_deployment_result
-    from delta.tables import DeltaTable
 
     values = {"data_agent_deployment_status": status, "data_agent_deployment_reason": reason}
     for key, value in details.items():
@@ -348,9 +372,7 @@ def persist_agent_status(status: str, reason: str, **details) -> None:
     source = spark.createDataFrame(
         [{"setting_name": k, "setting_value": v} for k, v in values.items()]
     ).withColumn("updated_utc", F.current_timestamp())
-    (DeltaTable.forName(spark, settings_table_name).alias("target")
-     .merge(source.alias("source"), "target.setting_name = source.setting_name")
-     .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+    merge_settings_with_retry(source)
     agent_deployment_result = {"status": status, "reason": reason, **details}
 
 
@@ -986,27 +1008,12 @@ except Exception as exc:
 
 
 if data_agent_item_id:
-    from delta.tables import DeltaTable
-
     persist = {"data_agent_name": data_agent_name, "data_agent_id": data_agent_item_id}
     persist_df = (
         spark.createDataFrame([{"setting_name": k, "setting_value": str(v)} for k, v in persist.items()])
         .withColumn("updated_utc", F.current_timestamp())
     )
-    settings_delta_table = DeltaTable.forName(spark, settings_table_name)
-    (
-        settings_delta_table.alias("target")
-        .merge(persist_df.alias("source"), "target.setting_name = source.setting_name")
-        .whenMatchedUpdate(set={"setting_value": "source.setting_value", "updated_utc": "source.updated_utc"})
-        .whenNotMatchedInsert(
-            values={
-                "setting_name": "source.setting_name",
-                "setting_value": "source.setting_value",
-                "updated_utc": "source.updated_utc",
-            }
-        )
-        .execute()
-    )
+    merge_settings_with_retry(persist_df)
     print("✅ Persisted Data Agent settings:", persist)
     display(spark.read.table(settings_table_name).orderBy("setting_name"))
 

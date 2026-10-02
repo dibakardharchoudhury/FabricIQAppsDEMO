@@ -1326,8 +1326,9 @@ class CapabilityTests(unittest.TestCase):
     def test_runtime_failure_status_preserves_published_identity_in_delta(self):
         spark = SimpleNamespace(createDataFrame=Mock())
         delta = SimpleNamespace(DeltaTable=SimpleNamespace(forName=Mock()))
-        ns = functions("009", "persist_agent_status", spark=spark,
-                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings")
+        ns = functions("009", "merge_settings_with_retry", "persist_agent_status", spark=spark,
+                       F=SimpleNamespace(current_timestamp=Mock()), settings_table_name="settings",
+                       time=SimpleNamespace(sleep=Mock()))
         with patch.dict("sys.modules", {"delta": SimpleNamespace(tables=delta), "delta.tables": delta}):
             ns["persist_agent_status"](
                 "published", "identity readback verified", publication_status="published",
@@ -1345,6 +1346,63 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(saved["data_agent_deployment_status"], "failed")
         self.assertEqual(saved["data_agent_runtime_status"], "failed")
         self.assertEqual(json.loads(saved["data_agent_runtime_evidence"]), {"ontology_id": "ontology"})
+
+    def test_agent_settings_merges_retry_only_delta_concurrency_conflicts(self):
+        for number, expected_delay in (("009", 1.0), ("010", 1.5)):
+            with self.subTest(number=number):
+                execute = Mock(side_effect=[
+                    RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException"),
+                    None,
+                ])
+
+                class Merge:
+                    def alias(self, *_):
+                        return self
+
+                    def merge(self, *_):
+                        return self
+
+                    def whenMatchedUpdateAll(self):
+                        return self
+
+                    def whenNotMatchedInsertAll(self):
+                        return self
+
+                    def execute(self):
+                        return execute()
+
+                delta = SimpleNamespace(
+                    DeltaTable=SimpleNamespace(forName=Mock(return_value=Merge())))
+                spark = SimpleNamespace(
+                    catalog=SimpleNamespace(clearCache=Mock()), sql=Mock())
+                sleep = Mock()
+                ns = functions(
+                    number, "merge_settings_with_retry", spark=spark,
+                    settings_table_name="settings", time=SimpleNamespace(sleep=sleep),
+                )
+                source = SimpleNamespace(alias=Mock(return_value="source"))
+                with patch.dict(
+                    "sys.modules",
+                    {"delta": SimpleNamespace(tables=delta), "delta.tables": delta},
+                ):
+                    ns["merge_settings_with_retry"](source)
+                self.assertEqual(execute.call_count, 2)
+                sleep.assert_called_once_with(expected_delay)
+                spark.catalog.clearCache.assert_called_once()
+                spark.sql.assert_called_once_with("REFRESH TABLE settings")
+
+                execute.reset_mock(side_effect=True)
+                execute.side_effect = ValueError("not a concurrency conflict")
+                sleep.reset_mock()
+                with (
+                    patch.dict(
+                        "sys.modules",
+                        {"delta": SimpleNamespace(tables=delta), "delta.tables": delta},
+                    ),
+                    self.assertRaisesRegex(ValueError, "not a concurrency conflict"),
+                ):
+                    ns["merge_settings_with_retry"](source)
+                sleep.assert_not_called()
 
     def runtime_namespace(self, result, delegated=True):
         def response(request_id, value, status=200, headers=None):

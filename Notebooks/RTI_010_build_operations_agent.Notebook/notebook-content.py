@@ -918,16 +918,37 @@ def get_ontology_generation(ontology_id: str) -> int:
         "Verify the Ontology API response; only generation 2 is supported by this deployment."
     )
 
-def persist_agent_status(status: str, reason: str) -> None:
+def merge_settings_with_retry(source, attempts: int = 6) -> None:
     from delta.tables import DeltaTable
 
+    for attempt in range(attempts):
+        try:
+            (DeltaTable.forName(spark, settings_table_name).alias("target")
+             .merge(source.alias("source"), "target.setting_name = source.setting_name")
+             .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+            return
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}"
+            concurrent = any(marker in text for marker in (
+                "ConcurrentAppendException", "ConcurrentWriteException",
+                "MetadataChangedException", "ProtocolChangedException",
+                "DELTA_CONCURRENT_",
+            ))
+            if not concurrent or attempt == attempts - 1:
+                raise
+            delay = 1.5 * (2 ** attempt)
+            print(f"⚠️ Settings update conflicted with another notebook; retrying in {delay:g}s.")
+            time.sleep(delay)
+            spark.catalog.clearCache()
+            spark.sql(f"REFRESH TABLE {settings_table_name}")
+
+
+def persist_agent_status(status: str, reason: str) -> None:
     values = {"ops_agent_deployment_status": status, "ops_agent_deployment_reason": reason}
     source = spark.createDataFrame(
         [{"setting_name": k, "setting_value": v} for k, v in values.items()]
     ).withColumn("updated_utc", F.current_timestamp())
-    (DeltaTable.forName(spark, settings_table_name).alias("target")
-     .merge(source.alias("source"), "target.setting_name = source.setting_name")
-     .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+    merge_settings_with_retry(source)
 
 # Required deployment: full configuration only; failures remain failures.
 
@@ -1136,13 +1157,10 @@ persist_agent_status("deploying", "Provisioning the complete Operations Agent an
 try:
     persist = deploy_operations_agent(result["ontology_id"])
     persist.update(deploy_eventhouse_operations_agent(persist["email_pipeline_id"]))
-    from delta.tables import DeltaTable
     source = spark.createDataFrame(
         [{"setting_name": key, "setting_value": value} for key, value in persist.items()]
     ).withColumn("updated_utc", F.current_timestamp())
-    (DeltaTable.forName(spark, settings_table_name).alias("target")
-     .merge(source.alias("source"), "target.setting_name = source.setting_name")
-     .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
+    merge_settings_with_retry(source)
     reason = ("Ontology and Eventhouse configurations/playbooks retained by readback; "
               "both agents stopped. Runtime actions not tested."
               if ops_agent_copy_playbook else
