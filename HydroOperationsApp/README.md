@@ -165,12 +165,13 @@ available and obtains the exact verification lease. On a cold request, source ve
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
 Prompts use a concise all-facilities/all-assets scope reset; benchmarked source-routing hints were
 slower and are not injected.
-The chat shows the outer published Data Agent MCP tool immediately and maps Fabric's real
-`notifications/progress` tool lifecycle into expandable steps. Fabric currently batches those
-notifications near completion and exposes internal tool names/statuses, but not their generated SQL,
-arguments, intermediate rows, or reasoning. Foundry steps appear earlier because those tools execute
-inside this browser and the app owns their arguments/results; the remote Data Agent owns its internal
-orchestration. Experimental MCP task invocation was not enabled because the live Fabric endpoint
+The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
+Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
+notifications near completion and exposes only internal tool names/statuses—not their generated SQL,
+arguments, intermediate rows, or reasoning—so rendering them created noise without useful detail.
+Foundry tool steps remain visible because those tools execute inside this browser and the app owns
+their arguments/results; the remote Data Agent owns its internal orchestration. Experimental MCP task
+invocation was not enabled because the live Fabric endpoint
 either rejected the SDK's automatic task shape or timed out with explicit task parameters.
 Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
 `type: ontology`, `artifactId`, and `workspaceId` fields used by the notebook publishers.

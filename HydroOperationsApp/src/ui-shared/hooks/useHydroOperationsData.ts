@@ -767,7 +767,7 @@ function useHydroOperationsDataController() {
     const startedAt = Date.now()
     setCopilotBusy(true)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '' }])
-    // Text and tool steps arrive on separate callbacks, so keep both and repaint the whole message.
+    // Foundry owns its local tool trace. Data Agent MCP internals stay hidden while its answer is pending.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
@@ -785,10 +785,9 @@ function useHydroOperationsDataController() {
         : await askDataAgent(
           text,
           partial => { liveText = partial; paint() },
-          steps => { liveSteps = steps; paint() },
         )
       liveText = answer.text
-      liveSteps = answer.steps ?? liveSteps
+      liveSteps = copilotEngine === 'foundry' ? answer.steps ?? liveSteps : undefined
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
       liveText = error instanceof Error ? error.message : 'The copilot request failed.'
