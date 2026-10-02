@@ -314,6 +314,48 @@ class WorkspaceActionTests(unittest.TestCase):
         for name in ("GitHub sync", "Setup pipeline", "Fabric app deploy"):
             self.assertIn(f"{name} completed successfully", log)
 
+    def test_real_workflow_step_returns_after_child_exits(self):
+        job = SERVER.Job(["Queued", "Running", "Done"], exclusive=True)
+        returncode = SERVER._run_workflow_step(
+            job,
+            "Test component",
+            ["-c", "print('child completed')"],
+            None,
+            5,
+            [],
+            1,
+        )
+
+        self.assertEqual(returncode, 0)
+        self.assertIsNone(job.process)
+        self.assertIn("[Test component] child completed", job.lines)
+        self.assertFalse(any("timed out" in line for line in job.lines))
+
+    def test_full_workflow_monitor_exception_fails_instead_of_staying_running(self):
+        job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
+        steps = [{
+            "name": "GitHub sync",
+            "argv": ["sync"],
+            "env": None,
+            "timeout": 1,
+            "markers": [],
+            "phase_offset": 1,
+        }]
+        with patch.object(
+            SERVER,
+            "_run_workflow_step",
+            side_effect=NameError("monitor state is unavailable"),
+        ):
+            SERVER._workflow_worker(job, steps)
+
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.returncode, -1)
+        self.assertEqual(job.failed_component, "GitHub sync")
+        self.assertIn(
+            "GitHub sync monitor failed: NameError: monitor state is unavailable",
+            "\n".join(job.lines),
+        )
+
     def test_job_api_exposes_failed_workflow_component(self):
         job = SERVER.Job(SERVER.WORKFLOW_PHASES, exclusive=True)
         job.status = "failed"

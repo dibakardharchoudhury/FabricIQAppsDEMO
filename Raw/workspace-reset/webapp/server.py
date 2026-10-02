@@ -282,6 +282,8 @@ def _worker(job: Job, argv: list[str], env_extra: dict[str, str] | None,
         proc.wait()
     finally:
         timer.cancel()
+        if proc.stdout is not None:
+            proc.stdout.close()
 
     with job.lock:
         job.process = None
@@ -337,7 +339,14 @@ def _run_workflow_step(
     if cancel_requested:
         _terminate_owned_process(proc)
 
-    timer = threading.Timer(timeout, _terminate_owned_process, args=(proc,))
+    timed_out = threading.Event()
+
+    def terminate_for_timeout() -> None:
+        if proc.poll() is None:
+            timed_out.set()
+            _terminate_owned_process(proc)
+
+    timer = threading.Timer(timeout, terminate_for_timeout)
     timer.start()
     try:
         assert proc.stdout is not None
@@ -352,6 +361,8 @@ def _run_workflow_step(
         proc.wait()
     finally:
         timer.cancel()
+        if proc.stdout is not None:
+            proc.stdout.close()
         with job.lock:
             job.process = None
             if timed_out.is_set():
@@ -364,15 +375,27 @@ def _workflow_worker(job: Job, steps: list[dict[str, object]]) -> None:
         if job.cancel_requested:
             break
         name = str(step["name"])
-        returncode = _run_workflow_step(
-            job,
-            name,
-            step["argv"],
-            step.get("env"),
-            int(step["timeout"]),
-            step["markers"],
-            int(step["phase_offset"]),
-        )
+        try:
+            returncode = _run_workflow_step(
+                job,
+                name,
+                step["argv"],
+                step.get("env"),
+                int(step["timeout"]),
+                step["markers"],
+                int(step["phase_offset"]),
+            )
+        except Exception as exc:
+            with job.lock:
+                job.status = "failed"
+                job.returncode = -1
+                job.failed_component = name
+                job.process = None
+                job.lines.append(
+                    f"[workflow stopped] {name} monitor failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            return
         if returncode != 0:
             with job.lock:
                 job.returncode = returncode
