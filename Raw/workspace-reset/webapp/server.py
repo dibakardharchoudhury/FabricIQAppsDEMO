@@ -915,6 +915,7 @@ def app_version():
             errors="replace",
             timeout=10,
             check=True,
+            creationflags=NO_WINDOW,
         ).stdout.strip()
 
     try:

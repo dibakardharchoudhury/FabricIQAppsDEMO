@@ -373,6 +373,20 @@ class WorkspaceActionTests(unittest.TestCase):
         finally:
             SERVER.JOBS.clear()
 
+    def test_version_git_commands_never_open_windows_consoles(self):
+        completed = Mock(stdout="1\n")
+        with (
+            patch.object(SERVER.shutil, "which", return_value="git.exe"),
+            patch.object(SERVER.subprocess, "run", return_value=completed) as run,
+            patch.object(SERVER.Path, "exists", return_value=True),
+        ):
+            response = self.client.get("/api/version")
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(run.call_count, 3)
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs["creationflags"], SERVER.NO_WINDOW)
+
     def test_full_workflow_validates_every_step_before_starting(self):
         base = {
             "tenant": "tenant.example",
