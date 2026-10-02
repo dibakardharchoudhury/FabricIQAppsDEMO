@@ -1,52 +1,16 @@
 import cytoscape, { type Core, type ElementDefinition, type LayoutOptions } from 'cytoscape'
 import { useEffect, useEffectEvent, useRef } from 'react'
 import type { KnowledgeEdge, KnowledgeNode } from '../../knowledgeGraphModel'
+import {
+  KNOWLEDGE_EDGE_COLOR,
+  KNOWLEDGE_NODE_SIZE,
+  KNOWLEDGE_STATUS_COLOR,
+  KNOWLEDGE_TYPE_COLOR,
+  telemetryFlowEdgeIds,
+} from '../../knowledgeGraphVisuals'
 import type { AppTheme } from '../../hooks/useTheme'
 
 export type GraphLayout = 'breadthfirst' | 'cose' | 'concentric'
-
-const typeColor: Record<KnowledgeNode['type'], string> = {
-  facility: '#0e7490',
-  system: '#2563eb',
-  equipment: '#b11f4b',
-  instrument: '#16a34a',
-  signal: '#0891b2',
-  ontology: '#475569',
-  model: '#7c3aed',
-  'work-order': '#d97706',
-  inspection: '#64748b',
-  notification: '#dc2626',
-}
-
-const typeSize: Record<KnowledgeNode['type'], number> = {
-  facility: 58,
-  system: 48,
-  equipment: 44,
-  instrument: 34,
-  signal: 28,
-  ontology: 36,
-  model: 30,
-  'work-order': 32,
-  inspection: 28,
-  notification: 32,
-}
-
-const statusColor: Record<KnowledgeNode['status'], string> = {
-  ok: '#16a34a',
-  warn: '#f59e0b',
-  crit: '#dc2626',
-  nodata: '#919191',
-}
-
-const edgeColor: Record<KnowledgeEdge['type'], string> = {
-  contains: '#64748b',
-  'has-instrument': '#16a34a',
-  'has-signal': '#0891b2',
-  'has-model': '#7c3aed',
-  affects: '#d97706',
-  documents: '#64748b',
-  reports: '#dc2626',
-}
 
 const iconPath: Record<KnowledgeNode['type'], string> = {
   facility: '<path d="M4 20V7l8-4 8 4v13M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/>',
@@ -117,14 +81,14 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
           selector: 'node',
           style: {
             shape: 'ellipse', width: 'data(size)', height: 'data(size)', 'background-color': 'data(color)',
-            'background-blacken': -0.08, 'background-image': 'data(icon)', 'background-fit': 'none',
+            'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
-            'border-color': 'data(ring)', 'border-width': 2.5, label: 'data(label)', color: color('--cp-text'),
+            'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
             'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 650,
             'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'underlay-color': 'data(ring)', 'underlay-opacity': 0.11, 'underlay-padding': 8,
+            'underlay-color': 'data(ring)', 'underlay-opacity': 0.14, 'underlay-padding': 9,
             'transition-property': 'opacity, border-width, underlay-opacity, underlay-padding',
             'transition-duration': 220,
           },
@@ -137,27 +101,50 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         {
           selector: 'edge',
           style: {
-            width: 1.8, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
+            width: 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
             'curve-style': 'bezier', 'control-point-step-size': 44, label: 'data(label)', color: color('--cp-text-muted'),
             'font-size': 7.5, 'font-weight': 650, opacity: 0.58, 'text-opacity': 0.15,
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'text-rotation': 'autorotate', 'arrow-scale': 0.72,
+            'text-rotation': 'autorotate', 'arrow-scale': 0.9,
             'transition-property': 'opacity, width, text-opacity', 'transition-duration': 220,
           },
         },
         { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
         { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [7, 5] } },
+        {
+          selector: 'edge[flow = 1]',
+          style: {
+            width: 3.2, opacity: 0.92, 'line-color': 'data(flowColor)', 'target-arrow-color': 'data(flowColor)',
+            'line-style': 'dashed', 'line-dash-pattern': [10, 12], 'arrow-scale': 1.05, 'z-index': 8,
+          },
+        },
       ],
     })
     graph.on('tap', 'node', event => handleNodeSelect(event.target.id()))
-    let pulse: number | undefined
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      pulse = window.setInterval(() => graph.nodes('[status = "crit"]').toggleClass('status-pulse'), 950)
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let animationFrame: number | undefined
+    let visible = true
+    let previousFrame = 0
+    let offset = 0
+    const animate = (time: number) => {
+      if (visible && time - previousFrame >= 34) {
+        previousFrame = time
+        offset = (offset + 1.35) % 44
+        graph.edges('[flow = 1]').style('line-dash-offset', -offset)
+        graph.nodes('[status = "crit"]').toggleClass('status-pulse', Math.floor(time / 900) % 2 === 0)
+      }
+      animationFrame = window.requestAnimationFrame(animate)
     }
+    const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(entries => {
+      visible = entries[0]?.isIntersecting ?? true
+    })
+    observer?.observe(containerRef.current)
+    if (!reducedMotion) animationFrame = window.requestAnimationFrame(animate)
     controllerRef.current = graph
     return () => {
-      if (pulse !== undefined) window.clearInterval(pulse)
+      observer?.disconnect()
+      if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame)
       graph.nodes().forEach(node => { positionCache.set(node.id(), node.position()) })
       controllerRef.current = null
       initializedRef.current = false
@@ -168,9 +155,26 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
+    const flowingEdges = telemetryFlowEdgeIds(nodes, edges)
+    const nodesById = new Map(nodes.map(node => [node.id, node]))
     const elements: ElementDefinition[] = [
-      ...nodes.map(node => ({ data: { ...node, color: typeColor[node.type], size: typeSize[node.type], ring: statusColor[node.status], icon: nodeIcons[node.type] } })),
-      ...edges.map(item => ({ data: { ...item, color: edgeColor[item.type] } })),
+      ...nodes.map(node => ({
+        data: {
+          ...node,
+          color: KNOWLEDGE_TYPE_COLOR[node.type],
+          size: KNOWLEDGE_NODE_SIZE[node.type],
+          ring: KNOWLEDGE_STATUS_COLOR[node.status],
+          icon: nodeIcons[node.type],
+        },
+      })),
+      ...edges.map(item => ({
+        data: {
+          ...item,
+          color: KNOWLEDGE_EDGE_COLOR[item.type],
+          flow: flowingEdges.has(item.id) ? 1 : 0,
+          flowColor: KNOWLEDGE_STATUS_COLOR[nodesById.get(item.source)?.status ?? 'nodata'],
+        },
+      })),
     ]
     const nextIds = new Set(elements.map(element => String(element.data.id)))
     const wasInitialized = initializedRef.current

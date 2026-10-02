@@ -45,9 +45,12 @@ database injected by the verified deployment before attempting slower workspace 
 GraphQL/KQL requests still determine whether those sources exist and are queryable: missing, deleted,
 or failed sources clear the corresponding UI data rather than displaying a persisted snapshot.
 
-The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
-to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital
-Twin, and Maintenance. It requires a verified **generation-2 Ontology** and an explicitly bound,
+The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
+Cytoscape 2D analysis view is the default; an optional, lazy-loaded WebGL 3D view adds orbit controls,
+instanced nodes, directional arrows, and bounded live-telemetry particles without increasing the
+initial app bundle. It defaults to the selected turbine and synchronizes that selection with
+Overview, Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
+**generation-2 Ontology** and an explicitly bound,
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
 Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
 No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.

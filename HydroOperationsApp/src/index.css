@@ -39,6 +39,9 @@
   --kg-label-bg: #ffffff;
   --kg-label-border: #d9e4ef;
   --kg-edge-rest: #64748b;
+  --kg-health-ok: #10b981;
+  --kg-health-warn: #f59e0b;
+  --kg-health-crit: #f43f5e;
   --twin-stage: #eaf2fa;
   --twin-stage-deep: #dce9f5;
   --twin-grid: rgba(8, 145, 178, 0.13);
@@ -87,6 +90,9 @@ html[data-theme='dark'] {
   --kg-label-bg: #132238;
   --kg-label-border: #324863;
   --kg-edge-rest: #7390a8;
+  --kg-health-ok: #34d399;
+  --kg-health-warn: #fbbf24;
+  --kg-health-crit: #fb7185;
   --twin-stage: #081322;
   --twin-stage-deep: #112238;
   --twin-grid: rgba(103, 232, 249, 0.10);

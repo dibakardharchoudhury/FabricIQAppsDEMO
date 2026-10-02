@@ -17,7 +17,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "test:knowledge-graph": "node --import tsx --test ./scripts/knowledge-graph-model.test.ts ./scripts/knowledge-graph-export.test.ts ./scripts/ontology-v2.test.ts ./scripts/ontology-definition.test.ts ./scripts/ontology-graph-query.test.ts",
+    "test:knowledge-graph": "node --import tsx --test ./scripts/knowledge-graph-model.test.ts ./scripts/knowledge-graph-export.test.ts ./scripts/knowledge-graph-visuals.test.ts ./scripts/ontology-v2.test.ts ./scripts/ontology-definition.test.ts ./scripts/ontology-graph-query.test.ts",
     "up": "rayfin up",
     "rayfin:db": "rayfin up db apply",
     "rayfin:up": "rayfin up",
