@@ -33,8 +33,10 @@
 # Product/API failures are persisted and raised, never inferred from a static issue gate.
 #
 # The existing agent retains its Ontology v2 source and instructions. A separate Operations
-# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`; its generated
-# BAD/UNCERTAIN KQL playbook is preserved. Both agents remain STOPPED by default. Successful definition
+# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`. Fabric's public API
+# cannot generate or import its KQL playbook, so first-time setup stops after source/action
+# provisioning and requires the portal's Generate playbook flow. A rerun verifies and preserves
+# the generated BAD/UNCERTAIN rules and Teams destination. Both agents remain STOPPED by default. Successful definition
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
@@ -77,8 +79,7 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # working New_RTI_Demo_OpsAgent_V3 agent, recovered from git history — no live agent is read).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 env_suffix = first_setting("env_suffix", required=True)
-eventhouse_ops_agent_name = first_setting(
-    "eventhouse_ops_agent_name", default=f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}")
+eventhouse_ops_agent_name = f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}"
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
 # `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name and
 # binds it as the Knowledge data source ({id: plain, workspaceId: real}) — no id is hard-coded. Set
@@ -164,7 +165,6 @@ print("   Copy playbook     :", ops_agent_copy_playbook)
 import json
 import time
 import base64
-import zlib
 from copy import deepcopy
 from typing import Optional
 
@@ -894,8 +894,6 @@ def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
             "workspaceId": workspace_id,
         }
     }
-    config["playbook"] = json.loads(zlib.decompress(
-        base64.b64decode(EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64)))
     return config
 
 
@@ -1097,8 +1095,29 @@ def deploy_eventhouse_operations_agent(pipeline_id: str) -> dict:
         raise RuntimeError("Eventhouse Operations Agent creation returned no id.")
     configuration = build_eventhouse_configurations(
         kql_database_id, pipeline_id, ops_agent_teams_team_id, ops_agent_teams_channel_id)
-    update_operations_agent_definition(agent_id, configuration)
-    verify_eventhouse_operations_readback(agent_id, kql_database_id, configuration)
+    actual = read_json_part(
+        get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
+    rules = (actual.get("playbook") or {}).get("RuleDefinitions") or {}
+    if rules:
+        verify_eventhouse_operations_readback(
+            agent_id, kql_database_id, {**configuration, "playbook": actual["playbook"]})
+    else:
+        expected_scaffolding = json.loads(json.dumps(configuration))
+        expected_scaffolding["configuration"].pop("messageDestination", None)
+        if (actual.get("configuration", {}).get("dataSources") !=
+                expected_scaffolding["configuration"]["dataSources"]):
+            update_operations_agent_definition(agent_id, configuration)
+            actual = read_json_part(
+                get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
+        require_retained(expected_scaffolding, actual)
+        if actual.get("shouldRun") is not False:
+            raise RuntimeError("Eventhouse Operations Agent scaffolding must remain stopped.")
+        raise RuntimeError(
+            "Eventhouse Operations Agent source/action scaffolding is configured and stopped, "
+            "but Fabric's public API cannot generate or import its KQL playbook. In the agent "
+            "Build page select Generate playbook, then set Agent behavior > Message delivery to "
+            "the configured Teams channel, stop the agent, and rerun RTI_010 for verified readback."
+        )
     return {
         "eventhouse_ops_agent_id": agent_id,
         "eventhouse_ops_agent_name": eventhouse_ops_agent_name,

@@ -8,7 +8,6 @@ import re
 import time
 import unittest
 import uuid
-import zlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -30,7 +29,7 @@ def source(number):
 
 
 def functions(number, *names, **overrides):
-    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib}
+    namespace = {"Optional": Optional, "json": json, "base64": base64}
     namespace.update(overrides)
     tree = ast.parse(source(number))
     included = set(names) | {"definition_parts"}
@@ -183,8 +182,7 @@ class CapabilityTests(unittest.TestCase):
     def operations_namespace(self):
         ns = functions("010", "build_configurations", "build_eventhouse_configurations")
         names = {
-            "EMBEDDED_OPS_CONFIG_B64", "EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64",
-            "ACTION_PARAMETERS",
+            "EMBEDDED_OPS_CONFIG_B64", "ACTION_PARAMETERS",
         }
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
@@ -231,16 +229,7 @@ class CapabilityTests(unittest.TestCase):
         config = ns["build_eventhouse_configurations"](
             "kql-database", "email-pipeline", "team", "channel")
         self.assertFalse(config["shouldRun"])
-        rules = config["playbook"]["RuleDefinitions"]
-        self.assertEqual(len(rules), 2)
-        self.assertEqual(
-            {rule["RuleCondition"]["Value"] for rule in rules.values()},
-            {"BAD", "UNCERTAIN"},
-        )
-        self.assertTrue(all(
-            rule["ClassExpression"]["$type"] == "kqldataquery"
-            for rule in rules.values()
-        ))
+        self.assertNotIn("playbook", config)
         self.assertEqual(config["configuration"]["instructions"], "Monitor OPCUAEvents.")
         self.assertEqual(config["configuration"]["dataSources"], {
             "kql-database": {
@@ -256,6 +245,75 @@ class CapabilityTests(unittest.TestCase):
         })
         action = next(iter(config["configuration"]["actions"].values()))
         self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
+
+    def test_eventhouse_deployment_requires_portal_generated_playbook(self):
+        expected = {
+            "shouldRun": False,
+            "configuration": {
+                "instructions": "Monitor OPCUAEvents.",
+                "dataSources": {"kql": {
+                    "id": "kql", "type": "KustoDatabase", "workspaceId": "workspace",
+                }},
+                "actions": {"email": {"kind": "FabricJobAction"}},
+                "messageDestination": {
+                    "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
+                },
+            },
+        }
+        actual = json.loads(json.dumps(expected))
+        actual["configuration"].pop("messageDestination")
+        ns = functions(
+            "010", "deploy_eventhouse_operations_agent", "require_retained",
+            eventhouse_table_name="OPCUAEvents", resolve_kql_database_id=Mock(return_value="kql"),
+            create_operations_agent=Mock(return_value={"id": "agent"}),
+            eventhouse_ops_agent_name="RTI_Demo_OpsAgent_Eventhouse_V20",
+            eventhouse_kql_database_name="RTI_Demo_Eventhouse_V20",
+            build_eventhouse_configurations=Mock(return_value=expected),
+            ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+            get_definition_parts=Mock(return_value=[]), read_json_part=Mock(return_value=actual),
+            update_operations_agent_definition=Mock(),
+            verify_eventhouse_operations_readback=Mock(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "Generate playbook"):
+            ns["deploy_eventhouse_operations_agent"]("pipeline")
+        ns["update_operations_agent_definition"].assert_not_called()
+        ns["verify_eventhouse_operations_readback"].assert_not_called()
+
+    def test_eventhouse_deployment_preserves_complete_portal_definition(self):
+        expected = {
+            "shouldRun": False,
+            "configuration": {
+                "instructions": "Monitor OPCUAEvents.",
+                "dataSources": {"kql": {
+                    "id": "kql", "type": "KustoDatabase", "workspaceId": "workspace",
+                }},
+                "actions": {"email": {"kind": "FabricJobAction"}},
+                "messageDestination": {
+                    "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
+                },
+            },
+        }
+        actual = {**json.loads(json.dumps(expected)), "playbook": {
+            "RuleDefinitions": {"bad": {}, "uncertain": {}},
+        }}
+        verify = Mock()
+        ns = functions(
+            "010", "deploy_eventhouse_operations_agent",
+            eventhouse_table_name="OPCUAEvents", resolve_kql_database_id=Mock(return_value="kql"),
+            create_operations_agent=Mock(return_value={"id": "agent"}),
+            eventhouse_ops_agent_name="RTI_Demo_OpsAgent_Eventhouse_V20",
+            eventhouse_kql_database_name="RTI_Demo_Eventhouse_V20",
+            build_eventhouse_configurations=Mock(return_value=expected),
+            ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
+            get_definition_parts=Mock(return_value=[]), read_json_part=Mock(return_value=actual),
+            update_operations_agent_definition=Mock(),
+            verify_eventhouse_operations_readback=verify,
+        )
+        result = ns["deploy_eventhouse_operations_agent"]("pipeline")
+        self.assertEqual(result["eventhouse_ops_agent_id"], "agent")
+        ns["update_operations_agent_definition"].assert_not_called()
+        verify.assert_called_once_with(
+            "agent", "kql", {**expected, "playbook": actual["playbook"]})
 
     def test_operations_auth_selects_notebook_pbi_token(self):
         get_token = Mock(return_value="offline-token")
