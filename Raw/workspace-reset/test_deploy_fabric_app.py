@@ -1356,6 +1356,45 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             "graphModelId": graph_id,
         })
 
+    def test_stale_same_workspace_ontology_hint_rotates_to_authoritative_lineage(self):
+        ontology_id = "ontology-v10"
+        graph_id = "graph-v10"
+        self.items.extend([
+            {"id": ontology_id, "type": "Ontology", "displayName": "RTI_Demo_Ontology_V10"},
+            {"id": graph_id, "type": "GraphModel", "displayName": "generated-v10-graph"},
+        ])
+        self.details[ontology_id] = {
+            "id": ontology_id, "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        self.details["downstream?beta=true"] = {
+            "items": [
+                {"id": graph_id, "type": "GraphIndex", "displayName": "generated-v10-graph",
+                 "workspaceId": self.workspace},
+            ],
+            "relations": [
+                {"itemId": graph_id, "dependentOnItemId": ontology_id,
+                 "relationType": "CascadeDelete"},
+            ],
+            "workspaces": [{"id": self.workspace, "displayName": "Target"}],
+        }
+        stale_binding = {
+            "workspaceId": self.workspace,
+            "ontologyId": "ontology-v20",
+            "graphModelId": "graph-v20",
+        }
+        resolved = self.resolve({
+            **self.config,
+            "RAYFIN_PUBLIC_ONTOLOGY_NAME": "RTI_Demo_Ontology_V20",
+            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps(stale_binding),
+        })
+
+        self.assertEqual(resolved["RAYFIN_PUBLIC_ONTOLOGY_NAME"], "RTI_Demo_Ontology_V10")
+        self.assertEqual(json.loads(resolved["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"]), {
+            "workspaceId": self.workspace,
+            "ontologyId": ontology_id,
+            "graphModelId": graph_id,
+        })
+
     def test_graph_binding_ignores_non_authoritative_and_cross_workspace_relations(self):
         ontology = {"id": "ontology-id", "type": "Ontology", "displayName": "Hydro ontology"}
         graph = {"id": "graph-id", "type": "GraphModel", "displayName": "Only graph"}

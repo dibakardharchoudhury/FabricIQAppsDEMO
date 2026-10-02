@@ -1259,10 +1259,11 @@ def resolve_public_artifact_config(
 
     ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
     ontologies = [item for item in items if item["type"] == "Ontology"]
-    selected_ontologies = (
+    named_ontologies = (
         [item for item in ontologies if item["displayName"] == ontology_name]
-        if ontology_name else ontologies
+        if ontology_name else []
     )
+    selected_ontologies = named_ontologies or ontologies
     if len(selected_ontologies) > 1:
         raise DeployError(
             "The target workspace contains multiple Ontologies; set RAYFIN_PUBLIC_ONTOLOGY_NAME "
