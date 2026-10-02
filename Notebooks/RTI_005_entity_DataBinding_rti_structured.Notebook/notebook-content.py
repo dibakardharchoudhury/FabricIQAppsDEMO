@@ -805,6 +805,7 @@ def _ensure_complete_static_graph_projection(
         raise RuntimeError("Complete graph relationships must be an array")
 
     aliases = {}
+    edge_aliases = {}
     keys = {}
     for spec in entity_projections:
         if not isinstance(spec, dict):
@@ -978,6 +979,7 @@ def _ensure_complete_static_graph_projection(
                 "properties": [],
             })
             changed = True
+        edge_aliases[name] = edge_alias
         expected_edge = {
             "edgeTypeAlias": edge_alias,
             "id": _graph_uuid(graph_model_id, f"edge-table:{name}"),
@@ -1014,6 +1016,11 @@ def _ensure_complete_static_graph_projection(
     return updated, changed, {
         "nodeTypeCount": len(aliases),
         "edgeTypeCount": len(relationship_projections),
+        "nodeAliases": aliases,
+        "edgeAliases": edge_aliases,
+        "staticPropertyCounts": {
+            spec["name"]: len(spec["propertyTypes"]) for spec in entity_projections
+        },
         "staticPropertyCount": sum(
             len(spec["propertyTypes"]) for spec in entity_projections
         ),

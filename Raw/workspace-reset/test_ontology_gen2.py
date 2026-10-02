@@ -1188,9 +1188,20 @@ class GraphMaterializationTests(unittest.TestCase):
         ]
         updated, changed, summary = self.complete_repair(parts)
         self.assertTrue(changed)
-        self.assertEqual(summary, {
-            "nodeTypeCount": 5, "edgeTypeCount": 4, "staticPropertyCount": 10,
-        })
+        self.assertEqual(summary["nodeTypeCount"], 5)
+        self.assertEqual(summary["edgeTypeCount"], 4)
+        self.assertEqual(summary["staticPropertyCount"], 10)
+        self.assertEqual(summary["staticPropertyCounts"]["signal_master"], 2)
+        self.assertEqual(
+            summary["nodeAliases"]["signal_master"],
+            support._graph_uuid(self.graph_id, "node-type:signal_master"),
+        )
+        self.assertEqual(
+            summary["edgeAliases"]["signals_from_instruments"],
+            support._graph_uuid(
+                self.graph_id, "edge-type:signals_from_instruments"
+            ),
+        )
         graph_type = self.decoded(updated, "graphType.json")
         self.assertEqual(
             {node["labels"][0] for node in graph_type["nodeTypes"]},

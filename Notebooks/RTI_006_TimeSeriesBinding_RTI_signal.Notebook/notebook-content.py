@@ -816,6 +816,7 @@ def _ensure_complete_static_graph_projection(
         raise RuntimeError("Complete graph relationships must be an array")
 
     aliases = {}
+    edge_aliases = {}
     keys = {}
     for spec in entity_projections:
         if not isinstance(spec, dict):
@@ -989,6 +990,7 @@ def _ensure_complete_static_graph_projection(
                 "properties": [],
             })
             changed = True
+        edge_aliases[name] = edge_alias
         expected_edge = {
             "edgeTypeAlias": edge_alias,
             "id": _graph_uuid(graph_model_id, f"edge-table:{name}"),
@@ -1025,6 +1027,11 @@ def _ensure_complete_static_graph_projection(
     return updated, changed, {
         "nodeTypeCount": len(aliases),
         "edgeTypeCount": len(relationship_projections),
+        "nodeAliases": aliases,
+        "edgeAliases": edge_aliases,
+        "staticPropertyCounts": {
+            spec["name"]: len(spec["propertyTypes"]) for spec in entity_projections
+        },
         "staticPropertyCount": sum(
             len(spec["propertyTypes"]) for spec in entity_projections
         ),
@@ -3026,9 +3033,12 @@ graph_status_rows = [
     ("ontology_graph_workspace_id", WORKSPACE_ID),
     ("ontology_graph_ontology_id", ontology_id),
     ("ontology_graph_model_id", graph_model_id),
-    ("ontology_graph_node_alias", projection["nodeAlias"]),
-    ("ontology_graph_edge_alias", projection["edgeAlias"]),
-    ("ontology_graph_static_property_count", str(projection["staticPropertyCount"])),
+    ("ontology_graph_node_alias", projection["nodeAliases"][STATIC_ENTITY_NAME]),
+    ("ontology_graph_edge_alias", projection["edgeAliases"][GRAPH_RELATIONSHIP_NAME]),
+    (
+        "ontology_graph_static_property_count",
+        str(projection["staticPropertyCounts"][STATIC_ENTITY_NAME]),
+    ),
     ("ontology_graph_refresh_seconds", f"{refresh_seconds:.3f}"),
     ("ontology_graph_gql_seconds", f"{gql_seconds:.3f}"),
     (
@@ -3052,7 +3062,11 @@ spark.sql(
 
 print("Verified attached Ontology v2 GraphModel:", graph_item.get("displayName"))
 print("GraphModel ID:", graph_model_id)
-print("Static signal properties:", projection["staticPropertyCount"])
+print(
+    "Static signal properties:",
+    projection["staticPropertyCounts"][STATIC_ENTITY_NAME],
+)
+print("Total static graph properties:", projection["staticPropertyCount"])
 print("Verified GQL rows:", verified_row_count)
 print(f"Graph definition phase: {definition_seconds:.3f}s")
 print(f"Graph refresh: {refresh_seconds:.3f}s")
