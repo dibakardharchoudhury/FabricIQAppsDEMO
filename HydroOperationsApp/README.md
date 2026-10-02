@@ -97,10 +97,12 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
 - A v2 materialized GraphModel is required for **native GQL results**, not for displaying already
   available Ontology-bound STID entities with KQL/SQL enrichment.
-  On a fresh Ontology, use **Manage graph → select eligible entities/relationships → Continue
-  → Materialize** once to establish the service-owned child relation. `RTI_006` then maintains the
-  static `signal_master` projection, runs the documented GraphModel refresh job, and verifies the
-  Operations Agent GQL query. Configure the `.env` binding with single-quoted JSON:
+  On a fresh Ontology, `RTI_006` follows the authoritative relation to its attached service-owned
+  GraphModel and authors the complete static five-entity/four-relationship projection. It verifies
+  persisted readback, automatic refresh, queryable schema, and the Operations Agent GQL query.
+  Missing authoritative lineage is a setup error; use **Manage graph → select eligible
+  entities/relationships → Continue → Materialize** only as the explicit operator fallback.
+  Configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
   Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
   `#`, including inside JSON double quotes, so exact ontology names containing `#` require quoting.
@@ -109,10 +111,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Public REST metadata does not expose ownership: names, sole-graph discovery, and structural
   similarity are not proof. The explicit operator binding records the association established in
   the portal; live metadata/contract/type/endpoint checks establish consistency.
-  Graph sources require keys and Delta/mirrored bindings. Fabric does not document an API for the
-  initial Manage graph entity/relationship selection. Once the child exists, `RTI_006` uses the
-  public GraphModel definition and `refreshGraph` APIs; only static Delta-backed `signal_master`
-  properties enter the graph, while `event_time`, `value`, and `quality` remain Eventhouse-bound.
+  Graph sources require keys and Delta/mirrored bindings. Fabric does not document an
+  ontology-owned materialization API. `RTI_006` uses the attached child's public GraphModel
+  definition API and automatic refresh; static properties from all five Delta-backed entities enter
+  the graph, while `event_time`, `value`, and `quality` remain Eventhouse-bound.
   Native GQL reads use GET `getQueryableGraphType?beta=true` and POST `executeQuery?beta=true`
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges

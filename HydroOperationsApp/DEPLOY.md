@@ -55,21 +55,25 @@ For these corrections, use bounded notebook-definition updates, not another full
 Git import: an earlier full import removed generated resources, subsequently restored through setup.
 This acceptance record does not authorize a new import, reset, deployment, or alert send.
 
-### Native graph prerequisite (manual portal operation)
+### Native graph materialization
 
-In the selected generation-2 ontology choose **Manage graph → select eligible entities and
-relationships → Continue → Materialize**. Graph sources require keys and Delta/mirrored bindings.
-Multi-backing-table `signal_master` may be ineligible; native instruments still receive KQL telemetry.
-No published ontology-owned projection/materialization REST endpoint is established, so the
-orchestrator does not promise fully unattended native graph deployment.
+Graph sources require keys and Delta/mirrored bindings. No published ontology-owned
+projection/materialization REST endpoint is established. On October 2, 2026, a clean deployment
+verified that a fresh generation-2 Ontology exposes an attached service-owned GraphModel child.
+`RTI_006` followed the authoritative Ontology-to-GraphIndex lineage, authored the complete static
+five-entity/four-relationship GraphModel definition, verified readback, observed successful
+automatic refresh, and verified the Operations Agent GQL selector. If that attached child or its
+authoritative lineage is unavailable, setup fails; use **Manage graph → select eligible entities and
+relationships → Continue → Materialize** as the explicit operator fallback.
 
-**Verified product limitation (2026-09-30):** the full five-entity projection failed with HTTP 400
+**Historical product behavior (2026-09-30):** the portal-authored full five-entity projection failed with HTTP 400
 `ModelValidationError` / `InvalidPropertyType`, reporting `INVALID` for the TimeSeries properties
 `event_time`, `value`, and `quality`. Selecting the native **facilities, systems, equipment, and
 instruments** subgraph plus its **three hierarchy relationships** in Manage graph successfully
 materialized **111 nodes / 108 edges**. Keep the original **five-entity / four-relationship ontology
-and its TimeSeries properties intact**; KQL enriches the actual native instrument nodes. This is
-a selected native projection—not a GraphQL topology fallback or deletion of ontology entities.
+and its TimeSeries properties intact**. The automated definition avoids that historical validation
+failure by excluding only those three Eventhouse-bound properties from static GraphModel mappings;
+it does not delete the Ontology properties or fabricate GraphQL topology.
 
 Before building the app, the canonical deployment orchestrator resolves the selected generation-2
 ontology's authoritative downstream `CascadeDelete` relation to its same-workspace `GraphIndex`,

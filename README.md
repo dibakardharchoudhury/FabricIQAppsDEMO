@@ -29,13 +29,15 @@ parts and existing bindings; incompatible changes must be resolved explicitly ra
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
 Graph materialization is optional in the Fabric generation-2 experience but required for the app's
 native graph canvas, tree, scopes, and Ontology Operations Agent GQL selectors. Fabric exposes no
-public REST operation for the initial **Manage graph** selection that creates the semantic child, so
-on a fresh Ontology use **Manage graph → select eligible entities/relationships → Continue →
-Materialize** once. After that association exists, `RTI_006_TimeSeriesBinding_RTI_signal`
-automatically discovers the child through authoritative lineage, preserves its complete definition,
-adds the static `signal_master`/`signals_from_instruments` projection without the three Eventhouse
-time-series properties, runs `refreshGraph`, verifies readback/queryable schema, and executes the
-Operations Agent's GQL selector. The canonical deployment orchestrator then generates the explicit
+ontology-owned materialization operation. A fresh generation-2 Ontology currently exposes an
+attached service-owned GraphModel child; `RTI_006_TimeSeriesBinding_RTI_signal` discovers that child
+through authoritative lineage and uses the GraphModel definition API to build the complete static
+five-entity/four-relationship projection. It excludes only the three Eventhouse time-series
+properties, preserves unknown definition parts, verifies persisted readback, observes the automatic
+refresh, verifies queryable schema, and executes the Operations Agent's GQL selector. If the attached
+child or authoritative lineage is absent, setup fails explicitly and the supported portal
+**Manage graph → select eligible entities/relationships → Continue → Materialize** flow remains the
+operator fallback. The canonical deployment orchestrator then generates the explicit
 `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
 An operator may supply the same verified binding as a fallback when lineage is unavailable.
 Ownership is never inferred from names, a sole graph, or sampled structure.

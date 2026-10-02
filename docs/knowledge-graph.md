@@ -74,19 +74,17 @@ signal_master -> instruments -> equipment -> systems -> facilities
 a legacy parser or used as agent sources. Graph materialization is required for native GQL reads,
 but does not block the progressive view of Ontology-bound STID entities.
 
-Fabric does not document a REST endpoint for the initial Ontology **Manage graph** selection that
-creates its semantic GraphModel child. For a fresh Ontology, open the selected item and choose
-**Manage graph → select eligible entities and relationships → Continue → Materialize** once. Use
-that ontology-managed GraphModel, not an independently created look-alike.
-
-After the child relation exists, the final phase of `RTI_006` is automated and idempotent:
+Fabric does not document an ontology-owned REST materialization endpoint. A fresh generation-2
+Ontology currently exposes an attached service-owned GraphModel child. The final phase of `RTI_006`
+uses that authoritative relation and is automated and idempotent. If the relation is unavailable,
+setup fails explicitly; **Manage graph → select eligible entities and relationships → Continue →
+Materialize** remains the operator fallback. Never substitute an independently created look-alike.
 
 1. Require live Ontology generation 2 and follow the exact downstream
    `CascadeDelete` Ontology-to-`GraphIndex` relation cross-checked against the workspace
    `GraphModel` identity.
 2. Round-trip the complete GraphModel definition and preserve unknown parts.
-3. Add or repair the Delta-backed static `signal_master` node and
-   `signals_from_instruments` edge.
+3. Add or repair all five Delta-backed static nodes and all four governed relationships.
 4. Exclude only `event_time`, `value`, and `quality` from GraphModel property mappings; those remain
    Ontology time-series properties backed by Eventhouse.
 5. Update and read back the same attached GraphModel, run the public `refreshGraph` job while
@@ -319,8 +317,16 @@ It does not provide a GraphModel-instance REST export contract.
 
 ### Automated materialization acceptance (October 2, 2026)
 
-The existing ontology-owned GraphModel was repaired through its public definition API and completed
-an automatic refresh. Read-only verification returned:
+A clean V10 Full workflow completed in `ws-vteam-demoV3` after the generated resources had been
+removed. Git synchronization imported 23 managed items, `01_Pipe_Setup` completed, and the canonical
+app orchestrator printed `SUCCESS` with
+`https://fond-rowan-c25c12f3ef-swedencentral.webapp.fabricapps.net`. The first setup attempt proved
+fresh five-entity/four-relationship definition update, persisted readback, automatic refresh, and
+GQL runtime verification, then exposed a status-summary compatibility bug after verification. Commit
+`7c64164` corrected that bookkeeping contract. The complete rerun succeeded and exercised the
+unchanged-definition refresh path, proving idempotency at the workflow level.
+
+Graph verification returned:
 
 - **5** queryable node types and **4** queryable edge types.
 - Exactly one `signal_master` node type and one `signals_from_instruments` edge type.
