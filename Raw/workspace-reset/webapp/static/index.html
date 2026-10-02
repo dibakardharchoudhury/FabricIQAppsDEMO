@@ -137,6 +137,26 @@
   .phases li.done::before { content:"\2713"; }
   .phases li.active { color:#0b1020; font-weight:750; background:linear-gradient(135deg,var(--warn),#f59e0b); border-color:transparent; }
   .phases li.active::before { content:"\25D0"; }
+  .workflow-phase-groups { display:grid; gap:.55rem; margin-top:.9rem; }
+  .workflow-phase-group { border:1px solid var(--border); border-radius:10px; background:rgba(3,8,20,.32); overflow:hidden; }
+  .workflow-phase-group[open] { border-color:rgba(59,130,246,.38); background:rgba(59,130,246,.05); }
+  .workflow-phase-group.active { border-color:rgba(251,191,36,.48); background:rgba(251,191,36,.06); }
+  .workflow-phase-group.done { border-color:rgba(52,211,153,.3); }
+  .workflow-phase-group.failed { border-color:rgba(251,113,133,.5); background:rgba(251,113,133,.06); }
+  .workflow-phase-summary { display:grid; grid-template-columns:1.45rem minmax(0,1fr) auto; gap:.55rem; align-items:center;
+    padding:.65rem .75rem; cursor:pointer; list-style:none; user-select:none; }
+  .workflow-phase-summary::-webkit-details-marker { display:none; }
+  .workflow-phase-summary::before { content:"\25CB"; display:grid; place-items:center; width:1.25rem; height:1.25rem;
+    border-radius:50%; color:var(--muted); border:1px solid var(--border); font-size:.68rem; }
+  .workflow-phase-group.active .workflow-phase-summary::before { content:"\25D0"; color:#0b1020; border-color:transparent; background:var(--warn); }
+  .workflow-phase-group.done .workflow-phase-summary::before { content:"\2713"; color:#06281e; border-color:transparent; background:var(--ok); font-weight:800; }
+  .workflow-phase-group.failed .workflow-phase-summary::before { content:"!"; color:#fff; border-color:transparent; background:var(--err); font-weight:800; }
+  .workflow-phase-name { min-width:0; color:var(--text); font-size:.8rem; font-weight:700; }
+  .workflow-phase-state { color:var(--muted); font-size:.7rem; font-weight:650; white-space:nowrap; }
+  .workflow-phase-group.active .workflow-phase-state { color:#fde68a; }
+  .workflow-phase-group.done .workflow-phase-state { color:var(--ok); }
+  .workflow-phase-group.failed .workflow-phase-state { color:#fecaca; }
+  .workflow-phase-group .phases { padding:.15rem .75rem .75rem 2.75rem; }
 
   /* shell: left sidebar + content pane */
   .shell { display:grid; grid-template-columns:266px 1fr; gap:1.6rem; align-items:start; }
@@ -481,6 +501,9 @@ function renderPanel(el, job) {
       : (i === job.phaseIndex && job.status === "running") ? "active" : "";
     return `<li class="${cls}">${p}</li>`;
   }).join("");
+  const phaseProgress = el.id === "workflowPanel"
+    ? renderWorkflowPhaseGroups(el, job)
+    : (phases ? `<ol class="phases">${phases}</ol>` : "");
   const tail = (job.status !== "running" && job.returncode !== null && job.returncode !== undefined)
     ? "\n\nexit code: " + job.returncode : "";
   const err = job.error ? "\n[error] " + job.error : "";
@@ -491,13 +514,64 @@ function renderPanel(el, job) {
     `<div class="progress">
        <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
-       ${phases ? `<ol class="phases">${phases}</ol>` : ""}
+       ${phaseProgress}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
      </div>`;
+  el.querySelectorAll(".workflow-phase-group").forEach((group) => {
+    group.addEventListener("toggle", () => {
+      if (group.dataset.state === "active" || group.dataset.state === "failed") return;
+      el._workflowBucketOpen = el._workflowBucketOpen || {};
+      el._workflowBucketOpen[group.dataset.group] = group.open;
+    });
+  });
   if (stick) {
     const out = el.querySelector(".output");
     if (out) out.scrollTop = out.scrollHeight;
   }
+}
+
+const WORKFLOW_PHASE_GROUPS = [
+  { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },
+  { key: "pipeline", title: "Setup Pipeline", prefix: "Pipeline \u00b7", component: "Setup pipeline" },
+  { key: "deploy", title: "Fabric App Deployment", prefix: "Deploy \u00b7", component: "Fabric app deploy" },
+];
+
+function renderWorkflowPhaseGroups(el, job) {
+  const phases = job.phases || [];
+  if (!phases.length) return "";
+  const groups = WORKFLOW_PHASE_GROUPS.map((group) => {
+    const items = phases
+      .map((label, index) => ({ label, index }))
+      .filter((item) => item.label.startsWith(group.prefix));
+    if (!items.length) return "";
+    const completed = items.filter((item) =>
+      job.status === "succeeded" || item.index < (job.phaseIndex || 0)).length;
+    const activeItem = items.find((item) =>
+      job.status === "running" && item.index === (job.phaseIndex || 0));
+    const failed = job.status === "failed" && (
+      job.failedComponent === group.component ||
+      items.some((item) => item.index === (job.phaseIndex || 0))
+    );
+    const state = failed ? "failed"
+      : completed === items.length ? "done"
+      : activeItem ? "active" : "pending";
+    const stateLabel = failed ? "Failed"
+      : state === "done" ? `Complete \u00b7 ${items.length}/${items.length}`
+      : activeItem ? `${escapeHtml(activeItem.label.slice(group.prefix.length).trim())} \u00b7 ${completed}/${items.length}`
+      : `Waiting \u00b7 ${completed}/${items.length}`;
+    const rememberedOpen = el._workflowBucketOpen && el._workflowBucketOpen[group.key];
+    const open = state === "active" || state === "failed" || rememberedOpen === true;
+    const itemHtml = items.map((item) => {
+      const cls = (job.status === "succeeded" || item.index < (job.phaseIndex || 0)) ? "done"
+        : (job.status === "running" && item.index === (job.phaseIndex || 0)) ? "active" : "";
+      return `<li class="${cls}">${escapeHtml(item.label.slice(group.prefix.length).trim())}</li>`;
+    }).join("");
+    return `<details class="workflow-phase-group ${state}" data-group="${group.key}" data-state="${state}"${open ? " open" : ""}>
+      <summary class="workflow-phase-summary"><span class="workflow-phase-name">${group.title}</span><span class="workflow-phase-state">${stateLabel}</span></summary>
+      <ol class="phases">${itemHtml}</ol>
+    </details>`;
+  }).join("");
+  return groups ? `<div class="workflow-phase-groups" aria-label="Workflow stages">${groups}</div>` : "";
 }
 
 function escapeHtml(s) {

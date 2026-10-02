@@ -242,6 +242,15 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn("Syncing backend settings", SERVER.DEPLOY_PHASES)
         self.assertIn("Checking endpoint and CORS readiness", SERVER.DEPLOY_PHASES)
 
+    def test_full_workflow_progress_groups_detailed_phases(self):
+        html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('class="workflow-phase-groups"', html)
+        self.assertIn('title: "GitHub Sync"', html)
+        self.assertIn('title: "Setup Pipeline"', html)
+        self.assertIn('title: "Fabric App Deployment"', html)
+        self.assertIn('el.id === "workflowPanel"', html)
+        self.assertIn('state === "active" || state === "failed"', html)
+
     def test_full_workflow_builds_existing_commands_in_serial_order(self):
         payload = {
             "tenant": "tenant.example",
