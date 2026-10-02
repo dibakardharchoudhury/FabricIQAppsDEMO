@@ -208,6 +208,13 @@
   .workflow-step { padding:.8rem .9rem; border:1px solid var(--border); border-radius:10px;
     background:rgba(148,163,184,.06); color:var(--muted); font-size:.8rem; line-height:1.45; }
   .workflow-step strong { display:block; color:var(--text); margin-bottom:.2rem; }
+  .workflow-config { display:grid; gap:1rem; margin:1rem 0; }
+  .workflow-config-section { padding:1rem; border:1px solid var(--border); border-radius:12px;
+    background:rgba(15,23,42,.28); }
+  .workflow-config-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:.85rem; }
+  .workflow-config-head strong { display:block; color:var(--text); font-size:.9rem; }
+  .workflow-config-head span { color:var(--muted); font-size:.75rem; line-height:1.45; }
+  .workflow-config-section .params { margin-top:.4rem; }
   .param { display:flex; flex-direction:column; gap:.4rem; }
   .param .plabel { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .param .phelp { font-size:.74rem; line-height:1.45; color:#7c8ab0; font-weight:400; margin:-.06rem 0 .1rem; }
@@ -304,15 +311,48 @@
         <span class="ico" style="background:rgba(34,211,238,.14);color:#67e8f9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h5M15 6h5M9 6l2-2m-2 2 2 2M4 12h8M16 12h4M12 12l2-2m-2 2 2 2M4 18h11M19 18h1M15 18l2-2m-2 2 2 2"/></svg></span>
         <h2>Initialize everything in one serial workflow</h2>
       </div>
-      <p class="hint">Uses the values configured in the Sync, Run pipeline, and Deploy app tabs. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
+      <p class="hint">Configure the complete workflow here. Only the tenant and workspace are shared from the target card on the left. Each step starts only after the previous step succeeds. A failure stops the workflow before later changes and identifies the failed component in the combined log.</p>
       <div class="workflow-steps">
         <div class="workflow-step"><strong>1. Sync from GitHub</strong>Imports the selected branch into the target Fabric workspace.</div>
         <div class="workflow-step"><strong>2. Run setup pipeline</strong>Runs Key Vault preflight and <code>01_Pipe_Setup</code>.</div>
         <div class="workflow-step"><strong>3. Deploy Fabric app</strong>Runs the approved deploy orchestrator and endpoint/CORS verification.</div>
       </div>
+      <div class="workflow-config">
+        <section class="workflow-config-section" aria-labelledby="workflowSyncHeading">
+          <div class="workflow-config-head"><div><strong id="workflowSyncHeading">1. GitHub sync</strong><span>Choose the source and connection behavior used by this full workflow.</span></div></div>
+          <div class="grid">
+            <label>Repository (owner/repo or URL)
+              <input id="workflowRepository" type="text" placeholder="owner/repo or https://github.com/owner/repo" /></label>
+            <label>Branch
+              <input id="workflowBranch" type="text" value="main" /></label>
+            <label>Directory (workspace root)
+              <input id="workflowDirectory" type="text" value="/" /></label>
+            <label class="check"><input id="workflowReuseConn" type="checkbox" checked /> Reuse existing connection</label>
+            <label class="check"><input id="workflowKeepConnected" type="checkbox" /> Keep connected after sync</label>
+            <label id="workflowPatWrap" style="display:none">GitHub PAT <span id="workflowPatNote"></span>
+              <input id="workflowPat" type="password" autocomplete="off" placeholder="ghp_… (kept out of history &amp; disk)" /></label>
+          </div>
+          <div class="testrow">
+            <button id="workflowTestBtn" type="button" class="ghost" disabled>Test connection</button>
+            <span id="workflowConnTestResult" class="testresult"></span>
+          </div>
+          <div id="workflowTestPanel"></div>
+        </section>
+        <section class="workflow-config-section" aria-labelledby="workflowPipelineHeading">
+          <div class="workflow-config-head"><div><strong id="workflowPipelineHeading">2. Setup pipeline</strong><span>Complete parameters for Key Vault, agents, alert delivery, and notebook execution.</span></div></div>
+          <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
+        </section>
+        <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Fabric app deployment</strong><span>The deployer discovers the tenant SPA automatically unless you provide its verified client ID.</span></div></div>
+          <div class="grid">
+            <label>SPA client id (optional)
+              <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+          </div>
+        </section>
+      </div>
       <aside class="notice">
-        Configure all required fields in the other tabs first. The GitHub PAT remains environment-only,
-        pipeline parameters remain environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
+        Tenant and workspace come from the target card. The GitHub PAT and pipeline parameters remain
+        environment-only, and deployment uses <code>deploy_fabric_app.py</code>.
       </aside>
       <button id="workflowBtn" class="primary" disabled style="background:linear-gradient(135deg,#0891b2,#2563eb);box-shadow:0 10px 26px -10px rgba(34,211,238,.8)">Sync, run pipeline &amp; deploy app</button>
       <div id="workflowPanel"><pre class="output muted">Combined progress and phase-tagged output will appear here.</pre></div>
@@ -522,16 +562,22 @@ async function runJob(startUrl, body, panelEl, onDone) {
 // ---- validation + wiring ----
 // Result of the most recent "Test connection" run: null (untested), "ok", or "fail".
 let connTestState = null;
+let workflowConnTestState = null;
 
-function setTestResult(cls, text) {
-  const el = $("connTestResult");
+function setTestResult(cls, text, elementId = "connTestResult") {
+  const el = $(elementId);
   el.className = "testresult" + (cls ? " " + cls : "");
   el.textContent = text || "";
 }
 const reuseChecked = () => $("reuseConn").checked;
 const connValue = () => (reuseChecked() ? "yes" : "");
+const workflowReuseChecked = () => $("workflowReuseConn").checked;
+const workflowConnValue = () => (workflowReuseChecked() ? "yes" : "");
 function baseValid() {
   return $("tenant").value.trim() && $("workspace").value.trim() && $("repository").value.includes("/");
+}
+function workflowBaseValid() {
+  return $("tenant").value.trim() && $("workspace").value.trim() && $("workflowRepository").value.includes("/");
 }
 function syncValid() {
   if (!baseValid()) return false;
@@ -539,8 +585,16 @@ function syncValid() {
   if (reuseChecked() && connTestState !== "fail") return true;
   return !!$("pat").value.trim();
 }
+function workflowSyncValid() {
+  if (!workflowBaseValid()) return false;
+  if (workflowReuseChecked() && workflowConnTestState !== "fail") return true;
+  return !!$("workflowPat").value.trim();
+}
 function testValid() {
   return baseValid() && (reuseChecked() || $("pat").value.trim());
+}
+function workflowTestValid() {
+  return workflowBaseValid() && (workflowReuseChecked() || $("workflowPat").value.trim());
 }
 function deleteValid() {
   const dry = $("dryRun").checked;
@@ -563,15 +617,26 @@ function refresh() {
   } else {
     $("patNote").textContent = "";
   }
+  const workflowNeedPat = !workflowReuseChecked() || workflowConnTestState === "fail";
+  $("workflowPatWrap").style.display = workflowNeedPat ? "flex" : "none";
+  $("workflowPat").disabled = false;
+  if (workflowConnTestState === "fail") {
+    $("workflowPatNote").textContent = "\u2014 reuse failed; enter a PAT to create a new connection";
+  } else if (workflowNeedPat) {
+    $("workflowPatNote").textContent = "\u2014 needed to create a reusable connection";
+  } else {
+    $("workflowPatNote").textContent = "";
+  }
   const dry = $("dryRun").checked;
   $("confirmWrap").style.display = dry ? "none" : "flex";
   $("deleteBtn").textContent = dry ? "List items (dry run)" : "Delete everything";
   $("deleteBtn").className = dry ? "primary" : "destructive";
   $("syncBtn").disabled = !syncValid();
   $("testBtn").disabled = !testValid();
+  $("workflowTestBtn").disabled = !workflowTestValid();
   $("deleteBtn").disabled = !deleteValid();
   $("deployBtn").disabled = !deployValid();
-  $("workflowBtn").disabled = !(syncValid() && pipelineValid() && deployValid());
+  $("workflowBtn").disabled = !(workflowSyncValid() && workflowPipelineValid() && deployValid());
   const pipeBtn = $("pipelineBtn");
   if (pipeBtn) pipeBtn.disabled = !pipelineValid();
 }
@@ -580,6 +645,11 @@ document.querySelectorAll("input[type=checkbox]").forEach((el) => el.addEventLis
 // Any change to a connection-affecting field invalidates the previous test result.
 ["repository", "branch", "directory", "tenant", "workspace", "pat"].forEach((id) =>
   $(id).addEventListener("input", () => { connTestState = null; setTestResult("", ""); }));
+["workflowRepository", "workflowBranch", "workflowDirectory", "tenant", "workspace", "workflowPat"].forEach((id) =>
+  $(id).addEventListener("input", () => {
+    workflowConnTestState = null;
+    setTestResult("", "", "workflowConnTestResult");
+  }));
 
 let testing = false;
 async function runTest() {
@@ -606,6 +676,32 @@ async function runTest() {
   });
 }
 $("testBtn").addEventListener("click", runTest);
+let workflowTesting = false;
+async function runWorkflowTest() {
+  if (workflowTesting || !workflowTestValid()) return;
+  workflowTesting = true;
+  $("workflowTestBtn").disabled = true;
+  workflowConnTestState = null;
+  setTestResult("running", "Testing\u2026", "workflowConnTestResult");
+  await runJob("/api/test-connection", {
+    tenant: $("tenant").value, workspace: $("workspace").value,
+    repository: $("workflowRepository").value, branch: $("workflowBranch").value,
+    directory: $("workflowDirectory").value, connectionId: workflowConnValue(),
+    pat: $("workflowPat").value,
+  }, $("workflowTestPanel"), (job) => {
+    workflowTesting = false;
+    if (job && job.returncode === 0) {
+      workflowConnTestState = "ok";
+      setTestResult("ok", "\u2713 Connection verified \u2014 it can reach GitHub.", "workflowConnTestResult");
+    } else {
+      workflowConnTestState = "fail";
+      setTestResult("error", "\u2717 Could not connect \u2014 enter a GitHub PAT below and test again.", "workflowConnTestResult");
+      $("workflowPat").focus();
+    }
+    refresh();
+  });
+}
+$("workflowTestBtn").addEventListener("click", runWorkflowTest);
 // Auto-verify a saved connection once we have enough to test it.
 function maybeAutoTest() {
   if (reuseChecked() && connTestState === null && !testing && testValid()) runTest();
@@ -619,9 +715,22 @@ $("reuseConn").addEventListener("change", () => {
     else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026");
   }
 });
+$("workflowReuseConn").addEventListener("change", () => {
+  workflowConnTestState = null;
+  setTestResult("", "", "workflowConnTestResult");
+  refresh();
+  if (workflowReuseChecked()) {
+    if (workflowTestValid()) runWorkflowTest();
+    else setTestResult("running", "Fill tenant, workspace & repository, then it tests automatically\u2026", "workflowConnTestResult");
+  }
+});
 // Finishing an edit (blur) on an identity/repo field re-runs the reuse test.
 ["tenant", "workspace", "repository", "branch", "directory"].forEach((id) =>
   $(id).addEventListener("change", maybeAutoTest));
+["tenant", "workspace", "workflowRepository", "workflowBranch", "workflowDirectory"].forEach((id) =>
+  $(id).addEventListener("change", () => {
+    if (workflowReuseChecked() && workflowConnTestState === null && !workflowTesting && workflowTestValid()) runWorkflowTest();
+  }));
 
 $("syncBtn").addEventListener("click", async () => {
   $("syncBtn").disabled = true;
@@ -653,16 +762,16 @@ $("workflowBtn").addEventListener("click", async () => {
   await runJob("/api/full-workflow", {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
-    repository: $("repository").value,
-    branch: $("branch").value,
-    directory: $("directory").value,
-    connectionId: connValue(),
-    keepConnected: $("keepConnected").checked,
-    pat: $("pat").value,
+    repository: $("workflowRepository").value,
+    branch: $("workflowBranch").value,
+    directory: $("workflowDirectory").value,
+    connectionId: workflowConnValue(),
+    keepConnected: $("workflowKeepConnected").checked,
+    pat: $("workflowPat").value,
     pipeline: "01_Pipe_Setup",
-    parameters: collectPipelineParams(),
-    clientId: $("deployClientId").value,
-  }, $("workflowPanel"), () => { $("pat").value = ""; refresh(); });
+    parameters: collectPipelineParams("wf_pp_"),
+    clientId: $("workflowDeployClientId").value,
+  }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
 });
 
 $("restartBtn").addEventListener("click", async () => {
@@ -725,8 +834,10 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 // the form stays in sync with the pipeline without duplicating it in the page.
 let pipelineSpec = [];
 function syncPipelineWorkspace() {
-  const field = $("pp_workspace_id");
-  if (field) field.value = $("workspace").value;
+  ["pp_workspace_id", "wf_pp_workspace_id"].forEach((id) => {
+    const field = $(id);
+    if (field) field.value = $("workspace").value;
+  });
 }
 async function loadPipelineParams() {
   try {
@@ -747,19 +858,40 @@ async function loadPipelineParams() {
       <input id="pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${p.name === "alert_email_to" ? "required" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
     </div>`;
   }).join("");
+  $("workflowPipelineFields").innerHTML = pipelineSpec.map((p) => {
+    const wide = (p.name === "ops_agent_teams_channel_id" || p.name === "key_vault_uri" || p.name === "ops_agent_run_as_user" || p.name === "alert_email_to");
+    const numeric = p.type === "int";
+    return `<div class="param${wide ? " wide" : ""}">
+      <span class="plabel">${escapeHtml(p.label)}</span>
+      <span class="phelp">${escapeHtml(p.help)}</span>
+      <input id="wf_pp_${p.name}" type="text" ${numeric ? 'inputmode="numeric"' : ""} ${p.name === "workspace_id" ? "readonly" : ""} ${p.name === "alert_email_to" ? "required" : ""} value="${escapeHtml(p.default || "")}" placeholder="${escapeHtml(p.default || "")}" />
+    </div>`;
+  }).join("");
   syncPipelineWorkspace();
   // Re-run validation whenever a pipeline field changes.
-  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) el.addEventListener("input", refresh); });
+  pipelineSpec.forEach((p) => {
+    ["pp_", "wf_pp_"].forEach((prefix) => {
+      const el = $(prefix + p.name);
+      if (el) el.addEventListener("input", refresh);
+    });
+  });
   refresh();
 }
-function collectPipelineParams() {
+function collectPipelineParams(prefix = "pp_") {
   const out = {};
-  pipelineSpec.forEach((p) => { const el = $("pp_" + p.name); if (el) out[p.name] = el.value; });
+  pipelineSpec.forEach((p) => { const el = $(prefix + p.name); if (el) out[p.name] = el.value; });
   return out;
 }
 function pipelineValid() {
   const keyVault = $("pp_key_vault_uri");
   const alertEmail = $("pp_alert_email_to");
+  return $("tenant").value.trim() && $("workspace").value.trim()
+    && keyVault && keyVault.value.trim()
+    && alertEmail && alertEmail.value.trim();
+}
+function workflowPipelineValid() {
+  const keyVault = $("wf_pp_key_vault_uri");
+  const alertEmail = $("wf_pp_alert_email_to");
   return $("tenant").value.trim() && $("workspace").value.trim()
     && keyVault && keyVault.value.trim()
     && alertEmail && alertEmail.value.trim();

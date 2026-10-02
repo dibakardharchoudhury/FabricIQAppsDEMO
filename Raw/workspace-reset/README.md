@@ -235,13 +235,19 @@ the sidebar. Its workspace parameter mirrors that value, and the runner resolves
 to the canonical GUID before starting `01_Pipe_Setup`.
 
 The **Full workflow** tab composes the existing actions without replacing their
-implementations:
+implementations. It is self-contained: only the target tenant and workspace are
+shared from the sidebar; Git, pipeline, and app-deployment values are entered on
+the Full workflow screen itself.
 
-1. **Sync from GitHub** using the Sync tab's repository, branch, directory, and
-   reusable connection/PAT settings.
-2. **Run `01_Pipe_Setup`** using the Pipeline tab's complete parameter set.
-3. **Deploy the Fabric app** using `deploy_fabric_app.py` and the Deploy tab's
-   optional SPA client ID.
+1. **Sync from GitHub** using its own repository, branch, directory, reusable
+   connection/PAT settings, and connection test.
+2. **Run `01_Pipe_Setup`** using its own complete parameter set.
+3. **Deploy the Fabric app** using `deploy_fabric_app.py` and its own optional
+   SPA client ID.
+
+The individual Sync, Pipeline, and Deploy tabs remain available for running or
+troubleshooting a single component; their values are not prerequisites for a
+Full workflow run.
 
 The steps run strictly in order under one exclusive job. Each child keeps its
 existing validation, timeout, environment-only secrets, and live output. If a

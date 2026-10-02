@@ -363,6 +363,48 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertLess(page.index('id="tabDeploy"'), page.index('id="tabWorkflow"'))
         self.assertLess(page.index('id="tabWorkflow"'), page.index('id="tabDelete"'))
 
+    def test_full_workflow_page_is_self_contained_except_for_target(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        workflow_pane = page[
+            page.index('<section id="paneWorkflow"'):
+            page.index('<section id="paneSync"')
+        ]
+        for field_id in (
+            "workflowRepository",
+            "workflowBranch",
+            "workflowDirectory",
+            "workflowReuseConn",
+            "workflowKeepConnected",
+            "workflowPat",
+            "workflowTestBtn",
+            "workflowPipelineFields",
+            "workflowDeployClientId",
+        ):
+            self.assertIn(f'id="{field_id}"', workflow_pane)
+        self.assertIn("Only the tenant and workspace are shared", workflow_pane)
+        self.assertNotIn("Configure all required fields in the other tabs", workflow_pane)
+        self.assertIn('id="wf_pp_${p.name}"', page)
+
+    def test_full_workflow_submission_uses_only_its_own_fields(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        handler = page[
+            page.index('$("workflowBtn").addEventListener'):
+            page.index('$("restartBtn").addEventListener')
+        ]
+        for field_id in (
+            "workflowRepository",
+            "workflowBranch",
+            "workflowDirectory",
+            "workflowKeepConnected",
+            "workflowPat",
+            "workflowDeployClientId",
+        ):
+            self.assertIn(f'$("{field_id}")', handler)
+        self.assertIn('workflowConnValue()', handler)
+        self.assertIn('collectPipelineParams("wf_pp_")', handler)
+        self.assertNotIn('$("repository")', handler)
+        self.assertNotIn('$("deployClientId")', handler)
+
     def test_deploy_page_explains_portable_backend_readiness_contract(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn("Workspace or capacity changes are detected automatically", page)
