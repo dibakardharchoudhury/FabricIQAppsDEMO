@@ -34,6 +34,11 @@ Lakehouse STID and Eventhouse telemetry are live-only browser state. The app doe
 source in local storage, removes legacy STID/telemetry browser caches on startup, and clears the
 corresponding UI data when a refresh fails or the source is unavailable. Rayfin SQL remains
 independent and can continue serving operational records while Fabric analytical sources are rebuilt.
+Within the active SPA, the shared data provider and memoized projections reuse STID and telemetry
+across the map, Knowledge Graph, and digital twin. Weather uses a five-minute, source-keyed in-memory
+cache with concurrent-request coalescing, forced-refresh bypass, and failure invalidation. Ontology
+definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
+analytical caches survive a full page reload.
 
 The **Knowledge Graph** visualizes this composition as a scoped Cytoscape property graph. It defaults
 to the selected turbine and synchronizes that selection with Overview, Real-Time Telemetry, Digital

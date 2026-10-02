@@ -64,6 +64,19 @@ This repo already automates deployment. Before doing ANY deploy / new-tenant / r
 The one-shot Python orchestrator resolves/downloads Node 24 and invokes the repository-local Rayfin
 CLI itself. Agents must not wrap or reconstruct those commands.
 
+## Hydro Operations runtime data caching
+
+- Never persist Lakehouse STID, Eventhouse telemetry, weather, Ontology definitions, or native graph
+  results in `localStorage`, IndexedDB, a service worker, or a bundled fallback.
+- Performance caches for analytical data must remain in memory inside the active SPA, be keyed by
+  authoritative workspace/source identity, use polling or a bounded TTL, coalesce concurrent reads,
+  and invalidate on missing sources, identity/configuration changes, or failed refreshes. Never
+  report a failed source as connected or render its previous values after a failed read.
+- Keep Rayfin SQL operational state independent. SQL-backed work orders, inspections, notifications,
+  spare parts, and 3D models may remain queryable when Lakehouse/Eventhouse sources are unavailable.
+- This runtime policy adds no local-deployer parameters and does not change notebook, Data Agent, or
+  Operations Agent provisioning.
+
 ## Git
 `main` is wired to Fabric git integration — `git fetch` and merge any Fabric commit-back before
 pushing. Commit AND push after changes. `rayfin/.env*` and `.deployments.json*` are gitignored.

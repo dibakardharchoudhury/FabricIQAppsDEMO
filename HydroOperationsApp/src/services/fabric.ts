@@ -634,6 +634,10 @@ export type WeatherData = {
   forecasts: WeatherForecast[]
 }
 
+const WEATHER_DATA_CACHE_TTL_MS = 5 * 60_000
+let weatherDataCache: { key: string; expiresAt: number; value: WeatherData } | undefined
+let weatherDataPromise: { key: string; promise: Promise<WeatherData> } | undefined
+
 type WeatherPayload = {
   data?: {
     locations?: { items?: WeatherLocation[] }
@@ -690,9 +694,24 @@ export async function queryStid(): Promise<StidData | null> {
 
 export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
   const config = await ensureConfig(forceRefresh, forceRefresh)
-  if (!config?.graphqlUrl) return null
+  if (!config?.graphqlUrl) {
+    weatherDataCache = undefined
+    weatherDataPromise = undefined
+    return null
+  }
   const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)
-  if (!token) return null
+  if (!token) {
+    weatherDataCache = undefined
+    weatherDataPromise = undefined
+    return null
+  }
+  const key = `${requireWorkspaceId()}:${config.graphqlUrl}`
+  if (forceRefresh) weatherDataCache = undefined
+  if (!forceRefresh && weatherDataCache?.key === key && weatherDataCache.expiresAt > Date.now()) {
+    return weatherDataCache.value
+  }
+  if (!forceRefresh && weatherDataPromise?.key === key) return weatherDataPromise.promise
+  const promise = (async () => {
   // The serving tables hold only the newest issue, pivoted one row per valid time, so the
   // whole page is a few hundred rows instead of the long tables' unbounded issue history.
   const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
@@ -712,13 +731,23 @@ export async function queryWeatherData(forceRefresh = false): Promise<WeatherDat
   if (!response.ok) throw new Error(`Weather query failed (${response.status}).`)
   const payload = JSON.parse(text) as WeatherPayload
   if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
-  return {
+  const value = {
     locations: payload.data?.locations?.items ?? [],
     areas: payload.data?.areas?.items ?? [],
     variables: payload.data?.variables?.items ?? [],
     observations: payload.data?.observations?.items ?? [],
     forecasts: payload.data?.forecasts?.items ?? [],
   }
+  weatherDataCache = { key, expiresAt: Date.now() + WEATHER_DATA_CACHE_TTL_MS, value }
+  return value
+  })().catch(error => {
+    weatherDataCache = undefined
+    throw error
+  }).finally(() => {
+    if (weatherDataPromise?.promise === promise) weatherDataPromise = undefined
+  })
+  weatherDataPromise = { key, promise }
+  return promise
 }
 
 export async function startStreamingPipeline(onStatus?: JobProgress) {

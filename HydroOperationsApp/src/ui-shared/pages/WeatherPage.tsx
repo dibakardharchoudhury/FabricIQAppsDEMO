@@ -67,12 +67,13 @@ export function WeatherPage() {
   }
 
   const load = async () => {
-    setState('loading'); setError(undefined)
+    setWeather(undefined); setState('loading'); setError(undefined)
     try {
       const data = await queryWeatherData(true)
-      if (!data) { setState('unavailable'); return }
+      if (!data) { setWeather(undefined); setState('unavailable'); return }
       applyWeather(data)
     } catch (reason) {
+      setWeather(undefined)
       setError(reason instanceof Error ? reason.message : 'Weather data is unavailable.')
       setState('error')
     }
@@ -83,9 +84,10 @@ export function WeatherPage() {
     void queryWeatherData().then(data => {
       if (cancelled) return
       if (data) applyWeather(data)
-      else setState('unavailable')
+      else { setWeather(undefined); setState('unavailable') }
     }).catch(reason => {
       if (cancelled) return
+      setWeather(undefined)
       setError(reason instanceof Error ? reason.message : 'Weather data is unavailable.')
       setState('error')
     })
