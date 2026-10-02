@@ -23,7 +23,7 @@
 
 # MARKDOWN ********************
 
-# # Operations Agent over the selected Ontology v2
+# # Operations Agents over Ontology v2 and Eventhouse
 #
 # `enabled` (default) and `auto` both attempt the complete deployment. Only explicit
 # `disabled` skips it. Live ontology generation and source identity are checked before writes.
@@ -32,8 +32,10 @@
 # can report success. REST OperationsAgentV1 is an agent format, not ontology generation.
 # Product/API failures are persisted and raised, never inferred from a static issue gate.
 #
-# The agent remains STOPPED by default. Successful definition readback means configured,
-# not that monitoring, ontology queries, Teams delivery, or email delivery were exercised.
+# The existing agent retains its Ontology v2 source and instructions. A separate Operations
+# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`; Fabric generates
+# its KQL rules in the Build page. Both agents remain STOPPED by default. Successful definition
+# readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
 
@@ -74,12 +76,18 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # Target agent to (re)deploy. The full definition is embedded in CELL 1 (byte-exact from the
 # working New_RTI_Demo_OpsAgent_V3 agent, recovered from git history — no live agent is read).
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
+eventhouse_ops_agent_name = first_setting(
+    "eventhouse_ops_agent_name", default="RTI_Demo_OpsAgent_Eventhouse")
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
 # `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name and
 # binds it as the Knowledge data source ({id: plain, workspaceId: real}) — no id is hard-coded. Set
 # ops_agent_ontology_datasource_id only to FORCE a specific plain ontology item id.
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 ops_agent_ontology_datasource_id = first_setting("ops_agent_ontology_datasource_id", default="")
+eventhouse_kql_database_name = first_setting(
+    "fabric_kql_db_name", "kql_database_name", required=True)
+eventhouse_table_name = first_setting(
+    "fabric_eventhouse_table", "eventhouse_table_name", required=True)
 
 # Email pipeline: CELL 1 always creates the `Pipe_SendEmailAlert` Data Pipeline in THIS workspace
 # from the embedded (git-synced) definition, or reuses the existing pipeline with that name. It is
@@ -127,8 +135,10 @@ print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
 print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
+print("   Eventhouse agent  :", eventhouse_ops_agent_name)
 print("   Ontology name     :", ontology_name)
 print("   Ontology dsrc     :", ops_agent_ontology_datasource_id or "(resolve from ontology by name)")
+print("   Eventhouse source :", f"{eventhouse_kql_database_name}.{eventhouse_table_name}")
 print("   Email pipeline    : (create/reuse Pipe_SendEmailAlert by name in this workspace)")
 print("   Run as (expected) :", ops_agent_run_as_user or "(the user running this notebook)")
 print("   Teams team id     :", ops_agent_teams_team_id)
@@ -311,6 +321,16 @@ def resolve_ontology_id() -> str:
             "Complete the v2-only ontology setup and disambiguate its folder before retrying."
         )
     return candidates[0]["id"]
+
+
+def resolve_kql_database_id() -> str:
+    item = find_item_by_name(eventhouse_kql_database_name, "KQLDatabase")
+    if not item:
+        raise RuntimeError(
+            f"Expected one KQL database named {eventhouse_kql_database_name!r} "
+            f"in configured target folder {target_folder_id!r}."
+        )
+    return item["id"]
 
 
 # Name + definition of the git-synced Data Pipeline (Pipe_SendEmailAlert). Parameters
@@ -735,6 +755,28 @@ INSTRUCTIONS = '''*** Goals ***
 
 9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
+EVENTHOUSE_INSTRUCTIONS = '''*** Goals ***
+- Monitor OPC UA signal quality by using the "OPCUAEvents" Eventhouse table.
+- Notify operations when an OPC UA signal has failed or degraded.
+- Recommend an email alert containing the available signal context.
+
+*** Operational Instructions ***
+1. Monitor the "OPCUAEvents" table, using "opcua_node_id" to identify each signal.
+2. Create an alert when the current value of "quality" equals "BAD".
+3. Create an alert when the current value of "quality" equals "UNCERTAIN".
+4. Include "opcua_node_id", "quality", "value", and "event_time" in the alert context.
+5. For the email action, use "opcua_node_id" as "equipment_id" and leave unavailable
+   "facility_id" and "unit" values empty.
+6. For every generated alert, recommend the "Send Email Alert!" action.
+
+*** Semantic Instructions ***
+1. Each "OPCUAEvents" row represents an OPC UA signal event.
+2. "opcua_node_id" identifies the signal.
+3. "quality" is the OPC UA signal quality.
+4. "value" is the measured value.
+5. "event_time" is the event timestamp.
+6. Use only columns available in "OPCUAEvents" when creating alert context.'''
+
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
 # The ontology data source below is a placeholder; at deploy time it is replaced by the ontology
@@ -831,6 +873,24 @@ def build_configurations(should_run: Optional[bool] = None,
                     })
     if not keep_playbook:
         config.pop("playbook", None)
+    return config
+
+
+def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
+                                    team_id: str, channel_id: str) -> dict:
+    config = build_configurations(
+        should_run=False, copy_playbook=False, team_id=team_id, channel_id=channel_id,
+        pipeline_id=pipeline_id,
+    )
+    config["configuration"]["instructions"] = EVENTHOUSE_INSTRUCTIONS
+    config["configuration"].pop("messageDestination", None)
+    config["configuration"]["dataSources"] = {
+        kql_database_id: {
+            "id": kql_database_id,
+            "type": "KustoDatabase",
+            "workspaceId": workspace_id,
+        }
+    }
     return config
 
 
@@ -957,6 +1017,23 @@ def verify_operations_readback(agent_id: str, ontology_id: str, configuration: d
     require_retained(configuration, actual)
 
 
+def verify_eventhouse_operations_readback(agent_id: str, kql_database_id: str,
+                                          configuration: dict) -> None:
+    actual = read_json_part(get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
+    expected_source = {
+        kql_database_id: {
+            "id": kql_database_id,
+            "type": "KustoDatabase",
+            "workspaceId": workspace_id,
+        }
+    }
+    if actual.get("configuration", {}).get("dataSources") != expected_source:
+        raise RuntimeError("Eventhouse Operations Agent readback changed the KQL database source.")
+    if actual.get("shouldRun") is not False:
+        raise RuntimeError("Eventhouse Operations Agent must remain stopped after deployment.")
+    require_retained(configuration, actual)
+
+
 def deploy_operations_agent(ontology_id: str) -> dict:
     if get_ontology_generation(ontology_id) != 2:
         raise RuntimeError("Operations Agent provisioning requires the selected live v2 ontology.")
@@ -993,10 +1070,36 @@ def deploy_operations_agent(ontology_id: str) -> dict:
             "ops_agent_should_run": str(ops_agent_should_run).lower()}
 
 
+def deploy_eventhouse_operations_agent(pipeline_id: str) -> dict:
+    if eventhouse_table_name != "OPCUAEvents":
+        raise RuntimeError(
+            f"Eventhouse Operations Agent requires table 'OPCUAEvents'; "
+            f"configured table is {eventhouse_table_name!r}."
+        )
+    kql_database_id = resolve_kql_database_id()
+    agent_id = create_operations_agent(
+        eventhouse_ops_agent_name,
+        f"Monitors {eventhouse_kql_database_name}.{eventhouse_table_name} for OPC UA quality alerts.",
+    ).get("id")
+    if not agent_id:
+        raise RuntimeError("Eventhouse Operations Agent creation returned no id.")
+    configuration = build_eventhouse_configurations(
+        kql_database_id, pipeline_id, ops_agent_teams_team_id, ops_agent_teams_channel_id)
+    update_operations_agent_definition(agent_id, configuration)
+    verify_eventhouse_operations_readback(agent_id, kql_database_id, configuration)
+    return {
+        "eventhouse_ops_agent_id": agent_id,
+        "eventhouse_ops_agent_name": eventhouse_ops_agent_name,
+        "eventhouse_ops_agent_kql_database_id": kql_database_id,
+        "eventhouse_ops_agent_should_run": "false",
+    }
+
+
 result = check_agent_capability()
 persist_agent_status("deploying", "Provisioning the complete Operations Agent and email pipeline.")
 try:
     persist = deploy_operations_agent(result["ontology_id"])
+    persist.update(deploy_eventhouse_operations_agent(persist["email_pipeline_id"]))
     from delta.tables import DeltaTable
     source = spark.createDataFrame(
         [{"setting_name": key, "setting_value": value} for key, value in persist.items()]
@@ -1004,9 +1107,10 @@ try:
     (DeltaTable.forName(spark, settings_table_name).alias("target")
      .merge(source.alias("source"), "target.setting_name = source.setting_name")
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
-    reason = ("Complete configuration, playbook and email pipeline retained by readback; runtime actions not tested."
+    reason = ("Ontology configuration/playbook and Eventhouse configuration retained by readback; "
+              "both agents stopped. Generate the Eventhouse playbook in the Build page; runtime actions not tested."
               if ops_agent_copy_playbook else
-              "Configuration and email pipeline retained by readback; generate the playbook in the portal as requested. Runtime actions not tested.")
+              "Ontology and Eventhouse configurations retained by readback; generate both playbooks in the portal as requested. Runtime actions not tested.")
     persist_agent_status("configured", reason)
     result.update(status="configured", reason=reason)
 except Exception as exc:

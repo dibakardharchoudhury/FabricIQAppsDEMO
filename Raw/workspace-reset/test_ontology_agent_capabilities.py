@@ -180,7 +180,7 @@ class CapabilityTests(unittest.TestCase):
             self.assertNotEqual(payload["status"], "ready")
 
     def operations_namespace(self):
-        ns = functions("010", "build_configurations")
+        ns = functions("010", "build_configurations", "build_eventhouse_configurations")
         names = {"EMBEDDED_OPS_CONFIG_B64", "ACTION_PARAMETERS"}
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
@@ -220,6 +220,25 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(manual, {key: value for key, value in config.items() if key != "playbook"})
         ns["ops_agent_copy_playbook"] = False
         self.assertNotIn("playbook", ns["build_configurations"]())
+
+    def test_eventhouse_operations_configuration_is_separate_and_stopped(self):
+        ns = self.operations_namespace()
+        ns["EVENTHOUSE_INSTRUCTIONS"] = "Monitor OPCUAEvents."
+        config = ns["build_eventhouse_configurations"](
+            "kql-database", "email-pipeline", "team", "channel")
+        self.assertFalse(config["shouldRun"])
+        self.assertNotIn("playbook", config)
+        self.assertEqual(config["configuration"]["instructions"], "Monitor OPCUAEvents.")
+        self.assertEqual(config["configuration"]["dataSources"], {
+            "kql-database": {
+                "id": "kql-database",
+                "type": "KustoDatabase",
+                "workspaceId": "workspace",
+            },
+        })
+        self.assertNotIn("messageDestination", config["configuration"])
+        action = next(iter(config["configuration"]["actions"].values()))
+        self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
 
     def test_operations_auth_selects_notebook_pbi_token(self):
         get_token = Mock(return_value="offline-token")
