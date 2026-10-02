@@ -40,10 +40,16 @@ cache with concurrent-request coalescing, forced-refresh bypass, and failure inv
 definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
 analytical caches survive a full page reload.
 
-On a full reload, STID and latest telemetry use the exact GraphQL URL, Eventhouse query URI, and KQL
-database injected by the verified deployment before attempting slower workspace discovery. The live
-GraphQL/KQL requests still determine whether those sources exist and are queryable: missing, deleted,
-or failed sources clear the corresponding UI data rather than displaying a persisted snapshot.
+On a full reload, STID, Weather, and latest telemetry use the exact GraphQL URL, Eventhouse query
+URI, and KQL database injected by the verified deployment before attempting slower workspace
+discovery. The live GraphQL/KQL requests still determine whether those sources exist and are
+queryable: missing, deleted, or failed sources clear the corresponding UI data rather than displaying
+a persisted snapshot.
+
+The entry point loads only the selected UI shell and active page. Weather/Leaflet, telemetry,
+Copilot, Digital Twin, Knowledge Graph, maintenance, and administration code are fetched on demand.
+The initial HTML includes a lightweight branded fallback, uses local system fonts, and does not wait
+on a third-party font stylesheet before showing application-owned content.
 
 The **Knowledge Graph** visualizes this composition as a scoped property graph. Its performant
 Cytoscape 2D analysis view is the default; an optional, lazy-loaded WebGL 3D view adds orbit controls,

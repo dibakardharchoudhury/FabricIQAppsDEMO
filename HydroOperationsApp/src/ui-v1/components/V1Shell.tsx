@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V1_TABS, resolveV1Tab, type V1Tab } from '../navigation'
 import { TabViewActions } from '../../ui-shared/components/TabViewActions'
@@ -75,7 +75,9 @@ function V1ShellContent() {
     </nav>
 
     <main className="v2-main">
-      <ActivePage />
+      <Suspense fallback={<div className="v2-page-loading"><span />Loading {activeTab.title}…</div>}>
+        <ActivePage />
+      </Suspense>
     </main>
   </div>
 }

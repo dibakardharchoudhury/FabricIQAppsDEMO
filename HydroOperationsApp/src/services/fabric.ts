@@ -698,8 +698,8 @@ export async function queryStid(): Promise<StidData | null> {
 }
 
 export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
-  const config = await ensureConfig(forceRefresh, forceRefresh)
-  if (!config?.graphqlUrl) {
+  const graphqlUrl = configuredGraphqlUrl ?? (await ensureConfig(forceRefresh, forceRefresh))?.graphqlUrl
+  if (!graphqlUrl) {
     weatherDataCache = undefined
     weatherDataPromise = undefined
     return null
@@ -710,7 +710,7 @@ export async function queryWeatherData(forceRefresh = false): Promise<WeatherDat
     weatherDataPromise = undefined
     return null
   }
-  const key = `${requireWorkspaceId()}:${config.graphqlUrl}`
+  const key = `${requireWorkspaceId()}:${graphqlUrl}`
   if (forceRefresh) weatherDataCache = undefined
   if (!forceRefresh && weatherDataCache?.key === key && weatherDataCache.expiresAt > Date.now()) {
     return weatherDataCache.value
@@ -727,8 +727,9 @@ export async function queryWeatherData(forceRefresh = false): Promise<WeatherDat
     observations: weather_latest_observations(first: 100000) { items { source_id location_id observed_at_utc ${values} } }
     forecasts: weather_latest_forecasts(first: 100000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
   }`
-  const response = await fetch(config.graphqlUrl, {
+  const response = await fetch(graphqlUrl, {
     method: 'POST',
+    cache: 'no-store',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
   })

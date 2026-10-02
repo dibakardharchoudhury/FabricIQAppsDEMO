@@ -175,6 +175,14 @@ export function knowledgeGraphScope(graph: KnowledgeGraph, scope: 'asset' | 'fac
   return visible
 }
 
+export function knowledgeGraphFocusId(
+  scope: 'asset' | 'facility' | 'all',
+  explicitSelectedId?: string,
+  defaultAssetId?: string,
+): string | undefined {
+  return explicitSelectedId ?? (scope === 'asset' ? defaultAssetId : undefined)
+}
+
 export function buildKnowledgeGraph(input: KnowledgeGraphInput): KnowledgeGraph {
   const unavailable = (error: string): KnowledgeGraph => ({ nodes: [], edges: [], error })
   const contract = input.ontology

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract, type OntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph, type OntologyGraph } from '../src/services/ontologyGraph.ts'
-import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 import { createOntologyCache } from '../src/services/ontologyCache.ts'
 
@@ -407,6 +407,14 @@ test('native scopes work without any GraphQL instance data and follow graph rath
   assert.ok(facility.has('model:M1'))
   assert.ok(!facility.has('facility:F2'))
   assert.equal(knowledgeGraphScope(graph, 'all'), undefined)
+})
+
+test('facility and all scopes do not dim nodes until the user explicitly selects one', () => {
+  assert.equal(knowledgeGraphFocusId('asset', undefined, 'equipment:E1'), 'equipment:E1')
+  assert.equal(knowledgeGraphFocusId('facility', undefined, 'equipment:E1'), undefined)
+  assert.equal(knowledgeGraphFocusId('all', undefined, 'equipment:E1'), undefined)
+  assert.equal(knowledgeGraphFocusId('facility', 'equipment:E2', 'equipment:E1'), 'equipment:E2')
+  assert.equal(knowledgeGraphFocusId('all', 'facility:F2', 'equipment:E1'), 'facility:F2')
 })
 
 test('discovers renamed Ontology without selecting a Graph Model', () => {

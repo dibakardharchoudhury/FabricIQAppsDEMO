@@ -7,7 +7,7 @@ import { DigitalTwinTree } from '../components/digitalTwin/DigitalTwinTree'
 import { buildDigitalTwinTree, pathToAsset } from '../components/digitalTwin/digitalTwinTreeModel'
 import { KnowledgeGraphCanvas, type GraphLayout } from '../components/knowledgeGraph/KnowledgeGraphCanvas'
 import type { KnowledgeGraph3DController } from '../components/knowledgeGraph/KnowledgeGraph3DCanvas'
-import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
+import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeNode, type KnowledgeNodeType } from '../knowledgeGraphModel'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 import { useExpandedView } from '../hooks/useExpandedView'
 import { useTheme } from '../hooks/useTheme'
@@ -151,12 +151,15 @@ export function KnowledgeGraphPage() {
   }), [data.assetModels, data.inspections, data.notifications, data.ontology, data.orders, data.stid, data.telemetry, ontology, ontologyGraph])
 
   const sharedSelectedId = data.selectedAssetId ? `equipment:${data.selectedAssetId}` : undefined
-  const effectiveSelectedId = selection && graph.nodes.some(item => item.id === selection.nodeId)
+  const explicitSelectedId = selection && graph.nodes.some(item => item.id === selection.nodeId)
     && (selection.assetId === data.selectedAssetId || graph.nodes.find(item => item.id === selection.nodeId)?.equipmentId === data.selectedAssetId)
     ? selection.nodeId
-    : graph.nodes.some(item => item.id === sharedSelectedId)
-      ? sharedSelectedId
-      : graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
+    : undefined
+  const defaultSelectedId = graph.nodes.some(item => item.id === sharedSelectedId)
+    ? sharedSelectedId
+    : graph.nodes.find(item => item.type === 'equipment')?.id ?? graph.nodes[0]?.id
+  const effectiveSelectedId = knowledgeGraphFocusId(scope, explicitSelectedId, defaultSelectedId)
+  const scopeAnchorId = effectiveSelectedId ?? defaultSelectedId
 
   const treeStations = useMemo(() => buildDigitalTwinTree({
     facilities: graph.nodes.filter(node => node.type === 'facility').map(node => ({ facility_id: node.entityId, facility_name: node.label })),
@@ -164,11 +167,11 @@ export function KnowledgeGraphPage() {
       equipment_id: node.entityId, facility_id: node.facilityId!, system_id: '', tag: node.label,
     })),
   }), [graph.nodes])
-  const selectedAssetId = graph.nodes.find(node => node.id === effectiveSelectedId)?.equipmentId ?? data.selectedAssetId
+  const selectedAssetId = graph.nodes.find(node => node.id === scopeAnchorId)?.equipmentId ?? data.selectedAssetId
   const revealPath = useMemo(() => pathToAsset(treeStations, selectedAssetId), [selectedAssetId, treeStations])
   const expansion = useTreeExpansion(revealPath)
   const assetStatuses = useMemo(() => new Map(graph.nodes.filter(node => node.type === 'equipment').map(node => [node.entityId, node.status])), [graph.nodes])
-  const scopeIds = useMemo(() => knowledgeGraphScope(graph, scope, effectiveSelectedId, selectedAssetId), [effectiveSelectedId, graph, scope, selectedAssetId])
+  const scopeIds = useMemo(() => knowledgeGraphScope(graph, scope, scopeAnchorId, selectedAssetId), [graph, scope, scopeAnchorId, selectedAssetId])
   const visibleNodes = useMemo(() => graph.nodes.filter(node => {
     const matchesQuery = matchesKnowledgeNodeQuery(node, deferredQuery)
     const matchesScope = Boolean(deferredQuery) || !scopeIds || scopeIds.has(node.id)
@@ -184,10 +187,15 @@ export function KnowledgeGraphPage() {
     if (node?.facilityId && node.equipmentId) data.actions.selectAsset(node.facilityId, node.equipmentId)
   }
   const selectAsset = (facilityId: string, assetId: string) => {
-    setScope('asset')
     const node = graph.nodes.find(item => item.type === 'equipment' && item.entityId === assetId)
-    if (node) setSelection({ nodeId: node.id, assetId: data.selectedAssetId })
     data.actions.selectAsset(facilityId, assetId)
+    if (node) setSelection({ nodeId: node.id, assetId })
+  }
+  const selectScope = (nextScope: GraphScope) => {
+    setScope(nextScope)
+    setSelection(nextScope === 'asset' && defaultSelectedId
+      ? { nodeId: defaultSelectedId, assetId: data.selectedAssetId }
+      : undefined)
   }
   const updateQuery = (value: string) => {
     setQuery(value)
@@ -274,7 +282,7 @@ export function KnowledgeGraphPage() {
     <div className={`kg-workspace${graphView.expanded ? ' kg-workspace-maximized' : ''}`}>
       <aside className="kg-sidebar kg-filters">
         <label className="kg-search"><Search size={15} /><input value={query} onChange={event => updateQuery(event.target.value)} placeholder="Find entity, ID, tag, OPC UA node…" /></label>
-        <section className="kg-scope-section"><div className="kg-section-title"><span>Graph scope</span><small>{visibleNodes.length} visible</small></div><div className="kg-segmented">{([['asset', 'Selected'], ['facility', 'Facility'], ['all', 'All']] as const).map(([value, label]) => <button key={value} className={scope === value ? 'active' : ''} onClick={() => setScope(value)}>{label}</button>)}</div></section>
+        <section className="kg-scope-section"><div className="kg-section-title"><span>Graph scope</span><small>{visibleNodes.length} visible</small></div><div className="kg-segmented">{([['asset', 'Selected'], ['facility', 'Facility'], ['all', 'All']] as const).map(([value, label]) => <button key={value} className={scope === value ? 'active' : ''} onClick={() => selectScope(value)}>{label}</button>)}</div></section>
         <div className="kg-asset-tree"><DigitalTwinTree stations={treeStations} selectedAssetId={selectedAssetId} handlers={{ isExpanded: expansion.isExpanded, onToggle: expansion.toggle, onSelectAsset: selectAsset, statusOf: assetId => assetStatuses.get(assetId) ?? 'nodata' }} /></div>
         <details className="kg-display-filters"><summary>Display filters</summary><section><div className="kg-section-title"><span>Entity classes</span><button onClick={() => setTypes(new Set(NODE_TYPES.map(item => item.type)))}>All</button></div>{counts.map(item => <label className="kg-filter-row" key={item.type}><input type="checkbox" checked={types.has(item.type)} onChange={() => toggleType(item.type)} /><i className={`kg-type-dot type-${item.type}`} /><span>{item.label}</span><small>{item.count}</small></label>)}</section><section><div className="kg-section-title"><span>Operational health</span></div><div className="kg-status-filters">{(['crit', 'warn', 'ok', 'nodata'] as const).map(status => <button key={status} className={statuses.has(status) ? `active status-${status}` : ''} onClick={() => toggleStatus(status)}><i />{STATUS_LABEL[status]}<small>{graph.nodes.filter(item => item.status === status).length}</small></button>)}</div></section></details>
       </aside>
@@ -289,7 +297,7 @@ export function KnowledgeGraphPage() {
           ? <Suspense fallback={<div className="kg-render-loading"><span />Preparing WebGL graph…</div>}><KnowledgeGraph3DCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controller3DRef} /></Suspense>
           : <KnowledgeGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={effectiveSelectedId} layout={layout} theme={theme} onSelect={selectNode} controllerRef={controllerRef} />
           : <div className="kg-no-results"><CircleDot size={32} /><h2>No matching entities</h2><p>Broaden the entity, health, facility, or search filters.</p></div>}
-        <div className="kg-legend"><span><i className="kg-type-dot type-facility" />Facility</span><span><i className="kg-type-dot type-equipment" />Equipment</span><span><i className="kg-type-dot type-instrument" />Instrument</span><span><i className="kg-flow-swatch" />Live telemetry flow</span><span><i className="kg-ring ring-crit" />Critical ring</span><span><i className="kg-ring ring-ok" />Healthy ring</span></div>
+        <div className="kg-legend"><span><i className="kg-type-dot type-facility" />Facility</span><span><i className="kg-type-dot type-equipment" />Equipment</span><span><i className="kg-type-dot type-instrument" />Instrument</span><span title="A solid arrow is a governed relationship without an active telemetry-flow highlight."><i className="kg-relationship-swatch" />Governed relationship</span><span title="Animated broken arrows trace current signal flow from a live reading through its governed topology."><i className="kg-flow-swatch" />Live telemetry flow</span><span><i className="kg-ring ring-crit" />Critical ring</span><span><i className="kg-ring ring-ok" />Healthy ring</span></div>
       </section>
 
       <aside className="kg-sidebar kg-inspector">

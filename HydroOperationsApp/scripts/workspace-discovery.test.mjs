@@ -68,6 +68,55 @@ function graphService(onRequest = async () => undefined) {
   return { service: exports, requests }
 }
 
+function weatherService() {
+  const requests = []
+  const dependencies = {
+    ...serviceDependencies,
+    './artifactDiscovery': { selectDataAgent: () => undefined },
+    '@azure/msal-browser': { PublicClientApplication: class {
+      async initialize() {}
+      async handleRedirectPromise() {}
+      getAllAccounts() { return [{}] }
+      async acquireTokenSilent() { return { accessToken: 'test-token' } }
+    } },
+  }
+  const exports = {}
+  new Function('require', 'exports', 'testEnv', 'fetch', 'location', serviceCode)(
+    name => {
+      assert.ok(dependencies[name], `Unexpected dependency: ${name}`)
+      return dependencies[name]
+    }, exports, {
+      VITE_RAYFIN_AAD_CLIENT_ID: 'test-client', VITE_RAYFIN_TENANT_ID: 'test-tenant',
+      VITE_RAYFIN_WORKSPACE_ID: workspaceId,
+      VITE_RAYFIN_STID_GRAPHQL_ID: 'weather-api',
+    }, async (url) => {
+      requests.push(String(url))
+      if (url.endsWith('/graphqlapis/weather-api/graphql')) {
+        return Response.json({
+          data: {
+            locations: { items: [{ location_id: 'L1', location_name: 'Station 1', latitude: 1, longitude: 2 }] },
+            areas: { items: [] },
+            variables: { items: [{ variable_id: 'temperature', canonical_unit: 'C' }] },
+            observations: { items: [] },
+            forecasts: { items: [] },
+          },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }, { origin: 'https://app.example.test' },
+  )
+  return { service: exports, requests }
+}
+
+test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {
+  const { service, requests } = weatherService()
+  const weather = await service.queryWeatherData()
+  assert.equal(weather.locations[0].location_name, 'Station 1')
+  assert.deepEqual(requests, [
+    `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/weather-api/graphql`,
+  ])
+})
+
 test('graph loading reuses one definition and coalesces concurrent native requests', async () => {
   const { service, requests } = graphService()
   const graphs = await Promise.all([service.queryOntologyGraph(), service.queryOntologyGraph()])
