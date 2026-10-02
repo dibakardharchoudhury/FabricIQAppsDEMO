@@ -135,8 +135,22 @@ class Fabric:
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
-        for _ in range(6):
-            resp = self._session.request(method, url, headers=headers, timeout=120, **kwargs)
+        method = method.upper()
+        for attempt in range(6):
+            try:
+                resp = self._session.request(
+                    method, url, headers=headers, timeout=120, **kwargs
+                )
+            except requests.RequestException as exc:
+                if method != "GET" or attempt == 5:
+                    raise
+                wait = min(2 ** attempt, 15)
+                print(
+                    f"  transient Fabric connection failure "
+                    f"({type(exc).__name__}); retrying GET in {wait}s..."
+                )
+                time.sleep(wait)
+                continue
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", "10"))
                 print(f"  throttled (429); waiting {wait}s...")

@@ -4,9 +4,11 @@ import io
 import json
 import unittest
 from datetime import datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from sync_workspace_from_git import configure_weather_assets, configure_weather_schedule
+import requests
+
+from sync_workspace_from_git import Fabric, configure_weather_assets, configure_weather_schedule
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -110,6 +112,40 @@ class FakeFabric:
             200,
             {"properties": {"publishDetails": {"state": self.publish_state}}},
         )
+
+
+class FabricRequestTests(unittest.TestCase):
+    def test_get_retries_transient_connection_reset(self):
+        fabric = Fabric.__new__(Fabric)
+        fabric._session = Mock()
+        fabric._token = Mock(return_value="token")
+        response = FakeResponse(200, {"status": "Succeeded"})
+        fabric._session.request.side_effect = [
+            requests.ConnectionError("connection reset"),
+            response,
+        ]
+
+        with patch("sync_workspace_from_git.time.sleep") as sleep:
+            actual = fabric.request("GET", "https://example.test/operation")
+
+        self.assertIs(actual, response)
+        self.assertEqual(fabric._session.request.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_post_does_not_retry_ambiguous_transport_failure(self):
+        fabric = Fabric.__new__(Fabric)
+        fabric._session = Mock()
+        fabric._token = Mock(return_value="token")
+        fabric._session.request.side_effect = requests.ConnectionError("connection reset")
+
+        with (
+            patch("sync_workspace_from_git.time.sleep") as sleep,
+            self.assertRaises(requests.ConnectionError),
+        ):
+            fabric.request("POST", "https://example.test/update", json={"value": 1})
+
+        self.assertEqual(fabric._session.request.call_count, 1)
+        sleep.assert_not_called()
 
 
 class WeatherProvisioningTests(unittest.TestCase):
