@@ -900,6 +900,41 @@ MULTISOURCE_INSTRUCTIONS = f"""
   when the user asks for combined telemetry and asset/operational context.
 """
 
+CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
+CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = f"""
+
+{CROSS_SOURCE_OPERATIONAL_MARKER}
+
+- SQL operational tables use camelCase `equipmentId`; Lakehouse reference tables use snake_case
+  `equipment_id`. These are the same canonical equipment identifier and must be matched exactly.
+- `WorkOrders` has no facility column. Never query or filter it by `facilityId`/`facility_id`.
+- For open-work-order counts by facility, first query SQL `WorkOrders`, treat every status except
+  `Completed` and `Cancelled` as open, and return every matching row's `workOrderNumber`,
+  `equipmentId`, and `status` with no row limit plus the exact total count. Do not summarize or
+  aggregate away individual work orders before the cross-source join. Then query all Lakehouse
+  `silver_equipment` rows for `equipment_id` and `facility_id`, join
+  `WorkOrders.equipmentId = silver_equipment.equipment_id`, and roll up by `facility_id`.
+- Resolve facility names/type/country from Lakehouse `silver_facilities` using the exact
+  `facility_id`. Do not report zero or no data merely because SQL cannot group directly by facility.
+- Before answering, verify that the sum of per-facility open-work-order counts equals the exact SQL
+  open-work-order total. If it does not, correct or retry the join rather than returning partial,
+  zero-filled, or unmatched results.
+- Format facility rollups as a compact Markdown table with `Facility`, `Type`, `Country`, `Assets`,
+  and `Open WOs` columns plus a totals line, unless the user requests another format.
+"""
+
+GLOBAL_SCOPE_MARKER = "### Conversation scope"
+GLOBAL_SCOPE_INSTRUCTIONS = f"""
+
+{GLOBAL_SCOPE_MARKER}
+
+- Unless the latest user question explicitly narrows scope, answer across all facilities and all
+  assets. Do not infer scope from an application selection.
+- Keep conversational follow-up meaning within the current agent session, but do not carry an
+  earlier facility/asset filter into a later question unless the user explicitly refers to that
+  earlier scope.
+"""
+
 # Ontology entities to expose to the agent (name -> column summary used as description).
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
@@ -1057,7 +1092,7 @@ def build_kusto_datasource_obj(existing: dict) -> dict:
 
 
 def build_stage_obj(existing: dict) -> dict:
-    """Preserve current instructions and append direct-source routing guidance once."""
+    """Preserve current instructions and append owned routing guidance once."""
     stage = dict(existing)
     stage.setdefault("$schema", STAGE_CONFIG_SCHEMA_URL)
     instructions = stage.get("aiInstructions")
@@ -1067,6 +1102,10 @@ def build_stage_obj(existing: dict) -> dict:
         instructions = AI_INSTRUCTIONS
     if MULTISOURCE_INSTRUCTIONS_MARKER not in instructions:
         instructions += MULTISOURCE_INSTRUCTIONS
+    if CROSS_SOURCE_OPERATIONAL_MARKER not in instructions:
+        instructions += CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS
+    if GLOBAL_SCOPE_MARKER not in instructions:
+        instructions += GLOBAL_SCOPE_INSTRUCTIONS
     if len(instructions) > 15000:
         raise RuntimeError("Preserved and appended Data Agent instructions exceed Fabric's 15,000 character limit.")
     stage["aiInstructions"] = instructions

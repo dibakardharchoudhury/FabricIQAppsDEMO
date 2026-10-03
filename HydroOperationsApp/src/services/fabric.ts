@@ -309,6 +309,7 @@ export function clearWorkspaceConfigCache() {
   configPromise = undefined
   invalidateDataAgentVerification()
   invalidateDataAgentMcpSession()
+  dataAgentMcpTool = undefined
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -911,8 +912,6 @@ type McpContent = {
   resource?: { text?: string; blob?: string; mimeType?: string; uri?: string }
 }
 
-type DataAgentTurn = { question: string; answer: string }
-const dataAgentConversation: DataAgentTurn[] = []
 type DataAgentMcpSession = {
   endpoint: string
   token: string
@@ -922,13 +921,14 @@ type DataAgentMcpSession = {
 }
 let dataAgentMcpSession: DataAgentMcpSession | undefined
 let dataAgentMcpSessionPromise: Promise<DataAgentMcpSession> | undefined
-const DATA_AGENT_VERIFICATION_TTL_MS = 2 * 60_000
-type DataAgentVerification = { key: string; token: string; expiresAt: number }
+type DataAgentMcpTool = Pick<DataAgentMcpSession, 'endpoint' | 'toolName' | 'questionArgument'>
+let dataAgentMcpTool: DataAgentMcpTool | undefined
+type DataAgentVerification = { key: string }
 let dataAgentVerification: DataAgentVerification | undefined
-let dataAgentVerificationPromise: { key: string; token: string; value: Promise<void> } | undefined
+let dataAgentVerificationPromise: { key: string; value: Promise<void> } | undefined
 
 export function resetDataAgentConversation() {
-  dataAgentConversation.length = 0
+  invalidateDataAgentMcpSession()
 }
 
 function invalidateDataAgentMcpSession() {
@@ -948,21 +948,10 @@ function invalidateDataAgentVerification() {
   dataAgentVerificationPromise = undefined
 }
 
-function dataAgentQuestion(question: string): string {
-  const scope = 'Answer across all facilities and all assets. Ignore application UI selections and earlier-turn filters; narrow the scope only when the latest question explicitly asks.'
-  if (!dataAgentConversation.length) return `${scope}\n\n${question}`
-  const transcript = dataAgentConversation
-    .slice(-4)
-    .map(turn => `User: ${turn.question}\nAssistant: ${turn.answer}`)
-    .join('\n\n')
-    .slice(-12_000)
-  return `Conversation memory for follow-up meaning only; its scope and filters do not carry forward.\n\n${transcript}\n\n${scope}\n\n${question}`
-}
-
 async function verifyDataAgentSource(dataAgentId: string, ontologyId: string, generation: unknown, token: string): Promise<void> {
   const key = `${requireWorkspaceId()}:${dataAgentId}:${ontologyId}:${String(generation)}`
-  if (dataAgentVerification?.key === key && dataAgentVerification.token === token && dataAgentVerification.expiresAt > Date.now()) return
-  if (dataAgentVerificationPromise?.key === key && dataAgentVerificationPromise.token === token) {
+  if (dataAgentVerification?.key === key) return
+  if (dataAgentVerificationPromise?.key === key) {
     return dataAgentVerificationPromise.value
   }
   const value = invokeVerifiedDataAgent(
@@ -976,9 +965,9 @@ async function verifyDataAgentSource(dataAgentId: string, ontologyId: string, ge
     },
     async () => undefined,
   ).then(() => {
-    dataAgentVerification = { key, token, expiresAt: Date.now() + DATA_AGENT_VERIFICATION_TTL_MS }
+    dataAgentVerification = { key }
   })
-  dataAgentVerificationPromise = { key, token, value }
+  dataAgentVerificationPromise = { key, value }
   try {
     await value
   } finally {
@@ -1033,11 +1022,16 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
       })
       try {
         await client.connect(transport)
-        const tool = (await client.listTools()).tools[0]
-        if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
-        const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
-        if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
-        const session = { endpoint, token, client, toolName: tool.name, questionArgument }
+        let tool = dataAgentMcpTool?.endpoint === endpoint ? dataAgentMcpTool : undefined
+        if (!tool) {
+          const discovered = (await client.listTools()).tools[0]
+          if (!discovered) throw new Error('The published Data Agent exposes no MCP tool.')
+          const questionArgument = Object.keys(discovered.inputSchema?.properties ?? {})[0]
+          if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
+          tool = { endpoint, toolName: discovered.name, questionArgument }
+          dataAgentMcpTool = tool
+        }
+        const session = { endpoint, token, client, toolName: tool.toolName, questionArgument: tool.questionArgument }
         client.onclose = () => {
           if (dataAgentMcpSession === session) {
             dataAgentMcpSession = undefined
@@ -1086,7 +1080,7 @@ async function callDataAgentMcp(
   try {
     const result = await session.client.callTool({
       name: session.toolName,
-      arguments: { [session.questionArgument]: dataAgentQuestion(question) },
+      arguments: { [session.questionArgument]: question },
     }, undefined, {
       timeout: 5 * 60_000,
       maxTotalTimeout: 5 * 60_000,
@@ -1114,8 +1108,6 @@ async function callDataAgentMcp(
       }]
     })
     const answer = text || 'The Data Agent returned no answer.'
-    dataAgentConversation.push({ question, answer })
-    if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
     Object.assign(steps[0], { status: 'done', summary: 'completed', elapsedMs: Date.now() - startedAt })
     publishSteps()
     onProgress?.(answer)

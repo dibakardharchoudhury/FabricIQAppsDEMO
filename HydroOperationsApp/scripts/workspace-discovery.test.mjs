@@ -5,6 +5,7 @@ import ts from 'typescript'
 import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+const hydroDataHookSource = await readFile(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
@@ -115,24 +116,27 @@ function weatherService() {
   return { service: exports, requests }
 }
 
-test('Data Agent MCP runtime preserves session memory without inheriting UI or prior scope', () => {
+test('Data Agent MCP runtime sends unchanged questions and keeps memory in the MCP session', () => {
   assert.match(source, /import \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
   assert.match(source, /import \{ StreamableHTTPClientTransport \} from '@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'/)
   assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
-  assert.match(source, /Answer across all facilities and all assets/)
-  assert.match(source, /its scope and filters do not carry forward/)
-  assert.match(source, /dataAgentConversation\.push/)
+  assert.match(source, /arguments: \{ \[session\.questionArgument\]: question \}/)
+  assert.doesNotMatch(source, /dataAgentQuestion|dataAgentConversation/)
+  assert.match(source, /resetDataAgentConversation\(\) \{\s+invalidateDataAgentMcpSession\(\)/)
   assert.match(source, /dataAgentMcpSession\?\.endpoint === endpoint/)
   assert.match(source, /if \(dataAgentMcpSession === session\) invalidateDataAgentMcpSession\(\)/)
   assert.match(source, /client\.onclose = \(\) =>/)
   assert.match(source, /isDisconnectedDataAgentMcpError\(error\)/)
   assert.match(source, /callDataAgentMcp\(endpoint, token, question, onProgress, onSteps, false\)/)
   assert.match(source, /Promise\.all\(\[verification, getDataAgentMcpSession\(endpoint, token\)\]\)/)
-  assert.match(source, /DATA_AGENT_VERIFICATION_TTL_MS = 2 \* 60_000/)
-  assert.match(source, /dataAgentVerification\.token === token/)
+  assert.match(source, /dataAgentVerification\?\.key === key/)
+  assert.match(source, /dataAgentMcpTool\?\.endpoint === endpoint/)
+  assert.match(source, /dataAgentMcpTool = tool/)
+  assert.match(source, /dataAgentMcpTool = undefined/)
   assert.match(source, /invalidateDataAgentVerification\(\)\s+invalidateDataAgentMcpSession\(\)/)
   assert.match(source, /onprogress: progress/)
   assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
+  assert.match(hydroDataHookSource, /await initAuth\(\)[\s\S]+void warmDataAgentMcp\(\)/)
 })
 
 test('Data Agent progress maps real Fabric tool lifecycle without inventing arguments', () => {

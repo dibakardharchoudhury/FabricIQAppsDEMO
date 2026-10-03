@@ -876,6 +876,10 @@ class CapabilityTests(unittest.TestCase):
             DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
             MULTISOURCE_INSTRUCTIONS_MARKER="### Direct Lakehouse and Eventhouse Sources",
             MULTISOURCE_INSTRUCTIONS="\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
+            CROSS_SOURCE_OPERATIONAL_MARKER="### Cross-source operational joins",
+            CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS="\n### Cross-source operational joins\nCross-source guidance",
+            GLOBAL_SCOPE_MARKER="### Conversation scope",
+            GLOBAL_SCOPE_INSTRUCTIONS="\n### Conversation scope\nGlobal scope guidance",
             ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name"), ("equipment", "equipment_id")],
             LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
             LAKEHOUSE_SOURCE_INSTRUCTIONS="default Lakehouse guidance",
@@ -904,7 +908,11 @@ class CapabilityTests(unittest.TestCase):
         actual = {part["path"]: part for part in state["parts"]}
         for version in ("draft", "published"):
             prefix = f"Files/Config/{version}/"
-            self.assertEqual(ns["decode_payload"](actual[prefix + "stage_config.json"]["payload"]), stage)
+            retained_stage = ns["decode_payload"](actual[prefix + "stage_config.json"]["payload"])
+            self.assertTrue(retained_stage["aiInstructions"].startswith(stage["aiInstructions"]))
+            self.assertEqual(retained_stage["customOptions"], stage["customOptions"])
+            self.assertEqual(retained_stage["aiInstructions"].count("### Cross-source operational joins"), 1)
+            self.assertEqual(retained_stage["aiInstructions"].count("### Conversation scope"), 1)
             retained_sql = ns["decode_payload"](actual[prefix + "sql-source/datasource.json"]["payload"])
             self.assertEqual(retained_sql, sql)
             self.assertEqual(len(retained_sql["elements"]), 5)
@@ -938,7 +946,18 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
         self.assertEqual(
             ns["build_stage_obj"]({})["aiInstructions"],
-            "default ontology instructions\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
+            "default ontology instructions\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
+            "\n### Cross-source operational joins\nCross-source guidance"
+            "\n### Conversation scope\nGlobal scope guidance",
+        )
+        existing_guidance = ns["build_stage_obj"]({
+            "aiInstructions": (
+                "custom\n### Direct Lakehouse and Eventhouse Sources\nexisting direct guidance"
+                "\n### Cross-source operational joins\nexisting cross-source guidance"
+            )
+        })
+        self.assertEqual(
+            existing_guidance["aiInstructions"].count("### Cross-source operational joins"), 1
         )
         with self.assertRaisesRegex(RuntimeError, "not a string"):
             ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})

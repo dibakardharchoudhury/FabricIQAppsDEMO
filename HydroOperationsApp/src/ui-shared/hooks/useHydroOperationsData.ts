@@ -3,7 +3,7 @@ import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
-  startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
+  startStreamingPipeline, warmDataAgentMcp, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
@@ -490,6 +490,7 @@ function useHydroOperationsDataController() {
       const initializeFabricData = async () => {
         try { await initAuth() }
         catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : 'Fabric authentication is unavailable.') }
+        void warmDataAgentMcp().catch(error => console.warn('Data Agent MCP warm-up failed.', error))
 
         const initializeStid = async () => {
           if (!isStidConfigured()) { clearStid(); setStidState('unavailable'); return }

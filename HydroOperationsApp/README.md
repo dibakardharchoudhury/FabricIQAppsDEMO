@@ -146,27 +146,26 @@ Guided setup marks only SQL/GraphQL and app data connection steps complete. It d
 notebook capability statuses or treat a completed notebook as agent readiness: review
 `data_agent_deployment_status`/`data_agent_deployment_reason` and
 `ops_agent_deployment_status`/`ops_agent_deployment_reason` in the shared configuration.
-A missing published Data Agent raises an actionable error. Before every MCP invocation the app
-reads the candidate's real `getDefinition` response and verifies **published** ontology datasource
+A missing published Data Agent raises an actionable error. For each active workspace/agent/Ontology
+configuration the app reads the candidate's real `getDefinition` response and verifies **published** ontology datasource
 `artifactId` and `workspaceId` against the selected, verified generation-2 Ontology. Draft sources,
 agent names, and notebook completion are insufficient. A different/legacy ontology source, an
 unreadable or malformed definition, or no matching published source blocks invocation explicitly.
 Invocation uses Fabric's published Data Agent MCP endpoint over the documented Streamable HTTP
-transport. The app preserves a bounded conversation transcript for follow-up meaning, while every
-question explicitly resets data scope to all facilities and assets. It never injects the selected
-facility/asset, and scope filters from prior turns do not carry into a later question.
+transport. The app sends each user question unchanged and keeps conversation continuity in the
+reused MCP session; starting a new chat closes that session. Global all-facilities/all-assets scope
+and cross-source join rules live in the published Data Agent instructions rather than being
+prepended by the web app. The app never injects the selected facility/asset.
 Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
 and access token remain unchanged. Workspace refreshes, token/endpoint changes, or MCP failures
 invalidate that session. SDK close notifications evict disconnected sessions, and a call that races
 with a stale transport reconnects and retries once instead of exposing a raw `Not connected` error.
-A two-minute verification lease is keyed to the exact workspace, Data
-Agent, Ontology, live generation and access token; every call requires that verified identity, and
-workspace/config changes invalidate it immediately.
-Opening Hydro Intelligence silently warms the MCP connection when an existing Fabric token is
-available and obtains the exact verification lease. On a cold request, source verification and MCP
+The verified identity is keyed to the exact workspace, Data Agent, Ontology, and live generation.
+Workspace/config changes invalidate it immediately and force fresh published-definition readback.
+Warm-up starts as soon as Fabric authentication initializes and runs again when Hydro Intelligence
+opens. It also retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
-Prompts use a concise all-facilities/all-assets scope reset; benchmarked source-routing hints were
-slower and are not injected.
+No app-authored scope reset or source-routing hint is injected into user prompts.
 The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
 Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
 notifications near completion and exposes only internal tool names/statuses—not their generated SQL,
