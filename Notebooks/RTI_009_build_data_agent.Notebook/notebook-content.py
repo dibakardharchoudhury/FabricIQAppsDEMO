@@ -956,6 +956,35 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   web client renders this CSV locally, so do not merely describe how another tool could plot it.
 """
 
+DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"
+DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = f"""
+
+{DIRECT_RUNTIME_ROUTING_MARKER}
+
+- For normal user questions, do not call the Ontology analysis tool. The attached Ontology v2 must
+  remain configured for identity and future ontology capability, but its current query runtime is
+  not a prerequisite, fallback, retry, or cross-check for direct-source answers.
+- Use `{kql_db_name}` / `{kql_table_name}` directly for every current, latest, historical,
+  time-series, quality, trend, health, or telemetry question.
+- Use `{lakehouse_name}` directly for facilities, systems, equipment, instruments, signal
+  metadata, hierarchy lookup, and canonical ID resolution.
+- When a telemetry question names a turbine, equipment tag, or signal type rather than an exact
+  `opcua_node_id`, first resolve the exact node through Lakehouse `silver_equipment` and
+  `silver_signal_master`, then query Eventhouse with that node. Reuse an exact node already stated
+  in the current conversation. Never treat Kusto tool schema samples, example values, or a partial
+  distinct-value list as the complete signal inventory, and never report that an asset has no
+  telemetry mapping without checking the Lakehouse mapping tables.
+- Use the operational SQL source directly for work orders, notifications, inspections, spare
+  parts, and 3D-model records. Combine SQL with Lakehouse only through the documented canonical
+  keys when a facility or hierarchy rollup is required.
+- Call the Ontology tool only when the current user question explicitly requests the Ontology,
+  an ontology-only answer, or ontology-native semantic relationship execution. Do not infer that
+  request merely because the question mentions an asset, relationship, facility, or hierarchy.
+- If a direct source answers the question, return that answer without attempting Ontology and
+  without adding an Ontology-runtime warning. Referential follow-ups keep the same direct-source
+  routing unless the current question explicitly switches source.
+"""
+
 # Ontology entities to expose to the agent (name -> column summary used as description).
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
@@ -1129,6 +1158,8 @@ def build_stage_obj(existing: dict) -> dict:
         instructions += GLOBAL_SCOPE_INSTRUCTIONS
     if MCP_FOLLOWUP_MARKER not in instructions:
         instructions += MCP_FOLLOWUP_INSTRUCTIONS
+    if DIRECT_RUNTIME_ROUTING_MARKER not in instructions:
+        instructions += DIRECT_RUNTIME_ROUTING_INSTRUCTIONS
     if len(instructions) > 15000:
         raise RuntimeError("Preserved and appended Data Agent instructions exceed Fabric's 15,000 character limit.")
     stage["aiInstructions"] = instructions
