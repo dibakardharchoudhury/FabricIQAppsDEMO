@@ -6,6 +6,7 @@ import { applyDataAgentProgress } from '../src/services/dataAgentProgress.ts'
 
 const source = await readFile(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
 const hydroDataHookSource = await readFile(new URL('../src/ui-shared/hooks/useHydroOperationsData.ts', import.meta.url), 'utf8')
+const copilotPageSource = await readFile(new URL('../src/ui-shared/pages/CopilotPage.tsx', import.meta.url), 'utf8')
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
@@ -128,6 +129,7 @@ test('Data Agent MCP runtime preserves bounded follow-up context without changin
   assert.match(source, /if \(dataAgentMcpSession === session\) invalidateDataAgentMcpSession\(\)/)
   assert.match(source, /client\.onclose = \(\) =>/)
   assert.match(source, /isDisconnectedDataAgentMcpError\(error\)/)
+  assert.match(source, /failed to fetch\|network error\|socket hang up\|econnreset\|connection reset\|terminated/)
   assert.match(source, /callDataAgentMcp\(endpoint, token, question, onProgress, onSteps, false\)/)
   assert.match(source, /Promise\.all\(\[verification, getDataAgentMcpSession\(endpoint, token\)\]\)/)
   assert.match(source, /dataAgentVerification\?\.key === key/)
@@ -138,7 +140,8 @@ test('Data Agent MCP runtime preserves bounded follow-up context without changin
   assert.match(source, /onprogress: progress/)
   assert.match(source, /extractDataAgentVisualizations\(answer\.text, question\)/)
   assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
-  assert.match(hydroDataHookSource, /await initAuth\(\)[\s\S]+void warmDataAgentMcp\(\)/)
+  assert.doesNotMatch(hydroDataHookSource, /warmDataAgentMcp\(\)/)
+  assert.match(copilotPageSource, /copilotEngine === 'data-agent'[\s\S]+warmDataAgentMcp\(\)/)
 })
 
 test('Data Agent progress maps real Fabric tool lifecycle without inventing arguments', () => {

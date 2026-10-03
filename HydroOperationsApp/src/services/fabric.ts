@@ -945,7 +945,7 @@ function invalidateDataAgentMcpSession() {
 
 function isDisconnectedDataAgentMcpError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /not connected|connection (?:is )?closed|transport (?:is )?closed/i.test(message)
+  return /not connected|connection (?:is )?closed|transport (?:is )?closed|failed to fetch|network error|socket hang up|econnreset|connection reset|terminated/i.test(message)
 }
 
 function invalidateDataAgentVerification() {

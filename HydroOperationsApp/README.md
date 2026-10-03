@@ -166,8 +166,9 @@ invalidate that session. SDK close notifications evict disconnected sessions, an
 with a stale transport reconnects and retries once instead of exposing a raw `Not connected` error.
 The verified identity is keyed to the exact workspace, Data Agent, Ontology, and live generation.
 Workspace/config changes invalidate it immediately and force fresh published-definition readback.
-Warm-up starts as soon as Fabric authentication initializes and runs again when Hydro Intelligence
-opens. It also retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
+Warm-up starts only when Hydro Intelligence opens with the Data Agent selected, so Data Agent
+connection and verification work cannot delay initial application load or unrelated tabs. It also
+retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
 No app-authored scope reset or source-routing hint is injected into user prompts. When the Data
 Agent returns plot-ready fenced CSV, the app converts it directly into the existing local chart

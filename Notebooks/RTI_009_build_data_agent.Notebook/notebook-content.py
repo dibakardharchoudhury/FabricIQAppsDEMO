@@ -909,9 +909,10 @@ CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = f"""
   `equipment_id`. These are the same canonical equipment identifier and must be matched exactly.
 - `WorkOrders` has no facility column. Never query or filter it by `facilityId`/`facility_id`.
 - For open-work-order counts by facility, first query SQL `WorkOrders`, treat every status except
-  `Completed` and `Cancelled` as open, and return every matching row's `workOrderNumber`,
-  `equipmentId`, and `status` with no row limit plus the exact total count. Do not summarize or
-  aggregate away individual work orders before the cross-source join. Then query all Lakehouse
+  `Completed` and `Cancelled` as open. Run an independent SQL count over that complete predicate,
+  then return every matching row's `workOrderNumber`, `equipmentId`, and `status` with no row limit.
+  The row count and independent SQL count must agree; if they differ, retry SQL before joining.
+  Do not summarize or aggregate away individual work orders before the cross-source join. Then query all Lakehouse
   `silver_equipment` rows for `equipment_id` and `facility_id`, join
   `WorkOrders.equipmentId = silver_equipment.equipment_id`, and roll up by `facility_id`.
 - Resolve facility names/type/country from Lakehouse `silver_facilities` using the exact
