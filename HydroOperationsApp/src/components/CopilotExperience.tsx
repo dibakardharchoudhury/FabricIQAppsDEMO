@@ -29,9 +29,11 @@ type CopilotExperienceProps = {
   busy: boolean
   engine: CopilotEngine
   foundryAvailable: boolean
+  battleEnabled?: boolean
   onSend: (question: string) => void
   onReset: () => void
   onEngineChange: (engine: CopilotEngine) => void
+  onBattle?: () => void
 }
 
 const ENGINE_LABELS: Record<CopilotEngine, { name: string; source: string }> = {
@@ -54,7 +56,7 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
   ],
 }
 
-export function CopilotExperience({ messages, busy, engine, foundryAvailable, onSend, onReset, onEngineChange }: CopilotExperienceProps) {
+export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
@@ -97,6 +99,12 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
             disabled={busy}
             onClick={() => onEngineChange(option)}
           >{ENGINE_LABELS[option].name}</button>)}
+          {battleEnabled && <button
+            type="button"
+            title="Compare Fabric Data Agent and Foundry with the same prompt"
+            disabled={busy}
+            onClick={onBattle}
+          >Battle</button>}
         </span>}
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
       </span></header>
@@ -105,9 +113,8 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, on
           const last = index === messages.length - 1
           return <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && last}>
             {message.role === 'agent'
-              ? <AgentMessage message={message} streaming={busy && last} />
+              ? <CopilotResponse message={message} streaming={busy && last} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
               : <p>{message.text}</p>}
-            {message.meta && <MessageFooter message={message} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />}
             {message.role === 'agent' && last && !busy && <SuggestionChips text={message.text} onCompose={compose} onSend={send} />}
           </div>
         })}
@@ -126,6 +133,13 @@ function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose:
     <button type="button" title="Put in the message box" aria-label={`Edit before sending: ${suggestion}`} onClick={() => onCompose(suggestion)}><SquarePen size={11} /></button>
     <button type="button" title="Send now" aria-label={`Send: ${suggestion}`} onClick={() => onSend(suggestion)}><Send size={11} /></button>
   </span>)}</div>
+}
+
+export function CopilotResponse({ message, streaming, question }: { message: CopilotMessage; streaming: boolean; question?: string }) {
+  return <>
+    <AgentMessage message={message} streaming={streaming} />
+    {message.meta && <MessageFooter message={message} question={question} />}
+  </>
 }
 
 function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {

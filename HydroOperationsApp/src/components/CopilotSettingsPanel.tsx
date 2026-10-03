@@ -51,8 +51,8 @@ export function CopilotSettingsPanel() {
     <summary>
       <span><Bot size={17} /></span>
       <div>
-        <h2>Foundry Copilot</h2>
-        <p>Prompt, tools and data sources. Saved in this browser and applied to the next question.</p>
+        <h2>Hydro Intelligence</h2>
+        <p>Foundry prompt, tools, data sources, and optional agent comparison. Saved in this browser.</p>
       </div>
     </summary>
     <div className="copilot-settings-body">
@@ -61,6 +61,18 @@ export function CopilotSettingsPanel() {
       Set the endpoint and deployment below to enable the Foundry engine. The signed-in user also needs the
       <code>Cognitive Services OpenAI User</code> role on that resource.
     </p> : null}
+    <div className="copilot-settings-group">
+      <h4>Agent comparison</h4>
+      <p>Enable the hidden Battle mode inside Hydro Intelligence for this browser. It remains off by default and does not initialize either agent during app startup.</p>
+      <ul><li><label>
+        <input
+          type="checkbox"
+          checked={draft.battleEnabled}
+          onChange={event => setDraft(current => ({ ...current, battleEnabled: event.target.checked }))}
+        />
+        <span><strong>Battle of the Agents</strong><small>Send the same prompt to Fabric Data Agent and Foundry, then compare their answers, traces, visuals, and latency side by side.</small></span>
+      </label></li></ul>
+    </div>
     <div className="copilot-settings-group">
       <h4>Model endpoint
         <button type="button" className="copilot-settings-inline" disabled={draft.endpoint === defaults.endpoint && draft.deployment === defaults.deployment} onClick={() => setDraft(current => ({ ...current, ...FOUNDRY_ENV_DEFAULTS }))}>Restore from rayfin/.env</button>

@@ -1,7 +1,7 @@
 {
   "name": "hydro-operations-app",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Hydro Operations on Microsoft Fabric",
   "engines": {
     "node": ">=24 <25"

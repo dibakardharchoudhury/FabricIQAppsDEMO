@@ -200,9 +200,20 @@ heuristic or generation-only check bypasses source verification. Reading the pub
 requires appropriate Data Agent read permissions; read failures remain errors. The app does not
 invoke or certify an Operations Agent playbook.
 
+Administration can optionally enable **Battle of the Agents** for the current browser. It is disabled
+and absent from Hydro Intelligence by default, does not initialize either runtime during app startup,
+and is lazy-loaded only after selection. Battle sends the same trimmed standalone prompt to the
+existing published Data Agent MCP and Foundry paths; it does not add routing, join, or semantic
+instructions. Results retain each engine's existing charts, artifacts, progress/tool trace, and error
+handling. Capacity-safe sequential execution is the default so comparison traffic does not contend
+for shared Fabric capacity; an explicit parallel mode is available when simultaneous wall-clock
+behavior is the measurement goal. The UI labels only the objectively faster successful response and
+does not infer which answer is more correct or higher quality.
+
 Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
 Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,
-and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`
+and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`,
+`scripts/agent-battle.test.ts`, and `scripts/copilot-settings.test.ts`
 (published source verification and honest setup readiness).
 
 ## Architecture

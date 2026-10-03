@@ -10,6 +10,7 @@ export type ToolName = (typeof TOOL_NAMES)[number]
 export type CopilotSettings = {
   endpoint: string
   deployment: string
+  battleEnabled: boolean
   systemPrompt: string
   promptExtra: string
   tools: Record<string, boolean>
@@ -54,6 +55,7 @@ Available data:
 ${CATALOG_PLACEHOLDER}`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
+const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
 
 const allEnabled = (keys: readonly string[]) => Object.fromEntries(keys.map(key => [key, true]))
 
@@ -64,6 +66,7 @@ export function defaultCopilotSettings(): CopilotSettings {
   return {
     endpoint: FOUNDRY_ENV_DEFAULTS.endpoint,
     deployment: FOUNDRY_ENV_DEFAULTS.deployment,
+    battleEnabled: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     promptExtra: '',
     tools: allEnabled(TOOL_NAMES),
@@ -81,6 +84,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
   return {
     endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
+    battleEnabled: stored.battleEnabled === true,
     systemPrompt: text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
@@ -107,12 +111,26 @@ export function loadCopilotSettings(): CopilotSettings {
 export function saveCopilotSettings(settings: CopilotSettings): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)) }
   catch { /* storage unavailable */ }
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT))
 }
 
 export function resetCopilotSettings(): CopilotSettings {
   try { localStorage.removeItem(STORAGE_KEY) } catch { /* storage unavailable */ }
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT))
   return defaultCopilotSettings()
 }
+
+export function subscribeCopilotSettings(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+  window.addEventListener(SETTINGS_CHANGED_EVENT, listener)
+  window.addEventListener('storage', listener)
+  return () => {
+    window.removeEventListener(SETTINGS_CHANGED_EVENT, listener)
+    window.removeEventListener('storage', listener)
+  }
+}
+
+export const isAgentBattleEnabled = () => loadCopilotSettings().battleEnabled
 
 export const isToolEnabled = (settings: CopilotSettings, name: string) => settings.tools[name] !== false
 export const isEntityEnabled = (settings: CopilotSettings, key: string) => settings.entities[key] !== false
