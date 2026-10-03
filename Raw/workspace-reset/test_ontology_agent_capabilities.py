@@ -880,6 +880,10 @@ class CapabilityTests(unittest.TestCase):
             CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS="\n### Cross-source operational joins\nCross-source guidance",
             GLOBAL_SCOPE_MARKER="### Conversation scope",
             GLOBAL_SCOPE_INSTRUCTIONS="\n### Conversation scope\nGlobal scope guidance",
+            MCP_FOLLOWUP_MARKER="### External MCP follow-ups and visualizations",
+            MCP_FOLLOWUP_INSTRUCTIONS=(
+                "\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
+            ),
             ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name"), ("equipment", "equipment_id")],
             LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
             LAKEHOUSE_SOURCE_INSTRUCTIONS="default Lakehouse guidance",
@@ -913,6 +917,12 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(retained_stage["customOptions"], stage["customOptions"])
             self.assertEqual(retained_stage["aiInstructions"].count("### Cross-source operational joins"), 1)
             self.assertEqual(retained_stage["aiInstructions"].count("### Conversation scope"), 1)
+            self.assertEqual(
+                retained_stage["aiInstructions"].count(
+                    "### External MCP follow-ups and visualizations"
+                ),
+                1,
+            )
             retained_sql = ns["decode_payload"](actual[prefix + "sql-source/datasource.json"]["payload"])
             self.assertEqual(retained_sql, sql)
             self.assertEqual(len(retained_sql["elements"]), 5)
@@ -948,16 +958,24 @@ class CapabilityTests(unittest.TestCase):
             ns["build_stage_obj"]({})["aiInstructions"],
             "default ontology instructions\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
             "\n### Cross-source operational joins\nCross-source guidance"
-            "\n### Conversation scope\nGlobal scope guidance",
+            "\n### Conversation scope\nGlobal scope guidance"
+            "\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance",
         )
         existing_guidance = ns["build_stage_obj"]({
             "aiInstructions": (
                 "custom\n### Direct Lakehouse and Eventhouse Sources\nexisting direct guidance"
                 "\n### Cross-source operational joins\nexisting cross-source guidance"
+                "\n### External MCP follow-ups and visualizations\nexisting follow-up guidance"
             )
         })
         self.assertEqual(
             existing_guidance["aiInstructions"].count("### Cross-source operational joins"), 1
+        )
+        self.assertEqual(
+            existing_guidance["aiInstructions"].count(
+                "### External MCP follow-ups and visualizations"
+            ),
+            1,
         )
         with self.assertRaisesRegex(RuntimeError, "not a string"):
             ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})

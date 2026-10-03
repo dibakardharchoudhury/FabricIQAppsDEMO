@@ -935,6 +935,27 @@ GLOBAL_SCOPE_INSTRUCTIONS = f"""
   earlier scope.
 """
 
+MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"
+MCP_FOLLOWUP_INSTRUCTIONS = f"""
+
+{MCP_FOLLOWUP_MARKER}
+
+- The external MCP client may wrap an explicitly referential follow-up in
+  `<recent_user_questions>` and `<current_user_question>` tags because each published MCP tool call
+  is otherwise stateless. Answer only `<current_user_question>`. Use the earlier user questions
+  solely to resolve references such as `this asset`, `same signal`, `it`, or a leading `or`; never
+  carry their filter into a standalone current question.
+- For a minimum/maximum/latest summary of one telemetry signal, constrain the exact
+  `opcua_node_id` and requested time window. Compute minimum and maximum from numeric `value`, and
+  obtain the latest row by greatest `event_time` while retaining that row's `value` and `quality`.
+  Return the latest timestamp. Reject and retry any result where the latest value is nonnumeric or
+  falls outside the computed minimum/maximum range.
+- When the user asks to plot, chart, graph, or visualize telemetry, return the answer plus a
+  fenced `csv` block containing plot-ready `event_time,value,quality` rows for the resolved signal
+  and time window. Keep chronological order and do not average unless the user requested it. The
+  web client renders this CSV locally, so do not merely describe how another tool could plot it.
+"""
+
 # Ontology entities to expose to the agent (name -> column summary used as description).
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
@@ -1106,6 +1127,8 @@ def build_stage_obj(existing: dict) -> dict:
         instructions += CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS
     if GLOBAL_SCOPE_MARKER not in instructions:
         instructions += GLOBAL_SCOPE_INSTRUCTIONS
+    if MCP_FOLLOWUP_MARKER not in instructions:
+        instructions += MCP_FOLLOWUP_INSTRUCTIONS
     if len(instructions) > 15000:
         raise RuntimeError("Preserved and appended Data Agent instructions exceed Fabric's 15,000 character limit.")
     stage["aiInstructions"] = instructions

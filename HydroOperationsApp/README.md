@@ -152,8 +152,12 @@ configuration the app reads the candidate's real `getDefinition` response and ve
 agent names, and notebook completion are insufficient. A different/legacy ontology source, an
 unreadable or malformed definition, or no matching published source blocks invocation explicitly.
 Invocation uses Fabric's published Data Agent MCP endpoint over the documented Streamable HTTP
-transport. The app sends each user question unchanged and keeps conversation continuity in the
-reused MCP session; starting a new chat closes that session. Global all-facilities/all-assets scope
+transport. Fabric's published MCP tool accepts only one `userQuestion` and is stateless across
+calls, even on a reused transport. Standalone questions are sent unchanged. For explicitly
+referential follow-ups such as `this asset`, `same signal`, or a leading `or`, the app includes at
+most four recent user questions in a bounded context envelope; it never replays the potentially
+large agent answers or makes an additional summarization call. Starting a new chat clears both the
+MCP transport and this bounded user-question context. Global all-facilities/all-assets scope
 and cross-source join rules live in the published Data Agent instructions rather than being
 prepended by the web app. The app never injects the selected facility/asset.
 Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
@@ -165,7 +169,9 @@ Workspace/config changes invalidate it immediately and force fresh published-def
 Warm-up starts as soon as Fabric authentication initializes and runs again when Hydro Intelligence
 opens. It also retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
-No app-authored scope reset or source-routing hint is injected into user prompts.
+No app-authored scope reset or source-routing hint is injected into user prompts. When the Data
+Agent returns plot-ready fenced CSV, the app converts it directly into the existing local chart
+model. This adds no model call or data query and therefore does not add network latency.
 The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
 Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
 notifications near completion and exposes only internal tool names/statuses—not their generated SQL,

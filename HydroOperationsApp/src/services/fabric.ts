@@ -13,6 +13,8 @@ import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
 import { applyDataAgentProgress } from './dataAgentProgress'
+import { contextualizeDataAgentQuestion } from './dataAgentConversation'
+import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -310,6 +312,7 @@ export function clearWorkspaceConfigCache() {
   invalidateDataAgentVerification()
   invalidateDataAgentMcpSession()
   dataAgentMcpTool = undefined
+  dataAgentUserQuestions = []
 }
 
 // ---- Fabric item jobs: trigger + poll for live progress ----
@@ -923,12 +926,14 @@ let dataAgentMcpSession: DataAgentMcpSession | undefined
 let dataAgentMcpSessionPromise: Promise<DataAgentMcpSession> | undefined
 type DataAgentMcpTool = Pick<DataAgentMcpSession, 'endpoint' | 'toolName' | 'questionArgument'>
 let dataAgentMcpTool: DataAgentMcpTool | undefined
+let dataAgentUserQuestions: string[] = []
 type DataAgentVerification = { key: string }
 let dataAgentVerification: DataAgentVerification | undefined
 let dataAgentVerificationPromise: { key: string; value: Promise<void> } | undefined
 
 export function resetDataAgentConversation() {
   invalidateDataAgentMcpSession()
+  dataAgentUserQuestions = []
 }
 
 function invalidateDataAgentMcpSession() {
@@ -989,7 +994,12 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     invalidateDataAgentMcpSession()
     throw error
   }
-  return callDataAgentMcp(endpoint, token, question, onProgress, onSteps)
+  const contextualizedQuestion = contextualizeDataAgentQuestion(question, dataAgentUserQuestions)
+  const answer = await callDataAgentMcp(endpoint, token, contextualizedQuestion, onProgress, onSteps)
+  dataAgentUserQuestions.push(question)
+  if (dataAgentUserQuestions.length > 4) dataAgentUserQuestions = dataAgentUserQuestions.slice(-4)
+  const visualizations = extractDataAgentVisualizations(answer.text, question)
+  return visualizations.length ? { ...answer, visualizations } : answer
 }
 
 export async function warmDataAgentMcp(): Promise<void> {
