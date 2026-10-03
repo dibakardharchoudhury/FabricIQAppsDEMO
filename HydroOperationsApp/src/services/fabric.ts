@@ -938,6 +938,11 @@ function invalidateDataAgentMcpSession() {
   if (session) void session.client.close().catch(() => undefined)
 }
 
+function isDisconnectedDataAgentMcpError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /not connected|connection (?:is )?closed|transport (?:is )?closed/i.test(message)
+}
+
 function invalidateDataAgentVerification() {
   dataAgentVerification = undefined
   dataAgentVerificationPromise = undefined
@@ -1032,7 +1037,13 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
         if (!tool) throw new Error('The published Data Agent exposes no MCP tool.')
         const questionArgument = Object.keys(tool.inputSchema?.properties ?? {})[0]
         if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
-        return { endpoint, token, client, toolName: tool.name, questionArgument }
+        const session = { endpoint, token, client, toolName: tool.name, questionArgument }
+        client.onclose = () => {
+          if (dataAgentMcpSession === session) {
+            dataAgentMcpSession = undefined
+          }
+        }
+        return session
       } catch (error) {
         await client.close().catch(() => undefined)
         throw error
@@ -1053,7 +1064,14 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
   }
 }
 
-async function callDataAgentMcp(endpoint: string, token: string, question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void): Promise<AgentAnswer> {
+async function callDataAgentMcp(
+  endpoint: string,
+  token: string,
+  question: string,
+  onProgress?: (text: string) => void,
+  onSteps?: (steps: AgentStep[]) => void,
+  reconnectOnDisconnect = true,
+): Promise<AgentAnswer> {
   const session = await getDataAgentMcpSession(endpoint, token)
   const startedAt = Date.now()
   const steps: AgentStep[] = [{
@@ -1111,6 +1129,9 @@ async function callDataAgentMcp(endpoint: string, token: string, question: strin
     })
     publishSteps()
     if (dataAgentMcpSession === session) invalidateDataAgentMcpSession()
+    if (reconnectOnDisconnect && isDisconnectedDataAgentMcpError(error)) {
+      return callDataAgentMcp(endpoint, token, question, onProgress, onSteps, false)
+    }
     throw error
   }
 }

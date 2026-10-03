@@ -157,7 +157,9 @@ question explicitly resets data scope to all facilities and assets. It never inj
 facility/asset, and scope filters from prior turns do not carry into a later question.
 Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
 and access token remain unchanged. Workspace refreshes, token/endpoint changes, or MCP failures
-invalidate that session. A two-minute verification lease is keyed to the exact workspace, Data
+invalidate that session. SDK close notifications evict disconnected sessions, and a call that races
+with a stale transport reconnects and retries once instead of exposing a raw `Not connected` error.
+A two-minute verification lease is keyed to the exact workspace, Data
 Agent, Ontology, live generation and access token; every call requires that verified identity, and
 workspace/config changes invalidate it immediately.
 Opening Hydro Intelligence silently warms the MCP connection when an existing Fabric token is
