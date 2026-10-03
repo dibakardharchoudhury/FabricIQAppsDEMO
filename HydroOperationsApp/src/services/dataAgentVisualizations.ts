@@ -36,6 +36,7 @@ function visualizationFromCsv(csv: string, question: string): AgentVisualization
     yColumns,
     xAxisTitle: xColumn,
     yAxisTitle: yColumns.join(', '),
+    groupBy: headers.find(header => ['opcua_node_id', 'equipment_id', 'series', 'signal'].includes(header.toLowerCase())),
     inlineCsvData: csv.trim(),
   }
 }

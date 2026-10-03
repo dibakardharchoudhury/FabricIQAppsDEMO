@@ -950,10 +950,15 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   obtain the latest row by greatest `event_time` while retaining that row's `value` and `quality`.
   Return the latest timestamp. Reject and retry any result where the latest value is nonnumeric or
   falls outside the computed minimum/maximum range.
-- When the user asks to plot, chart, graph, or visualize telemetry, return the answer plus a
-  fenced `csv` block containing plot-ready `event_time,value,quality` rows for the resolved signal
-  and time window. Keep chronological order and do not average unless the user requested it. The
-  web client renders this CSV locally, so do not merely describe how another tool could plot it.
+- When the user asks to plot, chart, graph, visualize, or show telemetry `visually`, a fenced `csv`
+  block is mandatory. Never say that this chat cannot render a chart and never return only plotting
+  instructions. For one signal use `event_time,value,quality`. For multiple signals use
+  `event_time,opcua_node_id,value,quality`; include every resolved signal, keep chronological order,
+  and keep the response to at most 240 total plot rows. If the raw series exceeds that bound, use
+  an appropriate time bin for a visual overview unless the user explicitly requested raw/no
+  averaging. The web client renders this CSV locally. Even if Fabric also generates a native
+  report/visualization file, include the fenced CSV because the external MCP result may not expose
+  that file.
 """
 
 DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"

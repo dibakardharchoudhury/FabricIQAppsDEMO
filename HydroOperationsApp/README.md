@@ -171,7 +171,8 @@ opens. It also retains discovered MCP tool metadata across transport reconnects.
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
 No app-authored scope reset or source-routing hint is injected into user prompts. When the Data
 Agent returns plot-ready fenced CSV, the app converts it directly into the existing local chart
-model. This adds no model call or data query and therefore does not add network latency.
+model. Multi-signal CSV containing `opcua_node_id` is rendered as grouped series. This adds no
+model call or data query and therefore does not add network latency.
 The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
 Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
 notifications near completion and exposes only internal tool names/statuses—not their generated SQL,
