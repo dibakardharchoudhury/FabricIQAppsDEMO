@@ -963,10 +963,16 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   `event_time,opcua_node_id,value,quality`; include every resolved signal, keep chronological order,
   and keep the response to at most 200 total plot rows. If the raw series exceeds that bound, use
   an appropriate time bin for a visual overview unless the user explicitly requested raw/no
-  averaging. Query `{kql_table_name}` directly for the resolved exact `opcua_node_id` values and
-  requested time window. If the first Eventhouse execution errors or returns no rows, retry that
-  direct query once before concluding that telemetry is unavailable; do not replace real values
-  with an example schema. The web client renders the returned CSV locally. Even if Fabric also generates a native
+  averaging. Use a compact overview instead of filling the maximum: for a six-hour multi-signal
+  visual, use 15-minute bins unless the user requests another granularity; do not return raw or
+  near-raw points for that default overview. Query
+  `{kql_table_name}` directly for the resolved exact `opcua_node_id` values and
+  requested time window. For multiple signals, verify that the returned `opcua_node_id` set exactly
+  matches the resolved signal set and that every signal has at least one row. If the first
+  Eventhouse execution errors, returns no rows, or omits any resolved signal, retry that direct
+  query once before concluding that telemetry is unavailable; never describe a partial signal set
+  as the complete result and do not replace real values with an example schema. The web client
+  renders the returned CSV locally. Even if Fabric also generates a native
   report/visualization file, include the fenced CSV because the external MCP result may not expose
   that file.
 """
