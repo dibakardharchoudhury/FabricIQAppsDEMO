@@ -451,14 +451,21 @@
 # ### 9. RTI_009 – v2 Data Agent
 # Requires the selected live ontology and every retained ontology source to report
 # integer `properties.generation == 2`. Both item ID and workspace must match.
+# The same definition also selects the five curated Lakehouse silver master tables
+# and the Eventhouse `OPCUAEvents` table as direct complementary sources. Existing
+# Ontology instructions remain intact; an idempotent routing block assigns semantic
+# relationship questions to Ontology v2, static/master queries to Lakehouse, telemetry
+# queries to Eventhouse, and later operational-record queries to the SQL source added
+# by RTI_011. Cross-source correlation uses only `opcua_node_id`, `equipment_id`,
+# `facility_id`, and `system_id`, never display-name inference.
 # Agent provisioning is always attempted; there is no mode or skip flag.
 # Draft identity is read back before publish and published-stage identity must also
 # be verified before publication is recorded separately. A delegated notebook-user MCP
 # probe asks for the first five facility IDs/names and compares exact content against
 # independently read live Lakehouse rows, without including expected values in the
-# prompt. The question requests only the selected ontology, but attached SQL sources
-# do not prevent a fresh smoke test when Setup has reset cached evidence. All sources
-# and custom configuration are preserved. Semantic errors fail even if `isError=false`,
+# prompt. The question requests only the selected ontology; attached Lakehouse,
+# Eventhouse, and SQL sources do not satisfy or bypass this source-specific check.
+# All sources and custom configuration are preserved. Semantic errors fail even if `isError=false`,
 # except for Fabric's exact documented temporary unsupported-Ontology-v2 response;
 # wrong rows fail, and non-JSON/count-only answers are inconclusive. This is source-specific
 # functional smoke evidence, not execution attestation or a synthetic receipt. Publication and evidence

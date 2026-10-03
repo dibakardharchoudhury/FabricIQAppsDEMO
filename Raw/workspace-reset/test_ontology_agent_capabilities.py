@@ -480,7 +480,7 @@ class CapabilityTests(unittest.TestCase):
         )
         for fail_at in (
             "create_data_agent", "validate_agent_ontology_sources", "update_item_definition",
-            "verify_agent_source_readback", "publish_data_agent",
+            "verify_agent_source_readback", "publish_data_agent", "lakehouse_schema_map",
         ):
             status = Mock()
             ns = functions("009", "upsert_part", "encode_payload")
@@ -488,13 +488,19 @@ class CapabilityTests(unittest.TestCase):
                 "ontology_generation": 2, "ontology_id": "ontology", "data_agent_item_id": None,
                 "data_agent_name": "agent", "DATA_AGENT_DESCRIPTION": "description",
                 "DRAFT_STAGE_CONFIG_PATH": "stage", "DATASOURCE_PATH": "datasource",
+                "LAKEHOUSE_DATASOURCE_PATH": "lakehouse-source",
+                "KUSTO_DATASOURCE_PATH": "kusto-source",
                 "ONTOLOGY_ELEMENTS": [], "FABRIC_API_BASE": "base", "workspace_id": "ws",
+                "LAKEHOUSE_TABLES": [], "kql_table_name": "OPCUAEvents",
                 "get_spn_access_token_for_fabric": Mock(),
                 "create_data_agent": Mock(return_value={"id": "agent-id", "_created_this_run": True}),
                 "get_item_definition": Mock(return_value={"definition": {"parts": []}}),
                 "validate_agent_ontology_sources": Mock(),
                 "verify_agent_source_readback": Mock(),
                 "build_stage_obj": Mock(return_value={}), "build_datasource_obj": Mock(return_value={}),
+                "lakehouse_schema_map": Mock(return_value={}),
+                "build_lakehouse_datasource_obj": Mock(return_value={}),
+                "build_kusto_datasource_obj": Mock(return_value={}),
                 "update_item_definition": Mock(), "enable_preview_runtime": Mock(),
                 "publish_data_agent": Mock(), "persist_agent_status": status,
             })
@@ -559,9 +565,31 @@ class CapabilityTests(unittest.TestCase):
             "submission", "before_publish", "after_publish", "draft_only",
             "none", "known_product_result", "known_product_exception", "healthy",
         ):
-            matching = {"definition": {"parts": [ontology_part()]}}
-            published = {"definition": {"parts": [ontology_part(), ontology_part("published")]}}
-            unrelated = {"definition": {"parts": [ontology_part(ontology_id="unrelated-v2")]}}
+            lakehouse_path = "Files/Config/draft/lakehouse-source/datasource.json"
+            kusto_path = "Files/Config/draft/kusto-source/datasource.json"
+            lakehouse_source = {
+                "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            }
+            kusto_source = {
+                "type": "kusto", "artifactId": "kusto", "workspaceId": "ws",
+            }
+            draft_direct = [
+                json_part(lakehouse_path, lakehouse_source),
+                json_part(kusto_path, kusto_source),
+            ]
+            published_direct = [
+                json_part(path.replace("/draft/", "/published/", 1), source_value)
+                for path, source_value in (
+                    (lakehouse_path, lakehouse_source), (kusto_path, kusto_source),
+                )
+            ]
+            matching = {"definition": {"parts": [ontology_part(), *draft_direct]}}
+            published = {"definition": {"parts": [
+                ontology_part(), ontology_part("published"), *draft_direct, *published_direct,
+            ]}}
+            unrelated = {"definition": {"parts": [
+                ontology_part(ontology_id="unrelated-v2"), *draft_direct,
+            ]}}
             responses = [{"definition": {"parts": []}}]
             if mismatch_at == "before_publish":
                 responses += [unrelated]
@@ -590,14 +618,18 @@ class CapabilityTests(unittest.TestCase):
                 })
             )
             ns = functions(
-                "009", "upsert_part", "encode_payload", "validate_agent_ontology_sources",
+                "009", "upsert_part", "encode_payload", "decode_payload",
+                "validate_agent_ontology_sources",
                 "require_v2_ontology", "verify_agent_source_readback",
                 workspace_id="ws", get_ontology_generation=Mock(return_value=2),
                 ontology_generation=2, ontology_id="ontology", data_agent_item_id=None,
                 data_agent_name="agent", DATA_AGENT_DESCRIPTION="description",
                 DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
                 DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
-                ONTOLOGY_ELEMENTS=[], FABRIC_API_BASE="base",
+                LAKEHOUSE_DATASOURCE_PATH=lakehouse_path,
+                KUSTO_DATASOURCE_PATH=kusto_path,
+                ONTOLOGY_ELEMENTS=[], LAKEHOUSE_TABLES=[],
+                kql_table_name="OPCUAEvents", FABRIC_API_BASE="base",
                 get_spn_access_token_for_fabric=Mock(),
                 create_data_agent=Mock(return_value={"id": "agent-id", "_created_this_run": True}),
                 get_item_definition=Mock(side_effect=responses),
@@ -606,6 +638,9 @@ class CapabilityTests(unittest.TestCase):
                     "artifactId": "unrelated-v2" if mismatch_at == "submission" else "ontology",
                     "workspaceId": "ws", "type": "ontology",
                 }),
+                lakehouse_schema_map=Mock(return_value={}),
+                build_lakehouse_datasource_obj=Mock(return_value=lakehouse_source),
+                build_kusto_datasource_obj=Mock(return_value=kusto_source),
                 update_item_definition=Mock(), enable_preview_runtime=Mock(),
                 publish_data_agent=Mock(), persist_agent_status=Mock(),
                 is_known_ontology_v2_product_limitation=lambda reason: (
@@ -663,6 +698,73 @@ class CapabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "v2-only"):
             ns["build_datasource_obj"]({}, "legacy")
 
+    def test_nb09_builds_curated_lakehouse_and_eventhouse_sources_without_resetting_custom_fields(self):
+        ns = functions(
+            "009", "_ds_element", "merge_source_elements",
+            "build_lakehouse_datasource_obj", "build_kusto_datasource_obj",
+            uuid=uuid, DATASOURCE_SCHEMA_URL="source-schema", workspace_id="ws",
+            lakehouse_id="lakehouse", lakehouse_name="RTI Lakehouse",
+            kql_db_id="kusto-db", kql_db_name="RTI KQL", kql_table_name="OPCUAEvents",
+            LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
+            LAKEHOUSE_SOURCE_INSTRUCTIONS="lakehouse instructions",
+            KUSTO_SOURCE_INSTRUCTIONS="kusto instructions",
+            LAKEHOUSE_TABLES=[
+                ("silver_facilities", "Facility master."),
+                ("silver_equipment", "Equipment master."),
+            ],
+        )
+        existing_lakehouse = {
+            "custom": {"preserve": True},
+            "dataSourceInstructions": "operator lakehouse guidance",
+            "elements": [{
+                "id": "saved-root", "type": "lakehouse_tables", "display_name": "Tables",
+                "is_selected": False, "children": [{
+                    "id": "saved-table", "type": "lakehouse_tables.table",
+                    "display_name": "silver_facilities", "is_selected": False,
+                    "description": "operator description", "children": [],
+                }],
+            }],
+        }
+        schema_map = {
+            "silver_facilities": [("facility_id", "string"), ("facility_name", "string")],
+            "silver_equipment": [("equipment_id", "string"), ("facility_id", "string")],
+        }
+        lakehouse = ns["build_lakehouse_datasource_obj"](existing_lakehouse, schema_map)
+        self.assertEqual(lakehouse["artifactId"], "lakehouse")
+        self.assertEqual(lakehouse["type"], "lakehouse_tables")
+        self.assertEqual(lakehouse["dataSourceInstructions"], "operator lakehouse guidance")
+        self.assertEqual(lakehouse["custom"], {"preserve": True})
+        root = lakehouse["elements"][0]
+        self.assertEqual(root["id"], "saved-root")
+        self.assertEqual(root["children"][0]["id"], "saved-table")
+        self.assertFalse(root["children"][0]["is_selected"])
+        self.assertEqual(root["children"][0]["description"], "operator description")
+        self.assertEqual(
+            [node["display_name"] for node in root["children"]],
+            ["silver_facilities", "silver_equipment"],
+        )
+        self.assertEqual(
+            [node["display_name"] for node in root["children"][0]["children"]],
+            ["facility_id", "facility_name"],
+        )
+
+        existing_kusto = {"custom": "preserve", "elements": []}
+        kusto = ns["build_kusto_datasource_obj"](existing_kusto)
+        self.assertEqual(kusto["artifactId"], "kusto-db")
+        self.assertEqual(kusto["type"], "kusto")
+        self.assertEqual(kusto["custom"], "preserve")
+        table = kusto["elements"][0]["children"][0]
+        self.assertEqual(table["display_name"], "OPCUAEvents")
+        self.assertEqual(
+            [(column["display_name"], column["data_type"]) for column in table["children"]],
+            [
+                ("event_time", "datetime"),
+                ("opcua_node_id", "string"),
+                ("value", "real"),
+                ("quality", "string"),
+            ],
+        )
+
     def test_nb09_failed_runtime_rerun_preserves_sql_and_custom_capabilities(self):
         sql_tables = ast.literal_eval(next(node.value for node in ast.parse(source("011")).body
                                           if assign_to(node, "SQL_TABLES")))
@@ -675,7 +777,10 @@ class CapabilityTests(unittest.TestCase):
         }
         stage = {
             "$schema": "existing-stage-schema",
-            "aiInstructions": "Original ontology instructions\nOperational SQL guidance\nUser custom rules",
+            "aiInstructions": (
+                "Original ontology instructions\nOperational SQL guidance\nUser custom rules\n"
+                "### Direct Lakehouse and Eventhouse Sources"
+            ),
             "customOptions": {"preserve": True},
         }
         ontology = {
@@ -689,10 +794,38 @@ class CapabilityTests(unittest.TestCase):
                  "is_selected": True, "children": []},
             ],
         }
+        lakehouse = {
+            "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
+            "displayName": "RTI Lakehouse", "dataSourceInstructions": "Custom Lakehouse guidance",
+            "elements": [{
+                "id": "lakehouse-root", "type": "lakehouse_tables", "display_name": "Tables",
+                "is_selected": False, "children": [{
+                    "id": "facilities-table", "type": "lakehouse_tables.table",
+                    "display_name": "silver_facilities", "is_selected": False,
+                    "children": [{"id": "facility-column", "type": "lakehouse_tables.column",
+                                  "display_name": "facility_id", "is_selected": True, "children": []}],
+                }],
+            }],
+            "customLakehouseOptions": {"preserve": True},
+        }
+        kusto = {
+            "type": "kusto", "artifactId": "kusto-db", "workspaceId": "ws",
+            "displayName": "RTI KQL", "dataSourceInstructions": "Custom Kusto guidance",
+            "elements": [{
+                "id": "kusto-root", "type": "kusto", "display_name": "Tables",
+                "is_selected": False, "children": [{
+                    "id": "events-table", "type": "kusto.table",
+                    "display_name": "OPCUAEvents", "is_selected": True, "children": [],
+                }],
+            }],
+            "customKustoOptions": {"preserve": True},
+        }
         baseline = []
         for version in ("draft", "published"):
             for path, value in (
                 ("stage_config.json", stage), ("ontology-source/datasource.json", ontology),
+                ("lakehouse-source/datasource.json", lakehouse),
+                ("kusto-source/datasource.json", kusto),
                 ("sql-source/datasource.json", sql), ("custom_queries.json", {"queries": ["custom query"]}),
             ):
                 baseline.append(json_part(f"Files/Config/{version}/{path}", value))
@@ -717,17 +850,33 @@ class CapabilityTests(unittest.TestCase):
         ns = functions(
             "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
             "require_v2_ontology", "verify_agent_source_readback", "build_stage_obj", "build_datasource_obj",
+            "_ds_element", "merge_source_elements", "build_lakehouse_datasource_obj",
+            "build_kusto_datasource_obj",
             workspace_id="ws", ontology_name="ontology-name", ontology_id="ontology",
             get_ontology_generation=Mock(return_value=2), data_agent_name="agent",
             DATA_AGENT_DESCRIPTION="description", FABRIC_API_BASE="base",
             DRAFT_STAGE_CONFIG_PATH="Files/Config/draft/stage_config.json",
             DATASOURCE_PATH="Files/Config/draft/ontology-source/datasource.json",
+            LAKEHOUSE_DATASOURCE_PATH="Files/Config/draft/lakehouse-source/datasource.json",
+            KUSTO_DATASOURCE_PATH="Files/Config/draft/kusto-source/datasource.json",
             STAGE_CONFIG_SCHEMA_URL="default-stage-schema", DATASOURCE_SCHEMA_URL="default-source-schema",
             DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
+            MULTISOURCE_INSTRUCTIONS_MARKER="### Direct Lakehouse and Eventhouse Sources",
+            MULTISOURCE_INSTRUCTIONS="\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
             ONTOLOGY_ELEMENTS=[("facilities", "facility_id,facility_name"), ("equipment", "equipment_id")],
+            LAKEHOUSE_DATASOURCE_TYPE="lakehouse_tables", KUSTO_DATASOURCE_TYPE="kusto",
+            LAKEHOUSE_SOURCE_INSTRUCTIONS="default Lakehouse guidance",
+            KUSTO_SOURCE_INSTRUCTIONS="default Kusto guidance",
+            LAKEHOUSE_TABLES=[("silver_facilities", "Facility master.")],
+            lakehouse_id="lakehouse", lakehouse_name="RTI Lakehouse",
+            kql_db_id="kusto-db", kql_db_name="RTI KQL", kql_table_name="OPCUAEvents",
+            uuid=uuid,
             get_spn_access_token_for_fabric=Mock(),
             create_data_agent=Mock(return_value={"id": "agent-id", "_created_this_run": False}),
             get_item_definition=Mock(side_effect=lambda _id: {"definition": {"parts": copy.deepcopy(state["parts"])}}),
+            lakehouse_schema_map=Mock(return_value={
+                "silver_facilities": [("facility_id", "string"), ("facility_name", "string")],
+            }),
             update_item_definition=Mock(side_effect=update), publish_data_agent=Mock(side_effect=publish),
             enable_preview_runtime=Mock(), persist_agent_status=Mock(),
             is_known_ontology_v2_product_limitation=lambda reason: False,
@@ -752,13 +901,29 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(retained_ontology["dataSourceInstructions"], "Custom ontology guidance")
             self.assertEqual(len(retained_ontology["elements"]), 3)
             self.assertEqual(ns["build_datasource_obj"](retained_ontology, "ontology"), retained_ontology)
+            retained_lakehouse = ns["decode_payload"](
+                actual[prefix + "lakehouse-source/datasource.json"]["payload"]
+            )
+            self.assertEqual(retained_lakehouse["customLakehouseOptions"], {"preserve": True})
+            self.assertEqual(retained_lakehouse["dataSourceInstructions"], "Custom Lakehouse guidance")
+            self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-root")
+            self.assertFalse(retained_lakehouse["elements"][0]["children"][0]["is_selected"])
+            retained_kusto = ns["decode_payload"](
+                actual[prefix + "kusto-source/datasource.json"]["payload"]
+            )
+            self.assertEqual(retained_kusto["customKustoOptions"], {"preserve": True})
+            self.assertEqual(retained_kusto["dataSourceInstructions"], "Custom Kusto guidance")
+            self.assertEqual(retained_kusto["elements"][0]["id"], "kusto-root")
             self.assertEqual(ns["decode_payload"](actual[prefix + "custom_queries.json"]["payload"]),
                              {"queries": ["custom query"]})
         self.assertEqual(actual[custom_part["path"]], custom_part)
         ns["update_item_definition"].assert_called_once()
         ns["publish_data_agent"].assert_called_once()
         self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
-        self.assertEqual(ns["build_stage_obj"]({})["aiInstructions"], "default ontology instructions")
+        self.assertEqual(
+            ns["build_stage_obj"]({})["aiInstructions"],
+            "default ontology instructions\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
+        )
         with self.assertRaisesRegex(RuntimeError, "not a string"):
             ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
         with self.assertRaisesRegex(RuntimeError, "malformed"):
@@ -955,6 +1120,16 @@ class CapabilityTests(unittest.TestCase):
             json_part("Files/Config/draft/other-sql/datasource.json", {
                 "type": "sql_database", "artifactId": "other-sql", "elements": [{"is_selected": False}],
                 "dataSourceInstructions": "Other SQL instructions",
+            }),
+            json_part("Files/Config/draft/lakehouse-tables-rti/datasource.json", {
+                "type": "lakehouse_tables", "artifactId": "lakehouse",
+                "elements": [{"id": "lakehouse-table", "is_selected": True}],
+                "dataSourceInstructions": "Lakehouse routing instructions",
+            }),
+            json_part("Files/Config/draft/kusto-rti/datasource.json", {
+                "type": "kusto", "artifactId": "kusto",
+                "elements": [{"id": "events-table", "is_selected": True}],
+                "dataSourceInstructions": "Eventhouse routing instructions",
             }),
             json_part("Files/Config/draft/custom.json", {"custom": ["untouched"]}),
             json_part("Files/Config/draft/stage_config.json", {

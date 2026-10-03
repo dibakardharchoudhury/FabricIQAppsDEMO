@@ -74,7 +74,12 @@ target_folder_id = first_setting("target_folder_id", required=True)
 ontology_name = first_setting("ontology_name", "fabric_ontology_name", required=True)
 lakehouse_id = first_setting("lakehouse_id", required=True)
 lakehouse_name = first_setting("lakehouse_name", default="Energy_IQ_LakehouseRTI_V3")
+kql_db_id = first_setting("fabric_kql_db_id", "kql_database_id", "kql_db_id", required=True)
 kql_db_name = first_setting("fabric_kql_db_name", "kql_database_name", required=True)
+kql_table_name = first_setting(
+    "fabric_eventhouse_table", "eventhouse_table_name", "kql_table_name",
+    default="OPCUAEvents",
+)
 
 # Key Vault names/URIs for SPN auth (written by RTI_001).
 key_vault_uri = first_setting("key_vault_uri", required=True)
@@ -90,6 +95,7 @@ print("   Target folder ID :", target_folder_id)
 print("   Ontology name    :", ontology_name)
 print("   Lakehouse name   :", lakehouse_name)
 print("   KQL DB name      :", kql_db_name)
+print("   KQL table        :", kql_table_name)
 print("   Data Agent name  :", data_agent_name)
 
 # METADATA ********************
@@ -130,6 +136,14 @@ LRO_MAX_WAIT_SECONDS = 300
 DATASOURCE_TYPE = "ontology"
 DRAFT_STAGE_CONFIG_PATH = "Files/Config/draft/stage_config.json"
 DATASOURCE_PATH = f"Files/Config/draft/{DATASOURCE_TYPE}-{ontology_name}/datasource.json"
+LAKEHOUSE_DATASOURCE_TYPE = "lakehouse_tables"
+LAKEHOUSE_DATASOURCE_PATH = (
+    f"Files/Config/draft/lakehouse-tables-{lakehouse_name}/datasource.json"
+)
+KUSTO_DATASOURCE_TYPE = "kusto"
+KUSTO_DATASOURCE_PATH = (
+    f"Files/Config/draft/{KUSTO_DATASOURCE_TYPE}-{kql_db_name}/datasource.json"
+)
 
 STAGE_CONFIG_SCHEMA_URL = (
     "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/"
@@ -443,12 +457,25 @@ def validate_agent_ontology_sources(
         raise RuntimeError("No verified published v2 ontology source exists; publish success is unverified.")
 
 
-def verify_agent_source_readback(agent_id: str, ontology_id: str, published: bool = False) -> list:
+def verify_agent_source_readback(
+    agent_id: str,
+    ontology_id: str,
+    expected_sources: Optional[dict] = None,
+    published: bool = False,
+) -> list:
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition)
     validate_agent_ontology_sources(
         parts, ontology_id, require_draft=not published, require_published=published,
     )
+    for draft_path, expected in (expected_sources or {}).items():
+        path = draft_path.replace("/draft/", "/published/", 1) if published else draft_path
+        source_part = next((part for part in parts if part.get("path") == path), None)
+        if source_part is None or decode_payload(source_part.get("payload", "")) != expected:
+            raise RuntimeError(
+                f"Data Agent source readback at {path!r} does not match the submitted source; "
+                "source retention and publish success are unverified."
+            )
     return parts
 
 
@@ -801,7 +828,7 @@ def upsert_part(parts: list, path: str, obj: dict) -> list:
 
 
 # -------------------------------------------------------------------------
-# Agent instructions + ontology data source
+# Agent instructions + ontology, Lakehouse and Eventhouse data sources
 # -------------------------------------------------------------------------
 AI_INSTRUCTIONS = (
     "You are an expert on industrial turbine telemetry modelled as a Fabric Ontology.\n"
@@ -849,6 +876,30 @@ in all `analyze_ontology` and `analyze_sql_database` queries.
 - This ID normalization is required and does **not** change user intent; it only maps human phrasing to model identifiers.
 """
 
+MULTISOURCE_INSTRUCTIONS_MARKER = "### Direct Lakehouse and Eventhouse Sources"
+MULTISOURCE_INSTRUCTIONS = f"""
+
+{MULTISOURCE_INSTRUCTIONS_MARKER}
+
+- Keep the Ontology v2 source as the semantic model for entity relationships and ontology-specific questions.
+- Use the `{lakehouse_name}` Lakehouse source for direct static/reference questions over
+  `silver_facilities`, `silver_systems`, `silver_equipment`, `silver_instruments`, and
+  `silver_signal_master`.
+- Use the `{kql_db_name}` Eventhouse/KQL source and its `{kql_table_name}` table for live or
+  historical telemetry values, quality, trends, time windows, and aggregations.
+- `{kql_table_name}` columns are `event_time`, `opcua_node_id`, `value`, and `quality`.
+- Join or correlate sources only through canonical keys: `opcua_node_id`, `equipment_id`,
+  `facility_id`, and `system_id`. Never infer a relationship from display names.
+- When the operational SQL source is present, use it for work orders, maintenance notifications,
+  inspections, spare parts, and 3D model records. Do not answer those operational-record questions
+  from Lakehouse or Eventhouse telemetry.
+- A successful Lakehouse, Eventhouse, or SQL answer does not prove that Ontology v2 execution
+  succeeded. For an explicitly ontology-only request, use only the Ontology source and return its
+  real error if it cannot execute; do not silently substitute another source.
+- Prefer one authoritative source when it fully answers the question. Use multiple sources only
+  when the user asks for combined telemetry and asset/operational context.
+"""
+
 # Ontology entities to expose to the agent (name -> column summary used as description).
 ONTOLOGY_ELEMENTS = [
     ("signal_master",
@@ -866,16 +917,153 @@ ONTOLOGY_ELEMENTS = [
      "instrument_type,is_active"),
 ]
 
+LAKEHOUSE_TABLES = [
+    (first_setting("silver_facilities_table", required=True),
+     "Facility master data keyed by facility_id."),
+    (first_setting("silver_systems_table", required=True),
+     "System master data keyed by system_id and related to facilities by facility_id."),
+    (first_setting("silver_equipment_table", required=True),
+     "Equipment master data keyed by equipment_id with facility_id, system_id and turbine tag."),
+    (first_setting("silver_instruments_table", required=True),
+     "Instrument metadata keyed by instrument_id and opcua_node_id with equipment context and unit."),
+    (first_setting("silver_signal_master_table", required=True),
+     "Per-signal metadata keyed by opcua_node_id with equipment, facility, system, tag and unit."),
+]
+
+LAKEHOUSE_SOURCE_INSTRUCTIONS = (
+    "Authoritative static/reference source. Use facilities, systems, equipment, instruments and "
+    "signal metadata for direct master-data questions and canonical ID resolution. Join only on "
+    "facility_id, system_id, equipment_id or opcua_node_id. This source does not contain live "
+    "telemetry readings or operational SQL records."
+)
+KUSTO_SOURCE_INSTRUCTIONS = (
+    f"Authoritative telemetry source. Use {kql_table_name} for time-windowed values, quality, "
+    "trends and aggregations. Filter and join by opcua_node_id; use event_time for time filters. "
+    "Quality is GOOD, UNCERTAIN or BAD. Resolve asset/facility context through the Lakehouse "
+    "metadata source when needed."
+)
+
+
+def _ds_element(type_name: str, display_name: str, is_selected: bool, children: list, **extra) -> dict:
+    node = {
+        "id": str(uuid.uuid4()),
+        "is_selected": is_selected,
+        "display_name": display_name,
+        "type": type_name,
+        "description": None,
+        "children": children,
+    }
+    node.update(extra)
+    return node
+
+
+def merge_source_elements(existing: list, desired: list) -> list:
+    """Add selected source schema without replacing saved IDs, descriptions or custom fields."""
+    if not isinstance(existing, list) or any(not isinstance(element, dict) for element in existing):
+        raise RuntimeError("Existing data source elements are malformed; refusing to replace them.")
+    merged = list(existing)
+    for node in desired:
+        index = next((i for i, old in enumerate(merged)
+                      if (old.get("type"), old.get("display_name")) ==
+                      (node["type"], node["display_name"])), None)
+        if index is None:
+            merged.append(node)
+        else:
+            old = merged[index]
+            merged[index] = {**node, **old, "children": merge_source_elements(
+                old.get("children", []), node["children"],
+            )}
+    return merged
+
+
+def lakehouse_schema_map() -> dict:
+    context = notebookutils.runtime.context
+    if (context.get("defaultLakehouseId") != lakehouse_id
+            or context.get("defaultLakehouseWorkspaceId") != workspace_id):
+        raise RuntimeError("Data Agent Lakehouse schema discovery must use the configured Lakehouse.")
+    schema_map = {}
+    for table_name, _description in LAKEHOUSE_TABLES:
+        if not re.fullmatch(r"(?:dbo\.)?[A-Za-z_][A-Za-z0-9_]*", table_name):
+            raise RuntimeError(f"Unsupported Lakehouse table name {table_name!r}.")
+        try:
+            fields = spark.read.table(table_name).schema.fields
+        except Exception as exc:
+            raise RuntimeError(
+                f"Required Data Agent Lakehouse table {table_name!r} is unavailable."
+            ) from exc
+        if not fields:
+            raise RuntimeError(f"Required Data Agent Lakehouse table {table_name!r} has no columns.")
+        schema_map[table_name] = [(field.name, field.dataType.simpleString()) for field in fields]
+    return schema_map
+
+
+def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
+    ds = dict(existing)
+    ds["$schema"] = DATASOURCE_SCHEMA_URL
+    ds["artifactId"] = lakehouse_id
+    ds["workspaceId"] = workspace_id
+    ds["displayName"] = lakehouse_name
+    ds["type"] = LAKEHOUSE_DATASOURCE_TYPE
+    ds.setdefault("dataSourceInstructions", LAKEHOUSE_SOURCE_INSTRUCTIONS)
+    ds.setdefault("userDescription", "Curated RTI asset and signal master tables.")
+    ds.setdefault("metadata", {})
+    table_nodes = []
+    for table_name, description in LAKEHOUSE_TABLES:
+        columns = [
+            _ds_element(
+                "lakehouse_tables.column", column_name, True, [],
+                data_type=data_type,
+            )
+            for column_name, data_type in schema_map[table_name]
+        ]
+        table_nodes.append(_ds_element(
+            "lakehouse_tables.table", table_name, True, columns,
+            description=description,
+        ))
+    desired = [_ds_element("lakehouse_tables", "Tables", False, table_nodes)]
+    ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
+    return ds
+
+
+def build_kusto_datasource_obj(existing: dict) -> dict:
+    ds = dict(existing)
+    ds["$schema"] = DATASOURCE_SCHEMA_URL
+    ds["artifactId"] = kql_db_id
+    ds["workspaceId"] = workspace_id
+    ds["displayName"] = kql_db_name
+    ds["type"] = KUSTO_DATASOURCE_TYPE
+    ds.setdefault("dataSourceInstructions", KUSTO_SOURCE_INSTRUCTIONS)
+    ds.setdefault("userDescription", "Live and historical OPC UA telemetry.")
+    ds.setdefault("metadata", {})
+    columns = [
+        _ds_element("kusto.column", "event_time", True, [], data_type="datetime"),
+        _ds_element("kusto.column", "opcua_node_id", True, [], data_type="string"),
+        _ds_element("kusto.column", "value", True, [], data_type="real"),
+        _ds_element("kusto.column", "quality", True, [], data_type="string"),
+    ]
+    table = _ds_element(
+        "kusto.table", kql_table_name, True, columns,
+        description="OPC UA telemetry readings with event time, node, value and quality.",
+    )
+    desired = [_ds_element("kusto", "Tables", False, [table])]
+    ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
+    return ds
+
 
 def build_stage_obj(existing: dict) -> dict:
-    """Initialize new agents without replacing operational or custom instructions."""
+    """Preserve current instructions and append direct-source routing guidance once."""
     stage = dict(existing)
     stage.setdefault("$schema", STAGE_CONFIG_SCHEMA_URL)
     instructions = stage.get("aiInstructions")
     if instructions is not None and not isinstance(instructions, str):
         raise RuntimeError("Existing agent instructions are not a string; refusing to replace custom configuration.")
     if not instructions:
-        stage["aiInstructions"] = AI_INSTRUCTIONS
+        instructions = AI_INSTRUCTIONS
+    if MULTISOURCE_INSTRUCTIONS_MARKER not in instructions:
+        instructions += MULTISOURCE_INSTRUCTIONS
+    if len(instructions) > 15000:
+        raise RuntimeError("Preserved and appended Data Agent instructions exceed Fabric's 15,000 character limit.")
+    stage["aiInstructions"] = instructions
     return stage
 
 
@@ -939,7 +1127,7 @@ try:
     for part in parts:
         print("   •", part.get("path", ""))
 
-    # 3) PATCH — upsert the draft aiInstructions + ontology data source.
+    # 3) PATCH — preserve instructions and upsert Ontology, Lakehouse and Eventhouse sources.
     existing_stage = next(
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
         {},
@@ -951,21 +1139,56 @@ try:
         {},
     )
     parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
+
+    discovered_lakehouse_schema = lakehouse_schema_map()
+    existing_lakehouse_ds = next(
+        (
+            decode_payload(p.get("payload", ""))
+            for p in parts if p.get("path") == LAKEHOUSE_DATASOURCE_PATH
+        ),
+        {},
+    )
+    submitted_lakehouse_source = build_lakehouse_datasource_obj(
+        existing_lakehouse_ds, discovered_lakehouse_schema,
+    )
+    parts = upsert_part(parts, LAKEHOUSE_DATASOURCE_PATH, submitted_lakehouse_source)
+
+    existing_kusto_ds = next(
+        (
+            decode_payload(p.get("payload", ""))
+            for p in parts if p.get("path") == KUSTO_DATASOURCE_PATH
+        ),
+        {},
+    )
+    submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
+    parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
+    submitted_direct_sources = {
+        LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
+        KUSTO_DATASOURCE_PATH: submitted_kusto_source,
+    }
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
     print("   • ontology data source  ->", DATASOURCE_PATH)
     print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
+    print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
+    print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
+    print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)
+    print(f"       {kql_table_name} selected with 4 columns.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
-    verify_agent_source_readback(data_agent_item_id, ontology_id)
+    verify_agent_source_readback(
+        data_agent_item_id, ontology_id, submitted_direct_sources,
+    )
     print(f"✅ Data Agent '{data_agent_name}' configured (id={data_agent_item_id}).")
 
     # 4) PUBLISH — promote staging; verify published identity, not runtime readiness.
     enable_preview_runtime(data_agent_item_id)
     publish_data_agent(data_agent_item_id, DATA_AGENT_DESCRIPTION)
-    published_parts = verify_agent_source_readback(data_agent_item_id, ontology_id, published=True)
+    published_parts = verify_agent_source_readback(
+        data_agent_item_id, ontology_id, submitted_direct_sources, published=True,
+    )
     persist_agent_status(
         "published",
         "REST publish and selected live generation 2 source identity verified; runtime probe pending.",
