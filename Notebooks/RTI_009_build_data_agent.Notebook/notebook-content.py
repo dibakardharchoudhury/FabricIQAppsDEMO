@@ -155,9 +155,9 @@ DATASOURCE_SCHEMA_URL = (
 )
 
 DATA_AGENT_DESCRIPTION = (
-    "Conversational agent over the RTI turbine telemetry ontology "
-    f"'{ontology_name}': real-time OPC UA readings joined to equipment, "
-    "facility, system and instrument context."
+    "Hydro operations agent for facilities, assets, OPC UA telemetry, signal quality, "
+    "and work orders across the governed Lakehouse, Eventhouse, SQL database, and "
+    f"verified Ontology v2 '{ontology_name}'."
 )[:256]  # Fabric item description max length is 256 chars
 
 
@@ -955,7 +955,7 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   block is mandatory. Never say that this chat cannot render a chart and never return only plotting
   instructions. For one signal use `event_time,value,quality`. For multiple signals use
   `event_time,opcua_node_id,value,quality`; include every resolved signal, keep chronological order,
-  and keep the response to at most 240 total plot rows. If the raw series exceeds that bound, use
+  and keep the response to at most 200 total plot rows. If the raw series exceeds that bound, use
   an appropriate time bin for a visual overview unless the user explicitly requested raw/no
   averaging. The web client renders this CSV locally. Even if Fabric also generates a native
   report/visualization file, include the fenced CSV because the external MCP result may not expose

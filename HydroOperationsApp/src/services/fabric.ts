@@ -1026,7 +1026,7 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
   }
   if (!dataAgentMcpSessionPromise) {
     dataAgentMcpSessionPromise = (async () => {
-      const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
+      const client = new Client({ name: 'hydro-operations-app', version: __APP_VERSION__ })
       const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
         requestInit: { headers: { Authorization: 'Bearer ' + token, ActivityId: crypto.randomUUID() } },
       })
@@ -1094,6 +1094,7 @@ async function callDataAgentMcp(
     }, undefined, {
       timeout: 5 * 60_000,
       maxTotalTimeout: 5 * 60_000,
+      resetTimeoutOnProgress: true,
       onprogress: progress => {
         if (applyDataAgentProgress(steps, progress.message, Date.now())) publishSteps()
       },

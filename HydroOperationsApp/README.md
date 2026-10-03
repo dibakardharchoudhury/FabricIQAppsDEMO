@@ -170,10 +170,18 @@ Warm-up starts only when Hydro Intelligence opens with the Data Agent selected, 
 connection and verification work cannot delay initial application load or unrelated tabs. It also
 retains discovered MCP tool metadata across transport reconnects. On a cold request, source verification and MCP
 connection setup run in parallel, but the tool call cannot start until verification succeeds.
+The published server advertises the `io.modelcontextprotocol/tasks` extension, but live simple and
+visual task-creation probes did not return `taskCreated`, persisted no task in `tasks/list`, and
+timed out. The production app therefore retains the proven synchronous `tools/call` path instead
+of enabling a capability whose live execution is inconclusive.
 No app-authored scope reset or source-routing hint is injected into user prompts. When the Data
 Agent returns plot-ready fenced CSV, the app converts it directly into the existing local chart
 model. Multi-signal CSV containing `opcua_node_id` is rendered as grouped series. This adds no
 model call or data query and therefore does not add network latency.
+Fabric-rendered visual images are currently limited to the native Data Agent experience. NB09
+therefore keeps visual semantics in the agent instructions and requires no more than the documented
+200 plot rows so external clients can reconstruct the chart without adding source-routing or join
+instructions to the user question.
 The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
 Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
 notifications near completion and exposes only internal tool names/statuses—not their generated SQL,
