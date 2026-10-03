@@ -717,11 +717,17 @@ class CapabilityTests(unittest.TestCase):
             "custom": {"preserve": True},
             "dataSourceInstructions": "operator lakehouse guidance",
             "elements": [{
-                "id": "saved-root", "type": "lakehouse_tables", "display_name": "Tables",
+                "id": "saved-root", "type": "schema_grouping", "display_name": "Schemas",
                 "is_selected": False, "children": [{
-                    "id": "saved-table", "type": "lakehouse_tables.table",
-                    "display_name": "silver_facilities", "is_selected": False,
-                    "description": "operator description", "children": [],
+                    "id": "saved-schema", "type": "lakehouse_tables.schema", "display_name": "dbo",
+                    "is_selected": False, "children": [{
+                        "id": "saved-tables", "type": "table_grouping", "display_name": "Tables",
+                        "is_selected": False, "children": [{
+                            "id": "saved-table", "type": "lakehouse_tables.table",
+                            "display_name": "silver_facilities", "is_selected": False,
+                            "description": "operator description", "children": [],
+                        }],
+                    }],
                 }],
             }],
         }
@@ -736,15 +742,16 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(lakehouse["custom"], {"preserve": True})
         root = lakehouse["elements"][0]
         self.assertEqual(root["id"], "saved-root")
-        self.assertEqual(root["children"][0]["id"], "saved-table")
-        self.assertFalse(root["children"][0]["is_selected"])
-        self.assertEqual(root["children"][0]["description"], "operator description")
+        tables = root["children"][0]["children"][0]
+        self.assertEqual(tables["children"][0]["id"], "saved-table")
+        self.assertFalse(tables["children"][0]["is_selected"])
+        self.assertEqual(tables["children"][0]["description"], "operator description")
         self.assertEqual(
-            [node["display_name"] for node in root["children"]],
+            [node["display_name"] for node in tables["children"]],
             ["silver_facilities", "silver_equipment"],
         )
         self.assertEqual(
-            [node["display_name"] for node in root["children"][0]["children"]],
+            [node["display_name"] for node in tables["children"][0]["children"]],
             ["facility_id", "facility_name"],
         )
 
@@ -798,12 +805,18 @@ class CapabilityTests(unittest.TestCase):
             "type": "lakehouse_tables", "artifactId": "lakehouse", "workspaceId": "ws",
             "displayName": "RTI Lakehouse", "dataSourceInstructions": "Custom Lakehouse guidance",
             "elements": [{
-                "id": "lakehouse-root", "type": "lakehouse_tables", "display_name": "Tables",
+                "id": "lakehouse-root", "type": "schema_grouping", "display_name": "Schemas",
                 "is_selected": False, "children": [{
-                    "id": "facilities-table", "type": "lakehouse_tables.table",
-                    "display_name": "silver_facilities", "is_selected": False,
-                    "children": [{"id": "facility-column", "type": "lakehouse_tables.column",
-                                  "display_name": "facility_id", "is_selected": True, "children": []}],
+                    "id": "lakehouse-schema", "type": "lakehouse_tables.schema", "display_name": "dbo",
+                    "is_selected": False, "children": [{
+                        "id": "lakehouse-tables", "type": "table_grouping", "display_name": "Tables",
+                        "is_selected": False, "children": [{
+                            "id": "facilities-table", "type": "lakehouse_tables.table",
+                            "display_name": "silver_facilities", "is_selected": False,
+                            "children": [{"id": "facility-column", "type": "lakehouse_tables.column",
+                                          "display_name": "facility_id", "is_selected": True, "children": []}],
+                        }],
+                    }],
                 }],
             }],
             "customLakehouseOptions": {"preserve": True},
@@ -812,7 +825,7 @@ class CapabilityTests(unittest.TestCase):
             "type": "kusto", "artifactId": "kusto-db", "workspaceId": "ws",
             "displayName": "RTI KQL", "dataSourceInstructions": "Custom Kusto guidance",
             "elements": [{
-                "id": "kusto-root", "type": "kusto", "display_name": "Tables",
+                "id": "kusto-root", "type": "table_grouping", "display_name": "Tables",
                 "is_selected": False, "children": [{
                     "id": "events-table", "type": "kusto.table",
                     "display_name": "OPCUAEvents", "is_selected": True, "children": [],

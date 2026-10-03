@@ -1020,7 +1020,13 @@ def build_lakehouse_datasource_obj(existing: dict, schema_map: dict) -> dict:
             "lakehouse_tables.table", table_name, True, columns,
             description=description,
         ))
-    desired = [_ds_element("lakehouse_tables", "Tables", False, table_nodes)]
+    desired = [
+        _ds_element("schema_grouping", "Schemas", False, [
+            _ds_element("lakehouse_tables.schema", "dbo", False, [
+                _ds_element("table_grouping", "Tables", False, table_nodes),
+            ]),
+        ]),
+    ]
     ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
     return ds
 
@@ -1045,7 +1051,7 @@ def build_kusto_datasource_obj(existing: dict) -> dict:
         "kusto.table", kql_table_name, True, columns,
         description="OPC UA telemetry readings with event time, node, value and quality.",
     )
-    desired = [_ds_element("kusto", "Tables", False, [table])]
+    desired = [_ds_element("table_grouping", "Tables", False, [table])]
     ds["elements"] = merge_source_elements(existing.get("elements", []), desired)
     return ds
 
