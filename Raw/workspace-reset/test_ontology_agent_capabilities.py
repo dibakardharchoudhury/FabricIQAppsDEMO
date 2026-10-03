@@ -744,7 +744,7 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(root["id"], "saved-root")
         tables = root["children"][0]["children"][0]
         self.assertEqual(tables["children"][0]["id"], "saved-table")
-        self.assertFalse(tables["children"][0]["is_selected"])
+        self.assertTrue(tables["children"][0]["is_selected"])
         self.assertEqual(tables["children"][0]["description"], "operator description")
         self.assertEqual(
             [node["display_name"] for node in tables["children"]],
@@ -920,7 +920,10 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(retained_lakehouse["customLakehouseOptions"], {"preserve": True})
             self.assertEqual(retained_lakehouse["dataSourceInstructions"], "Custom Lakehouse guidance")
             self.assertEqual(retained_lakehouse["elements"][0]["id"], "lakehouse-root")
-            self.assertFalse(retained_lakehouse["elements"][0]["children"][0]["is_selected"])
+            retained_lakehouse_table = (
+                retained_lakehouse["elements"][0]["children"][0]["children"][0]["children"][0]
+            )
+            self.assertTrue(retained_lakehouse_table["is_selected"])
             retained_kusto = ns["decode_payload"](
                 actual[prefix + "kusto-source/datasource.json"]["payload"]
             )

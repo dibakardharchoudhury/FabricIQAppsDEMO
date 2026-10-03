@@ -970,7 +970,7 @@ def merge_source_elements(existing: list, desired: list) -> list:
             merged.append(node)
         else:
             old = merged[index]
-            merged[index] = {**node, **old, "children": merge_source_elements(
+            merged[index] = {**node, **old, "is_selected": node["is_selected"], "children": merge_source_elements(
                 old.get("children", []), node["children"],
             )}
     return merged
