@@ -1146,8 +1146,21 @@ def build_kusto_datasource_obj(existing: dict) -> dict:
     return ds
 
 
+def upsert_instruction_section(instructions: str, marker: str, desired: str) -> str:
+    """Replace one owned section while preserving all unrelated instructions."""
+    desired = desired.strip("\n")
+    marker_index = instructions.find(marker)
+    if marker_index < 0:
+        return instructions.rstrip() + "\n\n" + desired
+    section_start = instructions.rfind("\n", 0, marker_index) + 1
+    next_section = instructions.find("\n### ", marker_index + len(marker))
+    prefix = instructions[:section_start].rstrip()
+    suffix = instructions[next_section:].lstrip("\n") if next_section >= 0 else ""
+    return prefix + "\n\n" + desired + (("\n\n" + suffix) if suffix else "")
+
+
 def build_stage_obj(existing: dict) -> dict:
-    """Preserve current instructions and append owned routing guidance once."""
+    """Preserve custom instructions and upsert notebook-owned guidance."""
     stage = dict(existing)
     stage.setdefault("$schema", STAGE_CONFIG_SCHEMA_URL)
     instructions = stage.get("aiInstructions")
@@ -1155,16 +1168,14 @@ def build_stage_obj(existing: dict) -> dict:
         raise RuntimeError("Existing agent instructions are not a string; refusing to replace custom configuration.")
     if not instructions:
         instructions = AI_INSTRUCTIONS
-    if MULTISOURCE_INSTRUCTIONS_MARKER not in instructions:
-        instructions += MULTISOURCE_INSTRUCTIONS
-    if CROSS_SOURCE_OPERATIONAL_MARKER not in instructions:
-        instructions += CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS
-    if GLOBAL_SCOPE_MARKER not in instructions:
-        instructions += GLOBAL_SCOPE_INSTRUCTIONS
-    if MCP_FOLLOWUP_MARKER not in instructions:
-        instructions += MCP_FOLLOWUP_INSTRUCTIONS
-    if DIRECT_RUNTIME_ROUTING_MARKER not in instructions:
-        instructions += DIRECT_RUNTIME_ROUTING_INSTRUCTIONS
+    for marker, desired in (
+        (MULTISOURCE_INSTRUCTIONS_MARKER, MULTISOURCE_INSTRUCTIONS),
+        (CROSS_SOURCE_OPERATIONAL_MARKER, CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS),
+        (GLOBAL_SCOPE_MARKER, GLOBAL_SCOPE_INSTRUCTIONS),
+        (MCP_FOLLOWUP_MARKER, MCP_FOLLOWUP_INSTRUCTIONS),
+        (DIRECT_RUNTIME_ROUTING_MARKER, DIRECT_RUNTIME_ROUTING_INSTRUCTIONS),
+    ):
+        instructions = upsert_instruction_section(instructions, marker, desired)
     if len(instructions) > 15000:
         raise RuntimeError("Preserved and appended Data Agent instructions exceed Fabric's 15,000 character limit.")
     stage["aiInstructions"] = instructions

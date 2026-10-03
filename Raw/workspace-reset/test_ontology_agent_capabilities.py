@@ -862,7 +862,8 @@ class CapabilityTests(unittest.TestCase):
 
         ns = functions(
             "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
-            "require_v2_ontology", "verify_agent_source_readback", "build_stage_obj", "build_datasource_obj",
+            "require_v2_ontology", "verify_agent_source_readback", "upsert_instruction_section",
+            "build_stage_obj", "build_datasource_obj",
             "_ds_element", "merge_source_elements", "build_lakehouse_datasource_obj",
             "build_kusto_datasource_obj",
             workspace_id="ws", ontology_name="ontology-name", ontology_id="ontology",
@@ -917,7 +918,10 @@ class CapabilityTests(unittest.TestCase):
         for version in ("draft", "published"):
             prefix = f"Files/Config/{version}/"
             retained_stage = ns["decode_payload"](actual[prefix + "stage_config.json"]["payload"])
-            self.assertTrue(retained_stage["aiInstructions"].startswith(stage["aiInstructions"]))
+            custom_prefix = stage["aiInstructions"].split(
+                "### Direct Lakehouse and Eventhouse Sources", 1
+            )[0].rstrip()
+            self.assertTrue(retained_stage["aiInstructions"].startswith(custom_prefix))
             self.assertEqual(retained_stage["customOptions"], stage["customOptions"])
             self.assertEqual(retained_stage["aiInstructions"].count("### Cross-source operational joins"), 1)
             self.assertEqual(retained_stage["aiInstructions"].count("### Conversation scope"), 1)
@@ -964,11 +968,11 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
         self.assertEqual(
             ns["build_stage_obj"]({})["aiInstructions"],
-            "default ontology instructions\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
-            "\n### Cross-source operational joins\nCross-source guidance"
-            "\n### Conversation scope\nGlobal scope guidance"
-            "\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
-            "\n### Authoritative source routing\nDirect routing guidance",
+            "default ontology instructions\n\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
+            "\n\n### Cross-source operational joins\nCross-source guidance"
+            "\n\n### Conversation scope\nGlobal scope guidance"
+            "\n\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
+            "\n\n### Authoritative source routing\nDirect routing guidance",
         )
         existing_guidance = ns["build_stage_obj"]({
             "aiInstructions": (
@@ -991,6 +995,10 @@ class CapabilityTests(unittest.TestCase):
             existing_guidance["aiInstructions"].count("### Authoritative source routing"),
             1,
         )
+        self.assertNotIn("existing follow-up guidance", existing_guidance["aiInstructions"])
+        self.assertIn("Follow-up and chart guidance", existing_guidance["aiInstructions"])
+        self.assertNotIn("existing direct routing", existing_guidance["aiInstructions"])
+        self.assertIn("Direct routing guidance", existing_guidance["aiInstructions"])
         with self.assertRaisesRegex(RuntimeError, "not a string"):
             ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
         with self.assertRaisesRegex(RuntimeError, "malformed"):
