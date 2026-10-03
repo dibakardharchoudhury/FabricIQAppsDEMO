@@ -915,8 +915,14 @@ CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = f"""
   Do not summarize or aggregate away individual work orders before the cross-source join. Then query all Lakehouse
   `silver_equipment` rows for `equipment_id` and `facility_id`, join
   `WorkOrders.equipmentId = silver_equipment.equipment_id`, and roll up by `facility_id`.
+- Verify the joined work-order rows one by one before grouping: every SQL `workOrderNumber` must
+  occur exactly once after the equipment join, with no unmatched `equipmentId` and no duplicate
+  work order. If that one-to-one conservation check fails, retry the Lakehouse equipment lookup
+  and join rather than redistributing rows merely to make the facility totals add up.
 - Resolve facility names/type/country from Lakehouse `silver_facilities` using the exact
-  `facility_id`. Do not report zero or no data merely because SQL cannot group directly by facility.
+  `facility_id`. The `Facility` column must contain the resolved facility name, never the raw
+  `facility_id` as a substitute; retry the Lakehouse facility lookup if any name/type/country is
+  unresolved. Do not report zero or no data merely because SQL cannot group directly by facility.
 - Before answering, verify that the sum of per-facility open-work-order counts equals the exact SQL
   open-work-order total. If it does not, correct or retry the join rather than returning partial,
   zero-filled, or unmatched results.
@@ -957,7 +963,10 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   `event_time,opcua_node_id,value,quality`; include every resolved signal, keep chronological order,
   and keep the response to at most 200 total plot rows. If the raw series exceeds that bound, use
   an appropriate time bin for a visual overview unless the user explicitly requested raw/no
-  averaging. The web client renders this CSV locally. Even if Fabric also generates a native
+  averaging. Query `{kql_table_name}` directly for the resolved exact `opcua_node_id` values and
+  requested time window. If the first Eventhouse execution errors or returns no rows, retry that
+  direct query once before concluding that telemetry is unavailable; do not replace real values
+  with an example schema. The web client renders the returned CSV locally. Even if Fabric also generates a native
   report/visualization file, include the fenced CSV because the external MCP result may not expose
   that file.
 """
