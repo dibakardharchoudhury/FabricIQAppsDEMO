@@ -54,7 +54,11 @@ test('saved shipped Foundry prompt upgrades without replacing custom instruction
   const current = defaultCopilotSettings().systemPrompt
   const legacy = current.split('\n\nOperational counts and rankings:')[0]
   assert.equal(mergeCopilotSettings({ systemPrompt: legacy }).systemPrompt, current)
+  const countVersion = current.split('\n\nAsset resolution and latest readings:')[0]
+  assert.equal(mergeCopilotSettings({ systemPrompt: countVersion }).systemPrompt, current)
   assert.equal(mergeCopilotSettings({ systemPrompt: 'My custom policy' }).systemPrompt, 'My custom policy')
   assert.match(current, /two status ne filters/)
   assert.match(current, /Draft is open/)
+  assert.match(current, /EQUIP_RTI_T003 belongs in equipment\.equipment_id/)
+  assert.match(current, /arg_max\(event_time, value, quality\)/)
 })

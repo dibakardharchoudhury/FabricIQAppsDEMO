@@ -222,6 +222,11 @@ SQL count tuples into an isolated Lakehouse analyzer request. Open orders exclud
 asking the model to manually count rows. Foundry's shipped default instructions use the same open
 definition; only saved prompts exactly matching the old shipped default are upgraded, preserving
 operator-authored prompts. No operational predicate or routing rule is injected by the chat UI.
+Foundry's instructions distinguish full equipment IDs from short tags and use a single raw
+Eventhouse `arg_max` query for unbounded latest-per-signal requests, retaining explicitly requested
+time windows and reporting the actual timestamp/staleness.
+See the [five-prompt investigation](../docs/data-agent-comparison.md) for measured results,
+source-truth checks, benchmark boundaries, and remaining browser/quality acceptance gaps.
 
 Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
 Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,

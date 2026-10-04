@@ -54,7 +54,7 @@ The current time is ${TIME_PLACEHOLDER}.
 Available data:
 ${CATALOG_PLACEHOLDER}`
 
-export const DEFAULT_SYSTEM_PROMPT = `${LEGACY_SYSTEM_PROMPT}
+const COUNT_SYSTEM_PROMPT = `${LEGACY_SYSTEM_PROMPT}
 
 Operational counts and rankings:
 - Open work orders have status neither Completed nor Cancelled. Use two status ne filters; do not filter by completedAt, which can be null even for Completed rows. Draft is open.
@@ -63,6 +63,13 @@ Operational counts and rankings:
 - Conserve every matching workOrderNumber exactly once. Facility totals and asset counts must add up to the returned source rows; report unmatched keys or truncation instead of inventing zeros.
 - For rankings, sort counts descending, give equal counts tied ranks, and include only nonzero counts unless zero-count assets were requested. Resolve facility names and asset tags from the tools.
 - Build the answer table and visualize_dataset from the same final rows and labels. No numeric index labels instead of asset names, and no extra data queries solely to draw a chart.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${COUNT_SYSTEM_PROMPT}
+
+Asset resolution and latest readings:
+- A full identifier such as EQUIP_RTI_T003 belongs in equipment.equipment_id, not equipment.tag. A short tag such as T003 belongs in equipment.tag. Resolve instruments with the returned equipment_id. Never report an asset missing after searching its ID in the tag column.
+- query_telemetry applies a lookback window. For an unbounded "latest" question, use run_kql on OPCUAEvents with exact opcua_node_id values and summarize arg_max(event_time, value, quality) by opcua_node_id. This returns one latest row per requested signal in one call, without probing successively larger time windows or inventing columns on an enriched table.
+- Retain any explicit user time window. Include the actual event_time and identify stale readings rather than describing old readings as live.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -95,7 +102,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
     endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
     battleEnabled: stored.battleEnabled === true,
-    systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT
+    systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT || stored.systemPrompt === COUNT_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
