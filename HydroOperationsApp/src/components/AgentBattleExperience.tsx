@@ -4,9 +4,11 @@ import { askDataAgent, resetDataAgentConversation, type AgentAnswer } from '../s
 import { askFoundryCopilot, resetFoundryConversation, type FoundryAnswer } from '../services/copilot/foundry'
 import { runAgentBattle, type AgentBattleEngine, type AgentBattleMode } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
+import { AgentElapsedTime } from './AgentElapsedTime'
 
 type BattleSide = {
   status: 'idle' | 'queued' | 'running' | 'completed' | 'error'
+  startedAt?: number
   message?: CopilotMessage
 }
 
@@ -75,7 +77,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
 
     const runners = {
       'data-agent': async (question: string) => {
-        updateSide('data-agent', { status: 'running' })
+        updateSide('data-agent', { status: 'running', startedAt: Date.now() })
         return askDataAgent(
           question,
           text => updateMessage('data-agent', { text }),
@@ -83,7 +85,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
         )
       },
       foundry: async (question: string) => {
-        updateSide('foundry', { status: 'running' })
+        updateSide('foundry', { status: 'running', startedAt: Date.now() })
         return askFoundryCopilot(
           question,
           text => updateMessage('foundry', { text }),
@@ -152,6 +154,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
         return <section className={`agent-battle-pane ${fastest === engine ? 'fastest' : ''}`} key={engine}>
           <header>
             <span><Bot size={17} /><strong>{label.name}</strong><small>{label.source}</small></span>
+            <AgentElapsedTime startedAt={side.startedAt} elapsedMs={side.message?.meta?.elapsedMs} running={active} />
             <em className={`agent-battle-status ${side.status}`}>{fastest === engine ? 'fastest' : side.status}</em>
           </header>
           <div className="agent-battle-body">

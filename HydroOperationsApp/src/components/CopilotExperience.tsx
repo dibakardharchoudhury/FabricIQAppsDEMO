@@ -189,7 +189,7 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
   if (question) parts.push(`## Question\n\n${question}`)
   for (const step of message.steps ?? []) {
     const lines = [`### Tool: ${step.tool}${step.detail ? ` — ${step.detail}` : ''}`]
-    lines.push(`${step.error ? `failed: ${step.error}` : step.summary} · ${formatDuration(step.elapsedMs)}`)
+    lines.push(`${step.error ? `failed: ${step.error}` : step.summary} · ${step.timingSource === 'notification' ? 'status received (not server execution time)' : formatDuration(step.elapsedMs)}`)
     if (step.args) lines.push(`Arguments:\n\n${block('json', prettyJson(step.args))}`)
     if (step.query) lines.push(`Query:\n\n${block('kusto', step.query)}`)
     if (step.result) lines.push(`Result:\n\n${block('json', prettyJson(step.result))}`)
@@ -237,9 +237,10 @@ function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
       <Wrench size={12} />
       <code>{step.tool}</code>
       {step.detail && <em>{step.detail}</em>}
-      <span>{step.status === 'running' ? 'running…' : `${step.error ? 'failed' : step.summary} · ${formatDuration(step.elapsedMs)}`}</span>
+      <span>{step.status === 'running' ? 'running…' : `${step.error ? 'failed' : step.summary}${step.timingSource === 'notification' ? ' · status received' : ` · ${formatDuration(step.elapsedMs)}`}`}</span>
     </summary>
     <div className="v2-agent-step-body">
+      {step.timingSource === 'notification' && <p>Fabric reports lifecycle notifications, not server execution durations. Notifications can arrive together near completion.</p>}
       {step.error && <p className="v2-agent-step-error">{step.error}</p>}
       {step.args && <pre>{prettyJson(step.args)}</pre>}
       {step.query && <pre>{step.query}</pre>}

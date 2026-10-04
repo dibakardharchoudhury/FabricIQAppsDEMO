@@ -9,5 +9,7 @@ export type AgentStep = {
   args?: string
   result?: string
   elapsedMs: number
+  startedAt?: number
+  timingSource?: 'notification'
   error?: string
 }

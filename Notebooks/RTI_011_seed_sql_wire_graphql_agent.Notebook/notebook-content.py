@@ -319,10 +319,11 @@ in all `analyze_ontology` and `analyze_sql_database` queries.
 
 SQL_DS_INSTRUCTIONS = (
     "Operational system-of-record for the hydro fleet (Fabric SQL Database). Prefer THIS source "
-    "for anything about maintenance and asset operations; use the ontology/KQL source for live "
+    "for anything about maintenance and asset operations; use the Eventhouse/KQL source for live "
     "telemetry values. Tables (dbo schema):\n"
-    "- WorkOrders: planned/active maintenance. Filter status in "
-    "(Draft, Planned, Scheduled, Ready, Approved, 'In progress', Completed) and "
+    "- WorkOrders: planned/active maintenance. Open means status NOT IN ('Completed','Cancelled'); "
+    "Draft is open. completedAt can be null for Completed rows and must not define open. "
+    "Use status, not a status whitelist. "
     "priority in (Critical, High, Medium, Low); dueAt/completedAt are datetime2.\n"
     "- MaintenanceNotifications: raised alerts. severity in (Advisory, Warning, Critical), "
     "status in (Open, Acknowledged).\n"

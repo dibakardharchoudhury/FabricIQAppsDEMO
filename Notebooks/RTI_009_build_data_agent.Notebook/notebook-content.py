@@ -877,14 +877,31 @@ in all `analyze_ontology` and `analyze_sql_database` queries.
 """
 
 MULTISOURCE_INSTRUCTIONS_MARKER = "### Direct Lakehouse and Eventhouse Sources"
+ASSET_RESOLUTION_MARKER = "### Asset & Facility Resolution (Must Follow)"
+ASSET_RESOLUTION_INSTRUCTIONS = f"""
+{ASSET_RESOLUTION_MARKER}
+
+- Resolve asset numbers/tags in Lakehouse `dbo.{first_setting("silver_equipment_table", required=True)}`:
+  turbine 5 means tag T005; turbine 12 means T012. Use the actual equipment_id returned by
+  the source. Do not search Ontology to resolve assets for direct-source questions.
+- Resolve facility names by joining `facility_id` to
+  `dbo.{first_setting("silver_facilities_table", required=True)}`. Never use a hard-coded
+  demo facility name or infer the facility from the equipment identifier.
+- Resolve signal IDs and units in `dbo.{first_setting("silver_signal_master_table", required=True)}`.
+  Exact opcua_node_id is the telemetry join key. Combine reference lookups in one SQL query
+  when they share this Lakehouse; do not make a separate analysis call per table.
+"""
 MULTISOURCE_INSTRUCTIONS = f"""
 
 {MULTISOURCE_INSTRUCTIONS_MARKER}
 
 - Keep the Ontology v2 source as the semantic model for entity relationships and ontology-specific questions.
 - Use the `{lakehouse_name}` Lakehouse source for direct static/reference questions over
-  `silver_facilities`, `silver_systems`, `silver_equipment`, `silver_instruments`, and
-  `silver_signal_master`.
+  `{first_setting("silver_facilities_table", required=True)}`,
+  `{first_setting("silver_systems_table", required=True)}`,
+  `{first_setting("silver_equipment_table", required=True)}`,
+  `{first_setting("silver_instruments_table", required=True)}`, and
+  `{first_setting("silver_signal_master_table", required=True)}`.
 - Use the `{kql_db_name}` Eventhouse/KQL source and its `{kql_table_name}` table for live or
   historical telemetry values, quality, trends, time windows, and aggregations.
 - `{kql_table_name}` columns are `event_time`, `opcua_node_id`, `value`, and `quality`.
@@ -908,24 +925,35 @@ CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = f"""
 - SQL operational tables use camelCase `equipmentId`; Lakehouse reference tables use snake_case
   `equipment_id`. These are the same canonical equipment identifier and must be matched exactly.
 - `WorkOrders` has no facility column. Never query or filter it by `facilityId`/`facility_id`.
-- For open-work-order counts by facility, first query SQL `WorkOrders`, treat every status except
-  `Completed` and `Cancelled` as open. Run an independent SQL count over that complete predicate,
-  then return every matching row's `workOrderNumber`, `equipmentId`, and `status` with no row limit.
-  The row count and independent SQL count must agree; if they differ, retry SQL before joining.
-  Do not summarize or aggregate away individual work orders before the cross-source join. Then query all Lakehouse
-  `silver_equipment` rows for `equipment_id` and `facility_id`, join
-  `WorkOrders.equipmentId = silver_equipment.equipment_id`, and roll up by `facility_id`.
-- Verify the joined work-order rows one by one before grouping: every SQL `workOrderNumber` must
-  occur exactly once after the equipment join, with no unmatched `equipmentId` and no duplicate
-  work order. If that one-to-one conservation check fails, retry the Lakehouse equipment lookup
-  and join rather than redistributing rows merely to make the facility totals add up.
-- Resolve facility names/type/country from Lakehouse `silver_facilities` using the exact
-  `facility_id`. The `Facility` column must contain the resolved facility name, never the raw
-  `facility_id` as a substitute; retry the Lakehouse facility lookup if any name/type/country is
-  unresolved. Do not report zero or no data merely because SQL cannot group directly by facility.
-- Before answering, verify that the sum of per-facility open-work-order counts equals the exact SQL
-  open-work-order total. If it does not, correct or retry the join rather than returning partial,
-  zero-filled, or unmatched results.
+- Open means `status NOT IN ('Completed','Cancelled')`. Never use `completedAt IS NULL`:
+  a completed order can have a null completion date. Never exclude Draft or add an active-asset
+  filter unless requested.
+- For counts/rankings, let SQL aggregate; do not fetch every work-order detail or ask separate
+  count/list questions. Retrieve one row per equipment with its open count and the overall total
+  in ONE SQL query:
+  SELECT equipmentId, COUNT_BIG(*) AS open_work_orders,
+         SUM(COUNT_BIG(*)) OVER () AS total_open_work_orders
+  FROM dbo.WorkOrders WHERE status NOT IN ('Completed','Cancelled')
+  GROUP BY equipmentId ORDER BY open_work_orders DESC, equipmentId;
+- Source analyzers do NOT share each other's results. For facility rollups, copy EVERY actual
+  returned (equipmentId, open_work_orders) tuple as literal data INTO the Lakehouse tool's
+  question, together with the requested SQL join/aggregation. Never tell it "use the previous
+  result" or refer to an unattached list: the tool cannot see that context.
+  Ask it to use those explicitly supplied tuples as a VALUES relation in ONE Lakehouse query.
+  If it reports missing tuples, repeat once with the actual tuples included in the tool question;
+  do not claim a missing schema or ask the user for data already returned by SQL. Left-join the complete
+  `dbo.{first_setting("silver_equipment_table", required=True)}` inventory and
+  `dbo.{first_setting("silver_facilities_table", required=True)}` on canonical keys.
+  Compute asset COUNT and open-work-order SUM by facility IN SQL, not by manually counting
+  prose or table rows. Include facilities with zero orders. Return facility names/type/country
+  from that same join, not a separate name lookup. SQL-pair values must come from the current
+  tool result, never examples or previous answers.
+- Conserve counts: every SQL equipment key must map exactly once; sum of the facility counts
+  must match total_open_work_orders. If keys are unmatched/duplicated or totals disagree, report
+  the discrepancy and correct the join once; never silently omit an order or invent counts.
+- Asset rankings use the same SQL counts, descending with tied ranks, and Lakehouse tags/facility
+  names when needed. Only include zero-count assets if requested; do not narrow assets to turbines
+  or a previous question's scope. Table and chart must use the SAME rows and human-readable labels.
 - Format facility rollups as a compact Markdown table with `Facility`, `Type`, `Country`, `Assets`,
   and `Open WOs` columns plus a totals line, unless the user requests another format.
 """
@@ -975,6 +1003,10 @@ MCP_FOLLOWUP_INSTRUCTIONS = f"""
   renders the returned CSV locally. Even if Fabric also generates a native
   report/visualization file, include the fenced CSV because the external MCP result may not expose
   that file.
+- The same fenced CSV requirement applies to non-telemetry charts, rankings, and work-order
+  counts. Use a descriptive categorical label column and numeric measure columns, with exactly
+  the same values as the answer table. Text bars and an offer to generate a chart later are not
+  a chart response. Do not requery data just to format a chart.
 """
 
 DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"
@@ -1004,7 +1036,47 @@ DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = f"""
 - If a direct source answers the question, return that answer without attempting Ontology and
   without adding an Ontology-runtime warning. Referential follow-ups keep the same direct-source
   routing unless the current question explicitly switches source.
+- Prefer one combined query per required source. Reuse the returned rows for reconciliation,
+  tables and CSV; do not perform separate schema searches, independent recounts, or repeated
+  executions when a successful query already returned the necessary evidence. Retry only a
+  concrete execution error, incomplete result, or failed key/total validation.
 """
+
+COUNT_QUERY_GUIDANCE_MARKER = "### Operational count queries"
+COUNT_QUERY_GUIDANCE = """
+### Operational count queries
+
+Open work orders means dbo.WorkOrders.status NOT IN ('Completed','Cancelled'); completedAt may
+be null on Completed rows and is NOT an open predicate. Draft is open. For asset rankings or
+counts to be mapped to facilities, execute this compact query rather than returning full detail:
+SELECT equipmentId, COUNT_BIG(*) AS open_work_orders,
+       SUM(COUNT_BIG(*)) OVER () AS total_open_work_orders
+FROM dbo.WorkOrders WHERE status NOT IN ('Completed','Cancelled')
+GROUP BY equipmentId ORDER BY open_work_orders DESC, equipmentId;
+This computes the complete grouped counts and total together, with no TOP restriction.
+WorkOrders has no facility_id; resolve that via the Lakehouse equipment mapping, not a SQL
+schema search. Do not run another query merely to recount rows already included in this result.
+"""
+
+
+def update_operational_source_guidance(parts: list) -> list:
+    """Refresh only notebook-owned SQL query guidance, retaining all sources and schema."""
+    result = list(parts)
+    for part in parts:
+        path = part.get("path", "")
+        if not path.startswith("Files/Config/draft/") or not path.endswith("/datasource.json"):
+            continue
+        ds = decode_payload(part.get("payload", ""))
+        if ds.get("type") != "sql_database":
+            continue
+        instructions = ds.get("dataSourceInstructions", "")
+        if not isinstance(instructions, str):
+            raise RuntimeError("SQL source instructions are malformed; refusing to replace them.")
+        ds["dataSourceInstructions"] = upsert_instruction_section(
+            instructions, COUNT_QUERY_GUIDANCE_MARKER, COUNT_QUERY_GUIDANCE,
+        )
+        result = upsert_part(result, path, ds)
+    return result
 
 # Ontology entities to expose to the agent (name -> column summary used as description).
 ONTOLOGY_ELEMENTS = [
@@ -1185,6 +1257,7 @@ def build_stage_obj(existing: dict) -> dict:
     if not instructions:
         instructions = AI_INSTRUCTIONS
     for marker, desired in (
+        (ASSET_RESOLUTION_MARKER, ASSET_RESOLUTION_INSTRUCTIONS),
         (MULTISOURCE_INSTRUCTIONS_MARKER, MULTISOURCE_INSTRUCTIONS),
         (CROSS_SOURCE_OPERATIONAL_MARKER, CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS),
         (GLOBAL_SCOPE_MARKER, GLOBAL_SCOPE_INSTRUCTIONS),
@@ -1297,6 +1370,12 @@ try:
         LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
         KUSTO_DATASOURCE_PATH: submitted_kusto_source,
     }
+    parts = update_operational_source_guidance(parts)
+    for part in parts:
+        if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
+            ds = decode_payload(part["payload"])
+            if ds.get("type") == "sql_database":
+                submitted_direct_sources[part["path"]] = ds
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")

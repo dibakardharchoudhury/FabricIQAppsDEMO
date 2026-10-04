@@ -156,8 +156,10 @@ transport. Fabric's published MCP tool accepts only one `userQuestion` and is st
 calls, even on a reused transport. Standalone questions are sent unchanged. For explicitly
 referential follow-ups such as `this asset`, `same signal`, or a leading `or`, the app includes at
 most four recent user questions in a bounded context envelope; it never replays the potentially
-large agent answers or makes an additional summarization call. Starting a new chat clears both the
-MCP transport and this bounded user-question context. Global all-facilities/all-assets scope
+large agent answers or makes an additional summarization call. Starting a new chat clears the
+bounded user-question context but retains the reusable MCP transport and tool metadata. Transport
+reuse does not create semantic memory or carry a previous answer into a standalone question.
+Global all-facilities/all-assets scope
 and cross-source join rules live in the published Data Agent instructions rather than being
 prepended by the web app. The app never injects the selected facility/asset.
 Follow-up questions reuse the authenticated MCP connection and discovered tool while the endpoint
@@ -182,12 +184,13 @@ Fabric-rendered visual images are currently limited to the native Data Agent exp
 therefore keeps visual semantics in the agent instructions and requires no more than the documented
 200 plot rows so external clients can reconstruct the chart without adding source-routing or join
 instructions to the user question.
-The chat keeps Fabric Data Agent MCP and internal progress calls hidden and shows the interactive
-Signal Sprint thinking animation until answer content arrives. Fabric currently batches progress
-notifications near completion and exposes only internal tool names/statuses—not their generated SQL,
-arguments, intermediate rows, or reasoning—so rendering them created noise without useful detail.
-Foundry tool steps remain visible because those tools execute inside this browser and the app owns
-their arguments/results; the remote Data Agent owns its internal orchestration. Experimental MCP task
+The regular chat hides Data Agent internal progress and uses the Signal Sprint thinking animation.
+Battle exposes the trace for comparison. Fabric can batch lifecycle notifications near completion
+and exposes internal tool names/statuses, not generated SQL, arguments, intermediate rows, or
+execution duration. Those steps say **status received**, including in copied transcripts; notification
+counts are not query counts. Repeated/out-of-order notifications cannot turn a duration into an
+epoch timestamp. Foundry steps have measured client execution durations and actual arguments/results.
+The remote Data Agent owns its internal orchestration. Experimental MCP task
 invocation was not enabled because the live Fabric endpoint
 either rejected the SDK's automatic task shape or timed out with explicit task parameters.
 Verification uses the actual `Files/Config/published/{source}/datasource.json` parts and the
@@ -209,6 +212,16 @@ handling. Capacity-safe sequential execution is the default so comparison traffi
 for shared Fabric capacity; an explicit parallel mode is available when simultaneous wall-clock
 behavior is the measurement goal. The UI labels only the objectively faster successful response and
 does not infer which answer is more correct or higher quality.
+Each pane has a live elapsed timer that starts when that engine actually begins (not while queued)
+and freezes on completion or failure. The 250 ms timer is isolated from response/chart rendering
+and is removed on unmount. Categorical chart axes display actual asset labels, not row indices.
+
+NB09 owns the Data Agent's published count/join instructions, including explicit transfer of actual
+SQL count tuples into an isolated Lakehouse analyzer request. Open orders exclude `Completed` and
+`Cancelled`; `completedAt` is not authoritative. SQL performs facility aggregation rather than
+asking the model to manually count rows. Foundry's shipped default instructions use the same open
+definition; only saved prompts exactly matching the old shipped default are upgraded, preserving
+operator-authored prompts. No operational predicate or routing rule is injected by the chat UI.
 
 Reference: [Microsoft Ontology (new) definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition).
 Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy rejection, caches,

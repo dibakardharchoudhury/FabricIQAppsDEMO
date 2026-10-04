@@ -863,7 +863,7 @@ class CapabilityTests(unittest.TestCase):
         ns = functions(
             "009", "upsert_part", "encode_payload", "decode_payload", "validate_agent_ontology_sources",
             "require_v2_ontology", "verify_agent_source_readback", "upsert_instruction_section",
-            "build_stage_obj", "build_datasource_obj",
+            "build_stage_obj", "build_datasource_obj", "update_operational_source_guidance",
             "_ds_element", "merge_source_elements", "build_lakehouse_datasource_obj",
             "build_kusto_datasource_obj",
             workspace_id="ws", ontology_name="ontology-name", ontology_id="ontology",
@@ -875,6 +875,10 @@ class CapabilityTests(unittest.TestCase):
             KUSTO_DATASOURCE_PATH="Files/Config/draft/kusto-source/datasource.json",
             STAGE_CONFIG_SCHEMA_URL="default-stage-schema", DATASOURCE_SCHEMA_URL="default-source-schema",
             DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
+            ASSET_RESOLUTION_MARKER="### Asset & Facility Resolution (Must Follow)",
+            ASSET_RESOLUTION_INSTRUCTIONS="### Asset & Facility Resolution (Must Follow)\nResolve actual keys",
+            COUNT_QUERY_GUIDANCE_MARKER="### Operational count queries",
+            COUNT_QUERY_GUIDANCE="### Operational count queries\nCount in SQL",
             MULTISOURCE_INSTRUCTIONS_MARKER="### Direct Lakehouse and Eventhouse Sources",
             MULTISOURCE_INSTRUCTIONS="\n### Direct Lakehouse and Eventhouse Sources\nNew guidance",
             CROSS_SOURCE_OPERATIONAL_MARKER="### Cross-source operational joins",
@@ -936,7 +940,11 @@ class CapabilityTests(unittest.TestCase):
                 1,
             )
             retained_sql = ns["decode_payload"](actual[prefix + "sql-source/datasource.json"]["payload"])
-            self.assertEqual(retained_sql, sql)
+            self.assertEqual({k: v for k, v in retained_sql.items() if k != "dataSourceInstructions"},
+                             {k: v for k, v in sql.items() if k != "dataSourceInstructions"})
+            self.assertEqual(retained_sql["dataSourceInstructions"],
+                             "Keep operational SQL guidance\n\n### Operational count queries\nCount in SQL")
+            self.assertEqual(ns["update_operational_source_guidance"](state["parts"]), state["parts"])
             self.assertEqual(len(retained_sql["elements"]), 5)
             retained_ontology = ns["decode_payload"](actual[prefix + "ontology-source/datasource.json"]["payload"])
             self.assertEqual(retained_ontology["elements"][:2], ontology["elements"])
@@ -968,7 +976,8 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(ns["persist_agent_status"].call_args.args[0], "failed")
         self.assertEqual(
             ns["build_stage_obj"]({})["aiInstructions"],
-            "default ontology instructions\n\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
+            "default ontology instructions\n\n### Asset & Facility Resolution (Must Follow)\nResolve actual keys"
+            "\n\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
             "\n\n### Cross-source operational joins\nCross-source guidance"
             "\n\n### Conversation scope\nGlobal scope guidance"
             "\n\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"

@@ -932,7 +932,6 @@ let dataAgentVerification: DataAgentVerification | undefined
 let dataAgentVerificationPromise: { key: string; value: Promise<void> } | undefined
 
 export function resetDataAgentConversation() {
-  invalidateDataAgentMcpSession()
   dataAgentUserQuestions = []
 }
 

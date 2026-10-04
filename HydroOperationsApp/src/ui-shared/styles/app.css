@@ -2487,11 +2487,12 @@ button.v2-signal-row:hover,
 .agent-battle-pane { min-width: 0; overflow: hidden; border: 1px solid var(--cp-border); border-radius: 12px; background: var(--cp-surface); box-shadow: var(--cp-shadow-card); }
 .agent-battle-pane.fastest { border-color: color-mix(in srgb, #1f9d68 65%, var(--cp-border)); }
 .agent-battle-pane > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 10px 12px; border-bottom: 1px solid var(--cp-border); }
-.agent-battle-pane > header > span { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; min-width: 0; }
+.agent-battle-pane > header > span:first-child { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; min-width: 0; }
 .agent-battle-pane > header svg { grid-row: span 2; color: var(--cp-accent); }
 .agent-battle-pane > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
 .agent-battle-pane > header small { overflow: hidden; color: var(--cp-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-battle-status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--cp-bg-elevated); color: var(--cp-text-soft); font-size: 9px; font-style: normal; font-weight: 700; text-transform: uppercase; }
+.agent-elapsed-time { margin-left: auto; white-space: nowrap; color: var(--cp-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .agent-battle-status.running { background: var(--cp-accent-soft); color: var(--cp-accent-hover); }
 .agent-battle-status.completed, .agent-battle-pane.fastest .agent-battle-status { background: #e7f7ef; color: #13734b; }
 .agent-battle-status.error { background: #fdeceb; color: #b42318; }

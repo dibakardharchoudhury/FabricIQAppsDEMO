@@ -124,7 +124,7 @@ test('Data Agent MCP runtime preserves bounded follow-up context without changin
   assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
   assert.match(source, /arguments: \{ \[session\.questionArgument\]: question \}/)
   assert.match(source, /contextualizeDataAgentQuestion\(question, dataAgentUserQuestions\)/)
-  assert.match(source, /resetDataAgentConversation\(\) \{\s+invalidateDataAgentMcpSession\(\)\s+dataAgentUserQuestions = \[\]/)
+  assert.match(source, /resetDataAgentConversation\(\) \{\s+dataAgentUserQuestions = \[\]\s+\}/)
   assert.match(source, /dataAgentMcpSession\?\.endpoint === endpoint/)
   assert.match(source, /if \(dataAgentMcpSession === session\) invalidateDataAgentMcpSession\(\)/)
   assert.match(source, /client\.onclose = \(\) =>/)
@@ -155,8 +155,12 @@ test('Data Agent progress maps real Fabric tool lifecycle without inventing argu
     detail: 'Fabric Data Agent internal tool',
     summary: 'completed',
     elapsedMs: 60,
+    timingSource: 'notification',
   }])
   assert.equal(applyDataAgentProgress(steps, 'Message completed msg-1', 170), false)
+  assert.equal(applyDataAgentProgress(steps, 'Run step in progress: tool_calls (Tools: trace.analyze_sql_database)', Date.now()), false)
+  assert.equal(applyDataAgentProgress(steps, 'Run step completed: tool_calls (Tools: trace.analyze_sql_database)', Date.now()), false)
+  assert.equal(steps[0].elapsedMs, 60, 'Repeated notifications must never turn durations into epoch timestamps')
 })
 
 test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {

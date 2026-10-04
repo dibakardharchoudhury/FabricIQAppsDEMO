@@ -10,6 +10,7 @@ type Series = { name: string; points: Point[]; color: string }
 type ParsedVisualization = {
   series: Series[]
   xIsTime: boolean
+  categories?: string[]
   xMinimum: number
   xMaximum: number
   yMinimum: number
@@ -21,9 +22,10 @@ function parseVisualization(spec: AgentVisualization): ParsedVisualization | nul
   if (!result.data.length) return null
   const rawX = result.data.map(row => row[spec.xColumn] ?? '')
   const timestamps = rawX.map(value => Date.parse(value))
-  const xIsTime = timestamps.every(Number.isFinite)
+  const xIsTime = rawX.every(value => /^\d{4}-\d{2}-\d{2}(?:[T ]|$)/.test(value)) && timestamps.every(Number.isFinite)
   const numericX = rawX.map(value => Number(value))
   const xIsNumeric = !xIsTime && numericX.every(Number.isFinite)
+  const categories = !xIsTime && !xIsNumeric ? [...new Set(rawX)] : undefined
   const grouped = new Map<string, Point[]>()
 
   result.data.forEach((row, rowIndex) => {
@@ -34,7 +36,7 @@ function parseVisualization(spec: AgentVisualization): ParsedVisualization | nul
       const name = group ? `${group}${spec.yColumns.length > 1 ? ` · ${yColumn}` : ''}` : yColumn
       const point: Point = {
         label: row[spec.xColumn] ?? '',
-        x: xIsTime ? timestamps[rowIndex] : xIsNumeric ? numericX[rowIndex] : rowIndex,
+        x: xIsTime ? timestamps[rowIndex] : xIsNumeric ? numericX[rowIndex] : categories!.indexOf(row[spec.xColumn] ?? ''),
         value,
       }
       grouped.set(name, [...(grouped.get(name) ?? []), point])
@@ -56,6 +58,7 @@ function parseVisualization(spec: AgentVisualization): ParsedVisualization | nul
   return {
     series,
     xIsTime,
+    categories,
     xMinimum: Math.min(...xValues),
     xMaximum: Math.max(...xValues),
     yMinimum,
@@ -77,7 +80,9 @@ export function AgentVisualizationView({ spec }: { spec: AgentVisualization }) {
   const plotHeight = height - top - bottom
   const xRange = parsed.xMaximum - parsed.xMinimum || 1
   const yRange = parsed.yMaximum - parsed.yMinimum || 1
-  const x = (value: number) => left + (value - parsed.xMinimum) / xRange * plotWidth
+  const x = (value: number) => parsed.categories
+    ? left + (value + .5) / parsed.categories.length * plotWidth
+    : left + (value - parsed.xMinimum) / xRange * plotWidth
   const y = (value: number) => top + plotHeight - (value - parsed.yMinimum) / yRange * plotHeight
   const chartType = spec.chartType.toLowerCase()
   const isArea = chartType.includes('area')
@@ -87,6 +92,12 @@ export function AgentVisualizationView({ spec }: { spec: AgentVisualization }) {
   const formatX = (value: number) => parsed.xIsTime
     ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : Number.isInteger(value) ? String(value) : value.toFixed(1)
+  const xTicks = parsed.categories
+    ? parsed.categories.map((label, value) => ({ label, value }))
+    : [0, .25, .5, .75, 1].map(fraction => {
+        const value = parsed.xMinimum + xRange * fraction
+        return { label: formatX(value), value }
+      })
 
   if (isPie) {
     const totals = parsed.series.map(series => ({ ...series, total: series.points.reduce((sum, point) => sum + Math.max(0, point.value), 0) }))
@@ -110,14 +121,14 @@ export function AgentVisualizationView({ spec }: { spec: AgentVisualization }) {
 
   return <figure className="v2-agent-native-chart"><figcaption>{spec.title}</figcaption><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={spec.title}>
     {[0, .25, .5, .75, 1].map(fraction => { const value = parsed.yMinimum + yRange * fraction; const position = y(value); return <g key={`y-${fraction}`}><line x1={left} x2={width - right} y1={position} y2={position} className="grid" /><text x={left - 10} y={position + 4} textAnchor="end">{value.toLocaleString(undefined, { maximumFractionDigits: 1 })}</text></g> })}
-    {[0, .25, .5, .75, 1].map(fraction => { const value = parsed.xMinimum + xRange * fraction; const position = x(value); return <g key={`x-${fraction}`}><line x1={position} x2={position} y1={top} y2={top + plotHeight} className="grid" /><text x={position} y={top + plotHeight + 20} textAnchor="middle">{formatX(value)}</text></g> })}
+    {xTicks.map(({ label, value }) => { const position = x(value); return <g key={`x-${value}`}><line x1={position} x2={position} y1={top} y2={top + plotHeight} className="grid" /><text x={position} y={top + plotHeight + 20} textAnchor="middle"><title>{label}</title>{label.length > 16 ? `${label.slice(0, 13)}...` : label}</text></g> })}
     {parsed.series.map((series, seriesIndex) => {
       const points = series.points.map(point => `${x(point.x)},${y(point.value)}`).join(' ')
       if (isColumn) {
         const barWidth = Math.max(3, Math.min(18, plotWidth / Math.max(series.points.length * parsed.series.length, 1) * .7))
-        return <g key={series.name}>{series.points.map(point => <rect key={`${point.x}-${point.value}`} x={x(point.x) - barWidth / 2 + seriesIndex * barWidth} y={y(point.value)} width={barWidth} height={y(parsed.yMinimum) - y(point.value)} fill={series.color} />)}</g>
+        return <g key={series.name}>{series.points.map(point => <rect key={`${point.x}-${point.value}`} x={x(point.x) + (seriesIndex - parsed.series.length / 2) * barWidth} y={y(Math.max(0, point.value))} width={barWidth} height={Math.abs(y(0) - y(point.value))} fill={series.color}><title>{`${point.label}: ${point.value}`}</title></rect>)}</g>
       }
-      return <g key={series.name}>{isArea && <polygon points={`${x(series.points[0].x)},${y(parsed.yMinimum)} ${points} ${x(series.points.at(-1)!.x)},${y(parsed.yMinimum)}`} fill={series.color} opacity=".16" />}{!isScatter && <polyline points={points} fill="none" stroke={series.color} strokeWidth="2.5" />}{series.points.map(point => <circle key={`${point.x}-${point.value}`} cx={x(point.x)} cy={y(point.value)} r={isScatter ? 4 : 3} fill={series.color}><title>{series.name}: {point.value} at {point.label}</title></circle>)}</g>
+      return <g key={series.name}>{isArea && <polygon points={`${x(series.points[0].x)},${y(parsed.yMinimum)} ${points} ${x(series.points.at(-1)!.x)},${y(parsed.yMinimum)}`} fill={series.color} opacity=".16" />}{!isScatter && <polyline points={points} fill="none" stroke={series.color} strokeWidth="2.5" />}{series.points.map(point => <circle key={`${point.x}-${point.value}`} cx={x(point.x)} cy={y(point.value)} r={isScatter ? 4 : 3} fill={series.color}><title>{`${series.name}: ${point.value} at ${point.label}`}</title></circle>)}</g>
     })}
     <text x={left + plotWidth / 2} y={height - 8} textAnchor="middle" className="axis-title">{spec.xAxisTitle || spec.xColumn}</text>
     <text x="16" y={top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90 16 ${top + plotHeight / 2})`} className="axis-title">{spec.yAxisTitle || spec.yColumns.join(', ')}</text>
