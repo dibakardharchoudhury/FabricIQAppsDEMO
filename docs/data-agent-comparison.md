@@ -21,6 +21,20 @@ popup before any MCP tool step appeared. Reloading cancelled that flow and produ
 Consequently, the service measurements below are explicitly **not authenticated
 hosted-browser end-to-end timings**.
 
+### Deployment status
+
+- **Live:** commit `f389cf4`, displayed app version **1.0.698**. This includes
+  live timers, corrected notification durations and chart labels, MCP transport
+  reuse, and the first Foundry operational-count guidance.
+- **Live agent:** final NB09 count/source-transfer guidance, published with Preview
+  Runtime and verified readback.
+- **Pushed, not yet deployed:** commit `927fc14`, adding the final Foundry
+  equipment-ID and unbounded-latest guidance used in the final service benchmark.
+  Its canonical redeploy stopped at tenant SPA discovery because Azure CLI
+  requires renewed interactive sign-in. No Rayfin deployment changes were made
+  by that attempt. The waiting process was stopped rather than bypassing identity
+  verification.
+
 ## Measurement boundaries
 
 All five prompts were sent unchanged. Runs were sequential, with conversations reset
@@ -185,8 +199,9 @@ adopted as an undocumented production API.
   follow-up passed eight targeted tests, type-check, and lint.
 - 19 related Python NB09/SQL preservation tests passed.
 - Production build passed; existing large-chunk warnings remain.
-- Canonical Fabric deployment completed with backend CORS/preflight/POST checks
+- The `f389cf4` canonical Fabric deployment completed with backend CORS/preflight/POST checks
   and preservation of all 36 existing SPA redirects.
+- The later `927fc14` redeploy remains blocked at authentication as detailed above.
 - Actual hosted shell version and the live timer were checked. Browser MCP/Foundry
   end-to-end comparison remains blocked by the separate delegated sign-in flow.
 - No socket failure occurred in the completed final protocol/service benchmark
