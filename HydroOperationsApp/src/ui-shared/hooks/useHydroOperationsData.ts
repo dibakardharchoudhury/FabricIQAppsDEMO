@@ -3,6 +3,7 @@ import {
   askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
+  refreshEnergyMap, resumeEnergyMapRefresh,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
 } from '../../services/fabric'
 import {
@@ -27,6 +28,7 @@ const JOB_RESUME_MAX_AGE_MS = 30 * 60_000
 const SEED_ETA_MS = 6 * 60_000
 const STREAM_ETA_MS = 5 * 60_000
 const WEATHER_ETA_MS = 12 * 60_000
+const MAP_REFRESH_MAX_AGE_MS = 3 * 60 * 60_000
 const QUEUED_PCT_CAP = 15
 const STID_READINESS_RETRIES = 12
 const STID_READINESS_DELAY_MS = 5_000
@@ -36,7 +38,7 @@ const TELEMETRY_POLL_MS = 30_000
 type LoadState = 'idle' | 'loading' | 'connected' | 'unavailable' | 'error'
 type ActionState = 'idle' | 'running' | 'complete' | 'error'
 type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
-export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
+export type ProgressJob = { kind: 'seed' | 'stream' | 'weather' | 'map'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
@@ -79,8 +81,8 @@ function readPersistedJobs(): Record<string, ProgressJob> {
     const saved = JSON.parse(localStorage.getItem(JOBS_STORAGE_KEY) || '{}') as Record<string, ProgressJob>
     const fresh: Record<string, ProgressJob> = {}
     for (const [key, job] of Object.entries(saved)) {
-      if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather') && typeof job.startedAt === 'number'
-        && Date.now() - job.startedAt < JOB_RESUME_MAX_AGE_MS) fresh[key] = job
+      if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather' || job.kind === 'map') && typeof job.startedAt === 'number'
+        && Date.now() - job.startedAt < (job.kind === 'map' ? MAP_REFRESH_MAX_AGE_MS : JOB_RESUME_MAX_AGE_MS)) fresh[key] = job
     }
     return fresh
   } catch { return {} }
@@ -112,6 +114,8 @@ function useHydroOperationsDataController() {
   const [provisionState, setProvisionState] = useState<ActionState>(persisted.provisioned ? 'complete' : 'idle')
   const [streamState, setStreamState] = useState<ActionState>('idle')
   const [weatherState, setWeatherState] = useState<ActionState>('idle')
+  const [mapRefreshState, setMapRefreshState] = useState<ActionState>('idle')
+  const [mapRefreshMessage, setMapRefreshMessage] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
@@ -352,6 +356,39 @@ function useHydroOperationsDataController() {
     } finally { endJob('weather') }
   }, [authenticate, jobs.weather, user, weatherState])
 
+  const updateAllMapData = useCallback(async () => {
+    if (mapRefreshState === 'running' || jobs.map) return
+    setMapRefreshState('running')
+    setMapRefreshMessage('Starting the full map refresh in Fabric...')
+    beginProgress('map', 'Refreshing map sources and chat data', MAP_REFRESH_MAX_AGE_MS)
+    let attached = false
+    try {
+      const status = await refreshEnergyMap(
+        value => updateJob('map', humanStatus(value)),
+        true,
+        startedAt => {
+          attached = true
+          setMapRefreshMessage('A map refresh is already running. Monitoring that run instead of starting a duplicate; it may use the normal source cache.')
+          if (startedAt) setJobs(current => current.map
+            ? { ...current, map: { ...current.map, startedAt: Date.parse(startedAt), label: 'Monitoring existing map refresh' } } : current)
+        },
+      )
+      if (status === 'Completed') {
+        setMapRefreshState('complete')
+        setMapRefreshMessage(attached
+          ? 'The existing map refresh completed. Start a full update if you still need to bypass its source cache.'
+          : `All configured map sources refreshed. Completed ${new Date().toLocaleString()}.`)
+      } else {
+        setMapRefreshState('error')
+        setMapRefreshMessage(`Map refresh ${humanStatus(status).toLowerCase()}. A queued or running job continues in Fabric; starting again will reattach rather than duplicate it.`)
+      }
+    } catch (error) {
+      console.error('Full map data refresh failed.', error)
+      setMapRefreshState('error')
+      setMapRefreshMessage(error instanceof Error ? error.message : 'Map data refresh failed.')
+    } finally { endJob('map') }
+  }, [jobs.map, mapRefreshState])
+
   const refreshOperationalData = useCallback(async () => {
     setOperationsState('loading'); setNotice(undefined)
     try {
@@ -422,6 +459,20 @@ function useHydroOperationsDataController() {
         setWeatherState('error')
         setNotice(error instanceof Error ? error.message : 'Weather load failed.')
       } finally { endJob('weather') }
+    } else if (job.kind === 'map') {
+      setMapRefreshState('running')
+      setMapRefreshMessage('Resuming progress for the map refresh already started in Fabric.')
+      try {
+        const status = await resumeEnergyMapRefresh(value => updateJob('map', humanStatus(value)), sinceIso)
+        setMapRefreshState(status === 'Completed' ? 'complete' : 'error')
+        setMapRefreshMessage(status === 'Completed'
+          ? 'The configured map-data refresh completed.'
+          : `Map refresh ${humanStatus(status).toLowerCase()}. The cloud run is not cancelled by closing this app.`)
+      } catch (error) {
+        console.error('Map refresh monitoring failed.', error)
+        setMapRefreshState('error')
+        setMapRefreshMessage(error instanceof Error ? error.message : 'Map refresh monitoring failed.')
+      } finally { endJob('map') }
     } else {
       setStreamState('running')
       await awaitStream(() => resumeStreamingPipeline(status => updateJob('stream', humanStatus(status)), sinceIso), job.startedAt)
@@ -535,6 +586,7 @@ function useHydroOperationsDataController() {
         const next: Record<string, ProgressJob> = {}
         for (const [key, job] of Object.entries(prev)) {
           const elapsed = Date.now() - job.startedAt
+          if (job.kind === 'map') { next[key] = job; continue }
           if (isTerminalJobStatus(job.status)) {
             const pct = isDoneStatus(job.status) ? 100 : job.pct
             const endedAt = job.endedAt ?? Date.now()
@@ -764,6 +816,8 @@ function useHydroOperationsDataController() {
     provisionState,
     streamState,
     weatherState,
+    mapRefreshState,
+    mapRefreshMessage,
     stid,
     ontology,
     stidSyncedAt,
@@ -810,6 +864,7 @@ function useHydroOperationsDataController() {
       seedAndProvision,
       startStream,
       connectWeather,
+      updateAllMapData,
       connectStid,
       refreshStid,
       connectTelemetry,

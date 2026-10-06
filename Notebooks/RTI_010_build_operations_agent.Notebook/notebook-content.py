@@ -217,16 +217,14 @@ ops_agent_run_as_user = first_setting("ops_agent_run_as_user", "run_as_user", de
 #   Team id    = the value after "groupId=" up to the next "&" (e.g. c480320e-...).
 #   Channel id = the part between "/channel/" and "/<ChannelName>", URL-decoded:
 #                replace "%3A" -> ":" and "%40" -> "@"  (=> 19:...@thread.tacv2).
-# Defaults are the RTI demo destination:
-#   Team "FacilitiesRealTimeMonitoring"  ->  c480320e-9204-474b-9b2c-54a53e94f220
-#   Channel "Alerts"                     ->  19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2
+# Blank destinations disable Teams delivery instead of reusing another tenant's IDs.
 
 ops_agent_teams_team_id = first_setting(
-    "ops_agent_teams_team_id", "teams_team_id", default="c480320e-9204-474b-9b2c-54a53e94f220")
+    "ops_agent_teams_team_id", "teams_team_id", default="")
 
 ops_agent_teams_channel_id = first_setting(
     "ops_agent_teams_channel_id", "teams_channel_id",
-    default="19:1-SLGOg6PFivKoyqZrKeH-PG-5JGjwATvoVAEyAr8jA1@thread.tacv2")
+    default="")
 
 # Deploy the agent STOPPED so you start it yourself in the portal (full control). This is a plain
 # constant — deliberately NOT read from the settings table — so a previously-persisted value can
@@ -1023,6 +1021,7 @@ try:
         """Build a Configurations.json variant, dropping any excluded component. ds_id is the plain
         ontology item id; None drops the embedded ontology. with_playbook defaults True (mirror the
         working agent's generated playbook verbatim)."""
+        with_teams = with_teams and bool(ops_agent_teams_team_id and ops_agent_teams_channel_id)
         cfg = build_configurations(
             should_run=ops_agent_should_run,
             copy_playbook=with_playbook,
@@ -1042,8 +1041,8 @@ try:
         return cfg
 
     candidates = [
-        ("FULL mirror: Ontology + action + Teams + playbook", _variant(resolved_datasource_id)),
-        ("Ontology + action + Teams (no playbook)", _variant(resolved_datasource_id, with_playbook=False)),
+        ("Ontology + action + configured delivery + playbook", _variant(resolved_datasource_id)),
+        ("Ontology + action + configured delivery (no playbook)", _variant(resolved_datasource_id, with_playbook=False)),
         ("Ontology + action (no Teams, no playbook)", _variant(resolved_datasource_id, with_teams=False, with_playbook=False)),
         ("Ontology only", _variant(resolved_datasource_id, with_action=False, with_teams=False, with_playbook=False)),
         ("instructions only (finish in portal)", _variant(None, with_action=False, with_teams=False, with_playbook=False)),

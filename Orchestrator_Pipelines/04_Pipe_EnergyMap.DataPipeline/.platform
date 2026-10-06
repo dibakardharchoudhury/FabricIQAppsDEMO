@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "04_Pipe_EnergyMap",
+    "description": "Imports validated public Norwegian energy snapshots into the dedicated GeoContext Lakehouse on demand."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "0e595bad-b543-4239-9d95-2dd8bce1b095"
+  }
+}

@@ -1,0 +1,19 @@
+.map-data-refresh { margin: 18px 0; padding: 18px; border: 1px solid var(--cp-border); border-radius: 10px; background: var(--cp-surface); color: var(--cp-text); }
+.map-data-refresh header { display: flex; align-items: center; gap: 12px; }
+.map-data-refresh header > div { flex: 1; }
+.map-data-refresh h2 { margin: 3px 0 0; font-size: 18px; }
+.map-data-refresh header button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 13px; border: 0; border-radius: 6px; background: #0f766e; color: white; font: inherit; font-size: 12px; cursor: pointer; }
+.map-data-refresh button:disabled { opacity: 0.65; cursor: default; }
+.map-data-refresh > p { font-size: 12px; line-height: 1.6; color: var(--cp-text-muted); }
+.map-data-refresh code { overflow-wrap: anywhere; font-size: 11px; }
+.map-data-refresh-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px; margin: 14px 0; border-radius: 6px; background: var(--cp-bg-elevated); font-size: 12px; }
+.map-data-refresh-status[role="alert"] { border: 1px solid #d97706; }
+.map-data-refresh-status p { flex-basis: 100%; margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.map-data-refresh-status progress { width: min(200px, 45%); accent-color: #0f766e; }
+.map-data-refresh summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.map-data-refresh li { font-size: 12px; line-height: 1.65; margin: 5px 0; }
+.map-data-refresh > .map-data-refresh-help { font-size: 11px; margin-bottom: 0; }
+@media (max-width: 600px) {
+  .map-data-refresh header { flex-wrap: wrap; }
+  .map-data-refresh header button { width: 100%; }
+}

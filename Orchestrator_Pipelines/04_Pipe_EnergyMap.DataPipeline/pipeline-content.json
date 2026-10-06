@@ -1,0 +1,110 @@
+{
+  "properties": {
+    "concurrency": 1,
+    "activities": [
+      {
+        "name": "Geo_001_ingest_energy_context",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "typeProperties": {
+          "notebookId": "bfb66353-9e7a-4f01-8d67-4b67acbbc49b",
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "workspace_id": {
+              "value": {
+                "value": "@pipeline().parameters.workspace_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "env_suffix": {
+              "value": {
+                "value": "@pipeline().parameters.env_suffix",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "refresh_mode": {
+              "value": {
+                "value": "@pipeline().parameters.refresh_mode",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "force_refresh": {
+              "value": {
+                "value": "@pipeline().parameters.force_refresh",
+                "type": "Expression"
+              },
+              "type": "bool"
+            }
+          }
+        }
+      },
+      {
+        "name": "Geo_002_publish_map_agent",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "Geo_001_ingest_energy_context",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.00:30:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "typeProperties": {
+          "notebookId": "b3236e30-dd23-4331-a1fc-f3cb977b2506",
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "workspace_id": {
+              "value": {
+                "value": "@pipeline().parameters.workspace_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "env_suffix": {
+              "value": {
+                "value": "@pipeline().parameters.env_suffix",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "workspace_id": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "env_suffix": {
+        "type": "string",
+        "defaultValue": "V6"
+      },
+      "refresh_mode": {
+        "type": "string",
+        "defaultValue": "all"
+      },
+      "force_refresh": {
+        "type": "bool",
+        "defaultValue": false
+      }
+    }
+  }
+}

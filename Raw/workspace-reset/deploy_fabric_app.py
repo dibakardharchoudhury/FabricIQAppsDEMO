@@ -1184,7 +1184,10 @@ def persist_generated_origin(workspace_name: str) -> None:
         raise DeployError(f"{upstream} changed during deployment. Merge it, then rerun deploy.")
     run_stream(command_argv("git", "add", relative), cwd=REPO_ROOT)
     run_stream(
-        command_argv("git", "commit", "-m", f"deploy: register {workspace_name} app origin"),
+        command_argv(
+            "git", "commit", "-m", f"deploy: register {workspace_name} app origin",
+            "-m", "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+        ),
         cwd=REPO_ROOT,
     )
     run_stream(command_argv("git", "push", "origin", branch), cwd=REPO_ROOT)
@@ -1292,6 +1295,18 @@ def deploy(args: argparse.Namespace) -> None:
     workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
+    feature_workspace = None
+    if os.environ.get("FABRIC_FEATURE_CONFIG", "").strip():
+        from feature_workspace import FeatureWorkspace, FeatureWorkspaceError, load_feature_config
+
+        try:
+            feature_config = load_feature_config(args.tenant, workspace_id)
+            if feature_config is None:
+                raise DeployError("Feature bootstrap configuration was not loaded.")
+            feature_workspace = FeatureWorkspace(feature_config, REPO_ROOT)
+        except (FeatureWorkspaceError, ValueError, OSError) as exc:
+            raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
+
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
     client_id = resolve_spa(args.client_id, args.tenant)
     if not client_id:
@@ -1327,10 +1342,20 @@ def deploy(args: argparse.Namespace) -> None:
     reuse_deployment = prepare_rayfin_env(
         args.tenant, workspace_id, workspace_name, capacity_id, client_id
     )
+    if feature_workspace:
+        feature_workspace.configure_app(RAYFIN_DIR / ".env")
     ensure_deploy_dependencies()
+    if feature_workspace:
+        run_stream(npm24("run", "validate-env"), cwd=APP_DIR)
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
     ensure_rayfin_login(args.tenant)
+
+    if feature_workspace:
+        try:
+            feature_workspace.prepare()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
 
     print("[5/8] Provisioning backend, database schema, and static app", flush=True)
     if reuse_deployment:
@@ -1384,6 +1409,8 @@ def deploy(args: argparse.Namespace) -> None:
                 ),
             )
         except DeployError as exc:
+            if feature_workspace:
+                raise DeployError("Feature deployment stopped: browser sign-in setup failed.") from exc
             warn_live_auth(f"Automated SPA configuration did not complete ({exc}).")
     else:
         warn_live_auth(
@@ -1411,6 +1438,11 @@ def deploy(args: argparse.Namespace) -> None:
             f"Entra validation was skipped. After an administrator creates the SPA, register "
             f"{hosting_url} as its redirect URI and run npm run setup-live-auth."
         )
+    if feature_workspace:
+        try:
+            feature_workspace.finish()
+        except FeatureWorkspaceError as exc:
+            raise DeployError(str(exc)) from exc
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)
 
     if args.push_config:

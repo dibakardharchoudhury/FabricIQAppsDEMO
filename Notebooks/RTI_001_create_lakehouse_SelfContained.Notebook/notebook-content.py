@@ -161,7 +161,7 @@ alert_pipeline_description = "This will be triggered from Ops Agent!"
 
 # Fail fast if the injected parameters (from Pipe_Setup via the orchestrator's nb01_args) are
 # missing. Only these are injected; the STATIC config above keeps its own defaults.
-# ops_agent_run_as_user is optional (blank => the deploying user), so it is not required here.
+# Run-as and Teams destinations are optional; blank Teams IDs leave delivery unconfigured.
 _required_injected = {
     "env_suffix": env_suffix,
     "workspace_id": workspace_id,
@@ -169,8 +169,6 @@ _required_injected = {
     "key_vault_tenant_id_secret_name": key_vault_tenant_id_secret_name,
     "key_vault_client_id_secret_name": key_vault_client_id_secret_name,
     "key_vault_client_secret_name": key_vault_client_secret_name,
-    "ops_agent_teams_team_id": ops_agent_teams_team_id,
-    "ops_agent_teams_channel_id": ops_agent_teams_channel_id,
 }
 _missing = [name for name, value in _required_injected.items() if not str(value).strip()]
 if _missing:

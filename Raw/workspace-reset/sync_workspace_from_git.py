@@ -92,6 +92,22 @@ FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+
+def fabric_operation_url(response: requests.Response) -> str:
+    operation_id = response.headers.get("x-ms-operation-id")
+    if operation_id:
+        if not GUID_RE.fullmatch(operation_id):
+            raise ValueError("Fabric returned an invalid operation ID.")
+        return f"{FABRIC_BASE}/operations/{operation_id}"
+    location = response.headers.get("Location") or response.headers.get("Operation-Location", "")
+    if location.startswith("/v1/operations/"):
+        location = f"https://api.fabric.microsoft.com{location}"
+    if not location.startswith(f"{FABRIC_BASE}/operations/"):
+        raise ValueError("Fabric operation returned no supported status URL.")
+    return location.rstrip("/")
+
+
 WEATHER_ENVIRONMENT_NAME = "Weather"
 WEATHER_NOTEBOOK_FOLDER = "Notebooks"
 WEATHER_PIPELINE_NAME = "03_Pipe_Weather"
@@ -265,10 +281,8 @@ class Fabric:
         """Follow a 202 long-running-operation to completion; return the final response."""
         if resp.status_code != 202:
             return resp
-        location = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+        location = fabric_operation_url(resp)
         retry = int(resp.headers.get("Retry-After", "5"))
-        if not location:
-            return resp
         while True:
             time.sleep(retry)
             status = self.request("GET", location)
@@ -423,14 +437,14 @@ def test_connection_flow(
 
 
 def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dict[str, Any]:
-    """Read a notebook definition in ipynb form, following the long-running operation."""
+    """Read the native source definition without requiring Python-to-ipynb conversion."""
     url = (
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}"
-        "/getDefinition?format=ipynb"
+        "/getDefinition?format=fabricGitSource"
     )
     response = fab.request("POST", url)
     if response.status_code == 202:
-        operation = response.headers.get("Location")
+        operation = fabric_operation_url(response)
         fab.poll_lro(response)
         response = fab.request("GET", f"{operation}/result")
     if response.status_code != 200:
@@ -438,6 +452,39 @@ def notebook_definition(fab: Fabric, workspace_id: str, notebook_id: str) -> dic
             f"Failed to read notebook definition: HTTP {response.status_code} {response.text}"
         )
     return response.json()["definition"]
+
+
+def bind_notebook_definition(definition: dict[str, Any], lakehouse: dict[str, Any],
+                            environment: dict[str, Any]) -> bool:
+    parts = definition.get("parts", [])
+    part = next((part for part in parts if part.get("path") == "notebook-content.py"), None)
+    if part is not None:
+        source = base64.b64decode(part["payload"]).decode("utf-8").replace("\r\n", "\n")
+        match = re.search(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)", source)
+        if not match:
+            raise SystemExit("Native notebook source has no metadata block.")
+        metadata = json.loads("\n".join(line.removeprefix("# META ") for line in match[1].splitlines()))
+        dependencies = metadata.setdefault("dependencies", {})
+        if dependencies.get("lakehouse") == lakehouse and dependencies.get("environment") == environment:
+            return False
+        dependencies.update(lakehouse=lakehouse, environment=environment)
+        block = "".join(f"# META {line}\n" for line in json.dumps(metadata, indent=2).splitlines())
+        payload = (source[:match.start(1)] + block + source[match.end(1):]).encode("utf-8")
+        definition["format"] = "fabricGitSource"
+    else:
+        part = next((part for part in parts if str(part.get("path", "")).endswith(".ipynb")), None)
+        if part is None:
+            raise SystemExit("Notebook has no supported source definition part.")
+        content = json.loads(base64.b64decode(part["payload"]))
+        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
+        if dependencies.get("lakehouse") == lakehouse and dependencies.get("environment") == environment:
+            return False
+        dependencies.update(lakehouse=lakehouse, environment=environment)
+        payload = json.dumps(content).encode("utf-8")
+        definition["format"] = "ipynb"
+    part["payload"] = base64.b64encode(payload).decode("ascii")
+    part["payloadType"] = "InlineBase64"
+    return True
 
 
 def rebind_weather_notebooks(
@@ -478,21 +525,9 @@ def rebind_weather_notebooks(
 
     for name, item in sorted(notebooks.items()):
         definition = notebook_definition(fab, workspace_id, item["id"])
-        part = next(
-            (part for part in definition.get("parts", []) if str(part.get("path", "")).endswith(".ipynb")),
-            None,
-        )
-        if part is None:
-            raise SystemExit(f"Notebook '{name}' has no .ipynb definition part.")
-        content = json.loads(base64.b64decode(part["payload"]))
-        dependencies = content.setdefault("metadata", {}).setdefault("dependencies", {})
-        if dependencies.get("lakehouse") == wanted_lakehouse and dependencies.get("environment") == wanted_environment:
+        if not bind_notebook_definition(definition, wanted_lakehouse, wanted_environment):
             print(f"  {name}: already bound.")
             continue
-        dependencies["lakehouse"] = wanted_lakehouse
-        dependencies["environment"] = wanted_environment
-        part["payload"] = base64.b64encode(json.dumps(content).encode("utf-8")).decode("ascii")
-        part["payloadType"] = "InlineBase64"
         response = fab.poll_lro(fab.request(
             "POST",
             f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{item['id']}/updateDefinition?updateMetadata=true",
