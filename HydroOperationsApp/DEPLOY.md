@@ -377,7 +377,8 @@ It updates only the source `rayfin/.env`; Rayfin remains responsible for generat
 and deployment state. Metadata-resolution failures stop before source writes or state rotation.
 
 - **Telemetry:** use a configured Eventhouse name only when it is found in the same configured
-  tenant/workspace; otherwise require a unique `RTI_Demo_Eventhouse` / `RTI_Demo_Eventhouse_V<n>`.
+  tenant/workspace; otherwise require a unique `RTI_Demo_Eventhouse` or suffix-derived name such
+  as `RTI_Demo_Eventhouse_V<n>` / `RTI_Demo_Eventhouse_VJOA_2`.
   An ontology-managed Eventhouse is not a fallback. KQL database selection verifies the live
   `properties.parentEventhouseItemId`, then uses that database's `displayName` and
   `queryServiceUri`—not a same-named database belonging to another Eventhouse. Multiple eligible

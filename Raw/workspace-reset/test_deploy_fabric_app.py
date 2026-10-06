@@ -1221,6 +1221,27 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
         self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], self.database)
         self.assertEqual(resolved["RAYFIN_PUBLIC_EVENTHOUSE_ID"], self.eventhouse)
 
+    def test_full_workflow_discovers_alphanumeric_underscore_suffix(self):
+        self.items[0]["displayName"] = "RTI_Demo_Eventhouse_VJOA_2"
+        self.items[2]["displayName"] = "RTI_Demo_Eventhouse_VJOA_2"
+        self.details[self.database]["displayName"] = "RTI_Demo_Eventhouse_VJOA_2"
+        self.items[4]["displayName"] = "Energy_IQ_LakehouseRTI_VJOA_2"
+        self.items.append({
+            "id": "dashboard-vjoa-2",
+            "type": "KQLDashboard",
+            "displayName": "RTI_Demo_OPCUA_TelemetryStats_VJOA_2",
+        })
+
+        resolved = self.resolve({})
+
+        self.assertEqual(resolved["RAYFIN_PUBLIC_EVENTHOUSE_NAME"], "RTI_Demo_Eventhouse_VJOA_2")
+        self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE"], "RTI_Demo_Eventhouse_VJOA_2")
+        self.assertEqual(resolved["RAYFIN_PUBLIC_LAKEHOUSE_NAME"], "Energy_IQ_LakehouseRTI_VJOA_2")
+        self.assertEqual(
+            resolved["RAYFIN_PUBLIC_KQL_DASHBOARD_NAME"],
+            "RTI_Demo_OPCUA_TelemetryStats_VJOA_2",
+        )
+
     def test_before_seed_clears_missing_graphql_and_other_stale_ids(self):
         self.items = [item for item in self.items if item["type"] != "GraphQLApi"]
         resolved = self.resolve()

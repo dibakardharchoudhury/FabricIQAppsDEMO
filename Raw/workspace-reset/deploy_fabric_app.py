@@ -66,6 +66,7 @@ STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"Please run ['\"]?az login|Run ['\"]?az login",
     re.IGNORECASE,
 )
+RTI_ARTIFACT_SUFFIX_RE = r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -1199,7 +1200,12 @@ def resolve_public_artifact_config(
             )
         return matches[0] if matches else None
 
-    eventhouse = select("Eventhouse", "RAYFIN_PUBLIC_EVENTHOUSE_NAME", r"RTI_Demo_Eventhouse(?:_V\d+)?", required=True)
+    eventhouse = select(
+        "Eventhouse",
+        "RAYFIN_PUBLIC_EVENTHOUSE_NAME",
+        rf"RTI_Demo_Eventhouse(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+        required=True,
+    )
     assert eventhouse is not None
     databases = []
     for item in items:
@@ -1234,8 +1240,16 @@ def resolve_public_artifact_config(
     graphql = select("GraphQLApi", "RAYFIN_PUBLIC_STID_GRAPHQL_NAME", r"Hydro_STID_API")
     pipeline = select("DataPipeline", "RAYFIN_PUBLIC_STREAM_PIPELINE_NAME", r"02_Pipe_Stream")
     notebook = select("Notebook", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME", r"RTI_011_seed_sql_wire_graphql_agent")
-    lakehouse = select("Lakehouse", "RAYFIN_PUBLIC_LAKEHOUSE_NAME", r"Energy_IQ_LakehouseRTI(?:_V\d+)?")
-    dashboard = select("KQLDashboard", "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME", r"RTI_Demo_OPCUA_TelemetryStats(?:_V\d+)?")
+    lakehouse = select(
+        "Lakehouse",
+        "RAYFIN_PUBLIC_LAKEHOUSE_NAME",
+        rf"Energy_IQ_LakehouseRTI(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+    )
+    dashboard = select(
+        "KQLDashboard",
+        "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME",
+        rf"RTI_Demo_OPCUA_TelemetryStats(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+    )
     values = {
         "RAYFIN_PUBLIC_EVENTHOUSE_NAME": str(eventhouse["displayName"]),
         "RAYFIN_PUBLIC_EVENTHOUSE_ID": str(eventhouse["id"]),
