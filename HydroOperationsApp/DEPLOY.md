@@ -67,8 +67,8 @@ This produces **fresh demo data**, not copies of another workspace's operational
 records or history. Teams delivery remains unconfigured, the Operations Agent stays
 stopped, and the Weather schedule stays disabled. Weather API credentials and an
 Outlook OAuth connection are not fabricated: provision those separately before
-enabling their respective jobs. Missing sign-in readiness is a hard failure in this
-bootstrap mode, even where app-only deployment would report a warning.
+enabling their respective jobs. Missing sign-in readiness is a hard failure in
+both feature bootstrap and app-only deployment.
 
 New prerequisite vaults are private-only and RBAC-protected. For a private vault,
 the orchestrator initializes credentials through an incremental ARM template with
@@ -421,8 +421,17 @@ npm run deploy      # builds (tsc + vite, rayfin env auto‑injected) and deploy
 
 The local **Deploy app** action uses this static-only command when its saved AppBackend still exists
 in the selected workspace. It runs full `rayfin up` for a fresh or changed target, and updates the
-backend after static deployment only when the generated hosting origin was not already registered.
-This preserves full new-workspace provisioning while keeping routine code redeploys short.
+backend after every static deployment, even when the generated hosting origin was already
+registered. This reapplies persisted runtime/CORS settings and the database configuration after a
+managed-service restart.
+
+The one-shot orchestrator does not report `SUCCESS` from the hosted HTML page alone. It also checks
+that the generated API URL contains the workspace's current capacity, workspace, and AppBackend
+ids, then sends browser-equivalent CORS preflights to both `/graphql` and
+`/api/auth/v1/token`, a minimal GraphQL POST, and a deliberately incomplete token POST. Transient
+backend warm-up and token HTTP 5xx responses are retried with bounded backoff; missing
+`Access-Control-Allow-Origin`, required headers, GraphQL readiness, or persistent token 5xx remains
+a deployment failure.
 
 The deploy prints the **hosting URL**. Add it to `rayfin/rayfin.yml` under
 `services.auth.allowedRedirectUris` (replace hostnames left over from another tenant), then re‑run
@@ -499,6 +508,10 @@ Get-Item rayfin/.env, rayfin/.env.local, rayfin/.deployments.json -ErrorAction S
   place, `rayfin up` calls the **old** endpoint and fails with **404 "The provided workspace was not
   found."** Move it (and `.env.local`) into the temporary backup when switching tenants; do not
   delete either file.
+- A workspace capacity move also invalidates the capacity-specific `RAYFIN_PUBLIC_API_URL`, even
+  when the AppBackend item still exists. The one-shot orchestrator compares the saved API URL with
+  the workspace's current `capacityId`, backs up the three state files above, and performs a full
+  reprovision when they differ.
 - Recreate `rayfin/.env` from `.env.example` with the **new** `FABRIC_WORKSPACE_NAME`,
   `RAYFIN_PUBLIC_WORKSPACE_ID`, `RAYFIN_PUBLIC_TENANT_ID`, and the new tenant's SPA
   `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Run `npm run validate-env` before continuing. Resolve the workspace

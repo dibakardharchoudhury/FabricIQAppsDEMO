@@ -93,8 +93,8 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 
 DEPLOY_PHASES = [
     "Queued", "Checking prerequisites", "Resolving SPA", "Preparing state",
-    "Signing in", "Provisioning app", "Setting app URL", "Setting up sign-in",
-    "Checking deployment", "Done",
+    "Signing in", "Provisioning app", "Syncing backend settings", "Setting up sign-in",
+    "Checking endpoint and CORS readiness", "Done",
 ]
 DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("[1/8]",)),

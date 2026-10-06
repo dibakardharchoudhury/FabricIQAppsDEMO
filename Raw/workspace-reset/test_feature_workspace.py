@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -481,36 +482,72 @@ class FeatureWorkspaceTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("feature_test_deploy", Path(__file__).with_name("deploy_fabric_app.py"))
         deploy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(deploy)
-        config = Mock()
-        workspace = Mock()
-        events = []
-        workspace.prepare.side_effect = lambda: events.append("prepare")
-        workspace.finish.side_effect = lambda: events.append("finish")
+        capacity_id = "44444444-4444-4444-8444-444444444444"
+        item_id = "55555555-5555-4555-8555-555555555555"
+        api_url = "https://api.feature.test"
         url = "https://feature.webapp.fabricapps.net"
         args = argparse.Namespace(tenant=TENANT, workspace=WORKSPACE, client_id=SUBSCRIPTION, push_config=False)
-        with (
-            patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": "/not-read-by-mock.json"}),
-            patch.object(feature, "load_feature_config", return_value=config),
-            patch.object(feature, "FeatureWorkspace", return_value=workspace),
-            patch.object(deploy, "ensure_azure_tenant"),
-            patch.object(deploy, "resolve_workspace", return_value=(WORKSPACE, "Feature")),
-            patch.object(deploy, "resolve_spa", return_value=SUBSCRIPTION),
-            patch.object(deploy, "read_entra_spa_redirects_with_reauth", return_value=[url]),
-            patch.object(deploy, "write_rayfin_redirects", side_effect=lambda uris: uris),
-            patch.object(deploy, "prepare_rayfin_env", return_value=True),
-            patch.object(deploy, "ensure_deploy_dependencies"),
-            patch.object(deploy, "ensure_rayfin_login", side_effect=lambda tenant: events.append("login")),
-            patch.object(deploy, "npm24", return_value=["validate"]),
-            patch.object(deploy, "rayfin24", return_value=["app"]),
-            patch.object(deploy, "node24_script", return_value=["auth"]),
-            patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
-            patch.object(deploy.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
-            patch.object(deploy, "validate_fabric_app"),
-            patch.object(deploy, "validate_spa_redirect_preservation"),
-            patch.object(deploy, "validate_entra_live_auth_with_reauth"),
-        ):
-            deploy.deploy(args)
-        self.assertEqual(events, ["validate", "login", "prepare", "app", "auth", "finish"])
+        for failure in (None, "endpoint", "cors", "auth-ready"):
+            with self.subTest(failure=failure):
+                config = Mock()
+                workspace = Mock()
+                events = []
+                workspace.configure_app.side_effect = lambda path: events.append("configure")
+                workspace.prepare.side_effect = lambda: events.append("prepare")
+                workspace.finish.side_effect = lambda: events.append("finish")
+
+                def readiness(step):
+                    events.append(step)
+                    if failure == step:
+                        raise deploy.DeployError(f"{step} failed")
+
+                with ExitStack() as stack:
+                    for context in (
+                        patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": "/not-read-by-mock.json"}),
+                        patch.object(feature, "load_feature_config", return_value=config),
+                        patch.object(feature, "FeatureWorkspace", return_value=workspace),
+                        patch.object(deploy, "ensure_azure_tenant"),
+                        patch.object(deploy, "resolve_workspace", return_value=(WORKSPACE, "Feature", capacity_id)),
+                        patch.object(deploy, "resolve_spa", return_value=SUBSCRIPTION),
+                        patch.object(deploy, "read_entra_spa_redirects_with_reauth", return_value=[url]),
+                        patch.object(deploy, "write_rayfin_redirects", side_effect=lambda uris: uris),
+                        patch.object(deploy, "ensure_deploy_dependencies"),
+                        patch.object(deploy, "ensure_rayfin_login", side_effect=lambda tenant: events.append("login")),
+                        patch.object(deploy, "npm24", return_value=["validate"]),
+                        patch.object(deploy, "node24_script", return_value=["auth"]),
+                        patch.object(deploy, "run_stream", side_effect=lambda argv, **_: events.append(argv[0]) or url),
+                        patch.object(deploy.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
+                        patch.object(deploy, "validate_fabric_app", return_value=item_id),
+                        patch.object(deploy, "validate_rayfin_publishable_key", return_value="pk-test"),
+                        patch.object(deploy, "validate_spa_redirect_preservation"),
+                        patch.object(deploy, "validate_entra_live_auth_with_reauth", side_effect=lambda *args: readiness("auth-ready")),
+                    ):
+                        stack.enter_context(context)
+                    prepare_env = stack.enter_context(patch.object(deploy, "prepare_rayfin_env", return_value=True))
+                    rayfin = stack.enter_context(patch.object(deploy, "rayfin24", return_value=["app"]))
+                    endpoint = stack.enter_context(patch.object(
+                        deploy, "validate_rayfin_endpoint_contract",
+                        side_effect=lambda *args: readiness("endpoint") or api_url,
+                    ))
+                    cors = stack.enter_context(patch.object(deploy, "validate_appbackend_cors", side_effect=lambda *args: readiness("cors")))
+                    if failure:
+                        with self.assertRaisesRegex(deploy.DeployError, f"{failure} failed"):
+                            deploy.deploy(args)
+                        workspace.finish.assert_not_called()
+                    else:
+                        deploy.deploy(args)
+                        self.assertEqual(events, [
+                            "configure", "validate", "login", "prepare", "app", "app", "auth",
+                            "endpoint", "cors", "auth-ready", "finish",
+                        ])
+                        cors.assert_called_once_with(api_url, url, "pk-test")
+                    prepare_env.assert_called_once_with(TENANT, WORKSPACE, "Feature", capacity_id, SUBSCRIPTION)
+                    workspace.configure_app.assert_called_once_with(deploy.RAYFIN_DIR / ".env")
+                    endpoint.assert_called_once_with(capacity_id, WORKSPACE, item_id)
+                    self.assertEqual([call.args for call in rayfin.call_args_list], [
+                        ("up", "staticapp", "deploy"),
+                        ("up", "--workspace-id", WORKSPACE, "--exclude-services", "staticHosting", "--yes"),
+                    ])
 
     def test_private_endpoint_is_ready_before_import_or_setup(self):
         events = []

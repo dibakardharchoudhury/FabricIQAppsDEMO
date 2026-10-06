@@ -17,9 +17,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, TypeVar
+from urllib.parse import urlparse
 
 import requests
 
@@ -39,6 +41,8 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
+APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token")
+APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": {"user_impersonation"},
     "00000009-0000-0000-c000-000000000000": {
@@ -512,11 +516,14 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
-def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
+def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
         item = fabric_get(f"workspaces/{workspace}", headers)
-        return workspace, str(item.get("displayName") or workspace)
+        capacity_id = str(item.get("capacityId") or "")
+        if not GUID_RE.fullmatch(capacity_id):
+            raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+        return workspace, str(item.get("displayName") or workspace), capacity_id
 
     matches: list[dict[str, Any]] = []
     url: str | None = f"{FABRIC_BASE}/workspaces"
@@ -536,7 +543,14 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str]:
     if len(matches) > 1:
         ids = ", ".join(str(item.get("id")) for item in matches)
         raise DeployError(f"Multiple workspaces are named '{workspace}': {ids}. Use the workspace GUID.")
-    return str(matches[0]["id"]), str(matches[0]["displayName"])
+    workspace_id = str(matches[0]["id"])
+    capacity_id = str(matches[0].get("capacityId") or "")
+    if not GUID_RE.fullmatch(capacity_id):
+        item = fabric_get(f"workspaces/{workspace_id}", headers)
+        capacity_id = str(item.get("capacityId") or "")
+    if not GUID_RE.fullmatch(capacity_id):
+        raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+    return workspace_id, str(matches[0]["displayName"]), capacity_id
 
 
 def warn_live_auth(message: str) -> None:
@@ -583,10 +597,10 @@ def resolve_spa(client_id: str | None, tenant: str) -> str | None:
             run_capture(az("ad", "app", "show", "--id", client_id, "--output", "none"))
             print(f"Using requested SPA app registration: {client_id}", flush=True)
         except DeployError as exc:
-            warn_live_auth(
-                f"The requested SPA {client_id} could not be verified ({exc}). "
-                "It will still be included in the deployed app configuration."
-            )
+            raise DeployError(
+                f"The requested SPA {client_id} could not be verified. Deployment stopped "
+                f"before changing Rayfin state. Underlying error: {exc}"
+            ) from exc
         ensure_spa_service_principal(client_id)
         return client_id
 
@@ -726,11 +740,161 @@ def fabric_item_exists(workspace_id: str, item_id: str, tenant: str) -> bool:
     )
 
 
+def rayfin_api_targets_capacity(
+    values: dict[str, str], deployment: dict[str, Any], capacity_id: str
+) -> bool:
+    expected_path = f"/capacities/{capacity_id.casefold()}/"
+    urls = (
+        values.get("RAYFIN_PUBLIC_API_URL", ""),
+        str(deployment.get("fabricApiUrl") or ""),
+    )
+    return all(expected_path in url.casefold() for url in urls)
+
+
+def validate_rayfin_endpoint_contract(
+    capacity_id: str, workspace_id: str, item_id: str
+) -> str:
+    values, deployment = current_rayfin_target()
+    env_url = values.get("RAYFIN_PUBLIC_API_URL", "").rstrip("/")
+    deployment_url = str((deployment or {}).get("fabricApiUrl") or "").rstrip("/")
+    if not env_url or env_url != deployment_url:
+        raise DeployError(
+            "Rayfin endpoint validation failed: rayfin/.env and deployment state do not "
+            "contain the same API URL."
+        )
+
+    parsed = urlparse(env_url)
+    expected_host = f"{capacity_id.replace('-', '').casefold()}.pbidedicated.windows.net"
+    expected_path = (
+        f"/webapi/capacities/{capacity_id.casefold()}/workloads/baas/baasservice/"
+        f"automatic/v1/workspaces/{workspace_id.casefold()}/appbackends/{item_id.casefold()}"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != expected_host
+        or parsed.path.rstrip("/").casefold() != expected_path
+    ):
+        raise DeployError(
+            "Rayfin endpoint validation failed: generated API URL does not target the current "
+            f"capacity/workspace/AppBackend ({capacity_id}/{workspace_id}/{item_id}). "
+            f"Found: {env_url or '(missing)'}"
+        )
+    print("Validated Rayfin endpoint against the current Fabric deployment.", flush=True)
+    return env_url
+
+
+def validate_rayfin_publishable_key() -> str:
+    values, deployment = current_rayfin_target()
+    env_key = values.get("RAYFIN_PUBLIC_PUBLISHABLE_KEY", "")
+    deployment_key = str((deployment or {}).get("publishableKey") or "")
+    if not env_key.startswith("pk-") or env_key != deployment_key:
+        raise DeployError(
+            "Rayfin publishable-key validation failed: rayfin/.env and deployment state "
+            "do not contain the same valid publishable key."
+        )
+    return env_key
+
+
+def validate_appbackend_cors(
+    api_url: str, hosting_url: str, publishable_key: str
+) -> None:
+    origin = urlparse(hosting_url).scheme + "://" + str(urlparse(hosting_url).netloc)
+    preflight_headers = {
+        "Origin": origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,x-publishable-key",
+    }
+    post_headers = {
+        "Origin": origin,
+        "Content-Type": "application/json",
+        "x-publishable-key": publishable_key,
+    }
+    post_bodies = {
+        "/graphql": {"query": "query { __typename }"},
+        "/api/auth/v1/token": {},
+    }
+    failures: list[str] = []
+    for path in APPBACKEND_CORS_PATHS:
+        last_failure = "no response"
+        for delay in APPBACKEND_READINESS_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                response = requests.options(
+                    f"{api_url}{path}",
+                    headers=preflight_headers,
+                    timeout=60,
+                )
+                allow_origin = response.headers.get("Access-Control-Allow-Origin", "")
+                allow_headers = {
+                    value.strip().casefold()
+                    for value in response.headers.get(
+                        "Access-Control-Allow-Headers", ""
+                    ).split(",")
+                    if value.strip()
+                }
+                required_headers = {"authorization", "content-type", "x-publishable-key"}
+                if not (
+                    200 <= response.status_code < 300
+                    and allow_origin in {"*", origin}
+                    and required_headers.issubset(allow_headers)
+                ):
+                    last_failure = (
+                        f"preflight HTTP {response.status_code}; Access-Control-Allow-Origin="
+                        f"{allow_origin or '(missing)'}; Access-Control-Allow-Headers="
+                        f"{response.headers.get('Access-Control-Allow-Headers', '(missing)')}"
+                    )
+                    continue
+
+                post_response = requests.post(
+                    f"{api_url}{path}",
+                    headers=post_headers,
+                    json=post_bodies[path],
+                    timeout=60,
+                )
+                post_allow_origin = post_response.headers.get(
+                    "Access-Control-Allow-Origin", ""
+                )
+                expected_status = (
+                    post_response.status_code == 200
+                    if path == "/graphql"
+                    else 200 <= post_response.status_code < 500
+                    and post_response.status_code not in {404, 405}
+                )
+                if expected_status and post_allow_origin in {"*", origin}:
+                    print(
+                        f"Validated AppBackend browser path: {path} "
+                        f"(preflight HTTP {response.status_code}, POST HTTP "
+                        f"{post_response.status_code}, origin {post_allow_origin}).",
+                        flush=True,
+                    )
+                    break
+                last_failure = (
+                    f"POST HTTP {post_response.status_code}; Access-Control-Allow-Origin="
+                    f"{post_allow_origin or '(missing)'}"
+                )
+            except requests.RequestException as exc:
+                last_failure = str(exc)
+        else:
+            failures.append(f"- {path}: {last_failure}")
+
+    if failures:
+        raise DeployError(
+            "AppBackend browser readiness failed after runtime settings were reapplied:\n"
+            + "\n".join(failures)
+            + "\nThe deployment is not healthy; do not treat the hosted HTML page as success."
+        )
+
+
 def prepare_rayfin_env(
-    tenant: str, workspace_id: str, workspace_name: str, client_id: str | None
+    tenant: str,
+    workspace_id: str,
+    workspace_name: str,
+    capacity_id: str,
+    client_id: str | None,
 ) -> bool:
     values, deployment = current_rayfin_target()
-    target_matches = deployment and all(
+    same_target = deployment and all(
         (
             values.get("FABRIC_WORKSPACE_NAME") == workspace_name,
             values.get("RAYFIN_PUBLIC_WORKSPACE_ID", "").casefold() == workspace_id.casefold(),
@@ -741,6 +905,15 @@ def prepare_rayfin_env(
             str(deployment.get("fabricTenantId") or "").casefold() == tenant.casefold(),
         )
     )
+    target_matches = bool(
+        same_target and rayfin_api_targets_capacity(values, deployment, capacity_id)
+    )
+    if same_target and not target_matches:
+        print(
+            "Saved Rayfin API URL targets a previous Fabric capacity; rotating state "
+            "before reprovisioning.",
+            flush=True,
+        )
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id, tenant):
@@ -790,7 +963,7 @@ def validate_fabric_app(workspace_id: str, tenant: str) -> str:
 
 
 def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
-    """Validate Entra runtime contracts; callers decide whether failures are fatal."""
+    """Validate every Entra runtime contract required for a usable deployment."""
     app = json.loads(run_capture(az("ad", "app", "show", "--id", client_id, "-o", "json")))
     redirect_uris = set((app.get("spa") or {}).get("redirectUris") or [])
     if hosting_url not in redirect_uris:
@@ -1119,7 +1292,7 @@ def deploy(args: argparse.Namespace) -> None:
     if args.push_config:
         validate_git_push_ready()
     ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name = resolve_workspace(args.workspace, args.tenant)
+    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     feature_workspace = None
@@ -1166,7 +1339,9 @@ def deploy(args: argparse.Namespace) -> None:
     )
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
-    reuse_deployment = prepare_rayfin_env(args.tenant, workspace_id, workspace_name, client_id)
+    reuse_deployment = prepare_rayfin_env(
+        args.tenant, workspace_id, workspace_name, capacity_id, client_id
+    )
     if feature_workspace:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
     ensure_deploy_dependencies()
@@ -1208,16 +1383,18 @@ def deploy(args: argparse.Namespace) -> None:
         f"Rayfin redirect configuration now contains {len(rayfin_redirects)} URI(s).",
         flush=True,
     )
-    if hosting_url not in original_entra_redirects:
-        run_stream(
-            rayfin24(
-                "up", "--workspace-id", workspace_id,
-                "--exclude-services", "staticHosting", "--yes",
-            ),
-            cwd=APP_DIR,
-        )
-    else:
-        print("Hosting origin is already configured; skipping backend reprovisioning.", flush=True)
+    print(
+        "Reapplying backend runtime settings and database configuration so managed-service "
+        "restarts cannot retain stale CORS state.",
+        flush=True,
+    )
+    run_stream(
+        rayfin24(
+            "up", "--workspace-id", workspace_id,
+            "--exclude-services", "staticHosting", "--yes",
+        ),
+        cwd=APP_DIR,
+    )
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
@@ -1247,19 +1424,15 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    validate_fabric_app(workspace_id, args.tenant)
+    item_id = validate_fabric_app(workspace_id, args.tenant)
+    api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
+    publishable_key = validate_rayfin_publishable_key()
+    validate_appbackend_cors(api_url, hosting_url, publishable_key)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
         validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
-        try:
-            validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
-        except (DeployError, json.JSONDecodeError) as exc:
-            if feature_workspace:
-                raise DeployError("Feature deployment stopped: browser sign-in readiness failed.") from exc
-            warn_live_auth(
-                f"Browser sign-in readiness check did not pass for SPA {client_id}:\n{exc}"
-            )
+        validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "

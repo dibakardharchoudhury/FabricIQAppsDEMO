@@ -141,7 +141,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=args.client_id),
             patch.object(
                 DEPLOY,
@@ -249,6 +257,24 @@ class DeployOrderTests(unittest.TestCase):
                 "Authorization_RequestDenied",
             ):
                 DEPLOY.resolve_spa(None, "tenant-id")
+
+    def test_explicit_spa_must_exist_before_deployment(self):
+        client_id = "11111111-1111-1111-1111-111111111111"
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=DEPLOY.DeployError("Application was not found"),
+            ),
+            patch.object(DEPLOY, "ensure_spa_service_principal") as ensure_sp,
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError, "Deployment stopped before changing Rayfin state"
+            ):
+                DEPLOY.resolve_spa(client_id, "tenant-id")
+
+        ensure_sp.assert_not_called()
 
     def test_spa_discovery_failed_login_does_not_use_fallback(self):
         stale = DEPLOY.DeployError("TokenCreatedWithOutdatedPolicies")
@@ -568,7 +594,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=None),
             patch.object(DEPLOY, "write_rayfin_redirects") as write_redirects,
             patch.object(DEPLOY, "prepare_rayfin_env", prepare),
@@ -592,7 +626,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=client_id),
             patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[]),
             patch.object(DEPLOY, "write_rayfin_redirects", return_value=["http://localhost:5173"]),
@@ -615,6 +657,9 @@ class DeployOrderTests(unittest.TestCase):
             ) as run_stream,
             patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
             patch.object(DEPLOY, "validate_fabric_app"),
+            patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
+            patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
+            patch.object(DEPLOY, "validate_appbackend_cors"),
             patch.object(DEPLOY, "validate_spa_redirect_preservation"),
             patch.object(DEPLOY, "validate_entra_live_auth"),
         ):
@@ -622,7 +667,7 @@ class DeployOrderTests(unittest.TestCase):
 
         self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
 
-    def test_existing_registered_origin_skips_backend_reprovisioning(self):
+    def test_existing_registered_origin_reapplies_backend_configuration(self):
         hosting_url = "https://fast.webapp.fabricapps.net"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -633,7 +678,15 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "ensure_azure_tenant"),
-            patch.object(DEPLOY, "resolve_workspace", return_value=("workspace-id", "Demo Workspace")),
+            patch.object(
+                DEPLOY,
+                "resolve_workspace",
+                return_value=(
+                    "workspace-id",
+                    "Demo Workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                ),
+            ),
             patch.object(DEPLOY, "resolve_spa", return_value=args.client_id),
             patch.object(DEPLOY, "read_entra_spa_redirects_with_reauth", return_value=[hosting_url]),
             patch.object(DEPLOY, "write_rayfin_redirects", side_effect=lambda redirects: redirects),
@@ -645,14 +698,21 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(DEPLOY.requests, "get", return_value=Mock(status_code=200, headers={"Content-Type": "text/html"})),
             patch.object(DEPLOY, "validate_fabric_app"),
+            patch.object(DEPLOY, "validate_rayfin_endpoint_contract", return_value="https://api.test"),
+            patch.object(DEPLOY, "validate_rayfin_publishable_key", return_value="pk-test"),
+            patch.object(DEPLOY, "validate_appbackend_cors"),
             patch.object(DEPLOY, "validate_spa_redirect_preservation"),
             patch.object(DEPLOY, "validate_entra_live_auth"),
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 2)
+        self.assertEqual(run_stream.call_count, 3)
         self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
-        self.assertEqual(run_stream.call_args_list[1].args[0], ["setup-live-auth"])
+        self.assertEqual(
+            run_stream.call_args_list[1].args[0],
+            ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
+        )
+        self.assertEqual(run_stream.call_args_list[2].args[0], ["setup-live-auth"])
 
     def test_verifies_installed_rayfin_without_running_the_cli(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -678,6 +738,166 @@ class DeployOrderTests(unittest.TestCase):
             "Fabric.Embed",
             DEPLOY.REQUIRED_DELEGATED["00000009-0000-0000-c000-000000000000"],
         )
+
+    def test_rayfin_api_capacity_match_requires_current_capacity_in_both_urls(self):
+        capacity_id = "22222222-2222-2222-2222-222222222222"
+        api_url = (
+            "https://host.pbidedicated.windows.net/webapi/capacities/"
+            f"{capacity_id}/workloads/BaaS/"
+        )
+        self.assertTrue(
+            DEPLOY.rayfin_api_targets_capacity(
+                {"RAYFIN_PUBLIC_API_URL": api_url},
+                {"fabricApiUrl": api_url},
+                capacity_id,
+            )
+        )
+        self.assertFalse(
+            DEPLOY.rayfin_api_targets_capacity(
+                {"RAYFIN_PUBLIC_API_URL": api_url},
+                {
+                    "fabricApiUrl": (
+                        "https://old.pbidedicated.windows.net/webapi/capacities/"
+                        "33333333-3333-3333-3333-333333333333/workloads/BaaS/"
+                    )
+                },
+                capacity_id,
+            )
+        )
+
+    def test_endpoint_contract_requires_current_capacity_workspace_and_item(self):
+        capacity_id = "22222222-2222-2222-2222-222222222222"
+        workspace_id = "33333333-3333-3333-3333-333333333333"
+        item_id = "44444444-4444-4444-4444-444444444444"
+        api_url = (
+            "https://22222222222222222222222222222222.pbidedicated.windows.net/"
+            f"webapi/capacities/{capacity_id}/workloads/BaaS/BaaSService/automatic/v1/"
+            f"workspaces/{workspace_id}/appbackends/{item_id}"
+        )
+
+        with patch.object(
+            DEPLOY,
+            "current_rayfin_target",
+            return_value=(
+                {"RAYFIN_PUBLIC_API_URL": api_url},
+                {"fabricApiUrl": api_url},
+            ),
+        ):
+            self.assertEqual(
+                DEPLOY.validate_rayfin_endpoint_contract(
+                    capacity_id, workspace_id, item_id
+                ),
+                api_url,
+            )
+
+    def test_cors_validation_retries_until_both_endpoints_are_ready(self):
+        origin = "https://app.webapp.fabricapps.net"
+        failed = Mock(status_code=500, headers={})
+        ready = Mock(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Headers": (
+                    "authorization, content-type, x-publishable-key"
+                ),
+            },
+        )
+
+        with (
+            patch.object(
+                DEPLOY.requests,
+                "options",
+                side_effect=[failed, ready, ready],
+            ) as options,
+            patch.object(
+                DEPLOY.requests,
+                "post",
+                side_effect=[
+                    Mock(
+                        status_code=200,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
+                    Mock(
+                        status_code=400,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
+                ],
+            ) as post,
+            patch.object(DEPLOY.time, "sleep") as sleep,
+        ):
+            DEPLOY.validate_appbackend_cors("https://api.test", origin, "pk-test")
+
+        self.assertEqual(options.call_count, 3)
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+    def test_browser_readiness_retries_token_endpoint_http_500(self):
+        origin = "https://app.webapp.fabricapps.net"
+        ready = Mock(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": (
+                    "authorization, content-type, x-publishable-key"
+                ),
+            },
+        )
+        with (
+            patch.object(DEPLOY.requests, "options", return_value=ready),
+            patch.object(
+                DEPLOY.requests,
+                "post",
+                side_effect=[
+                    Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=500, headers={}),
+                    Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
+                ],
+            ) as post,
+            patch.object(DEPLOY.time, "sleep") as sleep,
+        ):
+            DEPLOY.validate_appbackend_cors(
+                "https://api.test", origin, "pk-test"
+            )
+
+        self.assertEqual(post.call_count, 3)
+        sleep.assert_called_once_with(2)
+
+    def test_cors_validation_rejects_missing_allow_origin(self):
+        response = Mock(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Headers": (
+                    "authorization, content-type, x-publishable-key"
+                ),
+            },
+        )
+
+        with (
+            patch.object(DEPLOY, "APPBACKEND_READINESS_DELAYS", (0,)),
+            patch.object(DEPLOY.requests, "options", return_value=response),
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError, "AppBackend browser readiness failed"
+            ):
+                DEPLOY.validate_appbackend_cors(
+                    "https://api.test",
+                    "https://app.webapp.fabricapps.net",
+                    "pk-test",
+                )
+
+    def test_publishable_key_must_match_deployment_state(self):
+        with patch.object(
+            DEPLOY,
+            "current_rayfin_target",
+            return_value=(
+                {"RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-current"},
+                {"publishableKey": "pk-stale"},
+            ),
+        ):
+            with self.assertRaisesRegex(
+                DEPLOY.DeployError, "publishable-key validation failed"
+            ):
+                DEPLOY.validate_rayfin_publishable_key()
 
     def test_state_rotation_moves_only_known_files_to_temp_backup(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -712,6 +932,7 @@ class DeployOrderTests(unittest.TestCase):
                     "ad340c84-1886-4202-a483-2da2cb9168eb",
                     "a79a4b7e-e508-4fa4-8b6f-15deadca0f34",
                     "Demo Workspace",
+                    "33333333-3333-3333-3333-333333333333",
                     "22dedc54-8b7e-442c-929d-497c4df086e6",
                 )
 
