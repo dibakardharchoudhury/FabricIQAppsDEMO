@@ -72,11 +72,12 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
   const run = async () => {
     const exactPrompt = prompt.trim()
     if (!exactPrompt || running) return
+    const executionMode = isWorkOrderRequest(exactPrompt) ? 'sequential' : mode
     setPrompt('')
     setLastPrompt(exactPrompt)
     setSides({
       'data-agent': { status: 'running', message: { role: 'agent', text: '' } },
-      foundry: { status: mode === 'parallel' ? 'running' : 'queued', message: { role: 'agent', text: '' } },
+      foundry: { status: executionMode === 'parallel' ? 'running' : 'queued', message: { role: 'agent', text: '' } },
     })
 
     const runners = {
@@ -101,17 +102,16 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
       },
     }
 
-    await runAgentBattle<AgentAnswer | FoundryAnswer>(exactPrompt, isWorkOrderRequest(exactPrompt) ? 'sequential' : mode, runners, result => {
-      updateSide(result.engine, result.ok && result.value
-        ? { status: 'completed', message: asMessage(result.value, result.elapsedMs) }
-        : {
-            status: 'error',
-            message: {
-              role: 'agent',
-              text: result.error ?? 'The agent request failed.',
-              meta: { elapsedMs: result.elapsedMs },
-            },
-          })
+    await runAgentBattle<AgentAnswer | FoundryAnswer>(exactPrompt, executionMode, runners, result => {
+      if (result.ok && result.value) {
+        updateSide(result.engine, { status: 'completed', message: asMessage(result.value, result.elapsedMs) })
+      } else {
+        updateMessage(result.engine, {
+          text: result.error ?? 'The agent request failed.',
+          meta: { elapsedMs: result.elapsedMs },
+        })
+        updateSide(result.engine, { status: 'error' })
+      }
     })
   }
 

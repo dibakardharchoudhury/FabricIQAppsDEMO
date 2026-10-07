@@ -160,6 +160,28 @@ This follows the existing workspace-sync read-retry pattern. Certificate failure
 authorization/product errors, and all POST/PUT mutations still propagate without replay.
 Exhaustion is a deployment failure, never an inferred readback success.
 
+The next canonical deployment (`8851f9d`, hosted version 1.0.720) completed with
+`SUCCESS` after all five agent readbacks, app build/publication, backend/CORS checks,
+preservation of 39 redirects, and effective current-user consent verification passed.
+Tenant-wide consent could not be granted by this identity, but current-user grants now
+cover all required scopes; no additional permission was missing for this operator.
+
+Authenticated browser acceptance confirmed the deployed version and Supervisor-only UI.
+The direct Data Agent completed the explicit all-open-work SQL comparison in 56.1 seconds
+without a consent popup: 10 open orders across 9 equipment IDs, with tables and a chart.
+Every returned work-order number, equipment ID, title, status and priority matched the
+SQL-backed Maintenance view across all 15 turbines (12 total orders, 10 open). This is
+bounded SQL-answer evidence, not execution-provenance attestation or combined-source
+certification. The Foundry side and subsequent normal chat attempts still failed before
+HTTP with intermittent DNS errors, so Foundry parity and approval-to-SQL acceptance remain
+open. The account reports Succeeded/public access Enabled; Resource Health lookup returned
+an authorization/provider-registration error and does not establish service health.
+
+Review of that failed comparison identified a Battle-only receipt-loss bug: final failure
+state replaced the streamed message. The fix preserves its collected steps/agent receipts
+while displaying the error. Work-order comparisons also show the actual sequential queue
+state even if the operator selected Parallel for ordinary questions.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
