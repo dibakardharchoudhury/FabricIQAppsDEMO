@@ -330,7 +330,7 @@ const SIGN_IN_HINT = 'Not signed in to the operational database. Open Administra
 /** Per-turn caches so repeated tool calls in one answer do not refetch the same source. */
 export function createToolRuntime(
   settings: CopilotSettings,
-  options?: { onWorkOrderProposal?: (proposal: WorkOrderProposal) => void },
+  options?: { onWorkOrderProposal?: (proposal: WorkOrderProposal) => void; proposalPriority?: WorkOrderProposal['priority'] },
 ) {
   let stid: Promise<StidData | null> | undefined
   const operations = new Map<string, Promise<Record<string, unknown>[]>>()
@@ -542,7 +542,7 @@ export function createToolRuntime(
           opcuaNodeId: args.opcua_node_id,
           title: args.title,
           description: args.description,
-          priority: args.priority,
+          priority: options?.proposalPriority ?? 'Medium',
         })
         await validateWorkOrderTarget(proposal)
         const existingWork = (await loadOperations('work_orders')).filter(order =>
@@ -556,6 +556,7 @@ export function createToolRuntime(
             existing_work: existingWork,
             confirmation_required: true,
             confirmation_method: 'Review the editable approval card and choose Yes or No.',
+            priority_policy: 'Priority comes from the explicit operator request, otherwise Medium. The operator can edit it on the card; the model cannot escalate it.',
           },
         }
       }

@@ -35,12 +35,20 @@ Human approval progress comes from the in-memory approval store, so creation/rej
 does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
 application actions, not evidence that a model executed a database mutation.
 The 1.0.729 scientific test still produced an unsupported diagnostic threshold.
-The Supervisor's current review is instruction-driven, not a deterministic evidence
-validator; do not use its agreement as proof of causation or enterprise readiness.
+The subsequent implementation requires Sleuth's `complete_rca_assessment` report:
+application code validates current-turn evidence IDs and JSON-pointer paths and renders
+the returned values itself. Prose-only reports and unsupported fields are rejected within
+the existing round limit. Final RCA output excludes free-text diagnostic claims from
+Chief and Gauge. It preserves source-derived station summaries, returned open work,
+actual proposal counts and an explicitly unsent notification when requested.
+This validates source references, **not causal relevance or baseline comparability**.
+Hypotheses remain untested and cause undetermined; no approved diagnostic-limit source
+or validated causal model is configured. See the acceptance report for deployment/live status.
 For a simple Gauge-only station-power chart with one completed source query, the app
 renders the final table, units, timestamps and freshness directly from the validated
 chart dataset. A model rewrite is not authoritative for these values. Compound
-investigations still require separate review of their model-generated explanations.
+investigations preserve each queried station window separately and require engineering
+review of hypothesis relevance and missing evidence.
 The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
 and full handoff history. Normal chat has a keyboard-operable flow-height slider and
 Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed

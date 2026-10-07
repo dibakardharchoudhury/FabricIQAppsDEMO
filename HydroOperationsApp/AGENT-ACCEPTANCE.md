@@ -127,11 +127,21 @@ Recommended/current instruction contract:
    Gauge independently checks critical IDs, timestamps, units and work coverage when
    requested. Contradictions remain unresolved until evidence resolves them.
 
-This is an instruction-level quality contract, **not a certified causal inference
-engine or a code-enforced scientific validation gate**. A production reliability agent
-needs validated baselines, versioned domain procedures, calibrated thresholds, evidence
-references and deterministic report validation. Human engineering review remains required
-before hazardous operational actions. Do not automatically alter equipment controls.
+The 1.0.729 implementation relied on instructions and failed this contract. The subsequent
+source implementation adds a bounded structured RCA report with exact source references:
+unknown receipt IDs, absent JSON-pointer paths, unsupported narrative/threshold fields and
+prose-only completion are rejected. Actual values are rendered by the application, not
+copied from model prose. Two to four competing hypothesis categories and missing evidence
+are required. Chief/Gauge free-text diagnostic claims are excluded from the final RCA.
+This is **reference validation, not validation of causal relevance**. It does not certify
+baseline comparability, diagnostic thresholds or a causal inference engine. The report
+therefore leaves hypotheses untested and cause undetermined. Production reliability work
+still needs validated baselines, versioned procedures, approved limits and engineering
+review. No equipment controls are changed. Hosted verification of this change is pending.
+
+Proposal priority is now resolved from the explicit operator request before orchestration,
+otherwise Medium; model-generated priority cannot escalate it. Conflicting explicit values
+produce a visible error without leaving chat busy. The operator can still edit the card.
 
 ## Separate WO analysis from creation?
 
@@ -299,17 +309,17 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 
 ## Remaining acceptance gates
 
-- Add a structured RCA evidence contract with code-enforced checks for each diagnostic
-  threshold, baseline, quantitative claim and source reference. Reject unsupported
-  claims before Chief presents them as established findings. Repeat the scientific
-  scenarios; the latest RCA result is not accepted.
+- Deploy and exercise the new structured RCA reference gate. Local runtime tests reject
+  prose/invalid reports, exclude Chief's unsupported threshold, propagate a source failure
+  even after report submission, and preserve a single failed-turn history entry.
+  Repeat scientific scenarios; historical 1.0.729 RCA remains unaccepted.
 - Resolve native Data Agent output-moderation and Ontology/native timeout cases with
   their service traces, then repeat scenarios 2-5. Do not substitute a direct query and
   label the native-source workflow successful.
 - Verify ingestion before calling conditions current: the final hosted checks showed
   0/90 signals fresh, with latest source events around 20:20 UTC. Successful reads do
   not make those readings live.
-- Enforce proposal defaults and justified prioritization deterministically. Approval
+- Verify the new deterministic proposal-priority policy in hosted compound flows. Approval
   phase/race logic has unit coverage and rejection is hosted-tested; a new hosted
   approved SQL write was deliberately not performed in this acceptance suite.
 - Complete physical microphone recognition and tenant-wide consent for enterprise

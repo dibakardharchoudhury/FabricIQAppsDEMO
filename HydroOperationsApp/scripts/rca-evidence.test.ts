@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { parseRcaAssessment, renderRcaAssessment, renderOpenWorkEvidence, renderUnsentNotification, type EvidenceReceipt } from '../src/services/copilot/rcaEvidence.ts'
+import { agentDefinition } from '../src/services/copilot/agentDefinitions.ts'
+import { isNotificationDraftRequest, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { readAnswerDatasets } from '../src/services/copilot/answerPresentation.ts'
+
+const receipts: EvidenceReceipt[] = [{
+  id: 'call_measured', tool: 'query_station_power', completedAt: '2026-10-07T22:00:00Z',
+  result: { rows: [{ Station: 'Sloy', average_power_MW: 1315.0626405438807, latest_event_time: '2026-10-07T20:20:15Z' }], truncated: true },
+}]
+const ref = { evidence_id: 'call_measured', path: '/rows/0' }
+const assessment = {
+  observations: [ref],
+  hypotheses: [
+    { category: 'sensor_or_ingestion', supporting: [ref], contradicting: [], missing: ['fresh_measurements', 'independent_measurement'] },
+    { category: 'operating_conditions', supporting: [], contradicting: [ref], missing: ['matched_baseline', 'approved_limits'] },
+  ],
+}
+
+test('RCA renders actual measurements and limitations, never an invented threshold or baseline claim', () => {
+  const parsed = parseRcaAssessment(JSON.stringify(assessment), receipts)
+  const text = renderRcaAssessment(parsed, receipts)
+  assert.match(text, /Cause undetermined/)
+  assert.match(text, /1315\.0626405438807/)
+  assert.match(text, /20:20:15Z/)
+  assert.match(text, /Incomplete evidence/)
+  assert.match(text, /not proof of causation/)
+  assert.doesNotMatch(text, /5%|normal performance is established|validated baseline/i)
+  assert.equal(readAnswerDatasets(text).datasets.length, 2)
+})
+
+test('RCA rejects fabricated references, paths and unsupported diagnostic fields', () => {
+  for (const change of [
+    { ...assessment, threshold: 5 },
+    { ...assessment, conclusion: 'normal performance' },
+    { ...assessment, observations: [{ ...ref, evidence_id: 'invented' }] },
+    { ...assessment, observations: [{ ...ref, path: '/rows/99' }] },
+    { ...assessment, observations: [{ ...ref, path: '/constructor' }] },
+    { ...assessment, observations: [{ ...ref, path: '/rows/0/~bad' }] },
+    { ...assessment, observations: [] },
+    { ...assessment, hypotheses: [{ ...assessment.hypotheses[0], confidence: .99 }, assessment.hypotheses[1]] },
+    { ...assessment, hypotheses: [{ ...assessment.hypotheses[0], category: 'confirmed_failure' }, assessment.hypotheses[1]] },
+    { ...assessment, hypotheses: [{ ...assessment.hypotheses[0], missing: [] }, assessment.hypotheses[1]] },
+  ]) assert.throws(() => parseRcaAssessment(JSON.stringify(change), receipts))
+  assert.throws(() => parseRcaAssessment('{broken', receipts), /Invalid RCA JSON/)
+  assert.throws(() => parseRcaAssessment(JSON.stringify(assessment), [{ ...receipts[0], result: { rows: [{ large: 'x'.repeat(3000) }] } }]), /smaller source/)
+})
+
+test('evidence pointers retain null and escaped JSON keys without fabricating measurements', () => {
+  const sources = [{ ...receipts[0], result: { 'a/b': { '~key': null } } }]
+  const pointer = { evidence_id: ref.evidence_id, path: '/a~1b/~0key' }
+  const parsed = parseRcaAssessment(JSON.stringify({ ...assessment, observations: [pointer],
+    hypotheses: assessment.hypotheses.map(hypothesis => ({ ...hypothesis, supporting: [pointer], contradicting: [] })) }), sources)
+  assert.match(renderRcaAssessment(parsed, sources), /\| null \|/)
+})
+
+test('only Sleuth can submit the structured RCA completion tool', () => {
+  assert.match(JSON.stringify(agentDefinition('rca', 'test').tools), /complete_rca_assessment/)
+  for (const role of ['qa', 'work-order', 'supervisor'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_rca_assessment/)
+})
+
+test('work-order priority comes from an explicit operator directive or defaults to Medium', () => {
+  assert.equal(workOrderPriorityForRequest('Investigate BAD readings and prepare an inspection draft.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('List high-priority open orders, then prepare an inspection draft.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('Prepare one editable Low-priority inspection work-order draft.'), 'Low')
+  assert.equal(workOrderPriorityForRequest('Create a work order. Priority: Critical.'), 'Critical')
+  assert.equal(workOrderPriorityForRequest('Do not create a high-priority work order.'), 'Medium')
+  assert.throws(() => workOrderPriorityForRequest('Create a Low-priority work order. Priority: High.'), /conflicting priorities/)
+})
+
+test('source-rendered workflow preserves open Draft coverage and an explicitly unsent message', () => {
+  const source: EvidenceReceipt = { id: 'call_work', tool: 'query_operations', entity: 'work_orders', completedAt: receipts[0].completedAt,
+    result: { rows: [
+      { workOrderNumber: 'WO-1', equipmentId: 'EQUIP_RTI_T005', title: 'Inspect | sensor', status: 'Draft', priority: 'Medium' },
+      { workOrderNumber: 'WO-2', equipmentId: 'EQUIP_RTI_T005', title: 'Old work', status: 'Completed', priority: 'Low' },
+    ] } }
+  const text = renderOpenWorkEvidence([source, source])
+  assert.equal((text.match(/WO-1/g) ?? []).length, 1)
+  assert.doesNotMatch(text, /WO-2/)
+  assert.match(text, /Draft/)
+  assert.equal(renderOpenWorkEvidence([source, { ...source, result: { rows: [
+    { workOrderNumber: 'WO-1', status: 'Completed' },
+  ] } }]), '')
+  assert.match(renderUnsentNotification([source]), /EQUIP\\_RTI\\_T005/)
+  assert.match(renderUnsentNotification([source]), /not been sent/)
+  assert.equal(isNotificationDraftRequest('Investigate T005, then draft a notification. Do not send.'), true)
+})

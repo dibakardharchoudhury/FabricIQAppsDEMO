@@ -56,6 +56,23 @@ export function isWorkOrderRequest(question: string): boolean {
     || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork[\s-]*orders?\b/i.test(positiveClauses))
 }
 
+export function workOrderPriorityForRequest(question: string): WorkOrderProposal['priority'] {
+  const values = new Set<string>()
+  const positive = positiveActionClauses(question)
+  const patterns = [
+    /\b(?:create|raise|submit|log|make|generate|prepare|propose|draft)\b[^.!?;\n]{0,100}?\b(low|medium|high|critical)[ -]priority\b/gi,
+    /\bpriority\s*(?::|=|of|is|to)?\s*["']?(low|medium|high|critical)\b/gi,
+  ]
+  for (const pattern of patterns) for (const match of positive.matchAll(pattern)) values.add(match[1].toLowerCase())
+  if (values.size > 1) throw new Error('The work-order request specifies conflicting priorities. Specify one priority for this draft.')
+  const value = [...values][0]
+  return value === 'low' ? 'Low' : value === 'high' ? 'High' : value === 'critical' ? 'Critical' : 'Medium'
+}
+
+export function isNotificationDraftRequest(question: string): boolean {
+  return /\b(?:draft|prepare|compose|write)\b.{0,100}\b(?:notification|email|message)\b|\b(?:notification|email|message)\s+draft\b/i.test(positiveActionClauses(question))
+}
+
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
   const missing: AgentRole[] = []
   const positive = positiveActionClauses(question)
@@ -71,8 +88,7 @@ export function missingRequestedSpecialists(question: string, completed: readonl
 }
 
 export function delegationOrderError(question: string, next: AgentRole, completed: readonly AgentRole[]): string | undefined {
-  if (next === 'work-order' && !isWorkOrderRequest(question)
-    && /\bdraft\b.{0,80}\b(?:notification|email|message)\b/i.test(positiveActionClauses(question))) {
+  if (next === 'work-order' && !isWorkOrderRequest(question) && isNotificationDraftRequest(question)) {
     return 'The requested notification/email/message draft is prose, not an editable work-order request. Obtain factual evidence from qa/rca as needed, then compose the requested unsent message. No notification delivery tool is available. This rejected delegation did not consume a slot.'
   }
   const missing = missingRequestedSpecialists(question, completed)
