@@ -75,6 +75,20 @@ export type TelemetryQueryArgs = {
   limit?: number
 }
 
+export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): string {
+  if (!KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use a value like 30m, 6h or 7d.`)
+  const normalizedQuality = quality.trim().toUpperCase()
+  if (!['GOOD', 'UNCERTAIN', 'BAD'].includes(normalizedQuality)) {
+    throw new Error("Invalid quality. Use GOOD, UNCERTAIN, or BAD.")
+  }
+  return `OPCUAEvents
+| where event_time > ago(${lookback})
+| summarize arg_max(event_time, value, quality) by opcua_node_id
+| where toupper(quality) == '${normalizedQuality}'
+| project event_time, opcua_node_id, value, quality
+| order by opcua_node_id asc`
+}
+
 /** Build the telemetry query from validated fragments — no model text reaches the query body.
  *  Always keeps the NEWEST rows so "the last N readings" is answerable. */
 export function buildTelemetryQuery(args: TelemetryQueryArgs): string {

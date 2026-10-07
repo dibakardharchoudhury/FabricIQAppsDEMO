@@ -3,8 +3,9 @@ import { queryStid, runKustoQuery, type StidData } from '../fabric.ts'
 import { isRayfinConfigured, isRayfinSignedIn, listAsset3DModels, listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders, type Asset3DModelRecord } from '../rayfin.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
+import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import {
-  applyFilter, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, buildQualitySnapshotQuery, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -28,12 +29,16 @@ export function describeToolCall(name: string, args: ToolArguments): string {
         args.lookback ?? '24h',
         args.aggregation === 'none' ? `latest ${args.limit ?? MAX_ROWS} readings` : `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
       ].join(' · ')
+    case 'query_signal_quality_snapshot':
+      return [args.quality ?? 'BAD', args.lookback ?? '30m', args.equipment_type ?? 'all equipment'].join(' · ')
     case 'run_kql':
       return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
     case 'visualize_dataset':
       return [args.chart_type, args.title].filter(Boolean).join(' · ')
     case 'show_3d_model':
       return args.equipment_id ?? args.model_id ?? ''
+    case 'propose_work_order':
+      return [args.equipment_id, args.priority, args.title].filter(Boolean).join(' · ')
     default:
       return ''
   }
@@ -120,6 +125,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'query_signal_quality_snapshot',
+      description: 'Get every active signal whose single latest raw reading in the window has the requested quality, resolved to equipment with all open work. Use this for "running bad", current quality, and equivalent fleet-health questions instead of assembling multiple inventory/telemetry/work-order calls.',
+      parameters: {
+        type: 'object',
+        properties: {
+          quality: { type: 'string', enum: ['GOOD', 'UNCERTAIN', 'BAD'], description: 'Requested latest quality. Default BAD.' },
+          lookback: { type: 'string', description: 'Window ending now, e.g. 30m or 6h. Default 30m.' },
+          equipment_type: { type: 'string', description: 'Optional equipment type substring, e.g. turbine.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'visualize_dataset',
       description: 'Render a chart in the chat. Call this after retrieving data when a chart helps; still summarize the finding in your reply.',
       parameters: {
@@ -151,6 +171,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_work_order',
+      description: 'Stage a complete work-order draft for human approval. This does not create or modify data. Use only for an explicit request to create work, after checking relevant open work.',
+      parameters: {
+        type: 'object',
+        properties: {
+          equipment_id: { type: 'string', description: 'Canonical equipment_id resolved from asset metadata.' },
+          instrument_id: { type: 'string', description: 'Optional directly affected instrument_id.' },
+          opcua_node_id: { type: 'string', description: 'Optional directly affected telemetry node.' },
+          title: { type: 'string', description: 'Specific action-oriented work title.' },
+          description: { type: 'string', description: 'Evidence, observed condition, scope, and requested action.' },
+          priority: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'] },
+        },
+        required: ['equipment_id', 'title', 'description', 'priority'],
+      },
+    },
+  },
 ]
 
 export type ToolArguments = {
@@ -172,6 +211,12 @@ export type ToolArguments = {
   inline_csv_data?: string
   equipment_id?: string
   model_id?: string
+  instrument_id?: string
+  opcua_node_id?: string
+  description?: string
+  priority?: string
+  quality?: string
+  equipment_type?: string
 }
 
 function entityOrThrow(entities: CatalogEntity[], key: string | undefined, settings: CopilotSettings): CatalogEntity {
@@ -197,6 +242,12 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
       if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
       if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
       if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
+      if (tool.function.name === 'query_signal_quality_snapshot') {
+        return enabledKustoNames(settings).includes('OPCUAEvents')
+          && enabledEntities(ASSET_ENTITIES).includes('equipment')
+          && enabledEntities(ASSET_ENTITIES).includes('instruments')
+          && enabledEntities(OPERATIONS_ENTITIES).includes('work_orders')
+      }
       if (tool.function.name === 'run_kql') return enabledKustoNames(settings).length > 0
       return true
     })
@@ -243,7 +294,10 @@ function shape(entity: CatalogEntity, rows: Record<string, unknown>[], args: Too
 const SIGN_IN_HINT = 'Not signed in to the operational database. Open Administration and complete step 1, “Sign in to Fabric”, then ask again. This is a sign-in step, not a permissions problem.'
 
 /** Per-turn caches so repeated tool calls in one answer do not refetch the same source. */
-export function createToolRuntime(settings: CopilotSettings) {
+export function createToolRuntime(
+  settings: CopilotSettings,
+  options?: { onWorkOrderProposal?: (proposal: WorkOrderProposal) => void },
+) {
   let stid: Promise<StidData | null> | undefined
   const operations = new Map<string, Promise<Record<string, unknown>[]>>()
 
@@ -295,6 +349,74 @@ export function createToolRuntime(settings: CopilotSettings) {
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
         return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }
       }
+      case 'query_signal_quality_snapshot': {
+        if (!enabledKustoNames(settings).includes('OPCUAEvents')) throw new Error('The OPCUAEvents table is disabled in Administration.')
+        if (!isRayfinConfigured()) throw new Error('The operational database is not configured in this build.')
+        if (!isRayfinSignedIn()) throw new Error(SIGN_IN_HINT)
+        const csl = buildQualitySnapshotQuery(args.quality, args.lookback)
+        stid ??= queryStid()
+        const [telemetryResult, data, workOrders] = await Promise.all([
+          runKustoQuery(csl, MAX_ROWS),
+          stid,
+          loadOperations('work_orders'),
+        ])
+        if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
+        const instruments = new Map(data.instruments
+          .filter(instrument => instrument.is_active !== false)
+          .map(instrument => [instrument.opcua_node_id, instrument]))
+        const equipment = new Map(data.equipment
+          .filter(asset => asset.is_active !== false)
+          .map(asset => [asset.equipment_id, asset]))
+        const wantedType = args.equipment_type?.trim().toLowerCase()
+        const open = (status: unknown) => !['completed', 'cancelled'].includes(String(status ?? '').trim().toLowerCase())
+        const rows = kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows).flatMap(reading => {
+          const node = String(reading.opcua_node_id ?? '')
+          const instrument = instruments.get(node)
+          const asset = instrument ? equipment.get(instrument.equipment_id) : undefined
+          if (!instrument || !asset) return []
+          const assetType = `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim()
+          if (wantedType && !assetType.toLowerCase().includes(wantedType)) return []
+          const relatedWork = workOrders
+            .filter(order => order.equipmentId === asset.equipment_id && open(order.status))
+            .map(order => ({
+              workOrderNumber: order.workOrderNumber,
+              title: order.title,
+              priority: order.priority,
+              status: order.status,
+              instrumentId: order.instrumentId,
+              opcuaNodeId: order.opcuaNodeId,
+              relation: order.opcuaNodeId === node || order.instrumentId === instrument.instrument_id
+                ? 'same-signal'
+                : 'equipment-level',
+            }))
+          return [{
+            turbine: asset.tag,
+            equipment_id: asset.equipment_id,
+            equipment_type: assetType,
+            instrument_id: instrument.instrument_id,
+            signal: instrument.instrument_type ?? instrument.tag,
+            opcua_node_id: node,
+            value: reading.value,
+            unit: instrument.unit,
+            quality: reading.quality,
+            event_time: reading.event_time,
+            open_work_orders: relatedWork,
+          }]
+        })
+        const { rows: capped, truncated } = truncateForModel(rows)
+        return {
+          result: {
+            rows: capped,
+            row_count: capped.length,
+            latest_per_signal_then_quality_filter: true,
+            latest_quality_node_count: telemetryResult.rows.length,
+            returned_active_equipment_signal_count: rows.length,
+            truncated,
+          },
+          rowCount: capped.length,
+          query: csl,
+        }
+      }
       case 'run_kql': {
         const csl = validateKql(args.query ?? '', enabledKustoNames(settings))
         const { columns, rows } = await runKustoQuery(csl, MAX_ROWS)
@@ -339,6 +461,25 @@ export function createToolRuntime(settings: CopilotSettings) {
             equipment_id: model.equipmentId,
           },
           model3d: model,
+        }
+      }
+      case 'propose_work_order': {
+        const proposal = createWorkOrderProposal({
+          equipmentId: args.equipment_id,
+          instrumentId: args.instrument_id,
+          opcuaNodeId: args.opcua_node_id,
+          title: args.title,
+          description: args.description,
+          priority: args.priority,
+        })
+        options?.onWorkOrderProposal?.(proposal)
+        return {
+          result: {
+            staged: true,
+            proposal,
+            confirmation_required: true,
+            confirmation_message: `Confirm work order ${proposal.id}`,
+          },
         }
       }
       default:

@@ -4,7 +4,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
 // who is always limited to their own Entra permissions by the delegated token.
 
-export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export type CopilotSettings = {
@@ -75,7 +75,8 @@ const RUNNING_BAD_SYSTEM_PROMPT = `${PREVIOUS_DEFAULT_SYSTEM_PROMPT}
 
 Canonical "running bad" questions:
 - Interpret "Which turbines are running bad right now?" as literal telemetry quality BAD, not an out-of-range numeric value. Resolve every active turbine and all of its active instruments; do not silently narrow the request to temperature or another signal type.
-- Unless the user explicitly supplies another window or signal, use a 30-minute lookback and select the single raw reading with greatest event_time for each resolved opcua_node_id. Do not average or bin values. Include a turbine when at least one signal's latest row has quality BAD, compared case-insensitively, and return every such BAD signal.
+- Unless the user explicitly supplies another window or signal, call query_signal_quality_snapshot exactly once with quality BAD, lookback 30m, and equipment_type turbine. That tool selects the single latest raw row per node before filtering quality and returns all open equipment work. Do not prefilter a signal type, apply a top/result limit, or replace it with separate inventory, telemetry, and work-order calls.
+- Include a turbine when at least one signal's latest row has quality BAD, compared case-insensitively, and return every row from the snapshot. Never reuse the five-result default from "running hot."
 - Return turbine tag, equipment_id, instrument/signal identity, opcua_node_id, latest value, unit, quality, and event_time. Identify stale or missing telemetry instead of silently changing the window.
 - For "what work is already open on it/them?", retrieve every work order for the affected equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches one of that turbine's BAD signals; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD signal.
 - State this interpretation and the effective window briefly in the answer so Battle comparisons expose their scope.`
@@ -89,7 +90,7 @@ Canonical "running hot" questions:
 - For "what work is already open on it/them?", retrieve every work order for the returned equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses temperature.
 - State this interpretation, effective window, and ranking/threshold rule briefly in the answer so Battle comparisons expose their scope.`
 
-export const DEFAULT_SYSTEM_PROMPT = `${RUNNING_HOT_SYSTEM_PROMPT}
+const ADAPTIVE_SYSTEM_PROMPT = `${RUNNING_HOT_SYSTEM_PROMPT}
 
 Adaptive response contract:
 - Lead with the direct answer or conclusion. Briefly state only material interpretation choices, filters, time window, freshness, ranking rule, or threshold that affect the result.
@@ -99,6 +100,14 @@ Adaptive response contract:
 - Never silently change the requested signal, time range, asset, facility, population, aggregation, or source scope. Separate facts returned by tools from interpretation, recommendations, and assumptions.
 - For cross-source results, join only on documented canonical keys and state any material matching rule. Distinguish directly related records from records that merely share an equipment or facility.
 - Keep source attribution concise at the end. Do not expose engine-specific tool narration unless it explains a limitation. Given the same evidence and question, preserve the same facts and scope across the Data Agent, Foundry, and Battle panes even when the best rendering differs by result shape.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${ADAPTIVE_SYSTEM_PROMPT}
+
+Multi-agent operations:
+- The application supervisor assigns each turn to one bounded specialist: Q&A, Work Order, RCA, or Data Agent Bridge. Follow the specialist instruction appended to this message and do not assume another specialist's authority.
+- Read-only questions remain read-only. The Work Order Agent may stage a draft with propose_work_order only after resolving the equipment and checking relevant open work. A staged draft is not a created work order.
+- Work-order creation requires a separate human message in the exact form "Confirm work order <proposal-id>". Never invent confirmation, call a write action indirectly, or say creation succeeded without a returned workOrderNumber.
+- RCA output must distinguish observations, hypotheses, confidence, and evidence gaps.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -136,6 +145,8 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
       || stored.systemPrompt === PREVIOUS_DEFAULT_SYSTEM_PROMPT
       || stored.systemPrompt === RUNNING_BAD_SYSTEM_PROMPT
       || stored.systemPrompt === RUNNING_HOT_SYSTEM_PROMPT
+      || stored.systemPrompt === ADAPTIVE_SYSTEM_PROMPT
+      || stored.systemPrompt === DEFAULT_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },

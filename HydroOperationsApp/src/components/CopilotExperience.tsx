@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
+import type { OrchestrationEvent } from '../services/copilot/orchestration'
 import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AgentVisualizationView } from './AgentVisualizationView'
@@ -21,6 +22,7 @@ export type CopilotMessage = {
   visualizations?: AgentVisualization[]
   models?: Asset3DModelRecord[]
   steps?: AgentStep[]
+  orchestrationEvents?: OrchestrationEvent[]
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -143,13 +145,14 @@ export function CopilotResponse({ message, streaming, question }: { message: Cop
 }
 
 function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
-  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length)
+  const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   return <>
+    <AgentOrchestrationTrace events={message.orchestrationEvents} />
     <CopilotSteps steps={message.steps} />
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
@@ -162,6 +165,23 @@ function AgentMessage({ message, streaming }: { message: CopilotMessage; streami
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
+}
+
+function AgentOrchestrationTrace({ events }: { events?: OrchestrationEvent[] }) {
+  if (!events?.length) return null
+  return <div className="v2-agent-orchestration" aria-label="Multi-agent interaction">
+    <div className="v2-agent-orchestration-title"><Bot size={13} /><strong>Live agent flow</strong><small>{events.some(event => event.status === 'running') ? 'active' : 'complete'}</small></div>
+    <div className="v2-agent-orchestration-flow">
+      {events.map((event, index) => <div className={`v2-agent-event ${event.status}`} key={event.id}>
+        {index > 0 && <span className="v2-agent-event-link" aria-hidden="true">→</span>}
+        <span className="v2-agent-event-node">
+          <i>{event.role === 'supervisor' ? 'S' : event.role === 'work-order' ? 'WO' : event.role === 'data-agent' ? 'DA' : event.role === 'rca' ? 'RCA' : 'Q&A'}</i>
+          <span><strong>{event.label}</strong><small>{event.status}</small></span>
+          <em title={event.detail}>{event.detail}</em>
+        </span>
+      </div>)}
+    </div>
+  </div>
 }
 
 function AgentModel({ model }: { model: Asset3DModelRecord }) {
@@ -194,6 +214,9 @@ function buildTranscript(question: string | undefined, message: CopilotMessage):
     if (step.query) lines.push(`Query:\n\n${block('kusto', step.query)}`)
     if (step.result) lines.push(`Result:\n\n${block('json', prettyJson(step.result))}`)
     parts.push(lines.join('\n\n'))
+  }
+  if (message.orchestrationEvents?.length) {
+    parts.push(`## Agent flow\n\n${message.orchestrationEvents.map(event => `- ${event.label}: ${event.status} — ${event.detail}`).join('\n')}`)
   }
   if (message.text) parts.push(`## Answer\n\n${stripOptionsMarker(message.text)}`)
   for (const visualization of message.visualizations ?? []) {

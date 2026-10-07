@@ -8,11 +8,12 @@ import {
 import {
   createWorkOrder, deleteWorkOrder, initializeRayfin, isRayfinConfigured, listAsset3DModels, listInspections,
   listMaintenanceNotifications, listSpareParts, listWorkOrders, seedOperationalDataIfEmpty, signInToRayfin,
-  updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
+  subscribeWorkOrdersChanged, updateWorkOrderStatus, type AppUser, type Asset3DModelRecord, type InspectionRecord,
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from '../../services/rayfin'
 import { twinStatus, type TwinStatus } from '../../twin'
 import { askFoundryCopilot, isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
+import type { OrchestrationEvent } from '../../services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -48,7 +49,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
@@ -399,6 +400,12 @@ function useHydroOperationsDataController() {
       setNotice(error instanceof Error ? error.message : 'Operational data is unavailable.')
     }
   }, [authenticate, loadOperationalData, user])
+
+  useEffect(() => subscribeWorkOrdersChanged(() => {
+    void loadOperationalData().catch(error => {
+      setNotice(error instanceof Error ? error.message : 'Created work order, but refreshing operational data failed.')
+    })
+  }), [loadOperationalData])
 
   const waitForStreamData = useCallback(async (timeoutMs: number, sinceMs: number): Promise<TelemetryReading[] | null> => {
     const deadline = Date.now() + timeoutMs
@@ -769,9 +776,10 @@ function useHydroOperationsDataController() {
     // Foundry owns its local tool trace. Data Agent MCP internals stay hidden while its answer is pending.
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
+    let liveEvents: OrchestrationEvent[] | undefined
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, artifacts, visualizations, models, meta }
       return next
     })
     try {
@@ -780,6 +788,7 @@ function useHydroOperationsDataController() {
           text,
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
+          events => { liveEvents = events; paint() },
         )
         : await askDataAgent(
           text,
@@ -787,6 +796,7 @@ function useHydroOperationsDataController() {
         )
       liveText = answer.text
       liveSteps = copilotEngine === 'foundry' ? answer.steps ?? liveSteps : undefined
+      liveEvents = copilotEngine === 'foundry' ? answer.orchestrationEvents ?? liveEvents : undefined
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
       liveText = error instanceof Error ? error.message : 'The copilot request failed.'

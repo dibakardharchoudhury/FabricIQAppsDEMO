@@ -976,12 +976,17 @@ RUNNING_BAD_INSTRUCTIONS = f"""
 {RUNNING_BAD_MARKER}
 
 - "Running bad right now" means literal telemetry quality `BAD`, not a numeric threshold. Unless
-  overridden, resolve all active signals, use a 30-minute window, and take the latest raw row by
-  `event_time` per `opcua_node_id`; return every turbine/signal whose latest quality is BAD.
+  overridden, query all active signals from Eventhouse first with one logical plan: filter the
+  30-minute time window and select the latest raw row using
+  `summarize arg_max(event_time, value, quality) by opcua_node_id`, then filter `toupper(quality) ==
+  "BAD"`. Never filter quality before `arg_max`, prefilter a signal type, or apply TOP/limit. Resolve
+  every returned node through active Lakehouse instrument/equipment rows and return every turbine
+  signal; the five-result default belongs only to "running hot".
 - Include tag, `equipment_id`, signal/instrument, node, value/unit, quality, and event time. Report
   stale/missing data rather than widening scope.
-- Join all non-Completed/non-Cancelled work by equipment. Mark same-signal only for matching node or
-  instrument; otherwise mark equipment-level. State the interpretation and window.
+- Join all non-Completed/non-Cancelled work using only the affected `equipment_id` values. Do not
+  filter work by node/instrument. Mark same-signal only for matching node or instrument; otherwise
+  mark equipment-level. State the interpretation and window.
 """
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'

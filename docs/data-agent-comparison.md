@@ -23,6 +23,25 @@ and distinguish open work linked to the same signal from other equipment-level w
 comparing a short-window temperature-only query from one engine with an all-signal, one-hour query
 from the other.
 
+### Executable latest-quality contract
+
+Prompt-level agreement was not sufficient in the October 7 live comparison. For the same
+historical 30-minute window, the Data Agent returned only two speed signals and Foundry returned
+five signals, while a direct source-truth query returned eight latest BAD signals. The failure
+modes were signal-type narrowing, an implicit result cap, and work-order filtering by signal
+instead of by affected equipment.
+
+The Data Agent contract now requires this operation order: constrain the time window, compute
+`arg_max(event_time, value, quality)` for every `opcua_node_id`, and only then filter the latest
+rows to `quality = BAD`. It prohibits signal-type prefilters and TOP/limit, resolves every returned
+node afterward, and retrieves all open work by affected equipment before labeling same-signal
+versus equipment-level work.
+
+Foundry uses a structured `query_signal_quality_snapshot` tool implementing the same order and
+performing telemetry, asset resolution, and open-work retrieval in one tool round. This replaces
+the previous inventory → instruments → telemetry → work-orders sequence that could exceed two
+minutes and allowed rows to be lost between model/tool rounds.
+
 ## Canonical meaning of "running hot"
 
 Both engines interpret **"Which turbines are running hot right now?"** as a temperature-only

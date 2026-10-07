@@ -61,6 +61,9 @@ class AgentDeploymentContractTests(unittest.TestCase):
             "all active signals",
             "30-minute window",
             "latest raw row",
+            "arg_max(event_time, value, quality) by opcua_node_id",
+            "Never filter quality before",
+            "filter work by node/instrument",
             "same-signal",
             "equipment-level",
         )

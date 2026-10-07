@@ -37,6 +37,7 @@ const asMessage = (answer: AgentAnswer | FoundryAnswer, elapsedMs: number): Copi
   artifacts: answer.artifacts,
   visualizations: answer.visualizations,
   models: 'models' in answer ? answer.models : undefined,
+  orchestrationEvents: 'orchestrationEvents' in answer ? answer.orchestrationEvents : undefined,
   meta: { elapsedMs, tokens: answer.usage?.total },
 })
 
@@ -90,6 +91,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
           question,
           text => updateMessage('foundry', { text }),
           steps => updateMessage('foundry', { steps }),
+          orchestrationEvents => updateMessage('foundry', { orchestrationEvents }),
         )
       },
     }

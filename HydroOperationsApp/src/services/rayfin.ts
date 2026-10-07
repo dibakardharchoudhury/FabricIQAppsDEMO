@@ -87,6 +87,7 @@ const projectId = (import.meta.env.VITE_FABRIC_ITEM_ID ?? import.meta.env.VITE_R
 const fabricPortalUrl = (import.meta.env.VITE_FABRIC_PORTAL_URL ?? import.meta.env.VITE_RAYFIN_PORTAL_URL ?? 'https://app.fabric.microsoft.com') as string
 
 const configured = Boolean(apiUrl && publishableKey && workspaceId && projectId)
+const WORK_ORDERS_CHANGED_EVENT = 'hydro:work-orders-changed'
 const client = configured ? new RayfinClient<HydroSchema>({
   baseUrl: apiUrl!.endsWith('/') ? apiUrl! : `${apiUrl}/`,
   publishableKey: publishableKey!,
@@ -108,6 +109,12 @@ function currentUser(): AppUser | null {
 export function isRayfinConfigured() { return configured }
 
 export function isRayfinSignedIn() { return currentUser() !== null }
+
+export function subscribeWorkOrdersChanged(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+  window.addEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
+  return () => window.removeEventListener(WORK_ORDERS_CHANGED_EVENT, listener)
+}
 
 export async function initializeRayfin(): Promise<AppUser | null> {
   if (!client) return null
@@ -134,20 +141,39 @@ export async function listWorkOrders(): Promise<WorkOrderRecord[]> {
   ]).orderBy({ createdAt: 'desc' }).execute() as WorkOrderRecord[]
 }
 
-export async function createWorkOrder(user: AppUser, equipmentId: string, instrumentId?: string, opcuaNodeId?: string): Promise<WorkOrderRecord> {
+export type CreateWorkOrderInput = {
+  equipmentId: string
+  instrumentId?: string
+  opcuaNodeId?: string
+  title?: string
+  description?: string
+  priority?: 'Low' | 'Medium' | 'High' | 'Critical'
+}
+
+export async function createWorkOrder(
+  user: AppUser,
+  equipmentIdOrInput: string | CreateWorkOrderInput,
+  instrumentId?: string,
+  opcuaNodeId?: string,
+): Promise<WorkOrderRecord> {
   if (!client) throw new Error('Rayfin backend is not configured.')
-  return await client.data.WorkOrder.create({
+  const input: CreateWorkOrderInput = typeof equipmentIdOrInput === 'string'
+    ? { equipmentId: equipmentIdOrInput, instrumentId, opcuaNodeId }
+    : equipmentIdOrInput
+  const record = await client.data.WorkOrder.create({
     workOrderNumber: `WO-${Date.now().toString().slice(-6)}`,
-    equipmentId,
-    instrumentId,
-    opcuaNodeId,
-    title: `Inspect ${equipmentId}`,
-    description: 'Operator-created inspection from Hydro Operations.',
-    priority: 'High',
+    equipmentId: input.equipmentId,
+    instrumentId: input.instrumentId,
+    opcuaNodeId: input.opcuaNodeId,
+    title: input.title ?? `Inspect ${input.equipmentId}`,
+    description: input.description ?? 'Operator-created inspection from Hydro Operations.',
+    priority: input.priority ?? 'High',
     status: 'Draft',
     createdByOid: user.id,
     createdAt: new Date(),
   }) as WorkOrderRecord
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORK_ORDERS_CHANGED_EVENT))
+  return record
 }
 
 export async function updateWorkOrderStatus(id: string, status: string): Promise<void> {
