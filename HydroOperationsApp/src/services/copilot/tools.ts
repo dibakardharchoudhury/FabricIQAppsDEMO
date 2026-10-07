@@ -4,6 +4,7 @@ import { isRayfinConfigured, isRayfinSignedIn, listAsset3DModels, listInspection
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
+import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
   applyFilter, buildQualitySnapshotQuery, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
@@ -368,12 +369,13 @@ export function createToolRuntime(
           .filter(asset => asset.is_active !== false)
           .map(asset => [asset.equipment_id, asset]))
         const wantedType = args.equipment_type?.trim().toLowerCase()
+        const unresolvedNodes: string[] = []
         const open = (status: unknown) => !['completed', 'cancelled'].includes(String(status ?? '').trim().toLowerCase())
         const rows = kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows).flatMap(reading => {
           const node = String(reading.opcua_node_id ?? '')
           const instrument = instruments.get(node)
           const asset = instrument ? equipment.get(instrument.equipment_id) : undefined
-          if (!instrument || !asset) return []
+          if (!instrument || !asset) { unresolvedNodes.push(node); return [] }
           const assetType = `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim()
           if (wantedType && !assetType.toLowerCase().includes(wantedType)) return []
           const relatedWork = workOrders
@@ -411,7 +413,8 @@ export function createToolRuntime(
             latest_per_signal_then_quality_filter: true,
             latest_quality_node_count: telemetryResult.rows.length,
             returned_active_equipment_signal_count: rows.length,
-            truncated,
+            unresolved_nodes: unresolvedNodes,
+            truncated: truncated || telemetryResult.rows.length >= MAX_ROWS,
           },
           rowCount: capped.length,
           query: csl,
@@ -472,13 +475,18 @@ export function createToolRuntime(
           description: args.description,
           priority: args.priority,
         })
+        await validateWorkOrderTarget(proposal)
+        const existingWork = (await loadOperations('work_orders')).filter(order =>
+          order.equipmentId === proposal.equipmentId && !['completed', 'cancelled'].includes(String(order.status).toLowerCase()))
+        workOrderApprovals.stage(proposal)
         options?.onWorkOrderProposal?.(proposal)
         return {
           result: {
             staged: true,
             proposal,
+            existing_work: existingWork,
             confirmation_required: true,
-            confirmation_message: `Confirm work order ${proposal.id}`,
+            confirmation_method: 'Review the editable approval card and choose Yes or No.',
           },
         }
       }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Gauge, RotateCcw, Send, Swords } from 'lucide-react'
-import { askDataAgent, resetDataAgentConversation, type AgentAnswer } from '../services/fabric'
+import { resetDataAgentConversation, type AgentAnswer } from '../services/fabric'
+import { askCopilot } from '../services/copilot/askCopilot'
+import { isWorkOrderRequest } from '../services/copilot/orchestration'
 import { askFoundryCopilot, resetFoundryConversation, type FoundryAnswer } from '../services/copilot/foundry'
 import { runAgentBattle, type AgentBattleEngine, type AgentBattleMode } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
@@ -21,7 +23,7 @@ const EMPTY_SIDES: BattleSides = {
 
 const LABELS: Record<AgentBattleEngine, { name: string; source: string }> = {
   'data-agent': { name: 'Fabric Data Agent', source: 'Published MCP · Preview Runtime' },
-  foundry: { name: 'Foundry Agent', source: 'Azure AI Foundry · gpt-5-mini' },
+  foundry: { name: 'Foundry Agents', source: 'Persistent supervisor + specialists' },
 }
 
 const SAMPLES = [
@@ -38,6 +40,7 @@ const asMessage = (answer: AgentAnswer | FoundryAnswer, elapsedMs: number): Copi
   visualizations: answer.visualizations,
   models: 'models' in answer ? answer.models : undefined,
   orchestrationEvents: 'orchestrationEvents' in answer ? answer.orchestrationEvents : undefined,
+  proposals: 'proposals' in answer ? answer.proposals : undefined,
   meta: { elapsedMs, tokens: answer.usage?.total },
 })
 
@@ -79,10 +82,12 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
     const runners = {
       'data-agent': async (question: string) => {
         updateSide('data-agent', { status: 'running', startedAt: Date.now() })
-        return askDataAgent(
+        return askCopilot(
+          'data-agent',
           question,
           text => updateMessage('data-agent', { text }),
           steps => updateMessage('data-agent', { steps }),
+          orchestrationEvents => updateMessage('data-agent', { orchestrationEvents }),
         )
       },
       foundry: async (question: string) => {
@@ -96,7 +101,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
       },
     }
 
-    await runAgentBattle<AgentAnswer | FoundryAnswer>(exactPrompt, mode, runners, result => {
+    await runAgentBattle<AgentAnswer | FoundryAnswer>(exactPrompt, isWorkOrderRequest(exactPrompt) ? 'sequential' : mode, runners, result => {
       updateSide(result.engine, result.ok && result.value
         ? { status: 'completed', message: asMessage(result.value, result.elapsedMs) }
         : {
@@ -147,6 +152,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
 
     {!lastPrompt && <div className="agent-battle-samples">{SAMPLES.map(sample => <button type="button" key={sample} onClick={() => { setPrompt(sample); inputRef.current?.focus() }}>{sample}</button>)}</div>}
     {lastPrompt && <div className="agent-battle-prompt"><strong>Prompt</strong><span>{lastPrompt}</span></div>}
+    {isWorkOrderRequest(lastPrompt) && <p>Work-order requests use the Foundry approval flow on both sides, sequentially. This is not a comparison of two independent read-only engines.</p>}
 
     <div className="agent-battle-grid">
       {(['data-agent', 'foundry'] as AgentBattleEngine[]).map(engine => {

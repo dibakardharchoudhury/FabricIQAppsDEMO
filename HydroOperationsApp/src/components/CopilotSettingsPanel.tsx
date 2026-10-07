@@ -57,9 +57,9 @@ export function CopilotSettingsPanel() {
     </summary>
     <div className="copilot-settings-body">
 
-    {!draft.endpoint || !draft.deployment ? <p className="copilot-settings-warning">
-      Set the endpoint and deployment below to enable the Foundry engine. The signed-in user also needs the
-      <code>Cognitive Services OpenAI User</code> role on that resource.
+    {!draft.projectEndpoint ? <p className="copilot-settings-warning">
+      Set the Foundry project endpoint below to enable the provisioned agents. The signed-in user also needs the
+      <code>Foundry User</code> role on that project.
     </p> : null}
     <div className="copilot-settings-group">
       <h4>Agent comparison</h4>
@@ -72,6 +72,11 @@ export function CopilotSettingsPanel() {
         />
         <span><strong>Battle of the Agents</strong><small>Send the same prompt to Fabric Data Agent and Foundry, then compare their answers, traces, visuals, and latency side by side.</small></span>
       </label></li></ul>
+    </div>
+    <div className="copilot-settings-group">
+      <h4>Foundry Agent Service</h4>
+      <p>Uses the persistent Hydro Supervisor, Q&amp;A, RCA, Work Order, and Fabric IQ specialist agents. Provision their definitions before use.</p>
+      <label>Project endpoint<input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} /></label>
     </div>
     <div className="copilot-settings-group">
       <h4>Model endpoint

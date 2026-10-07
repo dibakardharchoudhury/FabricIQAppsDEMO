@@ -5,10 +5,11 @@ import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
 import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
-import type { OrchestrationEvent } from '../services/copilot/orchestration'
+import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
+import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
-import { AgentVisualizationView } from './AgentVisualizationView'
+import { AnswerDashboard } from './AnswerDashboard'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 
 // Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
@@ -23,6 +24,7 @@ export type CopilotMessage = {
   models?: Asset3DModelRecord[]
   steps?: AgentStep[]
   orchestrationEvents?: OrchestrationEvent[]
+  proposals?: WorkOrderProposal[]
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -139,12 +141,12 @@ function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose:
 
 export function CopilotResponse({ message, streaming, question }: { message: CopilotMessage; streaming: boolean; question?: string }) {
   return <>
-    <AgentMessage message={message} streaming={streaming} />
+    <AgentMessage message={message} streaming={streaming} question={question} />
     {message.meta && <MessageFooter message={message} question={question} />}
   </>
 }
 
-function AgentMessage({ message, streaming }: { message: CopilotMessage; streaming: boolean }) {
+function AgentMessage({ message, streaming, question }: { message: CopilotMessage; streaming: boolean; question?: string }) {
   const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
@@ -161,7 +163,8 @@ function AgentMessage({ message, streaming }: { message: CopilotMessage; streami
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {message.visualizations?.map((visualization, index) => <AgentVisualizationView spec={visualization} key={`${visualization.title}-${index}`} />)}
+    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} />}
+    {!streaming && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
@@ -175,9 +178,9 @@ function AgentOrchestrationTrace({ events }: { events?: OrchestrationEvent[] }) 
       {events.map((event, index) => <div className={`v2-agent-event ${event.status}`} key={event.id}>
         {index > 0 && <span className="v2-agent-event-link" aria-hidden="true">→</span>}
         <span className="v2-agent-event-node">
-          <i>{event.role === 'supervisor' ? 'S' : event.role === 'work-order' ? 'WO' : event.role === 'data-agent' ? 'DA' : event.role === 'rca' ? 'RCA' : 'Q&A'}</i>
+          <i>{event.role === 'supervisor' ? 'S' : event.role === 'work-order' ? 'WO' : event.role === 'fabric-iq' ? 'IQ' : event.role === 'rca' ? 'RCA' : 'Q&A'}</i>
           <span><strong>{event.label}</strong><small>{event.status}</small></span>
-          <em title={event.detail}>{event.detail}</em>
+          <em title={event.detail}>{event.detail}{event.agentName && <><br />{event.agentName}</>}{event.responseId && <><br /><code>{event.responseId}</code></>}</em>
         </span>
       </div>)}
     </div>

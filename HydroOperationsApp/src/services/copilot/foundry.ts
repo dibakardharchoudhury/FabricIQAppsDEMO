@@ -1,98 +1,43 @@
 import type { AgentAnswer, AgentVisualization } from '../assistantStream.ts'
-import { askDataAgent, foundryToken } from '../fabric.ts'
-import { createWorkOrder, initializeRayfin, type Asset3DModelRecord } from '../rayfin.ts'
+import { foundryAgentToken, verifyDataAgentForFoundry, verifyOntologyForFoundry } from '../fabric.ts'
+import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
 import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
-import { appendCompletedTurn, buildResponsesRequest, type ChatMessage } from './responsesProtocol.ts'
-import { loadCopilotSettings, renderSystemPrompt, type CopilotSettings } from './settings.ts'
+import { loadCopilotSettings, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import {
-  confirmationProposalId, createOrchestrationEvent, routeAgent, specialistInstructions,
-  type OrchestrationEvent, type WorkOrderProposal,
-} from './orchestration.ts'
+import { AGENT_NAMES, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
+import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
+import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { workOrderApprovals } from './workOrderApproval.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
-  steps?: AgentStep[]
   models?: Asset3DModelRecord[]
   orchestrationEvents?: OrchestrationEvent[]
+  proposals?: WorkOrderProposal[]
 }
 
-const MAX_TOOL_ROUNDS = 6
-const MAX_HISTORY_MESSAGES = 8
+let history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+let busy = false
 
-/** Endpoint and deployment come from Administration, seeded from rayfin/.env, so they can be
- *  repointed at another model without a rebuild. */
 export function isFoundryConfigured() {
-  const settings = loadCopilotSettings()
-  return Boolean(settings.endpoint && settings.deployment)
+  return Boolean(loadCopilotSettings().projectEndpoint)
 }
-
-// Only completed user/assistant text turns are replayed; tool traffic is dropped so a long
-// session cannot push the context window over the limit.
-let history: ChatMessage[] = []
-const pendingWorkOrders = new Map<string, WorkOrderProposal>()
 
 export function resetFoundryConversation() {
+  if (busy) throw new Error('Wait for the current Foundry request before resetting the conversation.')
   history = []
-  pendingWorkOrders.clear()
+  workOrderApprovals.clear()
 }
 
-function summarize(outcome: { rowCount?: number }): string {
-  return outcome.rowCount === undefined ? 'done' : `${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}`
-}
-
-// Some deployments (e.g. vLLM-backed serverless models like Phi-4-mini-reasoning) reject
-// tool_choice:"auto" unless the server was started with --enable-auto-tool-choice; that is a
-// deployment-side flag the client cannot set. Detected so the caller can retry without tools.
-class FoundryToolsUnsupportedError extends Error {}
-
-async function responsesCompletion(
-  settings: CopilotSettings,
-  token: string,
-  messages: ChatMessage[],
-  tools: ReturnType<typeof buildToolDefinitions>,
-  onText?: (text: string) => void,
-) {
-  const response = await fetchWithRetry(settings.endpoint, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildResponsesRequest(settings.deployment, messages, tools)),
-  })
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null
-    handleFoundryError(response.status, payload?.error?.message ?? '', tools.length)
+export function requireProjectEndpoint(endpoint: string): string {
+  const url = new URL(endpoint)
+  if (url.protocol !== 'https:' || !url.hostname.endsWith('.services.ai.azure.com')
+    || !/^\/api\/projects\/[A-Za-z0-9._-]+\/?$/.test(url.pathname) || url.search || url.hash || url.username || url.password) {
+    throw new Error('Use the HTTPS Foundry project endpoint, not a model inference URL.')
   }
-  return readResponsesStream(response.body, onText)
-}
-
-async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
-  try { return await fetch(url, init) }
-  catch {
-    try { return await fetch(url, init) }
-    catch (error) {
-      throw new Error(
-        `Azure AI Foundry could not be reached from this browser (${url}). Refresh after completing ` +
-        'Cognitive Services consent, and verify that the resource allows public network access.',
-        { cause: error },
-      )
-    }
-  }
-}
-
-function handleFoundryError(status: number, detail: string, toolCount: number): never {
-  if (status === 401 || status === 403) {
-    throw new Error('Azure AI Foundry rejected the sign-in. The account needs the "Cognitive Services OpenAI User" role on the Foundry resource.')
-  }
-  if (status === 400 && toolCount && /tool[_-]choice|tool-call-parser/i.test(detail)) {
-    throw new FoundryToolsUnsupportedError(detail)
-  }
-  throw new Error(`Azure AI Foundry request failed (${status}). ${detail.slice(0, 300)}`)
-}
-
-async function streamCompletion(settings: CopilotSettings, token: string, messages: ChatMessage[], tools: ReturnType<typeof buildToolDefinitions>, onText?: (text: string) => void) {
-  return responsesCompletion(settings, token, messages, tools, onText)
+  return url.href.replace(/\/$/, '')
 }
 
 export async function askFoundryCopilot(
@@ -101,211 +46,122 @@ export async function askFoundryCopilot(
   onSteps?: (steps: AgentStep[]) => void,
   onEvents?: (events: OrchestrationEvent[]) => void,
 ): Promise<FoundryAnswer> {
-  if (!isFoundryConfigured()) {
-    return { text: 'The Azure AI Foundry copilot is not configured. Set the endpoint and deployment under Administration → Foundry Copilot.' }
-  }
+  if (busy) throw new Error('A Foundry request is already running. Wait for it to finish.')
   const settings = loadCopilotSettings()
-  const role = routeAgent(question)
+  if (!settings.projectEndpoint) throw new Error('Configure the Foundry project endpoint and provision the Hydro agents before asking a question.')
+  const endpoint = requireProjectEndpoint(settings.projectEndpoint)
+  busy = true
   const events: OrchestrationEvent[] = []
-  const publishEvents = () => onEvents?.(events.map(event => ({ ...event })))
-  const replaceRoleEvent = (status: OrchestrationEvent['status'], detail: string) => {
-    const index = events.findLastIndex(event => event.role === role)
-    if (index >= 0) events[index] = createOrchestrationEvent(role, status, detail)
-    else events.push(createOrchestrationEvent(role, status, detail))
-    publishEvents()
-  }
-  events.push(createOrchestrationEvent('supervisor', 'running', 'Classifying the request and selecting a bounded specialist.'))
-  publishEvents()
-  events[0] = createOrchestrationEvent('supervisor', 'completed', `Delegated this turn to the ${role === 'qa' ? 'Q&A Agent' : role === 'work-order' ? 'Work Order Agent' : role === 'rca' ? 'RCA Agent' : 'Data Agent Bridge'}.`)
-  events.push(createOrchestrationEvent(role, 'running', specialistInstructions(role)))
-  publishEvents()
-
-  const confirmedProposalId = confirmationProposalId(question)
-  if (confirmedProposalId) {
-    const proposal = pendingWorkOrders.get(confirmedProposalId)
-    if (!proposal) {
-      replaceRoleEvent('error', `No pending proposal named ${confirmedProposalId} exists in this chat.`)
-      return {
-        text: `I could not find pending work-order proposal \`${confirmedProposalId}\`. Ask me to create the work order again so I can stage a new draft for approval.`,
-        orchestrationEvents: events,
-      }
-    }
-    const user = await initializeRayfin()
-    if (!user) {
-      replaceRoleEvent('error', 'Operational database sign-in is required before the approved draft can be created.')
-      return {
-        text: 'The work order was not created. Sign in to Fabric from Administration, then send the same confirmation again.',
-        orchestrationEvents: events,
-      }
-    }
-    const startedAt = Date.now()
-    const record = await createWorkOrder(user, {
-      equipmentId: proposal.equipmentId,
-      instrumentId: proposal.instrumentId,
-      opcuaNodeId: proposal.opcuaNodeId,
-      title: proposal.title,
-      description: proposal.description,
-      priority: proposal.priority,
-    })
-    pendingWorkOrders.delete(confirmedProposalId)
-    const step: AgentStep = {
-      tool: 'create_work_order',
-      status: 'done',
-      detail: `${record.equipmentId} · ${record.priority} · ${record.title}`,
-      summary: record.workOrderNumber,
-      result: JSON.stringify(record),
-      elapsedMs: Date.now() - startedAt,
-    }
-    replaceRoleEvent('completed', `Created ${record.workOrderNumber} after explicit approval.`)
-    const text = `Created **${record.workOrderNumber}** for **${record.equipmentId}** in **${record.status}** status with **${record.priority}** priority: ${record.title}.`
-    history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
-    return { text, steps: [step], orchestrationEvents: events }
-  }
-
-  if (role === 'data-agent') {
-    try {
-      const answer = await askDataAgent(question, onProgress, onSteps)
-      replaceRoleEvent('completed', 'Returned the published Fabric Data Agent result to the supervisor.')
-      history = appendCompletedTurn(history, question, answer.text, MAX_HISTORY_MESSAGES)
-      return { ...answer, orchestrationEvents: events }
-    } catch (error) {
-      replaceRoleEvent('error', error instanceof Error ? error.message : 'The Data Agent request failed.')
-      throw error
-    }
-  }
-
-  const token = await foundryToken(true)
-  if (!token) {
-    replaceRoleEvent('error', 'Azure AI Foundry sign-in is required.')
-    throw new Error('Azure AI Foundry sign-in is required.')
-  }
-  const tools = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
-  let stagedProposal: WorkOrderProposal | undefined
-  const runTool = createToolRuntime(settings, {
-    onWorkOrderProposal: proposal => {
-      stagedProposal = proposal
-      pendingWorkOrders.set(proposal.id, proposal)
-      replaceRoleEvent('approval', `Draft ${proposal.id} is waiting for explicit human confirmation.`)
-    },
-  })
-  const messages: ChatMessage[] = [
-    { role: 'system', content: `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nAssigned specialist:\n${specialistInstructions(role)}` },
-    ...history,
-    { role: 'user', content: question },
-  ]
   const steps: AgentStep[] = []
+  const proposals: WorkOrderProposal[] = []
   const visualizations: AgentVisualization[] = []
   const models: Asset3DModelRecord[] = []
   let usage: FoundryAnswer['usage']
-  let toolsForRequest = tools
-  let toolsUnsupported = false
-  const publish = () => onSteps?.(steps.map(step => ({ ...step })))
-
-  for (let iteration = 0; iteration < MAX_TOOL_ROUNDS; iteration++) {
-    let state
-    try {
-      state = await streamCompletion(settings, token, messages, toolsForRequest, onProgress)
-    } catch (error) {
-      // Deployment rejects tool_choice; fall back to a plain chat completion for the rest of this turn.
-      if (error instanceof FoundryToolsUnsupportedError && toolsForRequest.length) {
-        toolsForRequest = []
-        toolsUnsupported = true
-        state = await streamCompletion(settings, token, messages, toolsForRequest, onProgress)
-      } else {
+  const publish = () => onEvents?.(events.map(event => ({ ...event })))
+  const publishSteps = () => onSteps?.(steps.map(step => ({ ...step })))
+  const runTool = createToolRuntime(settings, { onWorkOrderProposal: proposal => proposals.push(proposal) })
+  const delegated = new Set<string>()
+  try {
+    const token = await foundryAgentToken(true)
+    if (!token) throw new Error('Foundry Agent Service sign-in is required.')
+    const invoke = async (role: AgentRole, prompt: string, parentId?: string): Promise<string> => {
+      const event = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId }
+      events.push(event)
+      publish()
+      const definitions = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
+      const input: unknown[] = [
+        { role: 'developer', content: role === 'supervisor' || role === 'fabric-iq'
+          ? `${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${new Date().toISOString()}`
+          : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.` },
+        ...history,
+        { role: 'user', content: prompt },
+      ]
+      try {
+        if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
+        for (let round = 0; round < 6; round++) {
+          const response = await fetch(`${endpoint}/openai/responses?api-version=v1`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent: { type: 'agent_reference', name: AGENT_NAMES[role] },
+              input, stream: true, store: false, include: ['reasoning.encrypted_content'],
+            }),
+            signal: AbortSignal.timeout(180_000),
+          })
+          if (!response.ok || !response.body) {
+            const detail = await response.text()
+            throw new Error(`Foundry agent ${AGENT_NAMES[role]} failed (${response.status}): ${detail.slice(0, 600)}`)
+          }
+          const state = await readResponsesStream(response.body, role === 'supervisor' ? onProgress : undefined, raw => {
+            if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'response.created') {
+              event.status = 'running'
+              event.detail = 'Foundry accepted this agent invocation.'
+              if ('response' in raw && raw.response && typeof raw.response === 'object' && 'id' in raw.response && typeof raw.response.id === 'string') event.responseId = raw.response.id
+              publish()
+            }
+          })
+          if (!state.completed) throw new Error('Foundry stream ended without a completed response. No success was inferred.')
+          if (state.usage) usage = {
+            prompt: (usage?.prompt ?? 0) + state.usage.prompt,
+            completion: (usage?.completion ?? 0) + state.usage.completion,
+            total: (usage?.total ?? 0) + state.usage.total,
+          }
+          if (!state.output) throw new Error('Foundry omitted the response output needed for verified tool continuation.')
+          input.push(...state.output)
+          const calls = state.toolCalls.filter(call => call.id && call.name)
+          if (!calls.length) {
+            if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
+            event.status = role === 'work-order' && proposals.length ? 'approval' : 'completed'
+            event.detail = event.status === 'approval' ? 'Draft available for human review; no SQL write performed.' : 'Foundry response completed.'
+            publish()
+            return state.content
+          }
+          for (const call of calls) {
+            if (role === 'supervisor' && call.name === 'delegate_to_agent') {
+              const { specialist, question: delegatedQuestion } = parseDelegation(call.arguments)
+              const key = `${specialist}:${delegatedQuestion}`
+              if (delegated.has(key) || delegated.size >= 4) throw new Error('Supervisor attempted repeated or excessive delegation.')
+              delegated.add(key)
+              const answer = await invoke(specialist, delegatedQuestion, event.responseId)
+              input.push({ type: 'function_call_output', call_id: call.id, output: answer })
+            } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
+              const parsed: unknown = JSON.parse(call.arguments)
+              if (!parsed || typeof parsed !== 'object' || !('tool_name' in parsed) || !('arguments_json' in parsed)
+                || typeof parsed.tool_name !== 'string' || typeof parsed.arguments_json !== 'string') throw new Error('Invalid Hydro tool call.')
+              const allowed: readonly string[] = role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
+              if (!allowed.includes(parsed.tool_name)) throw new Error(`Tool ${parsed.tool_name} is not permitted for ${role}.`)
+              const args: ToolArguments = JSON.parse(parsed.arguments_json)
+              if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Hydro tool arguments must be an object.')
+              const started = Date.now()
+              const step: AgentStep = { tool: parsed.tool_name, status: 'running', detail: describeToolCall(parsed.tool_name, args), summary: 'running', elapsedMs: 0, args: parsed.arguments_json }
+              steps.push(step)
+              publishSteps()
+              try {
+                const result = await runTool(parsed.tool_name, args)
+                if (result.visualization) visualizations.push(result.visualization)
+                if (result.model3d) models.push(result.model3d)
+                const output = JSON.stringify(result.result)
+                Object.assign(step, { status: 'done', elapsedMs: Date.now() - started, summary: `${result.rowCount ?? 0} returned rows`, query: result.query, result: output })
+                input.push({ type: 'function_call_output', call_id: call.id, output })
+              } catch (error) {
+                Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
+                throw error
+              } finally { publishSteps() }
+            } else {
+              throw new Error(`Unexpected client tool ${call.name} from ${AGENT_NAMES[role]}.`)
+            }
+          }
+        }
+        throw new Error(`${AGENT_NAMES[role]} exceeded its six-round execution budget.`)
+      } catch (error) {
+        event.status = 'error'
+        event.detail = error instanceof Error ? error.message : 'Foundry invocation failed.'
+        publish()
         throw error
       }
     }
-    if (state.usage) {
-      usage = usage
-        ? { prompt: usage.prompt + state.usage.prompt, completion: usage.completion + state.usage.completion, total: usage.total + state.usage.total }
-        : state.usage
-    }
-    const calls = state.toolCalls.filter(call => call.id && call.name)
-    if (!calls.length) {
-      const note = toolsUnsupported
-        ? 'This model deployment does not support tool calling, so the answer below is general knowledge only — no live data was queried. Switch to a tool-calling model under Administration → Foundry Copilot for data-backed answers.\n\n'
-        : ''
-      let text = note + (state.content.trim() || 'The copilot returned no answer.')
-      if (stagedProposal && !text.includes(`Confirm work order ${stagedProposal.id}`)) {
-        text += `\n\n<!--options: ["Confirm work order ${stagedProposal.id}"]-->`
-      }
-      replaceRoleEvent(
-        stagedProposal ? 'approval' : 'completed',
-        stagedProposal ? `Staged ${stagedProposal.id}; no write occurs until the operator confirms it.` : 'Returned the grounded specialist result to the supervisor.',
-      )
-      history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
-      return {
-        text,
-        usage,
-        visualizations: visualizations.length ? visualizations : undefined,
-        models: models.length ? models : undefined,
-        steps: steps.length ? steps : undefined,
-        orchestrationEvents: events,
-      }
-    }
-
-    messages.push({
-      role: 'assistant',
-      content: state.content || null,
-      tool_calls: calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments || '{}' } })),
-    })
-
-    for (const call of calls) {
-      const startedAt = Date.now()
-      let args: ToolArguments = {}
-      try { args = call.arguments ? JSON.parse(call.arguments) as ToolArguments : {} } catch { /* reported below */ }
-      // Publish the step before awaiting so the chat shows what is running, not just what finished.
-      const step: AgentStep = {
-        tool: call.name,
-        status: 'running',
-        detail: describeToolCall(call.name, args),
-        summary: 'running…',
-        args: call.arguments && call.arguments !== '{}' ? call.arguments : undefined,
-        elapsedMs: 0,
-      }
-      steps.push(step)
-      publish()
-      try {
-        const outcome = await runTool(call.name, args)
-        if (outcome.visualization) visualizations.push(outcome.visualization)
-        if (outcome.model3d) models.push(outcome.model3d)
-        const payload = JSON.stringify(outcome.result)
-        Object.assign(step, { status: 'done', summary: summarize(outcome), query: outcome.query, result: payload, elapsedMs: Date.now() - startedAt })
-        publish()
-        messages.push({ role: 'tool', tool_call_id: call.id, content: payload })
-      } catch (error) {
-        // Feed the failure back so the model can correct itself instead of aborting the turn.
-        const message = error instanceof Error ? error.message : 'The tool call failed.'
-        Object.assign(step, { status: 'error', summary: 'failed', error: message, elapsedMs: Date.now() - startedAt })
-        publish()
-        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: message }) })
-      }
-    }
-  }
-
-  // A tool result on the final round still needs one tool-free completion so the model can
-  // synthesize it instead of returning an iteration-limit error.
-  const finalState = await streamCompletion(settings, token, messages, [], onProgress)
-  if (finalState.usage) {
-    usage = usage
-      ? { prompt: usage.prompt + finalState.usage.prompt, completion: usage.completion + finalState.usage.completion, total: usage.total + finalState.usage.total }
-      : finalState.usage
-  }
-  let text = finalState.content.trim() || 'The copilot returned no answer after completing its data queries.'
-  if (stagedProposal && !text.includes(`Confirm work order ${stagedProposal.id}`)) {
-    text += `\n\n<!--options: ["Confirm work order ${stagedProposal.id}"]-->`
-  }
-  replaceRoleEvent(
-    stagedProposal ? 'approval' : 'completed',
-    stagedProposal ? `Staged ${stagedProposal.id}; no write occurs until the operator confirms it.` : 'Returned the grounded specialist result to the supervisor.',
-  )
-  history = appendCompletedTurn(history, question, text, MAX_HISTORY_MESSAGES)
-  return {
-    text,
-    usage,
-    visualizations: visualizations.length ? visualizations : undefined,
-    models: models.length ? models : undefined,
-    steps,
-    orchestrationEvents: events,
-  }
+    const text = await invoke('supervisor', question)
+    history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const, content: text }].slice(-8)
+    return { text, usage, steps, orchestrationEvents: events, proposals, visualizations, models }
+  } finally { busy = false }
 }

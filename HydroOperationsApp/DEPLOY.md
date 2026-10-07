@@ -8,6 +8,24 @@ Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
 
 **Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
 
+### Persistent Foundry agents
+
+The canonical Python orchestrator also provisions the five Hydro Prompt Agents from
+`src/services/copilot/agentDefinitions.ts` and verifies definition readback before publishing
+the SPA. It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
+(or the saved public project endpoint); discovery must find one matching project in the
+current subscription. `HYDRO_FOUNDRY_MODEL` selects an existing model deployment, defaulting
+to `gpt-5-mini`. It does not create a new Foundry account or silently select an ambiguous project.
+
+Separate Fabric IQ connections target the published Data Agent matching the live selected
+generation-2 ontology and the Ontology endpoint directly. The Data Agent keeps direct-table
+routing; its ontology query limitation does not gate those reads. Connection permissions and
+`Foundry User` RBAC remain required.
+`setup-live-auth` adds the Foundry Agent Service delegated scope and `DataAgent.Execute.All`;
+do not configure the SPA permissions manually. Agent definition readback is not runtime
+certification. Live acceptance must exercise direct-source Q&A, delegation, Fabric IQ, and
+human-approved SQL creation independently of hosting checks.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).

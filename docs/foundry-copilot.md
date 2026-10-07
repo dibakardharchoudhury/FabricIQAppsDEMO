@@ -1,5 +1,17 @@
 # Foundry Copilot — authentication, flows and tool calls
 
+> Current implementation: the app invokes persistent Foundry Prompt Agents through a project
+> endpoint. A real Supervisor emits delegation function calls; the client invokes separate
+> specialist agent identities and runs direct tools under the user's existing delegated identity.
+> This is not native A2A transport or Foundry Workflows. Only the Fabric IQ specialist uses Fabric IQ;
+> Q&A/RCA do not use the Data Agent as an intermediary. The historical single-model flow below
+> describes the previous implementation; see the [current app contract](../HydroOperationsApp/README.md)
+> and [deployment configuration](../HydroOperationsApp/DEPLOY.md#persistent-foundry-agents).
+>
+> The project API uses `https://ai.azure.com/user_impersonation` and Foundry User RBAC.
+> Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
+> Shared presentation and safety tests do not certify live response parity or agent latency.
+
 How the **Foundry** Copilot engine authenticates, what happens during a single answer, and exactly
 which data each tool can reach.
 

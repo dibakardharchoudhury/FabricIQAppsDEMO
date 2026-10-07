@@ -21,7 +21,7 @@ function visualizationFromCsv(csv: string, question: string): AgentVisualization
   const numericThreshold = Math.ceil(parsed.data.length / 2)
   const yColumns = headers.filter(header => {
     if (header === xColumn || NON_VALUE_COLUMNS.has(header.toLowerCase())) return false
-    return parsed.data.filter(row => Number.isFinite(Number(row[header]))).length >= numericThreshold
+    return parsed.data.filter(row => Boolean(row[header]?.trim()) && Number.isFinite(Number(row[header]))).length >= numericThreshold
   })
   if (!yColumns.length) return undefined
 

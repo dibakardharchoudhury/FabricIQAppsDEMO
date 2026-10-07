@@ -226,15 +226,32 @@ Foundry's instructions distinguish full equipment IDs from short tags and use a 
 Eventhouse `arg_max` query for unbounded latest-per-signal requests, retaining explicitly requested
 time windows and reporting the actual timestamp/staleness.
 
-Foundry chat now runs through an application supervisor with bounded Q&A, RCA, Work Order, and
-Data Agent Bridge specialists. The selected specialist and state transitions stream into the same
-answer in regular chat and in the Foundry Battle pane. Q&A and RCA remain read-only. The Work Order
-Agent can only stage a draft after checking evidence and existing work; creation requires a separate
-operator message in the exact form `Confirm work order <proposal-id>`. The confirmation is matched
-against an in-memory proposal from the current chat, uses the signed-in operational identity, and
-returns the created work-order number. Resetting the Foundry conversation invalidates pending
-proposals. The Data Agent Bridge delegates explicit Data Agent requests to the verified published
-v2 source and does not gain write authority.
+Foundry chat uses five separately provisioned, versioned Prompt Agents. The persistent Supervisor
+chooses Q&A, RCA, Work Order, or Fabric IQ using a delegation function. The client invokes the selected
+agent by its Foundry identity and executes its allowed direct tools as the signed-in user. This is
+code-mediated agent delegation, not local role-prompt switching, not native server-to-server A2A,
+and not Foundry Workflows. Microsoft Agent Framework is not required for this client-coordinated
+design; a hosted Framework coordinator would need a separate delegated tool/authentication boundary.
+Q&A and RCA retain direct Lakehouse, Eventhouse, and operational SQL tools. The Fabric IQ
+specialist uses `fabric_iq_preview` with separate Data Agent and Ontology connections; the
+deprecated `fabric_dataagent_preview` tool is not used. Data Agent direct-table queries do not
+depend on its currently limited ontology query runtime. The independent direct Ontology endpoint
+requires its own runtime acceptance; configuration is not proof that it executes successfully.
+The trace records real Foundry response IDs and agent identities; it does not expose hidden reasoning.
+
+Work-order requests from either engine use the Foundry approval flow. A structured draft appears
+in an editable card with Yes/No buttons. Equipment and signal identity cannot be changed through
+the card; request a new draft for a different target. Approval revalidates target identity and
+checks duplicate open titles before the SQL write. Drafts expire after 30 minutes and reset clears
+them. A failed write response is marked uncertain and is not retried automatically. A successful
+write displays the returned work-order number and refreshes the operational views. Battle runs
+mutation requests sequentially and labels this as the shared approval flow, not independent Q&A.
+
+All chat and Battle surfaces share the same presentation contract and evidence dashboard. Charts
+are derived from the same returned table/CSV rows, without a top-16 UI cap or treating empty values
+as zero. Different measures get separate charts. This is presentation consistency, not a guarantee
+that two independent query planners return identical facts; live quality acceptance must compare
+the same population, time window, exact key set and counts against authoritative source results.
 For current signal-quality questions, Foundry's structured quality-snapshot tool selects the latest
 row per node before applying the quality filter, resolves only the matching nodes, and retrieves
 their open equipment work concurrently. This avoids both implicit result caps and the previous
@@ -248,7 +265,8 @@ Regression coverage: `npm run test:knowledge-graph` (real-shaped TMDL, legacy re
 and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.test.mjs`,
 `scripts/agent-battle.test.ts`, and `scripts/copilot-settings.test.ts`
 (published source verification and honest setup readiness), plus
-`scripts/copilot-orchestration.test.ts` (supervisor routing and approval command validation).
+`scripts/copilot-orchestration.test.ts` and `scripts/answer-presentation.test.ts`
+(query semantics, persisted agent definitions, full datasets and approval safety).
 
 ## Architecture
 

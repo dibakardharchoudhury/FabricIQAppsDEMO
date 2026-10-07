@@ -84,6 +84,11 @@ let tenantIdFromEnv = null
 // resource app ids + human-readable scope values are hardcoded here.
 const REQUIRED_DELEGATED = [
   {
+    label: 'Microsoft Foundry Agent Service',
+    resourceAppId: '18a66f5f-dbdf-4c17-9dd7-1634712a9cbe',
+    scopeValues: ['user_impersonation'],
+  },
+  {
     label: 'Azure Data Explorer (telemetry / Eventhouse)',
     // Resource behind *.kusto.fabric.microsoft.com.
     resourceAppId: '2746ea77-4702-4b45-80ca-3c97e680e8b7',
@@ -96,7 +101,7 @@ const REQUIRED_DELEGATED = [
     // GraphQLApi.Execute.All = STID GraphQL query. Workspace.Read.All = List Items.
     // Item.Read.All = Get Eventhouse (telemetry queryServiceUri). Item.Execute.All = run jobs.
     // Fabric.Embed = render the Real-Time Dashboard in the RT Dashboard telemetry view.
-    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'Fabric.Embed'],
+    scopeValues: ['GraphQLApi.Execute.All', 'Workspace.Read.All', 'Item.Read.All', 'Item.Execute.All', 'DataAgent.Execute.All', 'Fabric.Embed'],
   },
   {
     label: 'Microsoft Cognitive Services (Azure AI Foundry copilot)',

@@ -1,6 +1,6 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  askDataAgent, beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
+  beginInteractiveConnect, clearWorkspaceConfigCache, initAuth, isPostSeedConfigured, isStidConfigured,
   queryLatestTelemetry, queryOntologyContract, queryStid, resetDataAgentConversation, resumePostSeedNotebook, resumeStreamingPipeline, resumeWeatherNotebooks, runPostSeedNotebook,
   runWeatherNotebooks,
   startStreamingPipeline, type AgentArtifact, type AgentVisualization, type JobStatus, type OntologyContract, type StidData, type TelemetryHistoryRange, type TelemetryReading,
@@ -12,8 +12,9 @@ import {
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from '../../services/rayfin'
 import { twinStatus, type TwinStatus } from '../../twin'
-import { askFoundryCopilot, isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
-import type { OrchestrationEvent } from '../../services/copilot/orchestration'
+import { isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
+import { askCopilot } from '../../services/copilot/askCopilot'
+import type { OrchestrationEvent, WorkOrderProposal } from '../../services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -49,7 +50,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
@@ -777,26 +778,24 @@ function useHydroOperationsDataController() {
     let liveText = ''
     let liveSteps: AgentStep[] | undefined
     let liveEvents: OrchestrationEvent[] | undefined
+    let proposals: WorkOrderProposal[] | undefined
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, proposals, artifacts, visualizations, models, meta }
       return next
     })
     try {
-      const answer: FoundryAnswer = copilotEngine === 'foundry'
-        ? await askFoundryCopilot(
+      const answer: FoundryAnswer = await askCopilot(
+          copilotEngine,
           text,
           partial => { liveText = partial; paint() },
           steps => { liveSteps = steps; paint() },
           events => { liveEvents = events; paint() },
         )
-        : await askDataAgent(
-          text,
-          partial => { liveText = partial; paint() },
-        )
       liveText = answer.text
-      liveSteps = copilotEngine === 'foundry' ? answer.steps ?? liveSteps : undefined
-      liveEvents = copilotEngine === 'foundry' ? answer.orchestrationEvents ?? liveEvents : undefined
+      proposals = answer.proposals
+      liveSteps = answer.steps ?? liveSteps
+      liveEvents = answer.orchestrationEvents ?? liveEvents
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
       liveText = error instanceof Error ? error.message : 'The copilot request failed.'

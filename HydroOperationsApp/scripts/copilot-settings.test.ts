@@ -13,7 +13,10 @@ test('Battle of the Agents is enabled only by an explicit true setting', () => {
 })
 
 test('previous shipped prompt upgrades while operator customization remains intact', () => {
-  const previousDefault = DEFAULT_SYSTEM_PROMPT.split('\n\nAdaptive response contract:')[0]
+  const previousDefault = DEFAULT_SYSTEM_PROMPT.split('\n\nAdaptive response contract:')[0].replace(
+    '- Queries are read-only. Work-order proposals require human review and approval in the application before any SQL write.',
+    '- You are read-only. You cannot create, modify or delete anything; say so if asked.',
+  )
   assert.equal(mergeCopilotSettings({ systemPrompt: previousDefault }).systemPrompt, DEFAULT_SYSTEM_PROMPT)
   assert.equal(mergeCopilotSettings({ systemPrompt: 'Use the approved operator policy.' }).systemPrompt, 'Use the approved operator policy.')
 })

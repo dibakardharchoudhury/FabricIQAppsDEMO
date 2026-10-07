@@ -763,6 +763,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "ensure_rayfin_login"),
             patch.object(DEPLOY, "export_frontend_env"),
             patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}]),
+            patch.object(DEPLOY, "provision_foundry_agents") as provision_agents,
             patch.object(
                 DEPLOY,
                 "rayfin24",
@@ -791,8 +792,10 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[0].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
         self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[2].kwargs["env"])
+        provision_agents.assert_called_once_with(args.tenant, "workspace-id")
 
-    def test_existing_registered_origin_reapplies_backend_configuration(self):
+    @patch.object(DEPLOY, "provision_foundry_agents")
+    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents):
         hosting_url = "https://fast.webapp.fabricapps.net"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -844,6 +847,7 @@ class DeployOrderTests(unittest.TestCase):
             DEPLOY.deploy(args)
 
         self.assertEqual(run_stream.call_count, 3)
+        provision_agents.assert_called_once_with(args.tenant, "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(
             run_stream.call_args_list[1].args[0],

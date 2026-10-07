@@ -161,7 +161,7 @@ export async function createWorkOrder(
     ? { equipmentId: equipmentIdOrInput, instrumentId, opcuaNodeId }
     : equipmentIdOrInput
   const record = await client.data.WorkOrder.create({
-    workOrderNumber: `WO-${Date.now().toString().slice(-6)}`,
+    workOrderNumber: `WO-${crypto.randomUUID()}`,
     equipmentId: input.equipmentId,
     instrumentId: input.instrumentId,
     opcuaNodeId: input.opcuaNodeId,

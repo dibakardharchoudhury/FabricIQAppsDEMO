@@ -1,4 +1,5 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
+import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
 
 // Operator-tunable copilot configuration, edited in Administration and persisted per browser.
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
@@ -10,6 +11,7 @@ export type ToolName = (typeof TOOL_NAMES)[number]
 export type CopilotSettings = {
   endpoint: string
   deployment: string
+  projectEndpoint: string
   battleEnabled: boolean
   systemPrompt: string
   promptExtra: string
@@ -25,6 +27,7 @@ const env = (import.meta as { env?: Record<string, string | undefined> }).env ??
 export const FOUNDRY_ENV_DEFAULTS = {
   endpoint: env.VITE_RAYFIN_FOUNDRY_ENDPOINT ?? '',
   deployment: env.VITE_RAYFIN_FOUNDRY_DEPLOYMENT ?? '',
+  projectEndpoint: env.VITE_RAYFIN_FOUNDRY_PROJECT_ENDPOINT ?? '',
 }
 
 export const CATALOG_PLACEHOLDER = '{{catalog}}'
@@ -101,13 +104,23 @@ Adaptive response contract:
 - For cross-source results, join only on documented canonical keys and state any material matching rule. Distinguish directly related records from records that merely share an equipment or facility.
 - Keep source attribution concise at the end. Do not expose engine-specific tool narration unless it explains a limitation. Given the same evidence and question, preserve the same facts and scope across the Data Agent, Foundry, and Battle panes even when the best rendering differs by result shape.`
 
-export const DEFAULT_SYSTEM_PROMPT = `${ADAPTIVE_SYSTEM_PROMPT}
+const APP_ROLE_SYSTEM_PROMPT = `${ADAPTIVE_SYSTEM_PROMPT}
 
 Multi-agent operations:
 - The application supervisor assigns each turn to one bounded specialist: Q&A, Work Order, RCA, or Data Agent Bridge. Follow the specialist instruction appended to this message and do not assume another specialist's authority.
 - Read-only questions remain read-only. The Work Order Agent may stage a draft with propose_work_order only after resolving the equipment and checking relevant open work. A staged draft is not a created work order.
 - Work-order creation requires a separate human message in the exact form "Confirm work order <proposal-id>". Never invent confirmation, call a write action indirectly, or say creation succeeded without a returned workOrderNumber.
 - RCA output must distinguish observations, hypotheses, confidence, and evidence gaps.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${ADAPTIVE_SYSTEM_PROMPT.replace(
+  '- You are read-only. You cannot create, modify or delete anything; say so if asked.',
+  '- Queries are read-only. Work-order proposals require human review and approval in the application before any SQL write.',
+)}
+
+Persistent Foundry agents:
+- The Foundry Supervisor delegates to separately provisioned Q&A, RCA, Work Order and Fabric IQ agents. Follow your registered agent instructions; never simulate another agent.
+- The Work Order agent stages structured drafts only. The human reviews or edits an approval card and chooses Yes or No; never request typed confirmation or claim a SQL write succeeded from a proposal.
+- Q&A and RCA use direct tools. Fabric IQ is used only by the Fabric IQ specialist. Report actual execution failures without falling back to ungrounded answers.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -121,6 +134,7 @@ export function defaultCopilotSettings(): CopilotSettings {
   return {
     endpoint: FOUNDRY_ENV_DEFAULTS.endpoint,
     deployment: FOUNDRY_ENV_DEFAULTS.deployment,
+    projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint,
     battleEnabled: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     promptExtra: '',
@@ -139,6 +153,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
   return {
     endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
+    projectEndpoint: text(stored.projectEndpoint, defaults.projectEndpoint),
     battleEnabled: stored.battleEnabled === true,
     systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT
       || stored.systemPrompt === COUNT_SYSTEM_PROMPT
@@ -146,6 +161,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
       || stored.systemPrompt === RUNNING_BAD_SYSTEM_PROMPT
       || stored.systemPrompt === RUNNING_HOT_SYSTEM_PROMPT
       || stored.systemPrompt === ADAPTIVE_SYSTEM_PROMPT
+      || stored.systemPrompt === APP_ROLE_SYSTEM_PROMPT
       || stored.systemPrompt === DEFAULT_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
@@ -162,7 +178,7 @@ export function renderSystemPrompt(settings: CopilotSettings, catalog: string, n
     .split(CATALOG_PLACEHOLDER).join(catalog)
     .split(TIME_PLACEHOLDER).join(now.toISOString())
   const extra = settings.promptExtra.trim()
-  return extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base
+  return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${ANSWER_PRESENTATION_CONTRACT}`
 }
 
 export function loadCopilotSettings(): CopilotSettings {

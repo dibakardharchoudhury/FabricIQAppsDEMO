@@ -2681,3 +2681,11 @@ button.v2-signal-row:hover,
     justify-self: start;
   }
 }
+.v2-work-order-approval, .v2-answer-dashboard { margin: 1rem 0; padding: 1rem; border: 1px solid var(--cp-border, #ccd5df); border-radius: 8px; }
+.v2-work-order-approval fieldset { border: 0; padding: 0; }
+.v2-work-order-approval label { display: grid; gap: .3rem; margin-bottom: .7rem; }
+.v2-work-order-approval input, .v2-work-order-approval textarea, .v2-work-order-approval select { width: 100%; padding: .5rem; font: inherit; }
+.v2-work-order-approval button { margin-right: .6rem; padding: .5rem .8rem; }
+.v2-answer-table { overflow-x: auto; margin-top: .8rem; }
+.v2-answer-table table { border-collapse: collapse; width: 100%; }
+.v2-answer-table th, .v2-answer-table td { padding: .4rem .6rem; border-bottom: 1px solid var(--cp-border, #ccd5df); text-align: left; }

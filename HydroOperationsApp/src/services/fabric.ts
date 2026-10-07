@@ -15,6 +15,7 @@ import { createSingleFlight } from './singleFlight'
 import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
+import { ANSWER_PRESENTATION_CONTRACT } from './copilot/answerPresentation'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -59,6 +60,7 @@ const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://
 // Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
 // `Cognitive Services OpenAI User` role on the Foundry resource for the token to be authorized.
 const FOUNDRY_SCOPES = ['https://cognitiveservices.azure.com/user_impersonation']
+const FOUNDRY_AGENT_SCOPES = ['https://ai.azure.com/user_impersonation']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
@@ -302,6 +304,13 @@ export async function foundryToken(interactive: boolean): Promise<string | null>
   if (silent) return silent
   if (!interactive) return null
   return popupToken(FOUNDRY_SCOPES)
+}
+
+export async function foundryAgentToken(interactive: boolean): Promise<string | null> {
+  const silent = await silentToken(FOUNDRY_AGENT_SCOPES)
+  if (silent) return silent
+  if (!interactive) return null
+  return popupToken(FOUNDRY_AGENT_SCOPES)
 }
 
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
@@ -993,12 +1002,37 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     invalidateDataAgentMcpSession()
     throw error
   }
+
   const contextualizedQuestion = contextualizeDataAgentQuestion(question, dataAgentUserQuestions)
-  const answer = await callDataAgentMcp(endpoint, token, contextualizedQuestion, onProgress, onSteps)
+  const answer = await callDataAgentMcp(endpoint, token, `${contextualizedQuestion}\n\n${ANSWER_PRESENTATION_CONTRACT}`, onProgress, onSteps)
   dataAgentUserQuestions.push(question)
   if (dataAgentUserQuestions.length > 4) dataAgentUserQuestions = dataAgentUserQuestions.slice(-4)
   const visualizations = extractDataAgentVisualizations(answer.text, question)
   return visualizations.length ? { ...answer, visualizations } : answer
+}
+
+export async function verifyDataAgentForFoundry(): Promise<void> {
+  const config = await ensureConfig(true)
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
+  if (!config?.ontologyId || !config.dataAgentId) throw new Error('Verified Data Agent source identity is unavailable.')
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  await verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
+}
+
+export async function verifyOntologyForFoundry(): Promise<void> {
+  const config = await ensureConfig(true)
+  if (config?.ontologyError) throw new Error(config.ontologyError)
+  if (!config?.ontologyId) throw new Error('Selected Ontology identity is unavailable.')
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required.')
+  const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/ontologies/${config.ontologyId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw new Error(`Live ontology generation verification failed (${response.status}).`)
+  const metadata = await response.json() as { properties?: { generation?: unknown } }
+  requireV2Generation(metadata.properties?.generation)
 }
 
 export async function warmDataAgentMcp(): Promise<void> {

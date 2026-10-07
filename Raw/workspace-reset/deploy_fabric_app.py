@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -45,17 +46,20 @@ HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
 APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token")
 APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
+    "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": {"user_impersonation"},
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": {"user_impersonation"},
     "00000009-0000-0000-c000-000000000000": {
         "GraphQLApi.Execute.All",
         "Workspace.Read.All",
         "Item.Read.All",
         "Item.Execute.All",
+        "DataAgent.Execute.All",
         "Fabric.Embed",
     },
     "7d312290-28c8-473c-a0ed-8e53749b6d6d": {"user_impersonation"},
 }
 RESOURCE_NAMES = {
+    "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": "Microsoft Foundry Agent Service",
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
     "7d312290-28c8-473c-a0ed-8e53749b6d6d": "Microsoft Cognitive Services",
@@ -1760,6 +1764,18 @@ def validate_spa_redirect_preservation(
     )
 
 
+def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
+    run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
+    foundry_spec = importlib.util.spec_from_file_location(
+        "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
+    )
+    if not foundry_spec or not foundry_spec.loader:
+        raise DeployError("Foundry provisioning module is unavailable.")
+    foundry = importlib.util.module_from_spec(foundry_spec)
+    foundry_spec.loader.exec_module(foundry)
+    foundry.provision(sys.modules[__name__], tenant, workspace_id)
+
+
 def deploy(args: argparse.Namespace) -> None:
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
@@ -1804,6 +1820,7 @@ def deploy(args: argparse.Namespace) -> None:
         args.tenant, workspace_id, workspace_name, capacity_id, client_id
     )
     ensure_deploy_dependencies()
+    provision_foundry_agents(args.tenant, workspace_id)
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
     ensure_rayfin_login(args.tenant)

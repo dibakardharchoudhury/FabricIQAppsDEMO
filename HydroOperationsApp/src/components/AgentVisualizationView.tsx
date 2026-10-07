@@ -30,6 +30,7 @@ function parseVisualization(spec: AgentVisualization): ParsedVisualization | nul
 
   result.data.forEach((row, rowIndex) => {
     for (const yColumn of spec.yColumns) {
+      if (!row[yColumn]?.trim()) continue
       const value = Number(row[yColumn])
       if (!Number.isFinite(value)) continue
       const group = spec.groupBy ? row[spec.groupBy] : undefined
@@ -100,7 +101,14 @@ export function AgentVisualizationView({ spec }: { spec: AgentVisualization }) {
       })
 
   if (isPie) {
-    const totals = parsed.series.map(series => ({ ...series, total: series.points.reduce((sum, point) => sum + Math.max(0, point.value), 0) }))
+    if (parsed.series.some(series => series.points.some(point => point.value < 0))) {
+      return <p role="alert">A pie chart cannot represent negative values. Use the evidence table.</p>
+    }
+    const totals = parsed.series.flatMap(series => series.points.map((point, index) => ({
+      name: parsed.series.length === 1 ? point.label : `${series.name} - ${point.label}`,
+      color: COLORS[index % COLORS.length],
+      total: point.value,
+    })))
     const total = totals.reduce((sum, series) => sum + series.total, 0)
     if (!total) return null
     const sweeps = totals.map(series => series.total / total * Math.PI * 2)

@@ -1,21 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  confirmationProposalId, createWorkOrderProposal, routeAgent,
+  createWorkOrderProposal, isWorkOrderRequest,
 } from '../src/services/copilot/orchestration.ts'
 import { buildQualitySnapshotQuery } from '../src/services/copilot/query.ts'
 
-test('supervisor routes operational questions to bounded specialists', () => {
-  assert.equal(routeAgent('Which turbines are running hot right now?'), 'qa')
-  assert.equal(routeAgent('Why did T004 temperature spike? Perform an RCA.'), 'rca')
-  assert.equal(routeAgent('Create a work order for T004.'), 'work-order')
-  assert.equal(routeAgent('Ask the Data Agent for open work orders.'), 'data-agent')
-})
-
-test('work-order confirmation must use the exact proposal command', () => {
-  assert.equal(confirmationProposalId('Confirm work order wo-abc-123'), 'wo-abc-123')
-  assert.equal(confirmationProposalId('yes create it'), undefined)
-  assert.equal(routeAgent('Confirm work order wo-abc-123'), 'work-order')
+test('only explicit work-order requests leave the read-only Data Agent path', () => {
+  assert.equal(isWorkOrderRequest('Which turbines are running hot right now?'), false)
+  assert.equal(isWorkOrderRequest('Why did T004 temperature spike? Perform an RCA.'), false)
+  assert.equal(isWorkOrderRequest('Create a work order for T004.'), true)
+  assert.equal(isWorkOrderRequest('Ask the Data Agent for open work orders.'), false)
 })
 
 test('work-order proposal validates required operational fields', () => {
