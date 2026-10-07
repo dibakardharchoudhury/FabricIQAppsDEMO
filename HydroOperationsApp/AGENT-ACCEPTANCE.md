@@ -246,6 +246,10 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
   **87 deployment regression tests passed**, including early-stop/no-mutation,
   pagination, exact identity and permission-preserving cases; Pylance found no syntax
   errors in the changed Python files.
+- Live verification of the unchanged canonical deployment command stopped at **step 1/8**
+  with an explicit `Inactive, not Active` error and exit code 1. It did not enter SPA,
+  agent or Rayfin configuration phases. This verifies the failure guard, not deployment
+  success or restoration of hosting.
 - Hosted scenarios 1-8 and 10 retain their historical evidence below; they were **not**
   all rerun against the new gate. Native failures are still unresolved, not repaired by
   a successful definition read. Two more scenario turns were completed before interruption,
