@@ -337,6 +337,10 @@ tenant and workspace selected in the sidebar:
   selected identity is missing from the Azure CLI token cache or its token is stale, deployment opens
   tenant-scoped Microsoft sign-in and retains that recovery in an isolated per-tenant cache for later
   deploys. Missing Node/npm/npx is reported with an install link.
+  The resolved capacity is checked when visible: a non-Active/unknown state stops before
+  configuration changes. Missing capacity-list permission/visibility is explicitly warned,
+  without adding a new operator-role requirement; final endpoint checks still apply.
+  The launcher never resumes, resizes or reassigns a paused capacity.
 2. Reuse the tenant's `Hydro Operations Fabric Client` SPA, create it when absent,
   or use the optional client ID entered in the form. If discovery, reuse, or creation is blocked,
   stop before changing Rayfin state and print an administrator handoff. A deployment never ships

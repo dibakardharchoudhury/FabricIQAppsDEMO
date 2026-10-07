@@ -40,6 +40,82 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_inactive_capacity_stops_before_configuration_changes(self):
+        workspace = "11111111-1111-1111-1111-111111111111"
+        capacity = "22222222-2222-2222-2222-222222222222"
+        args = argparse.Namespace(tenant="tenant.example", workspace=workspace, client_id=None, push_config=False)
+        response = Mock(status_code=200, ok=True)
+        response.json.return_value = {"value": [{"id": capacity, "displayName": "Target", "state": "Inactive"}]}
+        with (
+            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(DEPLOY, "fabric_headers", return_value={}),
+            patch.object(DEPLOY, "fabric_get", return_value={"id": workspace, "capacityId": capacity}),
+            patch.object(DEPLOY.requests, "get", return_value=response),
+            patch.object(DEPLOY, "resolve_spa") as spa,
+            patch.object(DEPLOY, "write_rayfin_redirects") as redirects,
+            patch.object(DEPLOY, "prepare_rayfin_env") as state,
+            patch.object(DEPLOY, "provision_foundry_agents") as agents,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "Inactive, not Active"):
+                DEPLOY.deploy(args)
+        for mutation in (spa, redirects, state, agents):
+            mutation.assert_not_called()
+
+    def test_capacity_availability_uses_exact_assignment_and_all_pages(self):
+        first = Mock(status_code=200, ok=True)
+        first.json.return_value = {"value": [{"id": "other", "state": "Inactive"}], "continuationToken": "next+/="}
+        second = Mock(status_code=200, ok=True)
+        second.json.return_value = {"value": [{"id": "TARGET", "state": "Active"}]}
+        with patch.object(DEPLOY.requests, "get", side_effect=[first, second]) as get:
+            DEPLOY.check_capacity_availability("target", {})
+        self.assertEqual(get.call_args_list[1].args[0], f"{DEPLOY.FABRIC_BASE}/capacities?continuationToken=next%2B%2F%3D")
+
+    def test_capacity_visibility_does_not_introduce_a_new_permission_requirement(self):
+        forbidden = Mock(status_code=403, ok=False)
+        hidden = Mock(status_code=200, ok=True)
+        hidden.json.return_value = {"value": []}
+        for response in (forbidden, hidden):
+            with (
+                self.subTest(status=response.status_code),
+                patch.object(DEPLOY.requests, "get", return_value=response),
+                patch("builtins.print") as output,
+            ):
+                DEPLOY.check_capacity_availability("target", {})
+                self.assertIn("Capacity state is unverified", output.call_args.args[0])
+
+    def test_capacity_state_and_real_api_failures_cannot_report_success(self):
+        for payload in (
+            {"value": [{"id": "target", "state": "Provisioning"}]},
+            {"value": [{"id": "target"}]},
+            {"value": "invalid"},
+            {"value": [], "continuationUri": "https://untrusted.example/"},
+            {"value": [], "continuationToken": "repeated"},
+            [],
+        ):
+            response = Mock(status_code=200, ok=True)
+            response.json.return_value = payload
+            with self.subTest(payload=payload), patch.object(DEPLOY.requests, "get", return_value=response):
+                with self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.check_capacity_availability("target", {})
+        for status in (401, 429, 500):
+            with self.subTest(status=status), patch.object(
+                DEPLOY.requests, "get", return_value=Mock(status_code=status, ok=False, text="service failure")
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, f"HTTP {status}"):
+                    DEPLOY.check_capacity_availability("target", {})
+
+    def test_workspace_name_checks_the_resolved_capacity(self):
+        capacity = "22222222-2222-2222-2222-222222222222"
+        response = Mock(ok=True)
+        response.json.return_value = {"value": [{"id": "workspace-id", "displayName": "Target", "capacityId": capacity}]}
+        with (
+            patch.object(DEPLOY, "fabric_headers", return_value={"header": "value"}),
+            patch.object(DEPLOY.requests, "get", return_value=response),
+            patch.object(DEPLOY, "check_capacity_availability") as check,
+        ):
+            self.assertEqual(DEPLOY.resolve_workspace("target", "tenant"), ("workspace-id", "Target", capacity))
+        check.assert_called_once_with(capacity, {"header": "value"})
+
     def test_consent_combines_tenant_grants_with_only_the_current_users_grants(self):
         origin = "https://app.webapp.fabricapps.net"
         app = {

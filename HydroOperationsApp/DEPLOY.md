@@ -35,6 +35,15 @@ Add `--client-id <spa-app-guid>` only for an explicitly supplied registration or
 discovery. The supplied ID must be verified in the selected tenant. The orchestrator resolves
 Node 24 itself; no agent-authored npm/Rayfin wrapper sequence is needed.
 
+The initial workspace check also inspects its exact assigned capacity when visible.
+An observed non-Active or unknown state stops deployment before SPA, agent or Rayfin
+configuration changes. The orchestrator never resumes, resizes or reassigns capacity.
+Fabric's capacity-list API is limited to capacity administrators/contributors: HTTP 403
+or a capacity absent from that identity's list produces an explicit **unverified state**
+warning, not a new permission requirement. Final endpoint checks remain mandatory.
+Other API failures propagate. A capacity can still stop after preflight; deployment
+success is point-in-time evidence, not an availability guarantee.
+
 **Manual prerequisites are not a second deployment path:**
 
 1. An authorized operator enables required Fabric preview features and grants workspace/source

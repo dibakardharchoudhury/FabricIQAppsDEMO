@@ -234,6 +234,18 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
   confirmed workspace `9c73201e-b2e5-48eb-81b9-3526d320faca` remains assigned to
   `83981279-dc7a-4ffd-96a0-da463da8026c`, **joademoframework**, **F16**, **Sweden Central**,
   state **Inactive**. No capacity resume, resize or reassignment was performed.
+- Follow-up read-only Azure investigation found the actual ARM resource in subscription
+  `078b9318-a6c7-4069-9045-a1bee6102239`, resource group `rg_fabric`, state **Paused**,
+  provisioning state **Succeeded**. Activity Log records a successful
+  `Microsoft.Fabric/capacities/suspend/action` at **23:36:41 UTC**. This establishes an
+  explicit suspension, not an app crash; it does not establish the caller's intent.
+  Approval to reverse it was unavailable, so capacity was left unchanged.
+- The deployment orchestrator now detects a visible non-Active assigned capacity before
+  SPA, agent or Rayfin changes. Missing capacity-list visibility is explicitly warned
+  rather than imposing a new capacity-admin requirement. Other API failures propagate.
+  **87 deployment regression tests passed**, including early-stop/no-mutation,
+  pagination, exact identity and permission-preserving cases; Pylance found no syntax
+  errors in the changed Python files.
 - Hosted scenarios 1-8 and 10 retain their historical evidence below; they were **not**
   all rerun against the new gate. Native failures are still unresolved, not repaired by
   a successful definition read. Two more scenario turns were completed before interruption,

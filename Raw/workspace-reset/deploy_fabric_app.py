@@ -655,6 +655,58 @@ def fabric_get(path: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json()
 
 
+def check_capacity_availability(capacity_id: str, headers: dict[str, str]) -> None:
+    url = f"{FABRIC_BASE}/capacities"
+    seen_tokens: set[str] = set()
+    while True:
+        response = requests.get(url, headers=headers, timeout=60)
+        if response.status_code == 403:
+            print(
+                "WARNING: Capacity-list access is unavailable. Capacity state is unverified; "
+                "the mandatory deployment endpoint checks must still pass.",
+                flush=True,
+            )
+            return
+        if not response.ok:
+            raise DeployError(
+                f"Fabric capacity availability check failed: HTTP {response.status_code} {response.text}"
+            )
+        page = response.json()
+        if not isinstance(page, dict):
+            raise DeployError("Fabric capacity availability response is not an object.")
+        items = page.get("value")
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise DeployError("Fabric capacity availability response omitted a valid capacity list.")
+        for item in items:
+            if str(item.get("id") or "").casefold() != capacity_id.casefold():
+                continue
+            state = item.get("state")
+            if state != "Active":
+                raise DeployError(
+                    f"Assigned Fabric capacity '{item.get('displayName') or capacity_id}' "
+                    f"({capacity_id}) is {state or 'in an unknown state'}, not Active. "
+                    "Deployment stopped before changing SPA, agents or Rayfin state. "
+                    "Ask the capacity owner to restore availability, then rerun this command. "
+                    "No resume, resize or reassignment was attempted."
+                )
+            print(f"Assigned Fabric capacity is Active ({capacity_id}).", flush=True)
+            return
+        token = page.get("continuationToken")
+        if not token:
+            if page.get("continuationUri"):
+                raise DeployError("Fabric capacity pagination omitted its continuation token.")
+            break
+        if not isinstance(token, str) or token in seen_tokens:
+            raise DeployError("Fabric capacity pagination returned an invalid or repeated token.")
+        seen_tokens.add(token)
+        url = f"{FABRIC_BASE}/capacities?continuationToken={quote(token, safe='')}"
+    print(
+        f"WARNING: Assigned capacity {capacity_id} is not visible to this identity. "
+        "Capacity state is unverified; the mandatory deployment endpoint checks must still pass.",
+        flush=True,
+    )
+
+
 def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
     headers = fabric_headers(tenant)
     if GUID_RE.fullmatch(workspace):
@@ -662,6 +714,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
         capacity_id = str(item.get("capacityId") or "")
         if not GUID_RE.fullmatch(capacity_id):
             raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+        check_capacity_availability(capacity_id, headers)
         return workspace, str(item.get("displayName") or workspace), capacity_id
 
     matches: list[dict[str, Any]] = []
@@ -689,6 +742,7 @@ def resolve_workspace(workspace: str, tenant: str) -> tuple[str, str, str]:
         capacity_id = str(item.get("capacityId") or "")
     if not GUID_RE.fullmatch(capacity_id):
         raise DeployError(f"Fabric workspace '{workspace}' is not assigned to a usable capacity.")
+    check_capacity_availability(capacity_id, headers)
     return workspace_id, str(matches[0]["displayName"]), capacity_id
 
 
