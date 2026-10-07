@@ -10,6 +10,14 @@
 }
 .agent-crew-heading { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 11px; }
 .agent-crew-heading > svg { color: var(--cp-accent); }
+.crew-size-toggle { padding: 3px 7px; border: 1px solid var(--cp-border); border-radius: 5px; background: var(--cp-bg-elevated); color: var(--cp-text); font: inherit; cursor: pointer; }
+.agent-crew.compact .crew-stage { grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: auto; gap: 3px; background: none; }
+.agent-crew.compact .crew-station.role-supervisor { grid-column: auto; width: 100%; }
+.agent-crew.compact .crew-helper-slot { transform: scale(.65); margin: -10px 0; }
+.agent-crew.compact .crew-wires, .agent-crew.compact .crew-wire-label,
+.agent-crew.compact .crew-live-feed, .agent-crew.compact .crew-activity,
+.agent-crew.compact .crew-controls { display: none; }
+.agent-crew.compact.status-error .crew-activity { display: flex; }
 .crew-run-status { margin-left: auto; color: var(--cp-text-muted); font-size: 10px; }
 .status-error .crew-run-status { color: var(--cp-danger); }
 .status-approval .crew-run-status { color: var(--cp-warning); }

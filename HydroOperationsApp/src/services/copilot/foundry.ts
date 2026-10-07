@@ -75,7 +75,12 @@ export async function askFoundryCopilot(
       const context = role === 'supervisor' || role === 'fabric-iq'
           ? renderCoordinatorPrompt(settings)
           : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.`
-      const input: unknown[] = buildAgentInput(context, history, prompt)
+      const scope = role === 'supervisor'
+        ? 'You retain the conversation history; specialists do not. Make each delegation self-contained: resolve references from previous turns and include relevant IDs, user constraints and evidence. Do not copy unrelated previous answers. For RCA, check evidence timestamps, units, quality, competing explanations and contradictory evidence before synthesis; request independent factual verification when the user asks for it. Verification of facts does not establish a physical cause. Keep the final answer concise without omitting requested records; do not repeat editable card fields in prose.'
+        : role === 'rca'
+          ? 'Use a scientific RCA structure: define the observed failure and time window; check identity, units, quality, freshness and missingness; compare against a justified baseline or comparable operating regime. Separate sensor/data faults from physical equipment hypotheses. For each competing hypothesis give supporting and contradictory source observations, unknowns, qualitative confidence with justification, and a safe discriminating inspection/test for qualified personnel. Correlation alone is not causation. Do not invent thresholds, probabilities or maintenance manuals. If evidence is insufficient, state that the cause is undetermined. Prefer source-side counts, trends and bounded summaries over raw dumps; do not omit requested evidence.'
+          : 'Execute only the assigned task using the current evidence. For mean power-output readings per station use query_station_power when enabled: it returns authoritative unit-normalized rows and a structured chart in one call. It is not total station generation or energy. Do not run a generic Signal contains power query or guess units. For other requested charts use visualize_dataset with the retrieved dataset rather than unfenced CSV prose.'
+      const input: unknown[] = buildAgentInput(`${context}\n\n${scope}`, history, prompt, role)
       let requestDeadline: AbortSignal | undefined
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       try {

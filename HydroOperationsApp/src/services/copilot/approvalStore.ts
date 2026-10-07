@@ -1,10 +1,21 @@
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 
 export type ProposalEdits = Pick<WorkOrderProposal, 'title' | 'description' | 'priority'>
-export type ApprovalState = 'pending' | 'saving' | 'created' | 'rejected' | 'withdrawn' | 'uncertain'
+export type ApprovalState = 'pending' | 'validating' | 'saving' | 'created' | 'rejected' | 'withdrawn' | 'uncertain'
+
+export const APPROVAL_PHASE_TIMEOUT_MS = 90_000
+
+async function bounded<T>(operation: Promise<T>, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), APPROVAL_PHASE_TIMEOUT_MS)
+    })])
+  } finally { clearTimeout(timer) }
+}
 
 export function createApprovalStore<T>() {
-  const entries = new Map<string, { proposal: WorkOrderProposal; state: ApprovalState; result?: T }>()
+  const entries = new Map<string, { proposal: WorkOrderProposal; state: ApprovalState; result?: T; startedAt?: number; error?: string }>()
   const listeners = new Set<() => void>()
   const notify = () => listeners.forEach(listener => listener())
   return {
@@ -39,20 +50,36 @@ export function createApprovalStore<T>() {
       const checked = createWorkOrderProposal({ ...entry.proposal, ...edits })
       const proposal = { ...checked, id, createdAt: entry.proposal.createdAt }
       if (!proposal.description.trim()) throw new Error('A description is required.')
-      entry.state = 'saving'
+      entry.state = 'validating'
+      entry.startedAt = Date.now()
+      entry.error = undefined
       notify()
-      try { await validate(proposal) }
-      catch (error) { entry.state = 'pending'; notify(); throw error }
       try {
-        entry.result = await write(proposal)
-        entry.state = 'created'
+        await bounded(validate(proposal), 'Validation did not finish within 90 seconds. No SQL write was attempted. Check source connectivity before trying this review again.')
+      } catch (error) {
+        entry.state = 'pending'
+        entry.error = error instanceof Error ? error.message : 'Work-order validation failed. No SQL write was attempted.'
         notify()
-        return entry.result
+        throw error
+      }
+      entry.state = 'saving'
+      entry.startedAt = Date.now()
+      notify()
+      try {
+        const writing = write(proposal).then(result => {
+          entry.result = result
+          entry.state = 'created'
+          entry.error = undefined
+          notify()
+          return result
+        })
+        return await bounded(writing, 'The SQL write did not return within 90 seconds.')
       } catch (error) {
         // A failed response does not prove the database rolled back the write.
         entry.state = 'uncertain'
+        entry.error = 'Creation could not be confirmed. Check the work-order list before requesting another draft; this submission will not be retried.'
         notify()
-        throw new Error('Creation could not be confirmed. Check the work-order list before requesting another draft; this submission will not be retried.', { cause: error })
+        throw new Error(entry.error, { cause: error })
       }
     },
   }

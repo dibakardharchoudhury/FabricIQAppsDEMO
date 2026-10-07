@@ -2300,10 +2300,12 @@ button.v2-signal-row:hover,
 .v2-copilot.has-conversation-crew { grid-template-rows: auto auto minmax(260px, 1fr) auto; }
 .v2-conversation-crew { padding: 0 12px; border-bottom: 1px solid var(--cp-border); }
 .v2-conversation-crew > summary { padding: 9px 0; color: var(--cp-text-muted); font-size: 11px; cursor: pointer; }
-.v2-conversation-crew > .agent-crew { max-height: 440px; overflow-y: auto; }
+.v2-flow-content { overflow-y: auto; overscroll-behavior: contain; }
+.v2-flow-resize { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; font-size: 10px; color: var(--cp-text-muted); }
+.v2-flow-resize input { width: 120px; accent-color: var(--cp-accent); }
 .v2-copilot.v2-expanded-view { display: grid; min-height: 0; padding: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
 .v2-copilot.v2-expanded-view.has-conversation-crew { grid-template-rows: auto auto minmax(0, 1fr) auto; }
-.v2-copilot.v2-expanded-view .v2-conversation-crew { max-height: 40vh; overflow-y: auto; }
+.v2-copilot.v2-expanded-view .v2-conversation-crew { max-height: 46vh; overflow-y: auto; }
 .v2-copilot.v2-expanded-view .v2-messages { min-height: 0; max-height: none; }
 .agent-battle-page.v2-expanded-view { display: flex; gap: 12px; }
 .agent-battle-page.v2-expanded-view > :not(.agent-battle-grid) { flex-shrink: 0; }
@@ -2439,7 +2441,7 @@ button.v2-signal-row:hover,
 .v2-message table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 /* A tabular answer outgrows the reading-width cap, so let it use the full transcript width.
    The table keeps overflow-x as a fallback for tables wider than that. */
-.v2-message.agent:has(table) { max-width: 100%; }
+.v2-message.agent { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 .v2-message th, .v2-message td { padding: 6px 8px; border: 1px solid var(--cp-border); text-align: left; white-space: nowrap; }
 .v2-agent-file { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--cp-accent); font-weight: 600; }
 .v2-agent-file[aria-disabled="true"] { color: var(--cp-text-soft); pointer-events: none; }

@@ -1,11 +1,36 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyFilter, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { applyFilter, buildStationPowerQuery, stationPowerEvidence, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
 import { catalogPrompt } from '../src/services/copilot/catalog.ts'
 import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'
 import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 import { extractSuggestions, stripOptionsMarker } from '../src/services/copilot/suggestions.ts'
+
+test('station power uses exact power-output nodes and authoritative units, never fuzzy power signals', () => {
+  const query = buildStationPowerQuery()
+  assert.match(query, /ago\(24h\)/)
+  assert.match(query, /endswith_cs '\.power_output'/)
+  assert.match(query, /AssetMaster\(\)/)
+  assert.doesNotMatch(query, /contains|where.*quality/)
+  assert.doesNotThrow(() => validateKql(query))
+  assert.throws(() => buildStationPowerQuery('0h'), /Invalid lookback/)
+  assert.throws(() => buildStationPowerQuery('24h); drop'), /Invalid lookback/)
+})
+
+test('station chart uses sample-weighted MW conversions and preserves exact chart values', () => {
+  const base = { Station: 'Site,"A"', average: 1000, samples: 2, invalid_values: 0, bad_samples: 1, latest_event_time: '2026-10-07T20:00:00Z', Unit: 'kW' }
+  const evidence = stationPowerEvidence([base, { ...base, Unit: 'MW', average: 3, samples: 6 }], '24h')
+  assert.equal(evidence.rows[0].average_power_MW, 2.5)
+  assert.equal(evidence.rows[0].samples, 8)
+  assert.equal(evidence.rows[0].bad_samples, 2)
+  assert.match(evidence.visualization.inlineCsvData, /"Site,""A""",2\.5/)
+  assert.equal(evidence.visualization.yAxisTitle, 'MW')
+  for (const patch of [{ Unit: 'kWh' }, { Unit: '' }, { Station: '' }, { average: NaN }, { invalid_values: 1 }, { samples: 0 }]) {
+    assert.throws(() => stationPowerEvidence([{ ...base, ...patch }], '24h'), /No partial chart/)
+  }
+  assert.equal(stationPowerEvidence([], '24h').visualization, undefined)
+})
 
 test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)

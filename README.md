@@ -299,3 +299,10 @@ and 174 enriched nodes / 171 edges using real KQL/SQL and empty STID topology in
 hosting checks passed, but these API/model results do not certify interactive app behavior. See
 [`docs/knowledge-graph.md`](docs/knowledge-graph.md). Deploy steps:
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).
+
+Start with that guide's interface chooser: the local deployment web app and the
+operator/agent command line use the same deployment orchestrator. Manual portal work
+is limited to documented access/setup prerequisites and ontology-managed graph materialization.
+For agent responsibilities, routing, evidence-based RCA, proposed maintenance specialists,
+and the ten-flow acceptance status, see
+[`HydroOperationsApp/AGENT-ACCEPTANCE.md`](HydroOperationsApp/AGENT-ACCEPTANCE.md).

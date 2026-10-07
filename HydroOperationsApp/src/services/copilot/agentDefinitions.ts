@@ -9,7 +9,7 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
   'fabric-iq': 'hydro-fabric-iq-agent',
 }
 
-export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
 Delegate operational requests using delegate_to_agent. Choose qa for factual questions, rca for root cause investigations, work-order for drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.
@@ -27,10 +27,11 @@ export function buildAgentInput(
   context: string,
   history: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>,
   question: string,
+  role: AgentRole = 'supervisor',
 ) {
   const messages: Array<{ role: 'developer' | 'user' | 'assistant'; content: string }> = [
     { role: 'developer', content: context },
-    ...history,
+    ...(role === 'supervisor' ? history : []),
     { role: 'user', content: question },
   ]
   return messages.map(message => ({

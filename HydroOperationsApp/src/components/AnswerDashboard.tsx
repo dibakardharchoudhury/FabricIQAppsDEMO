@@ -22,7 +22,7 @@ export function AnswerDashboard({ text, question = '', visualizations = [] }: {
   const charts = answerVisualizations(datasets, question)
   if (!requested && !visualizations.length && !issues.length && !datasets.some(dataset => dataset.format === 'csv')) return null
   // Explicit chart datasets take precedence over unrelated numeric table columns.
-  const specs = charts.length ? charts : visualizations
+  const specs = visualizations.length ? visualizations : charts
   return <section className="v2-answer-dashboard" aria-label="Answer evidence dashboard">
     {issues.map(issue => <p role="alert" key={issue}>{issue}</p>)}
     <div className="v2-chart-tabs" role="group" aria-label="Evidence view">

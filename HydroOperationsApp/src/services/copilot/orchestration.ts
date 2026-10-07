@@ -44,7 +44,7 @@ export type WorkOrderProposal = {
   createdAt: number
 }
 
-const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work\s*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work\s*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work\s*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work\s*orders?|wos?)\b/i
+const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work[\s-]*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work[\s-]*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work[\s-]*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work[\s-]*orders?|wos?)\b/i
 const positiveActionClauses = (question: string) => question.replace(
   /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
 
@@ -53,7 +53,7 @@ export function isWorkOrderRequest(question: string): boolean {
     /\b(?:prepare|generate|make)\s+(?:(?:a|an|the|new)\s+)?(?:table|chart|report|summary|list|dashboard|comparison)\b/gi,
     match => match.replace(/^\w+/, 'show'))
   return MUTATION_INTENT.test(positiveClauses)
-    || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork\s*orders?\b/i.test(positiveClauses))
+    || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork[\s-]*orders?\b/i.test(positiveClauses))
 }
 
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {

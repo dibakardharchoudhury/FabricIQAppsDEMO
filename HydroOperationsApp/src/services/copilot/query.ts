@@ -1,4 +1,5 @@
 import { KUSTO_SOURCE_NAMES } from './catalog.ts'
+import type { AgentVisualization } from '../assistantStream.ts'
 
 export const MAX_ROWS = 500
 
@@ -62,6 +63,50 @@ export function escapeKqlString(value: string): string {
 
 const KQL_TIMESPAN = /^\d+(\.\d+)?(s|m|h|d)$/
 const KQL_BIN = KQL_TIMESPAN
+
+export function buildStationPowerQuery(lookback = '24h'): string {
+  if (!KQL_TIMESPAN.test(lookback) || Number.parseFloat(lookback) <= 0) throw new Error('Invalid lookback for station power. Use a positive duration such as 24h.')
+  return `OPCUAEvents
+| where event_time > ago(${lookback}) and event_time <= now()
+| where opcua_node_id endswith_cs '.power_output'
+| join kind=leftouter (AssetMaster() | project opcua_node_id, Station, Unit) on opcua_node_id
+| summarize average = avg(value), samples = count(), invalid_values = countif(isnull(value) or not(isfinite(value))), bad_samples = countif(toupper(quality) == 'BAD'), latest_event_time = max(event_time) by Station, Unit
+| order by Station asc, Unit asc`
+}
+
+export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: string): { rows: Record<string, unknown>[]; visualization?: AgentVisualization } {
+  if (rows.length >= MAX_ROWS) throw new Error('Station power reached the source row limit; a complete chart cannot be verified.')
+  const factors: Record<string, number> = { W: .000001, kW: .001, MW: 1, GW: 1000 }
+  const stations = new Map<string, { sum: number; samples: number; bad: number; latest: string }>()
+  for (const row of rows) {
+    const factor = typeof row.Unit === 'string' ? factors[row.Unit.trim()] : undefined
+    if (typeof row.Station !== 'string' || !row.Station.trim() || factor === undefined
+      || typeof row.average !== 'number' || !Number.isFinite(row.average)
+      || typeof row.samples !== 'number' || !Number.isSafeInteger(row.samples) || row.samples <= 0
+      || row.invalid_values !== 0 || typeof row.bad_samples !== 'number'
+      || !Number.isSafeInteger(row.bad_samples) || row.bad_samples < 0 || row.bad_samples > row.samples
+      || typeof row.latest_event_time !== 'string' || !Number.isFinite(Date.parse(row.latest_event_time))) {
+      throw new Error('Station power requires mapped station identity, supported W/kW/MW/GW units, finite measurements and complete sample counts. No partial chart was produced.')
+    }
+    const station = stations.get(row.Station) ?? { sum: 0, samples: 0, bad: 0, latest: row.latest_event_time }
+    station.sum += row.average * factor * row.samples
+    station.samples += row.samples
+    station.bad += row.bad_samples
+    if (Date.parse(row.latest_event_time) > Date.parse(station.latest)) station.latest = row.latest_event_time
+    stations.set(row.Station, station)
+  }
+  const result = [...stations].map(([Station, value]) => ({
+    Station, average_power_MW: value.sum / value.samples, samples: value.samples,
+    bad_samples: value.bad, latest_event_time: value.latest,
+  }))
+  if (result.some(row => !Number.isFinite(row.average_power_MW))) throw new Error('Station power aggregation exceeded numeric limits.')
+  const csv = ['Station,average_power_MW', ...result.map(row => `"${row.Station.replace(/"/g, '""')}",${row.average_power_MW}`)].join('\n')
+  return { rows: result, visualization: result.length ? {
+    chartType: 'bar', title: `Average power-output reading by station (${lookback})`,
+    xColumn: 'Station', yColumns: ['average_power_MW'], xAxisTitle: 'Station', yAxisTitle: 'MW',
+    inlineCsvData: csv,
+  } : undefined }
+}
 const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }

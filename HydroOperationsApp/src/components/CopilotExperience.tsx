@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -66,6 +66,7 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
 
 export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
+  const [flowHeight, setFlowHeight] = useState(240)
   const chatView = useExpandedView()
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
@@ -123,7 +124,8 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
       </span></header>
       {conversationEvents.length > 0 && <details className="v2-conversation-crew" open>
         <summary>Conversation agent flow · {messages.filter(message => message.orchestrationEvents?.length).length} turns</summary>
-        <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} />
+        <label className="v2-flow-resize">Flow height<input aria-label="Agent flow height" type="range" min="140" max="420" step="20" value={flowHeight} onChange={event => setFlowHeight(Number(event.target.value))} /></label>
+        <div className="v2-flow-content" style={{ maxHeight: `min(${flowHeight}px, 40vh)` }}><AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} /></div>
       </details>}
       <div className="v2-messages" ref={listRef} onScroll={onScroll}>
         {messages.map((message, index) => {
@@ -154,12 +156,12 @@ function SuggestionChips({ message, onCompose, onSend }: { message: CopilotMessa
   </span>)}</div>
 }
 
-export function CopilotResponse({ message, streaming, question, showCrew = true }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew?: boolean }) {
+export const CopilotResponse = memo(function CopilotResponse({ message, streaming, question, showCrew = true }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew?: boolean }) {
   return <>
     <AgentMessage message={message} streaming={streaming} question={question} showCrew={showCrew} />
     {message.meta && <MessageFooter message={message} question={question} />}
   </>
-}
+})
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)

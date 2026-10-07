@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import { LatLngBounds } from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import type { TwinStatus } from '../twin'
 import { ageLabel, freshnessOf } from '../twin'
 

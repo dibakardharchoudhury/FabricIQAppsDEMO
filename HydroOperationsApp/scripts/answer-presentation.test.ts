@@ -3,8 +3,8 @@ import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
-import { createApprovalStore } from '../src/services/copilot/approvalStore.ts'
-import { createWorkOrderProposal } from '../src/services/copilot/orchestration.ts'
+import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
+import { createWorkOrderProposal, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
 
 function responseStream(events: unknown[]) {
@@ -24,6 +24,17 @@ test('only Work Orders can record a structured no-draft review, never a pretend 
   assert.throws(() => parseWorkOrderReview('{"decision":"no_draft","reason":""}'), /explicit decision/)
   assert.match(JSON.stringify(agentDefinition('work-order', 'test').tools), /complete_work_order_review/)
   for (const role of ['supervisor', 'qa', 'rca'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_work_order_review/)
+})
+
+test('hyphenated work-order prompts and generated draft suggestions reach the approval workflow', () => {
+  const prompt = 'Prepare one editable Low-priority inspection work-order draft for EQUIP_RTI_T005 titled "Acceptance battle review - T005 - DO NOT DISPATCH". Check existing work first. Do not save a SQL record.'
+  assert.equal(isWorkOrderRequest(prompt), true)
+  assert.deepEqual(missingRequestedSpecialists(prompt, ['qa']), ['work-order'])
+  const draftSuggestion = relatedSuggestions('EQUIP_RTI_T005 temperature is stale.').find(suggestion => /draft/i.test(suggestion))
+  assert.ok(draftSuggestion)
+  assert.equal(isWorkOrderRequest(draftSuggestion), true)
+  assert.equal(isWorkOrderRequest('List existing Draft work-orders for T005.'), false)
+  assert.equal(isWorkOrderRequest('Do not create a work-order for T005.'), false)
 })
 
 test('compound summaries preserve omitted snapshot work without inventing or duplicating orders', () => {
@@ -64,6 +75,13 @@ test('every Foundry input message has explicit item and content types, including
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'current question' }] },
   ])
   assert.equal(buildAgentInput('policy', [], 'question').length, 2)
+  const history = [{ role: 'user' as const, content: 'Unrelated old inventory'.repeat(100) }]
+  for (const role of ['qa', 'rca', 'work-order', 'fabric-iq'] as const) {
+    const scoped = buildAgentInput('policy', history, 'Assigned task with verified equipment ID', role)
+    assert.equal(scoped.length, 2)
+    assert.doesNotMatch(JSON.stringify(scoped), /Unrelated old inventory/)
+    assert.match(JSON.stringify(scoped), /verified equipment ID/)
+  }
 })
 
 test('native continuation preserves output items and actual response identity', async () => {
@@ -260,7 +278,7 @@ test('approval is editable, explicit and prevents duplicate concurrent writes', 
   let writes = 0
   const edits = { title: 'Inspect cooling', description: 'Operator-reviewed observation', priority: 'Medium' as const }
   const first = store.approve(draft.id, edits, async () => {}, async value => { writes++; assert.equal(value.title, edits.title); return 'WO-123' })
-  await assert.rejects(store.approve(draft.id, edits, async () => {}, async () => 'duplicate'), /saving|created/)
+  await assert.rejects(store.approve(draft.id, edits, async () => {}, async () => 'duplicate'), /validating|saving|created/)
   assert.equal(await first, 'WO-123')
   assert.equal(writes, 1)
   assert.equal(store.get(draft.id)?.state, 'created')
@@ -289,6 +307,74 @@ test('validation failure remains retryable without ever calling the writer', asy
   assert.equal(store.get(draft.id)?.state, 'pending')
 })
 
+test('a validation timeout cannot start a late SQL write', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const store = createApprovalStore<string>()
+  const draft = proposal()
+  store.stage(draft)
+  let finishValidation!: () => void
+  const validation = new Promise<void>(resolve => { finishValidation = resolve })
+  let writes = 0
+  const approval = store.approve(draft.id, draft, () => validation, async () => { writes++; return 'unexpected' })
+  const rejected = assert.rejects(approval, /No SQL write was attempted/)
+  assert.equal(store.get(draft.id)?.state, 'validating')
+  context.mock.timers.tick(APPROVAL_PHASE_TIMEOUT_MS + 1)
+  await rejected
+  assert.equal(store.get(draft.id)?.state, 'pending')
+  assert.equal(await store.approve(draft.id, draft, async () => {}, async () => 'WO-revalidated'), 'WO-revalidated')
+  finishValidation()
+  await validation
+  await Promise.resolve()
+  assert.equal(writes, 0)
+  assert.equal(store.get(draft.id)?.result, 'WO-revalidated')
+})
+
+test('a late failed write remains uncertain and cannot trigger a retry', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const store = createApprovalStore<string>()
+  const draft = proposal()
+  store.stage(draft)
+  let failWrite!: (reason: Error) => void
+  let markStarted!: () => void
+  const writing = new Promise<string>((_, reject) => { failWrite = reject })
+  const started = new Promise<void>(resolve => { markStarted = resolve })
+  const approval = store.approve(draft.id, draft, async () => {}, () => { markStarted(); return writing })
+  const rejected = assert.rejects(approval, /could not be confirmed/)
+  await started
+  context.mock.timers.tick(APPROVAL_PHASE_TIMEOUT_MS + 1)
+  await rejected
+  const lateFailure = assert.rejects(writing, /late connection failure/)
+  failWrite(new Error('late connection failure'))
+  await lateFailure
+  assert.equal(store.get(draft.id)?.state, 'uncertain')
+  assert.equal(store.get(draft.id)?.result, undefined)
+  await assert.rejects(store.approve(draft.id, draft, async () => {}, async () => 'duplicate'), /uncertain/)
+})
+
+test('write timeout blocks replay and a late database acknowledgement updates shared state', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const store = createApprovalStore<string>()
+  const draft = proposal()
+  store.stage(draft)
+  let finishWrite!: (value: string) => void
+  let markStarted!: () => void
+  const writing = new Promise<string>(resolve => { finishWrite = resolve })
+  const started = new Promise<void>(resolve => { markStarted = resolve })
+  const approval = store.approve(draft.id, draft, async () => {}, () => { markStarted(); return writing })
+  const rejected = assert.rejects(approval, /could not be confirmed/)
+  await started
+  assert.equal(store.get(draft.id)?.state, 'saving')
+  context.mock.timers.tick(APPROVAL_PHASE_TIMEOUT_MS + 1)
+  await rejected
+  assert.equal(store.get(draft.id)?.state, 'uncertain')
+  await assert.rejects(store.approve(draft.id, draft, async () => {}, async () => 'duplicate'), /uncertain/)
+  finishWrite('WO-late-confirmation')
+  await writing
+  assert.equal(store.get(draft.id)?.state, 'created')
+  assert.equal(store.get(draft.id)?.result, 'WO-late-confirmation')
+  assert.equal(store.get(draft.id)?.error, undefined)
+})
+
 test('approval observers receive transitions and stop receiving updates after unsubscribe', async () => {
   const store = createApprovalStore<string>()
   const draft = proposal()
@@ -296,10 +382,10 @@ test('approval observers receive transitions and stop receiving updates after un
   const unsubscribe = store.subscribe(() => states.push(store.get(draft.id)?.state))
   store.stage(draft)
   await store.approve(draft.id, draft, async () => {}, async () => 'WO-123')
-  assert.deepEqual(states, ['pending', 'saving', 'created'])
+  assert.deepEqual(states, ['pending', 'validating', 'saving', 'created'])
   store.clear()
   assert.equal(states.at(-1), undefined)
   unsubscribe()
   store.stage(draft)
-  assert.equal(states.length, 4)
+  assert.equal(states.length, 5)
 })

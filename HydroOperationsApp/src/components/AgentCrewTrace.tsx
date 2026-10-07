@@ -31,11 +31,12 @@ function CommunicationPacket({ path, timestamp, reverse = false, failed = false 
 export function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean }) {
   const [selected, setSelected] = useState<AgentRole>()
   const [paused, setPaused] = useState(false)
+  const [compact, setCompact] = useState(true)
   const approvalSnapshot = useSyncExternalStore(workOrderApprovals.subscribe,
     () => proposals.map(proposal => workOrderApprovals.get(proposal.id)?.state ?? 'expired').join(','), () => '')
   const approvals = approvalSnapshot ? approvalSnapshot.split(',') : []
   const reviewStatus: OrchestrationEvent['status'] | undefined = !approvals.length ? undefined : approvals.some(state => state === 'uncertain' || state === 'expired') ? 'error'
-    : approvals.some(state => state === 'saving') ? 'running'
+    : approvals.some(state => state === 'validating' || state === 'saving') ? 'running'
     : approvals.some(state => state === 'pending') ? 'approval' : 'completed'
   if (!events?.length) return null
   const displayedEvents = events.map<OrchestrationEvent>(event => {
@@ -43,7 +44,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     const states = event.proposalIds?.map(id => workOrderApprovals.get(id)?.state ?? 'expired')
     if (!states?.length) return reviewStatus ? { ...event, status: reviewStatus } : event
     const status = states.some(state => state === 'uncertain' || state === 'expired') ? 'error'
-      : states.some(state => state === 'saving') ? 'running'
+      : states.some(state => state === 'validating' || state === 'saving') ? 'running'
       : states.some(state => state === 'pending') ? 'approval' : 'completed'
     return { ...event, status }
   })
@@ -63,11 +64,12 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     .sort((a, b) => a.timestamp - b.timestamp).slice(-3)
   const insightsLink = applicationInsightsLink(import.meta.env.VITE_RAYFIN_FOUNDRY_APP_INSIGHTS_RESOURCE_ID)
   const traceQuery = responseTraceQuery(focusedEvents.flatMap(event => event.responseIds ?? (event.responseId ? [event.responseId] : [])))
-  return <section className={`agent-crew status-${status}${paused ? ' motion-paused' : ''}`} aria-label="Hydro agent crew execution">
+  return <section className={`agent-crew status-${status}${compact ? ' compact' : ''}${paused ? ' motion-paused' : ''}`} aria-label="Hydro agent crew execution">
     <header className="agent-crew-heading">
       <Activity size={14} />
       <strong>Agent crew</strong>
       <span className="crew-run-status" role="status">{STATUS_LABELS[status]}</span>
+      <button type="button" className="crew-size-toggle" aria-expanded={!compact} onClick={() => setCompact(value => !value)}>{compact ? 'Expand flow' : 'Compact flow'}</button>
     </header>
     <div className="crew-stage">
       <svg className="crew-wires" viewBox="0 0 800 56" preserveAspectRatio="none" aria-hidden="true">
@@ -101,8 +103,8 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       })}
     </div>
     {handoffs.length > 0 && <ol className="crew-route" aria-label="Recorded handoff sequence">
-      {handoffs.map((handoff, index) => <li key={handoff.id} className={handoff.failed ? 'failed' : ''}>
-        <span>{index + 1}</span>{handoff.from} <span aria-hidden="true">&rarr;</span> {handoff.to}{handoff.failed ? ' (failed)' : ''}
+      {(compact ? handoffs.slice(-2) : handoffs).map((handoff, index) => <li key={handoff.id} className={handoff.failed ? 'failed' : ''}>
+        <span>{(compact ? Math.max(0, handoffs.length - 2) : 0) + index + 1}</span>{handoff.from} <span aria-hidden="true">&rarr;</span> {handoff.to}{handoff.failed ? ' (failed)' : ''}
       </li>)}
     </ol>}
     {recentActivity.length > 0 && <ol className="crew-live-feed" aria-label="Recent execution activity">
@@ -120,7 +122,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       <span>{invoked} agents invoked · packets = recorded handoffs</span>
       <button type="button" onClick={() => setPaused(value => !value)} aria-pressed={paused}>{paused ? 'Resume animations' : 'Pause animations'}</button>
     </div>
-    {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('saving') && ' Validating or writing the approved draft.'}</p>}
+    {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('validating') && ' Checking identity and existing work; no SQL write yet.'}{approvals.includes('saving') && ' Writing the approved SQL draft; do not submit again.'}</p>}
     <details className="crew-diagnostics">
       <summary>Execution receipts <span>{trace.length} events for {CREW.find(member => member.role === focused)?.job}</span></summary>
       <p>Foundry stream events and browser-executed tools are labeled separately. These are execution records, not private reasoning or an Application Insights span export.</p>

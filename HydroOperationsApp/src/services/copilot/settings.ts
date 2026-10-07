@@ -5,7 +5,7 @@ import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './a
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
 // who is always limited to their own Entra permissions by the delegated token.
 
-export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
+export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export type CopilotSettings = {

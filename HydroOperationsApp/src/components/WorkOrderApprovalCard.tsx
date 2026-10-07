@@ -3,17 +3,18 @@ import { Check, ClipboardCheck, ShieldCheck, X } from 'lucide-react'
 import type { WorkOrderProposal } from '../services/copilot/orchestration'
 import { approveWorkOrder, workOrderApprovals } from '../services/copilot/workOrderApproval'
 import type { ProposalEdits } from '../services/copilot/approvalStore'
+import { AgentElapsedTime } from './AgentElapsedTime'
 
 export function WorkOrderApprovalCard({ proposal }: { proposal: WorkOrderProposal }) {
   const [draft, setDraft] = useState<ProposalEdits>(proposal)
   const state = useSyncExternalStore(workOrderApprovals.subscribe, () => workOrderApprovals.get(proposal.id)?.state ?? 'rejected')
   const [message, setMessage] = useState(workOrderApprovals.get(proposal.id) ? '' : 'This draft is no longer available. Check existing work before requesting a new draft.')
   const [error, setError] = useState('')
+  const entry = workOrderApprovals.get(proposal.id)
   const approve = async () => {
     setError('')
     try {
-      const order = await approveWorkOrder(proposal.id, draft)
-      setMessage(`Created ${order.workOrderNumber} - ${order.status}`)
+      await approveWorkOrder(proposal.id, draft)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Work-order approval failed.')
     }
@@ -36,8 +37,10 @@ export function WorkOrderApprovalCard({ proposal }: { proposal: WorkOrderProposa
       <div className="wo-review-actions"><button type="button" className="wo-approve" disabled={!draft.title.trim() || !draft.description.trim()} onClick={() => void approve()}><Check size={15} />Yes, create work order</button>
       <button type="button" onClick={reject}><X size={15} />No, reject</button></div>
     </fieldset>
-    {state === 'saving' && <p role="status">Validating and creating...</p>}
+    {state === 'validating' && <p role="status">Checking sign-in, asset identity and existing work. No SQL write yet. <AgentElapsedTime startedAt={entry?.startedAt} running /></p>}
+    {state === 'saving' && <p role="status">Creating the approved SQL draft. Do not submit again. <AgentElapsedTime startedAt={entry?.startedAt} running /></p>}
+    {state === 'created' && entry?.result && <p role="status">Created {entry.result.workOrderNumber} - {entry.result.status}</p>}
     {message && <p role="status">{message}</p>}
-    {error && <p role="alert">{error}</p>}
+    {state !== 'created' && (error || entry?.error) && <p role="alert">{error || entry?.error}</p>}
   </section>
 }

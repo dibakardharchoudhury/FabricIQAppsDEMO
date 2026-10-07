@@ -5,6 +5,9 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 **three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
 
 > **To deploy, follow [DEPLOY.md](DEPLOY.md).** This README covers the architecture and data model.
+> **Agent behavior and acceptance:** see [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md) for the
+> complete routing policy, actual tools/runtime, scientific RCA criteria, proposed enterprise
+> specialists, and ten multi-turn test scenarios with verified versus pending outcomes.
 > Moving to a different tenant, workspace, or capacity region? See
 > [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
 > (the repository orchestrator backs up target-specific state, resolves the tenant SPA, provisions

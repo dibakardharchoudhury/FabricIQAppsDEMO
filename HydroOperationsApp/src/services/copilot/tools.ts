@@ -6,7 +6,7 @@ import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
-  applyFilter, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, buildStationPowerQuery, stationPowerEvidence, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -34,6 +34,8 @@ export function describeToolCall(name: string, args: ToolArguments): string {
       return [args.quality ?? 'BAD', args.lookback ?? '30m', args.equipment_type ?? 'all equipment'].join(' · ')
     case 'query_turbine_temperature_snapshot':
       return [args.lookback ?? '30m', args.threshold === undefined ? `top ${args.limit ?? 5}` : `${args.threshold_operator ?? 'gt'} ${args.threshold}`, 'latest raw temperatures + open work'].join(' · ')
+    case 'query_station_power':
+      return `${args.lookback ?? '24h'} · mean power-output reading by station · MW`
     case 'run_kql':
       return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
     case 'visualize_dataset':
@@ -62,6 +64,14 @@ const whereSchema = {
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'query_station_power',
+      description: 'Return and chart mean power-output readings per station over a window (default 24h). Uses exact power_output node suffix, authoritative station/unit metadata, sample-weighted means converted to MW. Includes all qualities and reports BAD sample counts. Not total station generation or energy.',
+      parameters: { type: 'object', properties: { lookback: { type: 'string', description: 'Positive duration, e.g. 24h or 7d.' } } },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -265,6 +275,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
       if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
       if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
       if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
+      if (tool.function.name === 'query_station_power') return (['OPCUAEvents', 'AssetMaster'] as const).every(name => enabledKustoNames(settings).includes(name))
       if (tool.function.name === 'query_signal_quality_snapshot' || tool.function.name === 'query_turbine_temperature_snapshot') {
         return enabledKustoNames(settings).includes('OPCUAEvents')
           && enabledEntities(ASSET_ENTITIES).includes('equipment')
@@ -353,6 +364,19 @@ export function createToolRuntime(
     // Re-check here as well as in the schema: a model can still emit a disabled tool or entity.
     if (!isToolEnabled(settings, name)) throw new Error(`The tool '${name}' is disabled in Administration.`)
     switch (name) {
+      case 'query_station_power': {
+        if (!(['OPCUAEvents', 'AssetMaster'] as const).every(source => enabledKustoNames(settings).includes(source))) throw new Error('Station power requires enabled OPCUAEvents and AssetMaster sources.')
+        const lookback = args.lookback ?? '24h'
+        const query = buildStationPowerQuery(lookback)
+        const data = await runKustoQuery(query, MAX_ROWS)
+        const evidence = stationPowerEvidence(kustoRowsToObjects(data.columns, data.rows), lookback)
+        return {
+          result: { rows: evidence.rows, row_count: evidence.rows.length, lookback,
+            semantics: 'Sample-weighted arithmetic mean of individual power_output readings across turbines, converted to MW using metadata. All qualities included; not total station output, time-weighted mean or energy.',
+            read_completed_at_utc: new Date().toISOString() },
+          rowCount: evidence.rows.length, visualization: evidence.visualization, query,
+        }
+      }
       case 'query_assets': {
         const entity = entityOrThrow(ASSET_ENTITIES, args.entity, settings)
         stid ??= queryStid()

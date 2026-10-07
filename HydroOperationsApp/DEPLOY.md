@@ -2,11 +2,49 @@
 
 <!-- markdownlint-disable MD029 MD033 MD060 -->
 
-Deploy the Hydro Operations app to Microsoft Fabric. Run every command from
-`HydroOperationsApp/` on **Node 24** (if your default Node differs, prefix with
-`npx -y -p node@24 -c "<cmd>"`). Architecture: [README.md](README.md) · [root README](../README.md).
+Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engine**.
+Architecture: [README.md](README.md) · [root README](../README.md) ·
+[agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-**Path:** build RTI env → install → configure → provision → deploy → seed & provision → live auth → start stream.
+## Start here: choose your interface, not a different deployment process
+
+| Goal | Simplest supported path |
+|---|---|
+| Operator-led deployment without a coding agent | From the repository root, run the command below. It owns Node 24, dependency restore, target discovery, backend/schema, app publication and live auth. |
+| Local deployment web app | Launch `Raw\workspace-reset\Start Fabric Demo.cmd` on Windows, select the tenant/workspace, then **Deploy app**. It calls the same orchestrator and streams its output. See the [local launcher guide](../Raw/workspace-reset/README.md). |
+| Fresh Fabric data environment | Import the repository items and run `01_Pipe_Setup` with the documented parameters before app deployment. The local web app can orchestrate this as a separate full workflow. Do not reset an existing workspace for an ordinary app update. |
+| Edit/test the SPA locally | Use [local development](README.md#local-development). A local dev server does not publish Fabric resources or certify hosted CORS. |
+| Existing workspace, new code or changed capacity | Run the same deployment command. Do not delete state, recreate the SPA or reuse a capacity-specific endpoint manually. |
+
+```powershell
+# Run from the repository root.
+python Raw\workspace-reset\deploy_fabric_app.py `
+  --tenant <tenant-guid-or-domain> `
+  --workspace <workspace-guid-or-name> `
+  --push-config
+```
+
+Add `--client-id <spa-app-guid>` only for an explicitly supplied registration or ambiguous
+discovery. The supplied ID must be verified in the selected tenant. The orchestrator resolves
+Node 24 itself; no agent-authored npm/Rayfin wrapper sequence is needed.
+
+**Manual prerequisites are not a second deployment path:**
+
+1. An authorized operator enables required Fabric preview features and grants workspace/source
+   access. Configure setup-pipeline identities and Operations Agent destinations/connections.
+2. Let `setup-live-auth` configure redirects, permissions and consent. Perform only the exact
+   administrator action it reports as blocked; then rerun the orchestrator.
+3. In the selected verified v2 ontology, use **Manage graph -> select eligible
+   entities/relationships -> Continue -> Materialize**. The app requires authoritative item
+   lineage or an explicit operator-verified graph binding. This is not unattended REST deployment.
+4. For a fresh environment, finish **Seed & provision** and start the telemetry stream.
+   Verify real source timestamps, not just a connected badge.
+5. Require `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it. Hosting readiness,
+   agent execution, graph materialization and Teams/email delivery are separate acceptance gates.
+
+The detailed phase descriptions below are troubleshooting reference, not instructions to
+assemble an alternative deployment sequence. Earlier dated acceptance entries are historical;
+the [acceptance report](AGENT-ACCEPTANCE.md) distinguishes current changes from verified runs.
 
 ### Persistent Foundry agents
 
@@ -360,7 +398,36 @@ the responsible agent explicitly, without automatic retries. Automatic crew deta
 focus follows current-turn execution/failure rather than an old draft. These follow-up
 changes require fresh hosted acceptance; prior successes do not certify them.
 
-### Five complex orchestration acceptance scenarios
+Version 1.0.726 (`c8edfe4`) includes those follow-up changes. A live scenario-one
+rerun completed Q&A -> RCA -> Work Orders -> Q&A in 3m27s with an actual editable
+card and all four returned work-order numbers preserved. The test card was rejected.
+An earlier attempt failed with missing AppBackend CORS headers; later read-only
+preflight/POST checks and SQL queries succeeded, but do not prove that intermittent
+failure is permanently resolved. The remaining complex scenarios are still pending.
+
+Subsequent approval hardening separates sign-in/validation from SQL creation and
+bounds each phase at 90 seconds. A validation timeout cannot subsequently start a
+write, including after a fresh approval attempt. A write timeout has an uncertain
+outcome and cannot be replayed; a later successful acknowledgement updates the
+shared card with the returned SQL number and status. A late failure remains
+uncertain. Check existing work before requesting another draft. These changes cannot
+retroactively repair callbacks in an older loaded bundle. Hyphenated `work-order`
+requests and generated draft suggestions now use the same human-approval routing.
+Local regression tests cover these transitions; hosted acceptance is still required.
+
+During the October 7 performance investigation, browser navigation TTFB was 21.7s,
+the main script took 21.8s, and even sub-2KB scripts took approximately 21s.
+Eventhouse returned HTTP 429 throttling. After the operator reported scaling the
+capacity, one uncached HTML request completed in 1.46s with HTTP 200 at 21:13:19 UTC.
+This is an initial hosting-latency improvement, not a cold-start, SQL, telemetry or
+agent-runtime acceptance result. Rebaseline those paths before attributing remaining
+latency to application code; large agent contexts and answer/layout defects remain
+separate outstanding work.
+
+### First five complex orchestration acceptance scenarios
+
+The scope is now **ten multi-turn scenarios**. See [the acceptance matrix](AGENT-ACCEPTANCE.md#ten-multi-turn-acceptance-flows)
+for follow-up turns, scenarios 6-10, and actual status. The original five prompts remain below.
 
 These prompts are test inputs, not evidence that the scenarios have passed. Record
 observed routes and results separately. Every arrow below returns through Chief
@@ -611,7 +678,7 @@ deployment command; Azure CLI sign-in and Conditional Access requirements still 
 Find your row — it tells you exactly what to run. A workspace always belongs to one tenant, so
 “new tenant” means its workspaces are new to you as well. The only two things that change between
 hosting scenarios are **whether the SPA app registration already exists** (app regs are tenant‑scoped)
-and **whether Rayfin's local state must be reset** (when the target workspace changes). Separately,
+and **whether the orchestrator must back up and rotate Rayfin's local state** (when the target changes). Separately,
 every target needs its own ontology-managed graph and matching explicit binding for graph features.
 
 | Your situation | SPA app registration | Local Rayfin state | Do this |
@@ -884,31 +951,21 @@ cannot read anything that user could not read in Fabric.
 
 ## 4. Sign in to Rayfin
 
-```powershell
-npx rayfin logout
-npx rayfin login --select   # pick the tenant that owns your workspace
-npx rayfin login status
-```
+The orchestrator uses tenant-scoped Azure CLI authentication and supplies fresh Fabric
+tokens to its Rayfin child processes. Follow its sign-in prompt. Do not clear a working
+Rayfin session or assemble a separate login/logout sequence.
 
 ## 5. Provision the backend and SQL schema
 
-```powershell
-npm run up          # create/update AppBackend + auth + data services
-npm run rayfin:db   # apply rayfin/data/schema.ts to the live SQL database (creates tables, no rows)
-```
+The orchestrator creates or reuses the target AppBackend, applies the repository SQL
+schema, and configures runtime/auth/data services. Reuse never means skipping backend
+runtime/CORS and database readiness checks.
 
 ## 6. Deploy the app
 
-> [!NOTE]
-> This command documents the underlying operator phase. Agents must invoke the repository
-> orchestrator from the root; they must not run this phase directly.
-
-```powershell
-npm run deploy      # builds (tsc + vite, repository env producer) and deploys the static app
-```
-
-The local **Deploy app** action uses this static-only command when its saved AppBackend still exists
-in the selected workspace. It runs full `rayfin up` for a fresh or changed target, and updates the
+Use the one-shot command at the top of this guide, or the local **Deploy app** button.
+The orchestrator internally chooses static publication when its saved AppBackend still exists
+in the selected workspace. It provisions a fresh or changed target, and updates the
 backend after every static deployment, even when the generated hosting origin was already
 registered. This reapplies persisted runtime/CORS settings and the database configuration after a
 managed-service restart.
@@ -1015,95 +1072,21 @@ into the Eventhouse. Live gauges populate once telemetry lands and Step 8 auth i
 
 ## Redeploying to a different tenant, workspace, or region
 
-Moving the app to a **new tenant, workspace, or capacity** requires resetting Rayfin's per-workspace
-state and re-pointing every tenant-scoped identity — otherwise a stale `active` deployment pointer
-makes `rayfin up` target the old (now non-existent) workspace and fail with a 404.
+Run the same one-shot command with the new tenant and workspace, or change those fields
+in the local deployment web app and choose **Deploy app**.
 
-### 1. Rotate local Rayfin state
-
-```powershell
-# from HydroOperationsApp/
-$backup = Join-Path ([IO.Path]::GetTempPath()) ("fabric-demo-rayfin-backup-" + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $backup | Out-Null
-Get-Item rayfin/.env, rayfin/.env.local, rayfin/.deployments.json -ErrorAction SilentlyContinue |
-  Move-Item -Destination $backup
-```
-
-- `rayfin/.deployments.json` holds an `active` pointer to the previous workspace/backend. Left in
-  place, `rayfin up` calls the **old** endpoint and fails with **404 "The provided workspace was not
-  found."** Move it (and `.env.local`) into the temporary backup when switching tenants; do not
-  delete either file.
-- A workspace capacity move also invalidates the capacity-specific `RAYFIN_PUBLIC_API_URL`, even
-  when the AppBackend item still exists. The one-shot orchestrator compares the saved API URL with
-  the workspace's current `capacityId`, backs up the three state files above, and performs a full
-  reprovision when they differ.
-- Recreate `rayfin/.env` from `.env.example` with the **new** `FABRIC_WORKSPACE_NAME`,
-  `RAYFIN_PUBLIC_WORKSPACE_ID`, `RAYFIN_PUBLIC_TENANT_ID`, and the new tenant's SPA
-  `RAYFIN_PUBLIC_AAD_CLIENT_ID`. Run `npm run validate-env` before continuing. Resolve the workspace
-  GUID by display name:
-
-  ```powershell
-  $tok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
-  (Invoke-RestMethod -Uri "https://api.fabric.microsoft.com/v1/workspaces" -Headers @{Authorization="Bearer $tok"}).value |
-    Where-Object displayName -like '*<workspace-name>*' | Select-Object displayName,id,capacityId | Format-List
-  ```
-
-### 2. Register a fresh SPA in the new tenant
-
-> **Same tenant, only a different workspace/region?** The SPA app registration is **tenant‑scoped**, so
-> **reuse the existing `RAYFIN_PUBLIC_AAD_CLIENT_ID`** — do **not** create a new one. Keep it (and
-> `RAYFIN_PUBLIC_TENANT_ID`) in the new `.env`; only `FABRIC_WORKSPACE_NAME` + `RAYFIN_PUBLIC_WORKSPACE_ID`
-> change. `npm run setup-live-auth` then just **adds the new hosting origin** to the existing app and
-> re‑confirms consent (already `AllPrincipals`, so it's a no‑op). Skip the `az ad app create` below.
-
-A **different tenant** is the only case that needs a new app. App registrations are tenant-scoped — the
-old client id won't work. Create one (see
-[Identities → App SPA](#b-app-spa-created-once-then-automated)) and put its id in the new `.env`:
-
-```powershell
-az login --tenant <new-tenant-guid> --allow-no-subscriptions
-az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audience AzureADMyOrg --query appId -o tsv
-```
-
-### 3. Point Rayfin at the new tenant
-
-```powershell
-npx rayfin logout
-npx rayfin login --select     # pick the NEW tenant
-npx rayfin login status       # confirm tenant + user before deploying
-```
-
-### 4. Provision non-interactively
-
-Pass the workspace **GUID** and auto-accept so `rayfin up` never stops on the interactive
-*"Enter a Fabric workspace name"* prompt (its redraw UI is easy to mis-answer when scripted):
-
-```powershell
-rayfin up --workspace-id <workspace-guid> --yes
-```
-
-`rayfin up --help` also exposes `--workspace <name>`, `--workspace-uri <portal-url>`, `--tenant <id>`,
-`--dry-run`, and `--exclude-services staticHosting`. To repoint an **existing** deployment record
-without re-provisioning, use `rayfin switch <workspace-name>` (it rewrites `rayfin/.env`).
-
-For an agent-driven deployment, return to the repository root and run the one-shot orchestrator with
-the new tenant/workspace instead of continuing these phases individually. It provisions the schema,
-deploys the static app, preserves and extends SPA redirects, configures live auth, and verifies the
-hosted app shell or identity-matched protected sign-in gate. Interactive authenticated application
-acceptance remains separate.
-
-### Node 24 wrapper — gotchas
-
-If your default Node isn't 24, wrap **every** command; call the binary/script **directly** inside `-c`:
-
-```powershell
-npx -y -p node@24 -c "npm run up"                              # ✅
-npx -y -p node@24 -c "rayfin up --workspace-id <guid> --yes"  # ✅
-```
-
-- **Don't nest npx.** `npx -y -p node@24 -c "npx rayfin …"` fails with an npm **EUSAGE** error.
-- The `-c` string runs in its **own shell at an unspecified cwd**. If it can't find `rayfin.yml`,
-  put the directory inside the string: `-c "cd /d <abs-path>\HydroOperationsApp && rayfin up …"`.
+- The orchestrator compares the saved endpoint with the workspace's current capacity.
+  It preserves state in a unique temporary backup and rotates only `rayfin/.env`,
+  `rayfin/.env.local` and `rayfin/.deployments.json` when target changes require it.
+  Never delete state or copy an old generated `pbidedicated.windows.net` endpoint.
+- A same-tenant move reuses the verified tenant SPA. A different tenant requires a
+  registration verified in that tenant; discovery/creation may require an administrator.
+  Do not preemptively create a replacement application.
+- Node 24, dependency restore, backend/schema/runtime, public source pointers, app
+  publication, redirect preservation and live-auth setup remain orchestrator-owned.
+- Stop on a printed prerequisite failure. Require `SUCCESS` and `DEPLOYED_APP_URL`,
+  then run authenticated browser acceptance in the new target. Do not treat a
+  protected hosting gate as an executed application.
 
 ### Feature & region gating (Fabric App Items preview)
 

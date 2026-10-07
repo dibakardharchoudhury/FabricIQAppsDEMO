@@ -18,6 +18,13 @@ See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
 
 Two ways to run everything:
 
+For **app deployment only**, start with the
+[deployment interface chooser](../../HydroOperationsApp/DEPLOY.md#start-here-choose-your-interface-not-a-different-deployment-process).
+The local **Deploy app** action and command-line deployment use the same
+`deploy_fabric_app.py` orchestrator. A normal app update does not require workspace
+deletion, reset, full Git import or rerunning data setup. Access/consent actions reported
+as blocked and ontology graph materialization remain explicit operator prerequisites.
+
 - **CLI** — scripts for Git sync, pipeline execution, Rayfin app deployment, and deletion.
 - **Local web UI** — `webapp/server.py` serves a zero-build page that runs the
   workflows and streams live progress.
