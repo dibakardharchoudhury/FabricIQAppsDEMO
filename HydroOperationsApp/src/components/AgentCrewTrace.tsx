@@ -3,7 +3,7 @@ import { Activity, Check, ClipboardCheck, ExternalLink, GitBranch, Search, Teles
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
 import { workOrderApprovals } from '../services/copilot/workOrderApproval'
-import { applicationInsightsLink, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
+import { applicationInsightsLink, automaticCrewRole, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
 import './AgentCrewTrace.css'
 import { CopilotHelper } from './CopilotHelper'
 
@@ -49,10 +49,9 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
   })
   const currentEvents = currentEventIds ? displayedEvents.filter(event => currentEventIds.includes(event.id)) : displayedEvents
   const status = pending && !currentEvents.length ? 'queued' : executionStatus(currentEvents)
-  const active = [...events].reverse().find(event => event.status === 'running')?.role
-  const focused = selected ?? active ?? events.find(event => event.status === 'approval')?.role ?? events[0].role
+  const focused = selected ?? automaticCrewRole(currentEvents) ?? events[0].role
   const invoked = new Set(events.map(event => event.role)).size
-  const focusedEvents = events.filter(event => event.role === focused)
+  const focusedEvents = displayedEvents.filter(event => event.role === focused)
   const trace = focusedEvents.flatMap(event => event.trace ?? []).sort((a, b) => a.timestamp - b.timestamp)
   const start = Math.min(...events.map(event => event.timestamp))
   const latest = focusedEvents[focusedEvents.length - 1]

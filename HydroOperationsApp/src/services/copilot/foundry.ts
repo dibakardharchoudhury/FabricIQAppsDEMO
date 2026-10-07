@@ -6,11 +6,12 @@ import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
 import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery } from './agentDefinitions.ts'
+import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery, parseWorkOrderReview } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
 import { createOrchestrationEvent, missingRequestedSpecialists, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
+import { appendOmittedSnapshotWork } from './answerPresentation.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -75,9 +76,12 @@ export async function askFoundryCopilot(
           ? renderCoordinatorPrompt(settings)
           : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.`
       const input: unknown[] = buildAgentInput(context, history, prompt)
+      let requestDeadline: AbortSignal | undefined
+      let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       try {
         if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
         for (let round = 0; round < 6; round++) {
+          requestDeadline = AbortSignal.timeout(180_000)
           const response = await fetch(`${endpoint}/openai/v1/responses`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -85,7 +89,7 @@ export async function askFoundryCopilot(
               agent_reference: { type: 'agent_reference', name: AGENT_NAMES[role] },
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
             }),
-            signal: AbortSignal.timeout(180_000),
+            signal: requestDeadline,
           }).catch((error: unknown) => {
             if (error instanceof TypeError) {
               throw new Error(`No HTTP response was received from Foundry Agent Service at ${new URL(endpoint).hostname}. Check browser network/DNS, proxy and CORS diagnostics. This is not evidence of a missing consent grant; the request was not retried automatically.`, { cause: error })
@@ -100,6 +104,7 @@ export async function askFoundryCopilot(
           const state = await readResponsesStream(response.body, role === 'supervisor' ? onProgress : undefined, raw => {
             if (captureFoundryEvent(event, raw)) publish()
           })
+          requestDeadline = undefined
           if (!state.completed) throw new Error('Foundry stream ended without a completed response. No success was inferred.')
           if (state.usage) usage = {
             prompt: (usage?.prompt ?? 0) + state.usage.prompt,
@@ -111,6 +116,14 @@ export async function askFoundryCopilot(
           const calls = state.toolCalls.filter(call => call.id && call.name)
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
+            if (role === 'work-order' && !event.proposalIds?.length && !workReview) {
+              captureApplicationEvent(event, 'Work-order review has no staged card or explicit no-draft decision.')
+              publish()
+              input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: 'No editable draft exists yet. If a draft is warranted, call hydro_query/propose_work_order now; this stages an in-memory approval card and does not save SQL. Otherwise call complete_work_order_review with no_draft or needs_clarification and a specific reason. Do not ask permission again or substitute prose for this outcome.',
+              }] })
+              continue
+            }
             if (role === 'supervisor') {
               const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
               const missing = missingRequestedSpecialists(question, completed)
@@ -118,7 +131,7 @@ export async function askFoundryCopilot(
                 captureApplicationEvent(event, `Completion check: remaining requested specialist work (${missing.join(' -> ')}).`)
                 publish()
                 input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
-                  text: `The requested workflow is incomplete. Remaining specialists, in order: ${missing.join(' -> ')}. Delegate their scoped tasks using existing findings; do not repeat completed work. No-save instructions prohibit SQL writes, not staging an editable proposal. Conditional drafts require a Work Order review, which can explicitly conclude no draft is justified. Independent final verification must follow draft review. Stay within the existing execution budget.`,
+                  text: `The requested workflow is incomplete. Remaining specialists, in order: ${missing.join(' -> ')}. Delegate their scoped tasks using existing findings; do not repeat completed work. No-save instructions prohibit SQL writes, not staging an editable proposal. Conditional drafts require a Work Order review, which can explicitly conclude no draft is justified. Independent final verification must follow draft review. Stay within the existing execution budget. Your rejected provisional answer will be replaced: the final answer must consolidate ALL requested findings, inventory tables, chart CSV and limitations, not merely acknowledge the last step.`,
                 }] })
                 continue
               }
@@ -127,7 +140,9 @@ export async function askFoundryCopilot(
             event.detail = event.status === 'approval' ? 'Draft available for human review; no SQL write performed.' : 'Foundry response completed.'
             event.finishedAt = Date.now()
             publish()
-            return state.content
+            return workReview
+              ? `${workReview.decision === 'no_draft' ? 'No draft recommended' : 'Clarification required'}: ${workReview.reason}`
+              : state.content
           }
           for (const call of calls) {
             if (role === 'supervisor' && call.name === 'delegate_to_agent') {
@@ -149,6 +164,12 @@ export async function askFoundryCopilot(
                 publish()
                 throw error
               }
+            } else if (role === 'work-order' && call.name === 'complete_work_order_review') {
+              if (event.proposalIds?.length || workReview) throw new Error('Work-order review cannot overwrite an existing draft or decision.')
+              workReview = parseWorkOrderReview(call.arguments)
+              captureApplicationEvent(event, `Work-order review: ${workReview.decision} - ${workReview.reason}`, call.id)
+              input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ ...workReview, staged_drafts: 0, sql_writes: 0 }) })
+              publish()
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
               const parsed = parseHydroQuery(call.arguments)
               if (parsed.ok === false) {
@@ -165,6 +186,7 @@ export async function askFoundryCopilot(
               const allowed: readonly string[] = role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
               if (!allowed.includes(parsed.toolName)) throw new Error(`Tool ${parsed.toolName} is not permitted for ${role}.`)
               const args: ToolArguments = parsed.args
+              if (parsed.toolName === 'propose_work_order' && workReview) throw new Error('A completed no-draft review cannot also stage a draft.')
               const started = Date.now()
               const step: AgentStep = { tool: parsed.toolName, status: 'running', detail: describeToolCall(parsed.toolName, args), summary: 'running', elapsedMs: 0, args: parsed.argumentsJson }
               steps.push(step)
@@ -197,18 +219,33 @@ export async function askFoundryCopilot(
               throw new Error(`Unexpected client tool ${call.name} from ${AGENT_NAMES[role]}.`)
             }
           }
+          if (role === 'supervisor') {
+            const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
+            const missing = missingRequestedSpecialists(question, completed)
+            input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+              text: `${missing.length ? `Before answering, complete remaining requested specialist work: ${missing.join(' -> ')}.` : 'The completed specialists are available for synthesis.'} Actual editable cards staged in this turn: ${proposals.length}. Preserve the assigned scope of each remaining delegation. The final answer replaces all provisional streamed text: consolidate the complete requested findings, all requested inventory tables and chart CSV, work-review outcome and limitations. Do not return only a last-step acknowledgement or ask permission to perform work already requested.`,
+            }] })
+          }
         }
         throw new Error(`${AGENT_NAMES[role]} exceeded its six-round execution budget.`)
       } catch (error) {
+        const failure = requestDeadline?.aborted
+          ? new Error(`${AGENT_NAMES[role]} did not finish its response within 180 seconds. Its result is unverified; no automatic retry was made. See the execution receipts for the source and response identity.`, { cause: error })
+          : error
         event.status = 'error'
-        event.detail = error instanceof Error ? error.message : 'Foundry invocation failed.'
+        event.detail = failure instanceof Error ? failure.message : 'Foundry invocation failed.'
         event.finishedAt = Date.now()
         captureApplicationEvent(event, event.detail, undefined, true)
         publish()
-        throw error
+        throw failure
       }
     }
-    const text = await invoke('supervisor', question)
+    const narrative = await invoke('supervisor', question)
+    const text = appendOmittedSnapshotWork(narrative, steps)
+    if (text !== narrative) {
+      captureApplicationEvent(events[0], 'Preserved open-work evidence omitted from the Supervisor narrative.')
+      publish()
+    }
     history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const, content: text }].slice(-8)
     return { text, usage, steps, orchestrationEvents: events, proposals, visualizations, models }
   } catch (error) {

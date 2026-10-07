@@ -21,6 +21,13 @@ export function executionStatus(events: OrchestrationEvent[]) {
   return events.length ? 'completed' : 'idle'
 }
 
+export function automaticCrewRole(events: OrchestrationEvent[]) {
+  const latestFirst = [...events].reverse()
+  return latestFirst.find(event => event.status === 'running' || event.status === 'queued')?.role
+    ?? latestFirst.find(event => event.status === 'error' || event.status === 'approval')?.role
+    ?? events[0]?.role
+}
+
 export function crewCommunications(events: OrchestrationEvent[]) {
   return events.flatMap(event => {
     const parent = events.find(parent => parent.id === event.parentId)

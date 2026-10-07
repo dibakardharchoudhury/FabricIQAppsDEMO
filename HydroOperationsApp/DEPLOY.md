@@ -336,6 +336,30 @@ view hook, preserves messages/input, keeps the composer visible and restores wit
 Escape. Local browser checks passed at 1200 and 390 pixels, including no horizontal
 overflow. These later fixes require redeployment and live regression acceptance.
 
+Version 1.0.725 (`c6d4a2a`) passed canonical deployment and live HOT regression:
+five chart bars from the requested five rows, read-completion freshness, and an
+operational Maximize/Restore control. The first compound scenario ran the actual
+Q&A -> RCA -> Work Orders -> Q&A sequence in 2m59s and produced an editable T002
+card, which was rejected without a write. Its final narrative nevertheless omitted
+three returned orders on the other two affected turbines.
+
+The ontology-context scenario timed out at the client response deadline. Application
+Insights confirmed that the delegated Ontology request incorrectly included downstream
+telemetry, investigation and drafting, rather than only instance context. The backlog
+scenario independently returned ten SQL orders and invoked all four specialists, but
+its Work Order result was only a prose draft, and a final short acknowledgement replaced
+the requested table/chart. Those scenarios are not accepted.
+
+Follow-up changes preserve omitted canonical-snapshot orders in a clearly labeled
+application-generated evidence table, narrow Fabric IQ delegation scope, give the
+Supervisor remaining-work reminders after each handoff, and require a consolidated
+final answer. Work Orders must either stage a real approval card or call the read-only
+`complete_work_order_review` function with a validated no-draft/clarification reason;
+prose alone cannot complete review. Timeouts retain the 180-second bound and report
+the responsible agent explicitly, without automatic retries. Automatic crew detail
+focus follows current-turn execution/failure rather than an old draft. These follow-up
+changes require fresh hosted acceptance; prior successes do not certify them.
+
 ### Five complex orchestration acceptance scenarios
 
 These prompts are test inputs, not evidence that the scenarios have passed. Record

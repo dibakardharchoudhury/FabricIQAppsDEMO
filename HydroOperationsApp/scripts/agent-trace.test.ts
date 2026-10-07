@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applicationInsightsLink, captureApplicationEvent, captureFoundryEvent, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
+import { applicationInsightsLink, automaticCrewRole, captureApplicationEvent, captureFoundryEvent, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
 import { createOrchestrationEvent } from '../src/services/copilot/orchestration.ts'
 
 test('crew status never turns a failed or unstarted invocation into success', () => {
@@ -11,6 +11,18 @@ test('crew status never turns a failed or unstarted invocation into success', ()
   assert.equal(executionStatus([event]), 'error')
   event.status = 'approval'
   assert.equal(executionStatus([event]), 'approval')
+})
+
+test('automatic crew focus follows the current specialist failure or work, not historical drafts', () => {
+  const supervisor = createOrchestrationEvent('supervisor', 'error', 'Child failed')
+  const iq = createOrchestrationEvent('fabric-iq', 'error', 'Timed out')
+  assert.equal(automaticCrewRole([supervisor, iq]), 'fabric-iq')
+  iq.status = 'running'
+  assert.equal(automaticCrewRole([supervisor, iq]), 'fabric-iq')
+  supervisor.status = 'completed'
+  iq.status = 'completed'
+  assert.equal(automaticCrewRole([supervisor, iq]), 'supervisor')
+  assert.equal(automaticCrewRole([]), undefined)
 })
 
 test('multi-step handoffs retain names and roles and always return through Supervisor', () => {

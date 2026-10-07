@@ -1,9 +1,11 @@
 import Papa from 'papaparse'
 import type { AgentVisualization } from '../assistantStream.ts'
+import type { AgentStep } from '../agentSteps.ts'
 
 export const OPERATIONAL_EVIDENCE_CONTRACT = `Operational evidence contract:
 "Operational SQL work orders" means records from the operational SQL data source, not a work-order type or category. Do not invent a SQL/type/category filter. Open means status neither Completed nor Cancelled.
 For each affected equipment ID, include EVERY open work order and its number, title, status and priority. Same-signal work requires an exact instrument ID or OPC UA node match to the signal being discussed. EVERY other open order on that equipment is equipment-level work, including orders linked to a different signal; equipment-level does not mean only orders with null signal IDs. These two groups must account for all open orders on that equipment.
+When a compound request selects one turbine for investigation, preserve the requested work inventory for ALL initially affected turbines in the final answer, not only the selected turbine.
 Compare telemetry event timestamps with the tool's read_completed_at_utc when provided; it is the actual read-completion clock, not the request-start clock. For remote telemetry queries, request the query's UTC clock with the evidence when supported. Otherwise identify the supplied current UTC time as the request-start reference, not an invented query time. A reading received after request start does not establish source clock skew. Never use the newest event as the current clock. Explicitly label readings older than 60 seconds as stale; readings ahead of the actual read-completion clock have uncertain freshness. Never describe a reading as fresh merely because it falls inside the lookback window.
 When forwarding a request to another agent or remote tool, preserve these source and matching rules, the current time, and the original scope.`
 
@@ -20,6 +22,34 @@ export type AnswerDataset = {
   columns: string[]
   rows: string[][]
   csv: string
+}
+
+export function appendOmittedSnapshotWork(text: string, steps: readonly Pick<AgentStep, 'tool' | 'status' | 'result'>[]): string {
+  const missing = new Map<string, string[]>()
+  const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  const cell = (value: unknown) => (typeof value === 'string' && value ? value : 'Not supplied')
+    .replace(/[\\|`*_[\]<>]/g, '\\$&').replace(/\r?\n/g, ' ')
+  for (const step of steps) {
+    if (step.status !== 'done' || !['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'].includes(step.tool)) continue
+    if (!step.result) throw new Error('Completed snapshot omitted its evidence.')
+    const snapshot: unknown = JSON.parse(step.result)
+    if (!record(snapshot) || !Array.isArray(snapshot.rows)) throw new Error('Snapshot evidence has no rows array.')
+    for (const row of snapshot.rows) {
+      if (!record(row) || typeof row.equipment_id !== 'string' || typeof row.opcua_node_id !== 'string'
+        || !Array.isArray(row.open_work_orders)) throw new Error('Snapshot work coverage has an invalid equipment/signal identity.')
+      for (const order of row.open_work_orders) {
+        if (!record(order) || typeof order.workOrderNumber !== 'string' || !order.workOrderNumber) throw new Error('Snapshot work coverage has no work-order identity.')
+        const number = order.workOrderNumber
+        const mentioned = new RegExp(`(?<![\\w-])${number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i').test(text)
+        if (!mentioned) missing.set(JSON.stringify([row.equipment_id, row.opcua_node_id, number]), [
+          row.equipment_id, row.opcua_node_id, number, order.title, order.status, order.priority,
+          order.relation, snapshot.read_completed_at_utc,
+        ].map(cell))
+      }
+    }
+  }
+  if (!missing.size) return text
+  return `${text}\n\n### Additional verified open work\n\nThe application preserved these orders from the direct snapshot because the narrative omitted their numbers. Relations are relative to the signal shown; timestamps identify the source read, not a new live query.\n\n| Equipment | Signal | Work order | Title | Status | Priority | Relation | Read completed (UTC) |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n${[...missing.values()].map(row => `| ${row.join(' | ')} |`).join('\n')}`
 }
 
 const numeric = (value: string) => value.trim() !== '' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
-import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -15,6 +15,42 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('only Work Orders can record a structured no-draft review, never a pretend staged card', () => {
+  assert.deepEqual(parseWorkOrderReview('{"decision":"no_draft","reason":" Existing order covers the signal. "}'),
+    { decision: 'no_draft', reason: 'Existing order covers the signal.' })
+  assert.equal(parseWorkOrderReview('{"decision":"needs_clarification","reason":"Two matching equipment IDs."}').decision, 'needs_clarification')
+  assert.throws(() => parseWorkOrderReview('{"decision":"staged","reason":"Prose draft"}'), /explicit decision/)
+  assert.throws(() => parseWorkOrderReview('{"decision":"no_draft","reason":""}'), /explicit decision/)
+  assert.match(JSON.stringify(agentDefinition('work-order', 'test').tools), /complete_work_order_review/)
+  for (const role of ['supervisor', 'qa', 'rca'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_work_order_review/)
+})
+
+test('compound summaries preserve omitted snapshot work without inventing or duplicating orders', () => {
+  const result = JSON.stringify({ read_completed_at_utc: '2026-10-07T20:25:19Z', rows: [
+    { equipment_id: 'EQUIP_RTI_T002', opcua_node_id: 'ns=2;s=T002.power_output', open_work_orders: [
+      { workOrderNumber: 'WO-2836', title: 'Inlet pressure', status: 'Scheduled', priority: 'High', relation: 'equipment-level' },
+    ] },
+    { equipment_id: 'EQUIP_RTI_T008', opcua_node_id: 'ns=2;s=T008.vibration_a', open_work_orders: [
+      { workOrderNumber: 'WO-28', title: 'Inspect | signal\nchain', status: 'Draft', priority: 'High', relation: 'equipment-level' },
+      { workOrderNumber: 'WO-2851', title: 'Power output dip', status: 'Planned', priority: 'Medium', relation: 'equipment-level' },
+    ] },
+    { equipment_id: 'EQUIP_RTI_T011', opcua_node_id: 'ns=2;s=T011.power_output', open_work_orders: [
+      { workOrderNumber: 'WO-2857', title: 'Cooling inspection', status: 'In progress', priority: 'High', relation: 'equipment-level' },
+    ] },
+  ] })
+  const step = { tool: 'query_signal_quality_snapshot', status: 'done' as const, result }
+  const text = appendOmittedSnapshotWork('Selected T002 has WO-2836. Not WO-280.', [step, step])
+  const datasets = readAnswerDatasets(text).datasets
+  assert.equal(datasets.length, 1)
+  assert.deepEqual(datasets[0].rows.map(row => row[2]), ['WO-28', 'WO-2851', 'WO-2857'])
+  assert.equal(datasets[0].rows[0][3], 'Inspect | signal chain')
+  assert.ok(datasets[0].rows.every(row => row[6] === 'equipment-level' && row[7] === '2026-10-07T20:25:19Z'))
+  assert.equal(appendOmittedSnapshotWork(text, [step]), text)
+  assert.equal(appendOmittedSnapshotWork('No results.', [{ ...step, status: 'error' }]), 'No results.')
+  assert.equal(appendOmittedSnapshotWork('No results.', [{ ...step, result: '{"rows":[]}' }]), 'No results.')
+  assert.throws(() => appendOmittedSnapshotWork('Incomplete', [{ ...step, result: '{}' }]), /no rows array/)
+})
 
 test('every Foundry input message has explicit item and content types, including history', () => {
   const input = buildAgentInput('policy', [
