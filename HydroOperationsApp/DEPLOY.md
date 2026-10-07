@@ -26,6 +26,42 @@ do not configure the SPA permissions manually. Agent definition readback is not 
 certification. Live acceptance must exercise direct-source Q&A, delegation, Fabric IQ, and
 human-approved SQL creation independently of hosting checks.
 
+#### October 7, 2026 acceptance status
+
+The canonical deployment provisioned and read back Supervisor v1, Q&A v2, RCA v2,
+Work Order v2, and Fabric IQ v1. The separate Data Agent and Ontology connections
+use project-scoped delegated authentication. Older bridge resources were not deleted.
+The SPA bundle was published, backend/CORS POST checks passed, and all 39 pre-existing
+SPA redirect URIs were preserved. **The deployment exited with failure, not SUCCESS:**
+the current identity could configure permissions but could not grant consent.
+
+An Entra administrator must grant consent on **Hydro Operations Fabric Client**
+(`3ccdb72d-6c81-4459-b9fd-d9293c242555`) for the already configured scopes:
+
+- Microsoft Foundry Agent Service / Azure Machine Learning Services: `user_impersonation`.
+- Power BI Service / Microsoft Fabric: `DataAgent.Execute.All`.
+
+This is the exact manual action printed by `setup-live-auth` after its automated
+grant attempts returned `Authorization_RequestDenied`; do not replace the SPA or edit
+redirects. After consent, rerun the canonical deployment command and interactive acceptance.
+
+Independent delegated CLI tests, which do **not** prove SPA consent or browser readiness:
+
+- The persistent Supervisor returned a real Q&A delegation (about 5.8 seconds for that
+  routing response alone, not end-to-end Q&A).
+- Fabric IQ invoked the direct Ontology endpoint and returned the three facilities
+  Foyers, Pitlochry, and Sloy (about 67 seconds). No Data Agent invocation was used
+  for that question. This does not certify every ontology query or repair the known
+  Data Agent-to-Ontology limitation.
+- Fabric IQ separately invoked the published Data Agent and returned a reported open
+  work-order count of 10 from operational SQL (about 45 seconds). Its result included
+  an upstream output-moderation processing-error annotation. The count was not
+  independently reconciled with SQL and does not certify execution provenance.
+
+Browser answer parity, end-to-end latency, chart interaction, and edited Yes/No
+approval followed by SQL readback remain unverified. Do not infer them from the
+successful build, cloud definition readback, or these bounded endpoint tests.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
