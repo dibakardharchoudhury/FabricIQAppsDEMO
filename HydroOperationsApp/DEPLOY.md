@@ -144,6 +144,16 @@ This is not evidence of missing consent. Network failures now display an explici
 no-HTTP-response diagnostic without automatic retries or inferred agent success.
 Live answer parity and approval-to-SQL readback remain unverified until browser access works.
 
+Canonical deployment of `5cdf370` was attempted twice after source was committed/pushed.
+Both attempts reused the existing SPA and Rayfin state, captured all 39 redirects, passed
+environment validation, then failed during Foundry Supervisor definition readback with
+Python `NameResolutionError` (`getaddrinfo` 11001/11002). Neither attempt reached app
+publication or printed `SUCCESS`. An intervening DNS check and browser HEAD briefly worked,
+but a later real browser POST again failed `ERR_NAME_NOT_RESOLVED`; connectivity is intermittent.
+The hosted bundle therefore remains the earlier deployment, not these source changes.
+The final committed source still passes the Node 24 build, lint and startup budget locally.
+No DNS settings, endpoint identities, permission checks, or existing consent grants were bypassed.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
