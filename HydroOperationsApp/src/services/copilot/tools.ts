@@ -372,6 +372,8 @@ export function createToolRuntime(
         const evidence = stationPowerEvidence(kustoRowsToObjects(data.columns, data.rows), lookback)
         return {
           result: { rows: evidence.rows, row_count: evidence.rows.length, lookback,
+            chart_rendered: Boolean(evidence.visualization),
+            chart: evidence.visualization,
             semantics: 'Sample-weighted arithmetic mean of individual power_output readings across turbines, converted to MW using metadata. All qualities included; not total station output, time-weighted mean or energy.',
             read_completed_at_utc: new Date().toISOString() },
           rowCount: evidence.rows.length, visualization: evidence.visualization, query,

@@ -69,7 +69,7 @@ export function buildStationPowerQuery(lookback = '24h'): string {
   return `OPCUAEvents
 | where event_time > ago(${lookback}) and event_time <= now()
 | where opcua_node_id endswith_cs '.power_output'
-| join kind=leftouter (AssetMaster() | project opcua_node_id, Station, Unit) on opcua_node_id
+| join kind=leftouter (AssetMaster() | summarize mappings = count(), Station = take_any(Station), Unit = take_any(Unit) by opcua_node_id | extend Unit = iff(mappings == 1, Unit, '')) on opcua_node_id
 | summarize average = avg(value), samples = count(), invalid_values = countif(isnull(value) or not(isfinite(value))), bad_samples = countif(toupper(quality) == 'BAD'), latest_event_time = max(event_time) by Station, Unit
 | order by Station asc, Unit asc`
 }

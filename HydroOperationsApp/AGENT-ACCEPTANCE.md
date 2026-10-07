@@ -75,7 +75,8 @@ verification rather than inferring speed from reduced input construction.
     Independence here means a separately invoked factual specialist, not independent
     physical measurements or a different model family.
 14. **Compound workflow:** use requested capabilities in order; maximum four delegations
-    and six Responses rounds per invocation. Bounds and actual source failures are
+    and six Responses rounds for Chief/Sparky, eight for direct specialists (including
+    identity/coverage reads, investigation or staging, and final acknowledgement). Bounds and actual source failures are
     explicit; no hidden retry of failed writes or forced completion from invented data.
 15. **Battle:** the same prompt reaches both configured entries. Read-only comparisons
     can be capacity-safe sequential or parallel. Recognized work-order requests use
@@ -187,8 +188,47 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
 
 ## Basic regression evidence
 
+### Completed 1.0.727 baseline: 18 turns, not an accepted suite
+
+These are sequential live browser runs on October 7, 2026. Times are first/follow-up
+seconds, rounded. Zero-row results and stale telemetry are not automatically failures,
+but completed text alone is not acceptance. No test SQL writes or notifications were sent.
+
+| Flow | Seconds | Actual outcome requiring follow-up |
+|---|---|---|
+| 1 - BAD / RCA / work / verification | 111 / 12 | Failed: premature second Gauge run consumed the delegation budget; the failed turn then lost its useful conversation context. |
+| 2 - Ontology T005 / direct check / RCA | 222 / 118 | Returned identity/telemetry and no-draft decision on stale evidence. Answer nevertheless mentioned a draft template that was not a card. Source provenance and consistent final wording remain acceptance gates. |
+| 3 - Data Agent inventory / SQL / RCA | 197 / 79 | Both reads reported 11 open orders; explicit no-draft review cited existing T002 work and stale/truncated telemetry. One inventory chart rendered. End-to-end content review is not yet a full pass. |
+| 4 - Native/direct reconciliation | 95 / 121 | Native Data Agent reported output moderation failure. Direct results followed, but cannot establish the requested native comparison. Not accepted. |
+| 5 - Native facilities/backlog / draft follow-up | 187 / 29 | Native call timed out at 180s. Follow-up staged a candidate but Fixer exceeded its six-round budget; failed-workflow cleanup withdrew it. |
+| 6 - Spare-parts risk / verification | 215 / 78 | Correctly refused to infer equipment coverage without BOM/materials. Incorrectly treated old restock dates as stale inventory and offered queries against unconnected procurement sources. |
+| 7 - Downtime / verification | 75 / 69 | Correctly did not infer an outage from BAD/stale/truncated telemetry; zero recent station-power rows. Offered gateway/calendar queries without an integration; follow-up capability wording needs correction. |
+| 8 - Notifications / investigation | 37 / 19 | Failed: initial short tag was used as a canonical ID; identity correction/repeated empty reads exhausted RCA rounds. Follow-up exhausted Chief rounds. |
+| 9 - Station power / scientific RCA | Not run in this batch | Separate exact simple chart baseline took 50s and rendered correct bars but described an unnecessary hourly dataset. Correction and two-turn rerun required. |
+| 10 - Explicit editable draft / verification | 23 / 15 | Failed: repeated empty work reads exhausted Gauge's budget; follow-up lost failed-turn context. |
+
+Follow-up code corrects delegation ordering, retains explicitly incomplete turn context,
+propagates failed native MCP items, and preserves confirmed approval acknowledgements.
+Direct specialists have eight bounded rounds, with remaining-budget guidance, correct
+tag/ID resolution, reuse of successful empty results and immediate terminal no-draft
+review. Chart scope, business-date freshness and unavailable-source wording are explicit.
+These are corrections to verify live, **not retroactive passes for the baseline**.
+
+- Version **1.0.727**, commit `2057e77`, passed canonical deployment: backend GraphQL/
+  token preflights and POST readiness, all 39 redirects preserved. The existing operator
+  has consent; tenant-wide rollout still requires administrator consent. Definition
+  readback: Supervisor 6, Q&A 8, RCA 8, Work Order 8, Fabric IQ 5.
+- Hosted reload after capacity scaling: TTFB 1.601s, DOM ready 3.693s, load 3.706s,
+  first contentful paint 3.748s; STID and 90 signals connected. Previously observed
+  page load was 43.6s. These are individual observations, not p95 or code-only gains.
+- Hosted first visits: Maintenance 900ms, Administration 882ms, Intelligence 866ms.
+  Repeat visits: Overview 32ms, Maintenance 22ms, Intelligence 20ms; no horizontal overflow.
+- Hosted exact simple station-power prompt took 50.1s. Three correct structured bars
+  rendered, but the agent unnecessarily queried hourly values and described that different
+  dataset. **Answer consistency failed.** Follow-up changes expose the rendered chart
+  specification to the agent and explicitly preserve one-mean-per-station scope; rerun required.
 - Hosted pre-fix map reproduced `overflow: visible` and tile `position: static`.
-  Local corrected component: `overflow: hidden`, tile `position: absolute`.
+  Local and hosted 1.0.727 corrected component: `overflow: hidden`, tile `position: absolute`.
 - Local browser fixture: no horizontal overflow at 1440px or 390px, compact flow,
   keyboard-operable height slider, 140px flow clamp, composer visible when maximized,
   Escape restores and preserves unsent text. Two real SVG bars render from structured
@@ -196,6 +236,11 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
 - Approval timeout tests cover no late validation write, retry isolation, uncertain-write
   replay prevention, late success and late failure. These are deterministic unit tests,
   not proof of a successful hosted SQL transaction.
+  An additional deadline/acknowledgement race test verifies that confirmed creation cannot
+  be overwritten with an uncertain status.
+- The first repair release passed 94 focused tests, typecheck, lint, Node 24 production
+  build and two built-bundle checks. Subsequent targeted chart/approval checks passed
+  60 tests, typecheck and lint. Neither suite substitutes for the live flow matrix.
 - Capacity incident: prior HTML TTFB 21.7s, tiny scripts approximately 21s, Eventhouse
   HTTP 429. A single uncached HTML fetch after scale-up took 1.46s. That is not a full
   cold/warm performance benchmark or proof that source throttling cleared.

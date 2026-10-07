@@ -8,7 +8,7 @@ import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery, parseWorkOrderReview } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, missingRequestedSpecialists, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, delegationOrderError, missingRequestedSpecialists, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
@@ -80,12 +80,15 @@ export async function askFoundryCopilot(
         : role === 'rca'
           ? 'Use a scientific RCA structure: define the observed failure and time window; check identity, units, quality, freshness and missingness; compare against a justified baseline or comparable operating regime. Separate sensor/data faults from physical equipment hypotheses. For each competing hypothesis give supporting and contradictory source observations, unknowns, qualitative confidence with justification, and a safe discriminating inspection/test for qualified personnel. Correlation alone is not causation. Do not invent thresholds, probabilities or maintenance manuals. If evidence is insufficient, state that the cause is undetermined. Prefer source-side counts, trends and bounded summaries over raw dumps; do not omit requested evidence.'
           : 'Execute only the assigned task using the current evidence. For mean power-output readings per station use query_station_power when enabled: it returns authoritative unit-normalized rows and a structured chart in one call. It is not total station generation or energy. Do not run a generic Signal contains power query or guess units. For other requested charts use visualize_dataset with the retrieved dataset rather than unfenced CSV prose.'
-      const input: unknown[] = buildAgentInput(`${context}\n\n${scope}`, history, prompt, role)
+      const chartScope = 'A request for average power output per station over a window means one mean per station, unless the operator explicitly requests hourly bins or a time-series trend. Preserve that scope in delegation and the final answer. query_station_power already renders its chart: use its exact returned rows, units, semantics and read-completion clock. Do not add hourly queries, convert to a different display unit, or emit a second CSV for that completed request. Additional investigation explicitly requested by the operator remains separate.'
+      const readDiscipline = 'Resolve short asset tags such as T005 against equipment.tag, not equipment_id. Use the returned canonical equipment_id in operational equipmentId filters; never infer no work from an unresolved tag. Reuse verified current-turn identities and results. A successful zero-row result with total_matched=0 and truncated=false is a complete empty result for those exact filters; do not repeat it merely to confirm emptiness. Batch independent reads. When available sources are exhausted, return an evidence-limited conclusion rather than searching the same sources again. If a requested native source fails, report failure and do not silently replace it with direct queries.'
+      const input: unknown[] = buildAgentInput(`${context}\n\n${scope}\n\n${chartScope}\n\n${readDiscipline}`, history, prompt, role)
       let requestDeadline: AbortSignal | undefined
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       try {
         if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
-        for (let round = 0; round < 6; round++) {
+        const maxRounds = role === 'supervisor' || role === 'fabric-iq' ? 6 : 8
+        for (let round = 0; round < maxRounds; round++) {
           requestDeadline = AbortSignal.timeout(180_000)
           const response = await fetch(`${endpoint}/openai/v1/responses`, {
             method: 'POST',
@@ -152,6 +155,14 @@ export async function askFoundryCopilot(
           for (const call of calls) {
             if (role === 'supervisor' && call.name === 'delegate_to_agent') {
               const { specialist, question: delegatedQuestion, reason } = parseDelegation(call.arguments)
+              const completed = events.filter(entry => entry.status === 'completed' || entry.status === 'approval').map(entry => entry.role)
+              const orderError = delegationOrderError(question, specialist, completed)
+              if (orderError) {
+                input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ error: orderError, executed: false }) })
+                captureApplicationEvent(event, orderError, call.id, true)
+                publish()
+                continue
+              }
               const key = `${specialist}:${delegatedQuestion}`
               if (delegated.has(key) || delegated.size >= 4) throw new Error('Supervisor attempted repeated or excessive delegation.')
               delegated.add(key)
@@ -224,16 +235,30 @@ export async function askFoundryCopilot(
               throw new Error(`Unexpected client tool ${call.name} from ${AGENT_NAMES[role]}.`)
             }
           }
+          if (role === 'work-order' && workReview) {
+            event.status = 'completed'
+            event.detail = `Work-order review completed: ${workReview.decision}. No SQL write performed.`
+            event.finishedAt = Date.now()
+            publish()
+            return `${workReview.decision === 'no_draft' ? 'No draft recommended' : 'Clarification required'}: ${workReview.reason}`
+          }
           if (role === 'supervisor') {
             const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
             const missing = missingRequestedSpecialists(question, completed)
             input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
-              text: `${missing.length ? `Before answering, complete remaining requested specialist work: ${missing.join(' -> ')}.` : 'The completed specialists are available for synthesis.'} Actual editable cards staged in this turn: ${proposals.length}. Preserve the assigned scope of each remaining delegation. The final answer replaces all provisional streamed text: consolidate the complete requested findings, all requested inventory tables and chart CSV, work-review outcome and limitations. Do not return only a last-step acknowledgement or ask permission to perform work already requested.`,
+              text: `${missing.length ? `Before answering, complete remaining requested specialist work: ${missing.join(' -> ')}.` : 'The completed specialists are available for synthesis.'} Actual editable cards staged in this turn: ${proposals.length}. Never invent an editable template or review card when none was staged. A no_draft decision must not be followed by an offer to stage the same unsupported draft; explain the evidence needed to change that decision. Preserve the assigned scope of each remaining delegation. The final answer replaces all provisional streamed text: consolidate the complete requested findings, all requested inventory tables and chart CSV, work-review outcome and limitations. Do not return only a last-step acknowledgement or ask permission to perform work already requested.`,
+            }] })
+          } else if (role !== 'fabric-iq') {
+            input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+              text: `${maxRounds - round - 1} response rounds remain. Reuse verified current-turn findings instead of repeating successful reads, including valid empty results. Batch independent reads when needed. ${role === 'work-order' ? 'Finish all requested proposals using propose_work_order, or explicitly complete a no-draft/clarification review. When all requested cards are staged, return the result without another optional-field or permission questionnaire.' : 'Return the assigned evidence or investigation as soon as the requested facts and limitations are established. Do not spend the final round rechecking unchanged results.'}`,
             }] })
           }
         }
-        throw new Error(`${AGENT_NAMES[role]} exceeded its six-round execution budget.`)
+        throw new Error(`${AGENT_NAMES[role]} exceeded its ${maxRounds}-round execution budget.`)
       } catch (error) {
+        history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const,
+          content: `Incomplete workflow: ${error instanceof Error ? error.message : 'Agent execution failed'}. No successful final answer was produced. Pending proposals were withdrawn. Completed specialist findings are context for a fresh check, not proof that the workflow succeeded:\n${JSON.stringify(specialistResults)}`,
+        }].slice(-8)
         const failure = requestDeadline?.aborted
           ? new Error(`${AGENT_NAMES[role]} did not finish its response within 180 seconds. Its result is unverified; no automatic retry was made. See the execution receipts for the source and response identity.`, { cause: error })
           : error

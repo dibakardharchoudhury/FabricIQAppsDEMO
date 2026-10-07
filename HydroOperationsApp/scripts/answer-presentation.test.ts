@@ -4,7 +4,7 @@ import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRe
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
-import { createWorkOrderProposal, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
 
 function responseStream(events: unknown[]) {
@@ -15,6 +15,34 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('independent final verification cannot consume the slot needed for draft review', () => {
+  const prompt = 'Read T005 telemetry, investigate its condition, prepare an editable work-order draft and finally independently verify identity and coverage. Do not save.'
+  assert.equal(delegationOrderError(prompt, 'qa', []), undefined)
+  assert.match(delegationOrderError(prompt, 'qa', ['qa', 'rca']), /work-order first/)
+  assert.equal(delegationOrderError(prompt, 'work-order', ['qa', 'rca']), undefined)
+  assert.equal(delegationOrderError(prompt, 'qa', ['qa', 'rca', 'work-order']), undefined)
+  assert.equal(delegationOrderError('Read T005 work. No drafting requested.', 'qa', ['qa']), undefined)
+  const investigationOnly = 'Investigate T005 and then independently verify the evidence. Do not create a work order.'
+  assert.deepEqual(missingRequestedSpecialists(investigationOnly, ['qa', 'rca']), ['qa'])
+  assert.match(delegationOrderError(investigationOnly, 'qa', ['qa']), /rca first/)
+  assert.deepEqual(missingRequestedSpecialists(investigationOnly, ['qa', 'rca', 'qa']), [])
+})
+
+test('failed native tool items propagate even when the enclosing response completes', async () => {
+  await assert.rejects(readResponsesStream(responseStream([
+    { type: 'response.output_item.done', item: { type: 'mcp_call', name: 'fabric-query', status: 'failed', error: { message: 'Output moderation failed' } } },
+    { type: 'response.completed', response: { output: [] } },
+  ])), /native tool fabric-query failed.*Output moderation failed/)
+  await assert.rejects(readResponsesStream(responseStream([
+    { type: 'response.output_item.done', item: { type: 'mcp_call', name: 'fabric-query', status: 'completed', error: 'Source unavailable' } },
+  ])), /Source unavailable/)
+})
+
+test('inventory freshness is distinct from telemetry age and unconnected sources are not tools', () => {
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /Do not declare inventory stale from an old restock date alone/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /evidence requirements, not callable tools/)
+})
 
 test('only Work Orders can record a structured no-draft review, never a pretend staged card', () => {
   assert.deepEqual(parseWorkOrderReview('{"decision":"no_draft","reason":" Existing order covers the signal. "}'),
@@ -127,6 +155,18 @@ test('malformed data produces an explicit limitation instead of a chart', () => 
   const result = readAnswerDatasets('```csv\nAsset,Value\nT1,2,extra\n```')
   assert.equal(result.datasets.length, 0)
   assert.equal(result.issues.length, 1)
+})
+
+test('native CSV headings render only actual rectangular datasets, not flattened prose', () => {
+  for (const heading of ['Average power per station (CSV)', '### CSV dataset (station, MW)']) {
+    const { datasets } = readAnswerDatasets(`${heading}\n\nStation,average_power_MW\nSite A,1.2\nSite B,2.3`)
+    assert.equal(datasets.length, 1)
+    assert.deepEqual(datasets[0].rows, [['Site A', '1.2'], ['Site B', '2.3']])
+    assert.equal(answerVisualizations(datasets, 'Chart average power').length, 1)
+    const flattened = `${heading}\nStation,average_power_MW Site A,1.2 Site B,2.3`
+    assert.equal(readAnswerDatasets(flattened).datasets.length, 0)
+    assert.equal(hideRenderedCsv(flattened), flattened)
+  }
 })
 
 test('separate measures produce separate charts rather than mixing units', () => {
@@ -388,4 +428,22 @@ test('approval observers receive transitions and stop receiving updates after un
   unsubscribe()
   store.stage(draft)
   assert.equal(states.length, 5)
+})
+
+test('a write acknowledgement racing the deadline is never overwritten as uncertain', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const store = createApprovalStore<string>()
+  const draft = proposal()
+  store.stage(draft)
+  let finish!: (value: string) => void
+  let started!: () => void
+  const writing = new Promise<string>(resolve => { finish = resolve })
+  const start = new Promise<void>(resolve => { started = resolve })
+  const approval = store.approve(draft.id, draft, async () => {}, () => { started(); return writing })
+  await start
+  setTimeout(() => finish('WO-deadline'), APPROVAL_PHASE_TIMEOUT_MS)
+  context.mock.timers.tick(APPROVAL_PHASE_TIMEOUT_MS)
+  assert.equal(await approval, 'WO-deadline')
+  assert.equal(store.get(draft.id)?.state, 'created')
+  assert.equal(store.get(draft.id)?.result, 'WO-deadline')
 })

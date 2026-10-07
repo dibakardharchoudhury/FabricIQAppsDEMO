@@ -1,5 +1,10 @@
 # Data Agent and Foundry: five-prompt investigation
 
+> This is a historical source-comparison investigation, not the current multi-agent
+> release acceptance report. For the October 7 agent architecture, current role/routing
+> rules, scientific RCA limits, and expanded ten-flow multi-turn acceptance status, see
+> [Hydro Intelligence acceptance](../HydroOperationsApp/AGENT-ACCEPTANCE.md).
+
 ## Shared adaptive response contract
 
 The engines share presentation principles rather than one rigid answer template. Each response leads

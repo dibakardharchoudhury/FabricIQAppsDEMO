@@ -378,7 +378,7 @@ All commands run from `HydroOperationsApp/` on **Node 24**. On a machine whose d
 prefix any command with `npx -y -p node@24 -c "…"`.
 
 ```powershell
-npm install       # also installs the pinned Rayfin CLI locally
+npm ci            # fresh checkout or changed lockfile: restore pinned packages
 npm run typecheck # tsc --noEmit
 npm run lint      # eslint
 npm run test:knowledge-graph # v2 contract, projection, discovery, cache and LRO regressions
@@ -387,7 +387,12 @@ npm run build     # production build (rayfin env auto‑injected via prebuild)
 npm run dev       # dev server
 ```
 
-Without Fabric environment values the app shows explicit disconnected states — it never fabricates data.
+Required environment values must pass validation before the dev server/build starts.
+Configured sources that are unavailable show explicit disconnected/error states; the app
+never fabricates data. Local development uses the existing verified backend and
+`http://localhost:5173` redirect configured by live-auth setup. It is not a second deployment
+flow: use the [one-shot command or local deployment UI](DEPLOY.md#start-here-choose-your-interface-not-a-different-deployment-process)
+to publish. Never hand-edit generated environment or deployment state.
 Published Data Agent source/invocation guards have separate coverage:
 `node --import tsx --test scripts/artifact-discovery.test.mjs`.
 

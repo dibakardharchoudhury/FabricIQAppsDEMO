@@ -18,7 +18,7 @@ type ResponsesEvent = {
   type?: string
   delta?: string
   output_index?: number
-  item?: { type?: string; call_id?: string; name?: string; arguments?: string; content?: Array<{ type?: string; text?: string }> }
+  item?: { type?: string; call_id?: string; name?: string; arguments?: string; status?: string; error?: unknown; content?: Array<{ type?: string; text?: string }> }
   response?: {
     id?: string
     output?: unknown[]
@@ -155,6 +155,10 @@ export async function readResponsesStream(body: ReadableStream<Uint8Array>, onTe
     onEvent?.(event)
     if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') {
       throw new Error(event.response?.error?.message ?? 'Azure AI Foundry response failed.')
+    }
+    if (event.type === 'response.output_item.done' && event.item?.type === 'mcp_call'
+      && (event.item.error || event.item.status === 'failed')) {
+      throw new Error(`Foundry native tool ${event.item.name ?? 'unnamed'} failed: ${JSON.stringify(event.item.error ?? event.item.status)}. No source substitution was performed.`)
     }
     const before = state.content
     applyResponsesEvent(state, event)

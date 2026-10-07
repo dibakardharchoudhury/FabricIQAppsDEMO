@@ -4,8 +4,9 @@
 > endpoint. A real Supervisor emits delegation function calls; the client invokes separate
 > specialist agent identities and runs direct tools under the user's existing delegated identity.
 > This is not native A2A transport or Foundry Workflows. Only the Fabric IQ specialist uses Fabric IQ;
-> Q&A/RCA do not use the Data Agent as an intermediary. The historical single-model flow below
-> describes the previous implementation; see the [current app contract](../HydroOperationsApp/README.md)
+> Q&A/RCA do not use the Data Agent as an intermediary. See the
+> [role/routing and ten-flow acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md),
+> [current app contract](../HydroOperationsApp/README.md)
 > and [deployment configuration](../HydroOperationsApp/DEPLOY.md#persistent-foundry-agents).
 >
 > The project API uses `https://ai.azure.com/user_impersonation` and Foundry User RBAC.
@@ -24,7 +25,7 @@ which data each tool can reach.
 ## Live crew and execution tracing
 
 The shared chat/Battle renderer reuses the existing yellow Signal Sprint helper in a
-Supervisor-led communication diagram, with role badges: Chief (Supervisor), Scout (Q&A), Sleuth (RCA),
+Supervisor-led communication diagram, with role badges: Chief (Supervisor), Gauge (Q&A), Sleuth (RCA),
 Fixer (work orders), and Sparky (Fabric IQ). The thinking game and crew share the same
 `CopilotHelper` component and existing character styles; there is no separate SVG mascot.
 Execution receipts are collapsed by default so the answer retains the screen space. Only actual running
@@ -33,6 +34,10 @@ reduced-motion preferences. Failed runs never receive a successful overall statu
 Human approval progress comes from the in-memory approval store, so creation/rejection
 does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
 application actions, not evidence that a model executed a database mutation.
+The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
+and full handoff history. Normal chat has a keyboard-operable flow-height slider and
+Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed
+delta or composer edit. Cards remain outside collapsed evidence sections.
 
 Request packets originate only from actual child invocations with a recorded parent.
 Return/failure packets require the matching delegation call receipt, not just a completed
@@ -203,46 +208,58 @@ private endpoint or a "selected networks" firewall cuts the browser off.
 
 ## 2. Answer flow
 
-One question runs an agent loop of at most **6 iterations**. Tool results are fed back as `role:
-tool` messages so the model can chain queries or recover from its own mistakes.
+Chief and Sparky have at most **six Responses rounds** per invocation; the direct
+specialists have **eight**, including identity/coverage reads, investigation or staging,
+and final acknowledgement. Chief has a four-delegation
+budget per turn. Results return as `function_call_output` items matching actual call IDs.
+Native response output items are preserved for continuation.
 
 ```mermaid
 sequenceDiagram
   participant U as User
   participant A as foundry.ts
-  participant M as Foundry model
+  participant M as Chief (Foundry Supervisor)
+  participant S as Foundry specialist
   participant T as tools.ts
   participant D as Fabric data
 
   U->>A: question
-  A->>A: build [system + history + question]
-  loop max 6 iterations
-    A->>M: POST configured model endpoint (Responses API + tools)
-    M-->>A: SSE text deltas and/or function_call items
-    A-->>U: stream partial text
-    alt model requested tools
-      A->>T: runTool(name, args)
+  A->>M: project Responses API, agent_reference, history and question
+  loop at most four delegations
+    M-->>A: delegate_to_agent with scoped task and reason
+    A->>S: agent_reference, task and current evidence (not full history)
+    alt direct read tool
+      S-->>A: hydro_query
+      A->>T: validated runTool(name, args)
       T->>D: Kusto / GraphQL / SQL (as the user)
       D-->>T: rows
-      T-->>A: capped + projected result
-      A->>A: append tool message, record step
-    else no tool calls
-      A->>A: save turn to history (last 8 messages)
-      A-->>U: final answer + usage + trace
+      T-->>A: source evidence and optional structured chart/card
+      A->>S: function_call_output
+    else explicit native-source task
+      S->>D: Fabric IQ Data Agent or Ontology connection
+      D-->>S: native-source result or failure
     end
+    S-->>A: findings
+    A->>M: matching function_call_output and completion checks
   end
+  M-->>A: consolidated answer
+  A-->>U: answer, source evidence, real receipts and editable cards
 ```
 
 Notes on the implementation:
 
-- **Dynamic endpoint.** Administration stores the complete Responses API URL. The client posts to
-  that exact value and sends the configured deployment as `model`; it does not construct a route.
+- **Project endpoint.** Administration stores the HTTPS Foundry project endpoint. The
+  client appends `/openai/v1/responses` and sends a provisioned `agent_reference`.
+  The canonical provisioner owns model deployment selection.
 - **Streaming.** Responses API SSE text deltas are rendered progressively. Function-call argument
   fragments are accumulated by output index, and final items replace fragments before execution.
-- **Tool failures are not fatal.** The error message is returned to the model as the tool result so
-  it can correct itself; the step is still recorded in the trace with its error.
-- **History** keeps only completed user/assistant text turns (last 8 message objects, normally four
-  user/assistant exchanges). Tool traffic is
+- **Failures propagate.** Real source, publication, runtime and readback failures fail the
+  workflow. Only locally rejected, unexecuted arguments/KQL and premature delegation
+  can be corrected without a source retry. Pending proposals from failed workflows
+  are withdrawn. A write timeout remains uncertain and is never automatically replayed.
+- **History** is bounded to eight user/assistant message objects for Chief. Specialists
+  receive self-contained assignments and current-turn evidence. Incomplete-turn context
+  is explicitly labelled failed, never stored as a successful answer. Tool traffic is
   dropped between completed turns so a long session cannot grow the context unbounded. During an
   active turn, every function call and function output remains in the Responses input until the
   model produces the final answer. History is cleared only by the explicit conversation reset.
@@ -290,7 +307,7 @@ transcript.
 
 | Setting | Effect |
 | --- | --- |
-| Endpoint / deployment | Which Foundry model is called. The endpoint is the complete `/openai/v1/responses` URL, so there is no separate API-version setting. Seeded from `rayfin/.env`, but changing it needs **no rebuild** — it applies to the next question. |
+| Project endpoint | Which provisioned Foundry project is invoked. The model is selected by the canonical provisioner, not a browser inference-endpoint field. |
 | System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
 | Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |

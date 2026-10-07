@@ -7,6 +7,7 @@ export const OPERATIONAL_EVIDENCE_CONTRACT = `Operational evidence contract:
 For each affected equipment ID, include EVERY open work order and its number, title, status and priority. Same-signal work requires an exact instrument ID or OPC UA node match to the signal being discussed. EVERY other open order on that equipment is equipment-level work, including orders linked to a different signal; equipment-level does not mean only orders with null signal IDs. These two groups must account for all open orders on that equipment.
 When a compound request selects one turbine for investigation, preserve the requested work inventory for ALL initially affected turbines in the final answer, not only the selected turbine.
 Compare telemetry event timestamps with the tool's read_completed_at_utc when provided; it is the actual read-completion clock, not the request-start clock. For remote telemetry queries, request the query's UTC clock with the evidence when supported. Otherwise identify the supplied current UTC time as the request-start reference, not an invented query time. A reading received after request start does not establish source clock skew. Never use the newest event as the current clock. Explicitly label readings older than 60 seconds as stale; readings ahead of the actual read-completion clock have uncertain freshness. Never describe a reading as fresh merely because it falls inside the lookback window.
+The telemetry 60-second rule does not apply to business dates. Inventory lastRestockedAt, work-order createdAt and notification dates describe business events, not when the current SQL record was read or last synchronized. Do not declare inventory stale from an old restock date alone; state that synchronization freshness is unknown when no authoritative sync timestamp exists. Missing BOM, procurement, dispatch or gateway-log sources are evidence requirements, not callable tools: request operator-provided evidence or a new integration rather than offering to query unavailable tables.
 When forwarding a request to another agent or remote tool, preserve these source and matching rules, the current time, and the original scope.`
 
 export const ANSWER_PRESENTATION_CONTRACT = `Response presentation contract:
@@ -63,7 +64,8 @@ function normalizeLabeledCsv(text: string): string {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]
     if (/^\s*```/.test(line)) fenced = !fenced
-    if (!fenced && /^\s*CSV:\s*\S/i.test(line)) {
+    const label = line.replace(/^\s*#{1,6}\s+/, '').trim()
+    if (!fenced && (/^CSV(?::|\s+dataset\b)/i.test(label) || /\(CSV\)\s*:?\s*$/i.test(label))) {
       let start = index + 1
       while (start < lines.length && !lines[start].trim()) start++
       let end = start
@@ -73,7 +75,7 @@ function normalizeLabeledCsv(text: string): string {
       if (!parsed.errors.length && parsed.data.length > 1 && columns.length > 1
         && columns.every(column => column.trim()) && new Set(columns).size === columns.length
         && parsed.data.every(row => row.length === columns.length)) {
-        output.push(`### ${line.replace(/^\s*CSV:\s*/i, '')}`, '```csv', ...lines.slice(start, end), '```')
+        output.push(`### ${label.replace(/^CSV:\s*/i, '')}`, '```csv', ...lines.slice(start, end), '```')
         index = end - 1
         continue
       }

@@ -65,8 +65,10 @@ export function createApprovalStore<T>() {
       entry.state = 'saving'
       entry.startedAt = Date.now()
       notify()
+      let confirmed: { result: T } | undefined
       try {
         const writing = write(proposal).then(result => {
+          confirmed = { result }
           entry.result = result
           entry.state = 'created'
           entry.error = undefined
@@ -75,6 +77,7 @@ export function createApprovalStore<T>() {
         })
         return await bounded(writing, 'The SQL write did not return within 90 seconds.')
       } catch (error) {
+        if (confirmed) return confirmed.result
         // A failed response does not prove the database rolled back the write.
         entry.state = 'uncertain'
         entry.error = 'Creation could not be confirmed. Check the work-order list before requesting another draft; this submission will not be retried.'

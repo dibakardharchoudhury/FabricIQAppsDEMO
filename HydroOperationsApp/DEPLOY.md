@@ -311,7 +311,8 @@ Precedence and boundaries:
   later specialists. This is not direct peer-to-peer A2A.
 - Missing optional draft fields use editable defaults (Medium priority unless specified);
   unresolved/ambiguous asset identity still requires clarification.
-- At most four distinct delegations per turn and six response rounds per invocation.
+- At most four distinct delegations per turn, six response rounds per Chief/Sparky
+  invocation, and eight for direct specialists including reads and final acknowledgement.
   Repeated identical delegations fail. Local rejected JSON/KQL can be corrected only
   within that budget and only when nothing executed. Source/network/runtime failures
   propagate; no hidden fallback, uncertain write replay, or fabricated success.

@@ -59,13 +59,24 @@ export function isWorkOrderRequest(question: string): boolean {
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
   const missing: AgentRole[] = []
   const positive = positiveActionClauses(question)
-  if (/\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b/i.test(positive) && !completed.includes('rca')) missing.push('rca')
+  const investigation = /\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b/i.test(positive)
+  if (investigation && !completed.includes('rca')) missing.push('rca')
   const drafting = isWorkOrderRequest(question)
   if (drafting && !completed.includes('work-order')) missing.push('work-order')
   const verification = /\b(?:independently (?:check|verify)|independent (?:check|verification)|verify\b.{0,80}\bagain)\b/i.test(positive)
-  if (verification && (!completed.includes('qa') || (drafting
-    && (!completed.includes('work-order') || completed.lastIndexOf('qa') < completed.lastIndexOf('work-order'))))) missing.push('qa')
+  const reviews: AgentRole[] = [...(investigation ? ['rca' as const] : []), ...(drafting ? ['work-order' as const] : [])]
+  if (verification && (!completed.includes('qa') || reviews.some(role =>
+    !completed.includes(role) || completed.lastIndexOf('qa') < completed.lastIndexOf(role)))) missing.push('qa')
   return missing
+}
+
+export function delegationOrderError(question: string, next: AgentRole, completed: readonly AgentRole[]): string | undefined {
+  const missing = missingRequestedSpecialists(question, completed)
+  if (next === 'qa' && completed.includes('qa') && missing.includes('qa')) {
+    const prerequisites = missing.filter(role => role !== 'qa')
+    if (prerequisites.length) return `Independent final verification is premature. Complete ${prerequisites.join(' -> ')} first, then delegate verification to qa. This rejected delegation did not invoke an agent or consume a delegation slot.`
+  }
+  return undefined
 }
 
 export function createOrchestrationEvent(
