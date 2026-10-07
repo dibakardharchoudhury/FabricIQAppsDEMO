@@ -73,12 +73,30 @@ approval; only `DataAgent.Execute.All` remained missing. Tenant-wide admin conse
 not the only supported route: the validator also accepts complete per-user grants
 for the current identity. A subsequent browser HTTP 400 was separately reproduced
 as missing explicit message types in the Responses input. Typed message input and
-tool-output continuation passed live HTTP 200 checks; the client correction requires
-redeployment and must not be described as already active on the hosted page.
+tool-output continuation passed live HTTP 200 checks. The client correction was included
+in the later published bundle below; interactive browser acceptance is still incomplete.
 The Data Agent execution path now requests `DataAgent.Execute.All` explicitly alongside
 its existing Fabric scopes. If tenant policy permits personal consent, asking a Data
 Agent question presents the **Execute data agents** permission once; warm-up never opens
 a popup. Ordinary telemetry and direct Q&A reads do not request this additional scope.
+
+The later October 7 deployment of commit `9a81e14` read back Supervisor v2, Q&A v2,
+RCA v2, Work Order v2, and Fabric IQ v1 and published the crew/trace UI plus the typed
+message and Data Agent scope corrections. It reused the existing SPA and hosting
+origin and captured all 39 existing redirects for preservation. The final hosting
+availability check failed with `ConnectionResetError(10054)`; the orchestrator exited
+1 and did **not** print `SUCCESS`. The consent setup also reported insufficient
+privileges to grant the remaining Fabric permission. Refreshing the shared browser
+reached the private-app sign-in gate, preventing authenticated acceptance.
+
+Local validation passed 24 focused TypeScript tests, typecheck, lint, the Node 24
+production build, 81 deployment tests, four provisioner tests, and seven notebook
+deployment-contract tests. Local browser fixtures verified the crew's 320-pixel
+layout, pause/reduced-motion behavior, inactive-agent labeling, and approval-store
+rejection updating the UI without a SQL write. The linked Application Insights
+resource returned real Supervisor/tool spans for a verified response ID. These
+checks do not certify browser answer parity, a live SQL approval, or a hosted
+Microsoft Agent Framework coordinator; those remain outstanding.
 
 ## Ontology v2 prerequisite and capability boundaries
 
