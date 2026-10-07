@@ -19,6 +19,19 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_linked_insights_identity_is_required_and_never_inferred_by_name(self):
+        resource_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/demo/providers/Microsoft.Insights/components/demo"
+        connection = {"properties": {"category": "AppInsights", "target": resource_id}}
+        self.assertEqual(module.linked_application_insights([connection]), resource_id)
+        for invalid in [
+            [],
+            [{"properties": {"category": "RemoteTool", "target": resource_id}}],
+            [{"properties": {"category": "AppInsights", "target": "https://untrusted.example"}}],
+            [connection, {"properties": {"category": "AppInsights", "target": resource_id + "-other"}}],
+        ]:
+            with self.assertRaises(RuntimeError):
+                module.linked_application_insights(invalid)
+
     def test_regional_definition_operations_are_polled_on_canonical_origin(self):
         path = "/v1/operations/46823fb9-2ddd-4c7b-8089-068435f979f0"
         for host in ["api.fabric.microsoft.com", "wabi-us-central-b-primary-redirect.analysis.windows.net"]:

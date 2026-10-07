@@ -1,0 +1,96 @@
+.agent-crew {
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid var(--cp-border);
+  border-radius: 16px;
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  container-type: inline-size;
+  font-family: "Segoe UI", Aptos, Calibri, sans-serif;
+}
+.agent-crew-heading { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+.crew-heading-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--cp-accent); background: var(--cp-accent-soft); }
+.agent-crew-heading > div { display: grid; gap: 4px; }
+.agent-crew-heading strong { font-size: 14px; letter-spacing: -.02em; }
+.agent-crew-heading > div > span { font-size: 10px; color: var(--cp-text-muted); }
+.crew-run-status { margin-left: auto; padding: 5px 9px; border-radius: 10px; font-size: 10px; font-weight: 650; background: var(--cp-accent-soft); color: var(--cp-accent); white-space: nowrap; }
+.status-error .crew-run-status { background: var(--cp-surface-soft); color: var(--cp-danger); }
+.status-approval .crew-run-status { color: var(--cp-warning); }
+.status-completed .crew-run-status { color: var(--cp-success); }
+.crew-stage { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 16px 12px 12px; background: var(--cp-bg); }
+.crew-station { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; padding: 8px 4px 12px; border: 1px solid var(--cp-border); border-radius: 12px; color: var(--cp-text); background: var(--cp-surface); cursor: pointer; transition: border-color .2s, background .2s; }
+.crew-station.selected { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+.crew-station:focus-visible, .crew-controls button:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+.crew-speech { display: grid; place-items: center; min-height: 32px; padding: 0 4px; font-size: 9px; line-height: 1.35; color: var(--cp-text-muted); }
+.crew-name { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; font-weight: 750; }
+.crew-name svg { color: var(--cp-success); }
+.crew-job { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; min-height: 28px; font-size: 9px; color: var(--cp-text-muted); }
+.crew-station-status { padding: 3px 6px; border-radius: 8px; background: var(--cp-surface-soft); color: var(--cp-text-muted); font-size: 9px; line-height: 1.4; }
+.state-running .crew-station-status { color: var(--cp-accent); background: var(--cp-accent-soft); }
+.state-approval .crew-station-status { color: var(--cp-warning); }
+.state-error .crew-station-status { color: var(--cp-danger); }
+.state-completed .crew-station-status { color: var(--cp-success); }
+.state-idle .crew-bot { opacity: .45; }
+.crew-bot { width: min(100%, 100px); height: 114px; overflow: visible; }
+.crew-bot-shadow { fill: var(--cp-border); opacity: .45; }
+.crew-bot-body { transform-origin: 50px 96px; }
+.crew-bot-face { fill: var(--cp-bg-elevated); stroke: var(--cp-border-strong); stroke-width: 2; }
+.crew-bot-suit { fill: var(--cp-accent-soft); stroke: var(--cp-accent); stroke-width: 2; }
+.crew-bot-limb { fill: none; stroke: var(--cp-text-muted); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.crew-bot-lamp { fill: var(--cp-accent); stroke: var(--cp-surface); stroke-width: 2; }
+.crew-bot-visor { fill: var(--cp-surface); stroke: var(--cp-border); stroke-width: 2; }
+.crew-bot-eyes { fill: var(--cp-text); stroke: var(--cp-text); stroke-width: 2; stroke-linecap: round; }
+.crew-bot-smile { fill: none; stroke: var(--cp-text-muted); stroke-width: 2; stroke-linecap: round; }
+.crew-bot-badge { fill: var(--cp-accent); stroke: var(--cp-accent); stroke-width: 1.5; stroke-linejoin: round; }
+.bot-qa .crew-bot-badge { fill: var(--cp-surface); stroke-width: 2; }
+.crew-bot-prop { fill: var(--cp-accent-soft); stroke: var(--cp-accent); stroke-width: 4; stroke-linecap: round; }
+.crew-bot-clipboard { fill: var(--cp-surface); stroke: var(--cp-accent); stroke-width: 2; stroke-linejoin: round; }
+.crew-bot-clipboard path { fill: none; stroke: var(--cp-success); stroke-width: 3; }
+.state-running .crew-bot-body { animation: crew-work 1.6s ease-in-out infinite; }
+.state-running .bot-rca .crew-bot-prop { transform-origin: 74px 73px; animation: crew-investigate 2s ease-in-out infinite; }
+.state-running .crew-bot-lamp { animation: crew-signal 1.4s ease-in-out infinite; }
+.state-approval .crew-bot-clipboard { transform-origin: 60px 70px; animation: crew-approval 2.4s ease-in-out infinite; }
+.state-error .crew-bot-lamp { fill: var(--cp-danger); }
+.state-error .crew-bot-body { transform: rotate(-7deg); }
+.state-completed .crew-bot-lamp { fill: var(--cp-success); }
+.crew-activity { display: flex; align-items: flex-start; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--cp-border); font-size: 11px; overflow-wrap: anywhere; background: var(--cp-bg-elevated); }
+.crew-activity-dot { flex: 0 0 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--cp-accent); }
+.status-error .crew-activity-dot { background: var(--cp-danger); }
+.crew-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 16px; color: var(--cp-text-muted); font-size: 10px; }
+.crew-review-status { margin: 0; padding: 8px 16px 12px; color: var(--cp-text-muted); font-size: 11px; }
+.crew-controls button { padding: 4px 8px; border: 1px solid var(--cp-border); border-radius: 8px; color: var(--cp-text-muted); background: var(--cp-surface); cursor: pointer; font: inherit; }
+.crew-diagnostics { border-top: 1px solid var(--cp-border); padding: 0 16px; font-size: 11px; }
+.crew-diagnostics summary { padding: 12px 0; cursor: pointer; font-weight: 650; }
+.crew-diagnostics summary > span { margin-left: 8px; color: var(--cp-text-muted); font-size: 10px; font-weight: 400; }
+.crew-diagnostics p { color: var(--cp-text-muted); line-height: 1.5; }
+.crew-identities { display: grid; gap: 5px; padding: 12px; margin-bottom: 8px; border: 1px solid var(--cp-border); border-radius: 10px; }
+.crew-identities span { color: var(--cp-text-muted); overflow-wrap: anywhere; }
+.crew-identities code, .crew-timeline code { font: 10px Consolas, "Courier New", monospace; overflow-wrap: anywhere; }
+.crew-timeline { margin: 12px 0; padding: 0; list-style: none; }
+.crew-timeline li { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; padding: 0 0 12px; }
+.crew-timeline time { color: var(--cp-text-soft); font-variant-numeric: tabular-nums; font-size: 10px; }
+.crew-timeline li > span { display: grid; gap: 4px; padding-left: 12px; border-left: 2px solid var(--cp-border); overflow-wrap: anywhere; }
+.crew-timeline b { font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--cp-text-muted); }
+.crew-timeline .failed > span { border-color: var(--cp-danger); color: var(--cp-danger); }
+.crew-insights-link { display: inline-flex; align-items: center; gap: 6px; color: var(--cp-link); margin-bottom: 8px; }
+.crew-query { margin-bottom: 12px; }
+.crew-query pre { max-width: 100%; overflow: auto; padding: 12px; border-radius: 10px; background: var(--cp-bg-elevated); color: var(--cp-text); }
+.motion-paused *, .motion-paused *::before, .motion-paused *::after { animation-play-state: paused !important; }
+@keyframes crew-work { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-5px) rotate(2deg); } }
+@keyframes crew-signal { 50% { opacity: .35; } }
+@keyframes crew-investigate { 50% { transform: translate(-5px, -4px); } }
+@keyframes crew-approval { 50% { transform: rotate(9deg); } }
+@container (max-width: 420px) {
+  .crew-stage { gap: 4px; padding: 8px 4px; }
+  .crew-station { padding: 4px 2px 8px; }
+  .crew-speech { display: none; }
+  .crew-bot { height: 80px; }
+  .crew-job { font-size: 8px; }
+  .crew-name { font-size: 10px; }
+  .crew-station-status { font-size: 8px; padding: 3px; }
+  .agent-crew-heading { padding: 12px; gap: 8px; }
+  .crew-heading-mark { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-crew *, .agent-crew *::before, .agent-crew *::after { animation: none !important; transition: none !important; }
+}

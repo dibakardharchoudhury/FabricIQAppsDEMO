@@ -5,17 +5,25 @@ export type ApprovalState = 'pending' | 'saving' | 'created' | 'rejected' | 'unc
 
 export function createApprovalStore<T>() {
   const entries = new Map<string, { proposal: WorkOrderProposal; state: ApprovalState; result?: T }>()
+  const listeners = new Set<() => void>()
+  const notify = () => listeners.forEach(listener => listener())
   return {
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
     stage(proposal: WorkOrderProposal) {
       if (entries.has(proposal.id)) throw new Error('This proposal has already been staged.')
       entries.set(proposal.id, { proposal: { ...proposal }, state: 'pending' })
+      notify()
     },
-    clear() { entries.clear() },
+    clear() { entries.clear(); notify() },
     get(id: string) { return entries.get(id) },
     reject(id: string) {
       const entry = entries.get(id)
       if (!entry || entry.state !== 'pending') throw new Error('This proposal is no longer awaiting approval.')
       entry.state = 'rejected'
+      notify()
     },
     async approve(id: string, edits: ProposalEdits, validate: (proposal: WorkOrderProposal) => Promise<void>, write: (proposal: WorkOrderProposal) => Promise<T>) {
       const entry = entries.get(id)
@@ -26,15 +34,18 @@ export function createApprovalStore<T>() {
       const proposal = { ...checked, id, createdAt: entry.proposal.createdAt }
       if (!proposal.description.trim()) throw new Error('A description is required.')
       entry.state = 'saving'
+      notify()
       try { await validate(proposal) }
-      catch (error) { entry.state = 'pending'; throw error }
+      catch (error) { entry.state = 'pending'; notify(); throw error }
       try {
         entry.result = await write(proposal)
         entry.state = 'created'
+        notify()
         return entry.result
       } catch (error) {
         // A failed response does not prove the database rolled back the write.
         entry.state = 'uncertain'
+        notify()
         throw new Error('Creation could not be confirmed. Check the work-order list before requesting another draft; this submission will not be retried.', { cause: error })
       }
     },

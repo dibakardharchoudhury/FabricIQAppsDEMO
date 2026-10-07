@@ -152,10 +152,10 @@ export async function readResponsesStream(body: ReadableStream<Uint8Array>, onTe
   const consume = (payload: string) => {
     let event: ResponsesEvent
     try { event = JSON.parse(payload) as ResponsesEvent } catch { return }
+    onEvent?.(event)
     if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') {
       throw new Error(event.response?.error?.message ?? 'Azure AI Foundry response failed.')
     }
-    onEvent?.(event)
     const before = state.content
     applyResponsesEvent(state, event)
     if (state.content !== before) onText?.(state.content)

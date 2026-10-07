@@ -15,6 +15,33 @@
 How the **Foundry** Copilot engine authenticates, what happens during a single answer, and exactly
 which data each tool can reach.
 
+## Live crew and execution tracing
+
+The shared chat/Battle renderer shows five original robot characters: Chief (Supervisor),
+Scout (Q&A), Sleuth (RCA), Fixer (work orders), and Sparky (Fabric IQ). Only actual invoked
+agents animate; unused agents remain standing by. Animations can be paused and respect
+reduced-motion preferences. Failed runs never receive a successful overall status.
+Human approval progress comes from the in-memory approval store, so creation/rejection
+does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
+application actions, not evidence that a model executed a database mutation.
+
+Execution receipts retain actual Foundry response IDs, exposed request IDs, stable
+parent invocation IDs, and lifecycle/tool events. Browser tool execution is labeled
+separately from Foundry events. Tokens, response payloads, and private reasoning are not
+included in these receipts. They are not a complete distributed trace export.
+
+The canonical provisioner discovers the project's existing AppInsights connection and
+exports only its resource ID as `RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID`. It
+requires one unambiguous linked resource; no instrumentation secret enters the SPA.
+Receipts link to that resource and provide a response-ID-scoped, 24-hour Logs query.
+The portal uses the operator's existing Azure authorization; the UI does not request
+another API scope just to display tracing links.
+
+On October 7, a bounded query of the linked demo resource found the verified Supervisor
+response under `invoke_agent hydro-supervisor-agent:1` and an `execute_tool` span sharing
+one operation ID. This verifies correlation for that response, not end-to-end browser
+parity, hosted Framework orchestration, or SQL approval acceptance.
+
 This document covers the **Foundry engine**, not a second ontology generation. The project supports
 **Ontology v2 only**. UI/engine labels such as V1/V2 are separate from `properties.generation`.
 Foundry queries its allowed Lakehouse, Eventhouse, and operational sources directly; it does not

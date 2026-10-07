@@ -41,6 +41,24 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
         raise RuntimeError("No published Data Agent source matches the selected Ontology v2.")
 
 
+def linked_application_insights(connections: list[dict]) -> str:
+    insights = {
+        connection["properties"]["target"]
+        for connection in connections
+        if connection.get("properties", {}).get("category") == "AppInsights"
+        and connection.get("properties", {}).get("target")
+    }
+    if len(insights) != 1:
+        raise RuntimeError("The selected Foundry project must have one linked Application Insights resource for trace drill-down.")
+    resource_id = insights.pop()
+    if not isinstance(resource_id, str) or not re.fullmatch(
+        r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/microsoft\.insights/components/[^/]+",
+        resource_id, re.IGNORECASE,
+    ):
+        raise RuntimeError("The linked Application Insights target is not an authoritative resource ID.")
+    return resource_id
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip() or values.get("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "").strip()
@@ -83,6 +101,19 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     model_data = request("GET", f"https://management.azure.com{account_id}/deployments/{model}?api-version=2025-06-01", arm_headers).json()
     if model_data.get("properties", {}).get("provisioningState") != "Succeeded":
         raise deploy.DeployError("The selected Foundry model deployment is not ready.")
+
+    project_connections = request("GET", f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview", arm_headers).json()
+    connections = project_connections.get("value", [])
+    while project_connections.get("nextLink"):
+        next_link = urlparse(project_connections["nextLink"])
+        if next_link.scheme != "https" or next_link.netloc != "management.azure.com" or next_link.path != f"{project_id}/connections":
+            raise deploy.DeployError("Unexpected Foundry connection pagination URL.")
+        project_connections = request("GET", project_connections["nextLink"], arm_headers).json()
+        connections.extend(project_connections.get("value", []))
+    try:
+        insights_id = linked_application_insights(connections)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
 
     binding = json.loads(deploy._public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
     ontology = binding["ontologyId"]
@@ -152,5 +183,6 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
+        "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,
     }), encoding="utf-8")
     print("Foundry configuration readback verified; agent runtime acceptance is a separate check.", flush=True)

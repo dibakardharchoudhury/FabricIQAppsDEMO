@@ -44,7 +44,10 @@ test('native continuation preserves output items and actual response identity', 
 
 test('failed or incomplete native streams never become successful answers', async () => {
   for (const type of ['response.failed', 'response.incomplete', 'error']) {
-    await assert.rejects(readResponsesStream(responseStream([{ type, response: { error: { message: 'Runtime failed' } } }])), /Runtime failed/)
+    const events: unknown[] = []
+    const failure = { type, response: { error: { message: 'Runtime failed' } } }
+    await assert.rejects(readResponsesStream(responseStream([failure]), undefined, event => events.push(event)), /Runtime failed/)
+    assert.deepEqual(events, [failure])
   }
   assert.notEqual((await readResponsesStream(responseStream([]))).completed, true)
 })
@@ -130,4 +133,19 @@ test('validation failure remains retryable without ever calling the writer', asy
   store.stage(draft)
   await assert.rejects(store.approve(draft.id, draft, async () => { throw new Error('Invalid asset') }, async () => { assert.fail('must not write') }), /Invalid asset/)
   assert.equal(store.get(draft.id)?.state, 'pending')
+})
+
+test('approval observers receive transitions and stop receiving updates after unsubscribe', async () => {
+  const store = createApprovalStore<string>()
+  const draft = proposal()
+  const states: (string | undefined)[] = []
+  const unsubscribe = store.subscribe(() => states.push(store.get(draft.id)?.state))
+  store.stage(draft)
+  await store.approve(draft.id, draft, async () => {}, async () => 'WO-123')
+  assert.deepEqual(states, ['pending', 'saving', 'created'])
+  store.clear()
+  assert.equal(states.at(-1), undefined)
+  unsubscribe()
+  store.stage(draft)
+  assert.equal(states.length, 4)
 })

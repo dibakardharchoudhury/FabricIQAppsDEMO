@@ -7,6 +7,7 @@ import type { Asset3DModelRecord } from '../services/rayfin'
 import type { AgentStep } from '../services/copilot/foundry'
 import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
+import { AgentCrewTrace } from './AgentCrewTrace'
 import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
@@ -154,7 +155,7 @@ function AgentMessage({ message, streaming, question }: { message: CopilotMessag
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   return <>
-    <AgentOrchestrationTrace events={message.orchestrationEvents} />
+    <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />
     <CopilotSteps steps={message.steps} />
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
@@ -168,23 +169,6 @@ function AgentMessage({ message, streaming, question }: { message: CopilotMessag
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
-}
-
-function AgentOrchestrationTrace({ events }: { events?: OrchestrationEvent[] }) {
-  if (!events?.length) return null
-  return <div className="v2-agent-orchestration" aria-label="Multi-agent interaction">
-    <div className="v2-agent-orchestration-title"><Bot size={13} /><strong>Live agent flow</strong><small>{events.some(event => event.status === 'error') ? 'failed' : events.some(event => event.status === 'running' || event.status === 'queued') ? 'active' : events.some(event => event.status === 'approval') ? 'awaiting approval' : 'complete'}</small></div>
-    <div className="v2-agent-orchestration-flow">
-      {events.map((event, index) => <div className={`v2-agent-event ${event.status}`} key={event.id}>
-        {index > 0 && <span className="v2-agent-event-link" aria-hidden="true">→</span>}
-        <span className="v2-agent-event-node">
-          <i>{event.role === 'supervisor' ? 'S' : event.role === 'work-order' ? 'WO' : event.role === 'fabric-iq' ? 'IQ' : event.role === 'rca' ? 'RCA' : 'Q&A'}</i>
-          <span><strong>{event.label}</strong><small>{event.status}</small></span>
-          <em title={event.detail}>{event.detail}{event.agentName && <><br />{event.agentName}</>}{event.responseId && <><br /><code>{event.responseId}</code></>}</em>
-        </span>
-      </div>)}
-    </div>
-  </div>
 }
 
 function AgentModel({ model }: { model: Asset3DModelRecord }) {

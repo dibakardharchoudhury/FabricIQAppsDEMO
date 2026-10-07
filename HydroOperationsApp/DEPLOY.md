@@ -26,6 +26,12 @@ do not configure the SPA permissions manually. Agent definition readback is not 
 certification. Live acceptance must exercise direct-source Q&A, delegation, Fabric IQ, and
 human-approved SQL creation independently of hosting checks.
 
+The provisioner also resolves the existing project's single linked AppInsights resource
+and exports its public resource ID for the crew's diagnostics link. Missing or ambiguous
+monitoring links fail explicitly rather than pointing at an inferred resource. This does
+not certify telemetry ingestion. The SPA shows real streamed execution receipts and a
+response-scoped Logs query; full service spans remain in Application Insights.
+
 #### October 7, 2026 acceptance status
 
 The canonical deployment provisioned and read back Supervisor v1, Q&A v2, RCA v2,

@@ -8,6 +8,7 @@ import { loadCopilotSettings, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
+import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
 import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 
@@ -65,7 +66,7 @@ export async function askFoundryCopilot(
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
     const invoke = async (role: AgentRole, prompt: string, parentId?: string): Promise<string> => {
-      const event = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId }
+      const event: OrchestrationEvent = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId }
       events.push(event)
       publish()
       const definitions = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
@@ -89,13 +90,9 @@ export async function askFoundryCopilot(
             const detail = await response.text()
             throw new Error(`Foundry agent ${AGENT_NAMES[role]} failed (${response.status}): ${detail.slice(0, 600)}`)
           }
+          event.requestId = response.headers.get('x-request-id') ?? response.headers.get('apim-request-id') ?? response.headers.get('x-ms-request-id') ?? undefined
           const state = await readResponsesStream(response.body, role === 'supervisor' ? onProgress : undefined, raw => {
-            if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'response.created') {
-              event.status = 'running'
-              event.detail = 'Foundry accepted this agent invocation.'
-              if ('response' in raw && raw.response && typeof raw.response === 'object' && 'id' in raw.response && typeof raw.response.id === 'string') event.responseId = raw.response.id
-              publish()
-            }
+            if (captureFoundryEvent(event, raw)) publish()
           })
           if (!state.completed) throw new Error('Foundry stream ended without a completed response. No success was inferred.')
           if (state.usage) usage = {
@@ -110,6 +107,7 @@ export async function askFoundryCopilot(
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
             event.status = role === 'work-order' && proposals.length ? 'approval' : 'completed'
             event.detail = event.status === 'approval' ? 'Draft available for human review; no SQL write performed.' : 'Foundry response completed.'
+            event.finishedAt = Date.now()
             publish()
             return state.content
           }
@@ -119,7 +117,9 @@ export async function askFoundryCopilot(
               const key = `${specialist}:${delegatedQuestion}`
               if (delegated.has(key) || delegated.size >= 4) throw new Error('Supervisor attempted repeated or excessive delegation.')
               delegated.add(key)
-              const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}`, event.responseId)
+              captureApplicationEvent(event, `Handed task to ${AGENT_NAMES[specialist]}`, call.id)
+              publish()
+              const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}`, event.id)
               input.push({ type: 'function_call_output', call_id: call.id, output: answer })
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
               const parsed: unknown = JSON.parse(call.arguments)
@@ -132,6 +132,8 @@ export async function askFoundryCopilot(
               const started = Date.now()
               const step: AgentStep = { tool: parsed.tool_name, status: 'running', detail: describeToolCall(parsed.tool_name, args), summary: 'running', elapsedMs: 0, args: parsed.arguments_json }
               steps.push(step)
+              captureApplicationEvent(event, `Executing ${parsed.tool_name}`, call.id)
+              publish()
               publishSteps()
               try {
                 const result = await runTool(parsed.tool_name, args)
@@ -139,11 +141,13 @@ export async function askFoundryCopilot(
                 if (result.model3d) models.push(result.model3d)
                 const output = JSON.stringify(result.result)
                 Object.assign(step, { status: 'done', elapsedMs: Date.now() - started, summary: `${result.rowCount ?? 0} returned rows`, query: result.query, result: output })
+                captureApplicationEvent(event, `${parsed.tool_name} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id)
                 input.push({ type: 'function_call_output', call_id: call.id, output })
               } catch (error) {
                 Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
+                captureApplicationEvent(event, `${parsed.tool_name} failed`, call.id, true)
                 throw error
-              } finally { publishSteps() }
+              } finally { publishSteps(); publish() }
             } else {
               throw new Error(`Unexpected client tool ${call.name} from ${AGENT_NAMES[role]}.`)
             }
@@ -153,6 +157,8 @@ export async function askFoundryCopilot(
       } catch (error) {
         event.status = 'error'
         event.detail = error instanceof Error ? error.message : 'Foundry invocation failed.'
+        event.finishedAt = Date.now()
+        captureApplicationEvent(event, event.detail, undefined, true)
         publish()
         throw error
       }

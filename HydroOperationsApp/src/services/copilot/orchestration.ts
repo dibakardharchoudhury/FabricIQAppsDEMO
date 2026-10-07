@@ -1,6 +1,16 @@
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq'
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 
+export type AgentTraceEntry = {
+  id: string
+  timestamp: number
+  source: 'foundry' | 'application'
+  label: string
+  responseId?: string
+  callId?: string
+  failed?: boolean
+}
+
 export type OrchestrationEvent = {
   id: string
   role: AgentRole
@@ -11,6 +21,10 @@ export type OrchestrationEvent = {
   agentName?: string
   responseId?: string
   parentId?: string
+  responseIds?: string[]
+  requestId?: string
+  finishedAt?: number
+  trace?: AgentTraceEntry[]
 }
 
 export type WorkOrderProposal = {
