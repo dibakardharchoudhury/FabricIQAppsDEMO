@@ -970,6 +970,30 @@ GLOBAL_SCOPE_INSTRUCTIONS = f"""
   earlier scope.
 """
 
+RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
+RUNNING_BAD_INSTRUCTIONS = f"""
+
+{RUNNING_BAD_MARKER}
+
+- Interpret "Which turbines are running bad right now?" as literal telemetry quality `BAD`, not
+  an out-of-range numeric value. Resolve every active turbine and all of its active instruments;
+  do not silently narrow the request to temperature or another signal type.
+- Unless the user explicitly supplies another window or signal, use a 30-minute lookback and
+  select the single raw reading with greatest `event_time` for each resolved `opcua_node_id`. Do
+  not average or bin values. Include a turbine when at least one signal's latest row has quality
+  `BAD`, compared case-insensitively, and return every such BAD signal.
+- Return turbine tag, `equipment_id`, instrument/signal identity, `opcua_node_id`, latest value,
+  unit, quality, and `event_time`. Identify stale or missing telemetry instead of silently
+  changing the window.
+- For "what work is already open on it/them?", retrieve every work order for the affected
+  equipment whose status is neither `Completed` nor `Cancelled`. Label each order as same-signal
+  only when `opcuaNodeId` or `instrumentId` matches one of that turbine's BAD signals; otherwise
+  label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD
+  signal.
+- State this interpretation and the effective window briefly in the answer so Battle comparisons
+  expose their scope.
+"""
+
 MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"
 MCP_FOLLOWUP_INSTRUCTIONS = f"""
 
@@ -1261,6 +1285,7 @@ def build_stage_obj(existing: dict) -> dict:
         (MULTISOURCE_INSTRUCTIONS_MARKER, MULTISOURCE_INSTRUCTIONS),
         (CROSS_SOURCE_OPERATIONAL_MARKER, CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS),
         (GLOBAL_SCOPE_MARKER, GLOBAL_SCOPE_INSTRUCTIONS),
+        (RUNNING_BAD_MARKER, RUNNING_BAD_INSTRUCTIONS),
         (MCP_FOLLOWUP_MARKER, MCP_FOLLOWUP_INSTRUCTIONS),
         (DIRECT_RUNTIME_ROUTING_MARKER, DIRECT_RUNTIME_ROUTING_INSTRUCTIONS),
     ):

@@ -219,6 +219,16 @@ test('prompt tells the model to stop when it has enough data', () => {
   assert.doesNotMatch(DEFAULT_SYSTEM_PROMPT, /files\.- When/)
 })
 
+test('prompt gives running bad a stable cross-agent meaning', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /literal telemetry quality BAD/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /all of its active instruments/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /do not silently narrow.*temperature/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /30-minute lookback/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /single raw reading with greatest event_time for each resolved opcua_node_id/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /status is neither Completed nor Cancelled/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches/)
+})
+
 test('prefers the declared options marker over the prose heuristic', () => {
   const answer = 'Here are the results.\n\nNext steps:\n- Guessed from prose\n\n<!--options: ["Show open work orders", "Chart power for T009"]-->'
   assert.deepEqual(extractSuggestions(answer), ['Show open work orders', 'Chart power for T009'])

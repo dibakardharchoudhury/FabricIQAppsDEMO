@@ -15,6 +15,10 @@ RUNTIME_READINESS_FILES = (
     REPO_ROOT / ".github" / "copilot-instructions.md",
     REPO_ROOT / ".github" / "prompts" / "deploy-fresh-tenant.prompt.md",
 )
+DATA_AGENT_NOTEBOOKS = (
+    REPO_ROOT / "Notebooks" / "RTI_009_build_data_agent.Notebook" / "notebook-content.py",
+    REPO_ROOT / "Raw" / "RTI_Notebooks" / "RTI_009_build_data_agent.ipynb",
+)
 
 
 class AgentDeploymentContractTests(unittest.TestCase):
@@ -48,6 +52,23 @@ class AgentDeploymentContractTests(unittest.TestCase):
                 self.assertIn("/graphql", content)
                 self.assertIn("/api/auth/v1/token", content)
                 self.assertIn("CORS", content)
+
+    def test_data_agent_has_canonical_running_bad_contract(self):
+        required = (
+            "Canonical",
+            "running bad",
+            "literal telemetry quality",
+            "all of its active instruments",
+            "30-minute lookback",
+            "single raw reading with greatest",
+            "same-signal",
+            "equipment-level work",
+        )
+        for file in DATA_AGENT_NOTEBOOKS:
+            with self.subTest(file=file.relative_to(REPO_ROOT)):
+                content = file.read_text(encoding="utf-8")
+                for phrase in required:
+                    self.assertIn(phrase, content)
 
 
 if __name__ == "__main__":

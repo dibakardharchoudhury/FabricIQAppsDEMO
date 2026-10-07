@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { defaultCopilotSettings, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
+import { defaultCopilotSettings, DEFAULT_SYSTEM_PROMPT, mergeCopilotSettings } from '../src/services/copilot/settings.ts'
 
 test('Battle of the Agents is disabled by default', () => {
   assert.equal(defaultCopilotSettings().battleEnabled, false)
@@ -10,4 +10,10 @@ test('Battle of the Agents is disabled by default', () => {
 test('Battle of the Agents is enabled only by an explicit true setting', () => {
   assert.equal(mergeCopilotSettings({ battleEnabled: true }).battleEnabled, true)
   assert.equal(mergeCopilotSettings({ battleEnabled: false }).battleEnabled, false)
+})
+
+test('previous shipped prompt upgrades while operator customization remains intact', () => {
+  const previousDefault = DEFAULT_SYSTEM_PROMPT.split('\n\nCanonical "running bad" questions:')[0]
+  assert.equal(mergeCopilotSettings({ systemPrompt: previousDefault }).systemPrompt, DEFAULT_SYSTEM_PROMPT)
+  assert.equal(mergeCopilotSettings({ systemPrompt: 'Use the approved operator policy.' }).systemPrompt, 'Use the approved operator policy.')
 })

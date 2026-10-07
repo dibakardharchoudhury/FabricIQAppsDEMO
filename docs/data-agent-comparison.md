@@ -1,5 +1,16 @@
 # Data Agent and Foundry: five-prompt investigation
 
+## Canonical meaning of "running bad"
+
+The Battle view sends the same text to two independent planners, so ambiguous operational phrases
+must have an explicit shared contract. Both engines now interpret **"Which turbines are running bad
+right now?"** as literal telemetry `quality = BAD`: they resolve all active signals, take the latest
+raw reading per signal within a 30-minute lookback, and return every turbine with at least one BAD
+latest signal, unless the user specifies another signal or window. The answer must state that scope
+and distinguish open work linked to the same signal from other equipment-level work. This avoids
+comparing a short-window temperature-only query from one engine with an all-signal, one-hour query
+from the other.
+
 Date: October 4, 2026. Workspace: `ws-vteam-demoV3`.
 
 ## Outcome and limits

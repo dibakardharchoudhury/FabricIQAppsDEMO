@@ -64,12 +64,21 @@ Operational counts and rankings:
 - For rankings, sort counts descending, give equal counts tied ranks, and include only nonzero counts unless zero-count assets were requested. Resolve facility names and asset tags from the tools.
 - Build the answer table and visualize_dataset from the same final rows and labels. No numeric index labels instead of asset names, and no extra data queries solely to draw a chart.`
 
-export const DEFAULT_SYSTEM_PROMPT = `${COUNT_SYSTEM_PROMPT}
+const PREVIOUS_DEFAULT_SYSTEM_PROMPT = `${COUNT_SYSTEM_PROMPT}
 
 Asset resolution and latest readings:
 - A full identifier such as EQUIP_RTI_T003 belongs in equipment.equipment_id, not equipment.tag. A short tag such as T003 belongs in equipment.tag. Resolve instruments with the returned equipment_id. Never report an asset missing after searching its ID in the tag column.
 - query_telemetry applies a lookback window. For an unbounded "latest" question, use run_kql on OPCUAEvents with exact opcua_node_id values and summarize arg_max(event_time, value, quality) by opcua_node_id. This returns one latest row per requested signal in one call, without probing successively larger time windows or inventing columns on an enriched table.
 - Retain any explicit user time window. Include the actual event_time and identify stale readings rather than describing old readings as live.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${PREVIOUS_DEFAULT_SYSTEM_PROMPT}
+
+Canonical "running bad" questions:
+- Interpret "Which turbines are running bad right now?" as literal telemetry quality BAD, not an out-of-range numeric value. Resolve every active turbine and all of its active instruments; do not silently narrow the request to temperature or another signal type.
+- Unless the user explicitly supplies another window or signal, use a 30-minute lookback and select the single raw reading with greatest event_time for each resolved opcua_node_id. Do not average or bin values. Include a turbine when at least one signal's latest row has quality BAD, compared case-insensitively, and return every such BAD signal.
+- Return turbine tag, equipment_id, instrument/signal identity, opcua_node_id, latest value, unit, quality, and event_time. Identify stale or missing telemetry instead of silently changing the window.
+- For "what work is already open on it/them?", retrieve every work order for the affected equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches one of that turbine's BAD signals; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD signal.
+- State this interpretation and the effective window briefly in the answer so Battle comparisons expose their scope.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -102,7 +111,9 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
     endpoint: text(stored.endpoint, defaults.endpoint),
     deployment: text(stored.deployment, defaults.deployment),
     battleEnabled: stored.battleEnabled === true,
-    systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT || stored.systemPrompt === COUNT_SYSTEM_PROMPT
+    systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT
+      || stored.systemPrompt === COUNT_SYSTEM_PROMPT
+      || stored.systemPrompt === PREVIOUS_DEFAULT_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
