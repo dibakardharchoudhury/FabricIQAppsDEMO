@@ -71,7 +71,7 @@ Asset resolution and latest readings:
 - query_telemetry applies a lookback window. For an unbounded "latest" question, use run_kql on OPCUAEvents with exact opcua_node_id values and summarize arg_max(event_time, value, quality) by opcua_node_id. This returns one latest row per requested signal in one call, without probing successively larger time windows or inventing columns on an enriched table.
 - Retain any explicit user time window. Include the actual event_time and identify stale readings rather than describing old readings as live.`
 
-export const DEFAULT_SYSTEM_PROMPT = `${PREVIOUS_DEFAULT_SYSTEM_PROMPT}
+const RUNNING_BAD_SYSTEM_PROMPT = `${PREVIOUS_DEFAULT_SYSTEM_PROMPT}
 
 Canonical "running bad" questions:
 - Interpret "Which turbines are running bad right now?" as literal telemetry quality BAD, not an out-of-range numeric value. Resolve every active turbine and all of its active instruments; do not silently narrow the request to temperature or another signal type.
@@ -79,6 +79,15 @@ Canonical "running bad" questions:
 - Return turbine tag, equipment_id, instrument/signal identity, opcua_node_id, latest value, unit, quality, and event_time. Identify stale or missing telemetry instead of silently changing the window.
 - For "what work is already open on it/them?", retrieve every work order for the affected equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches one of that turbine's BAD signals; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD signal.
 - State this interpretation and the effective window briefly in the answer so Battle comparisons expose their scope.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${RUNNING_BAD_SYSTEM_PROMPT}
+
+Canonical "running hot" questions:
+- Interpret "Which turbines are running hot right now?" as turbine temperature, not telemetry quality and not speed, vibration, pressure, power, or another signal type. Resolve every active turbine's active turbine_temp instrument.
+- Unless the user explicitly supplies another window, use a 30-minute lookback and select the single raw reading with greatest event_time for each resolved turbine_temp opcua_node_id. Do not average or bin values. Rank the latest temperatures descending and, when no threshold or result count is supplied, return the five hottest turbines.
+- Return turbine tag, equipment_id, instrument_id, opcua_node_id, latest temperature, unit, quality, and event_time. Identify stale or missing telemetry instead of silently changing the window. A high rank means hottest in the compared fleet; do not call a value abnormal, overheating, or unsafe unless the user supplies a threshold or an authoritative operating limit is available.
+- For "what work is already open on it/them?", retrieve every work order for the returned equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses temperature.
+- State this interpretation, effective window, and ranking/threshold rule briefly in the answer so Battle comparisons expose their scope.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -114,6 +123,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
     systemPrompt: stored.systemPrompt === LEGACY_SYSTEM_PROMPT
       || stored.systemPrompt === COUNT_SYSTEM_PROMPT
       || stored.systemPrompt === PREVIOUS_DEFAULT_SYSTEM_PROMPT
+      || stored.systemPrompt === RUNNING_BAD_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },

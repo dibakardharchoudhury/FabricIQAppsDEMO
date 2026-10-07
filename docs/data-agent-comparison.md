@@ -11,6 +11,15 @@ and distinguish open work linked to the same signal from other equipment-level w
 comparing a short-window temperature-only query from one engine with an all-signal, one-hour query
 from the other.
 
+## Canonical meaning of "running hot"
+
+Both engines interpret **"Which turbines are running hot right now?"** as a temperature-only
+ranking. They resolve each active turbine's `turbine_temp` signal, take its latest raw reading in a
+30-minute lookback, and rank those readings descending. If the user gives neither a temperature
+threshold nor a result count, both return the five hottest turbines. A rank does not by itself mean
+that a turbine is overheating or outside an operating limit. Open work is labeled as either linked
+to that temperature signal or other equipment-level work.
+
 Date: October 4, 2026. Workspace: `ws-vteam-demoV3`.
 
 ## Outcome and limits

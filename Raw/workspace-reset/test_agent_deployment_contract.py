@@ -70,6 +70,23 @@ class AgentDeploymentContractTests(unittest.TestCase):
                 for phrase in required:
                     self.assertIn(phrase, content)
 
+    def test_data_agent_has_canonical_running_hot_contract(self):
+        required = (
+            "running hot",
+            "turbine temperature",
+            "turbine_temp",
+            "30-minute lookback",
+            "five hottest turbines",
+            "abnormal",
+            "same-signal",
+            "equipment-level work",
+        )
+        for file in DATA_AGENT_NOTEBOOKS:
+            with self.subTest(file=file.relative_to(REPO_ROOT)):
+                content = file.read_text(encoding="utf-8")
+                for phrase in required:
+                    self.assertIn(phrase, content)
+
 
 if __name__ == "__main__":
     unittest.main()

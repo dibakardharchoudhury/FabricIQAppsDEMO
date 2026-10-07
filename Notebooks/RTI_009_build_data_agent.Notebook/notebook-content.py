@@ -994,6 +994,31 @@ RUNNING_BAD_INSTRUCTIONS = f"""
   expose their scope.
 """
 
+RUNNING_HOT_MARKER = '### Canonical "running hot" questions'
+RUNNING_HOT_INSTRUCTIONS = f"""
+
+{RUNNING_HOT_MARKER}
+
+- Interpret "Which turbines are running hot right now?" as turbine temperature, not telemetry
+  quality and not speed, vibration, pressure, power, or another signal type. Resolve every active
+  turbine's active `turbine_temp` instrument.
+- Unless the user explicitly supplies another window, use a 30-minute lookback and select the
+  single raw reading with greatest `event_time` for each resolved `turbine_temp` `opcua_node_id`.
+  Do not average or bin values. Rank the latest temperatures descending and, when no threshold or
+  result count is supplied, return the five hottest turbines.
+- Return turbine tag, `equipment_id`, `instrument_id`, `opcua_node_id`, latest temperature, unit,
+  quality, and `event_time`. Identify stale or missing telemetry instead of silently changing the
+  window. A high rank means hottest in the compared fleet; do not call a value abnormal,
+  overheating, or unsafe unless the user supplies a threshold or an authoritative operating limit
+  is available.
+- For "what work is already open on it/them?", retrieve every work order for the returned equipment
+  whose status is neither `Completed` nor `Cancelled`. Label each order as same-signal only when
+  `opcuaNodeId` or `instrumentId` matches that turbine's temperature signal; otherwise label it
+  equipment-level work. Do not claim that unrelated equipment-level work addresses temperature.
+- State this interpretation, effective window, and ranking/threshold rule briefly in the answer so
+  Battle comparisons expose their scope.
+"""
+
 MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"
 MCP_FOLLOWUP_INSTRUCTIONS = f"""
 
@@ -1286,6 +1311,7 @@ def build_stage_obj(existing: dict) -> dict:
         (CROSS_SOURCE_OPERATIONAL_MARKER, CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS),
         (GLOBAL_SCOPE_MARKER, GLOBAL_SCOPE_INSTRUCTIONS),
         (RUNNING_BAD_MARKER, RUNNING_BAD_INSTRUCTIONS),
+        (RUNNING_HOT_MARKER, RUNNING_HOT_INSTRUCTIONS),
         (MCP_FOLLOWUP_MARKER, MCP_FOLLOWUP_INSTRUCTIONS),
         (DIRECT_RUNTIME_ROUTING_MARKER, DIRECT_RUNTIME_ROUTING_INSTRUCTIONS),
     ):

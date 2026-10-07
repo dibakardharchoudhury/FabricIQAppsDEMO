@@ -229,6 +229,15 @@ test('prompt gives running bad a stable cross-agent meaning', () => {
   assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches/)
 })
 
+test('prompt gives running hot a temperature-only cross-agent meaning', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /running hot.*turbine temperature/s)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /active turbine_temp instrument/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /30-minute lookback/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /five hottest turbines/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /do not call a value abnormal, overheating, or unsafe/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal/)
+})
+
 test('prefers the declared options marker over the prose heuristic', () => {
   const answer = 'Here are the results.\n\nNext steps:\n- Guessed from prose\n\n<!--options: ["Show open work orders", "Chart power for T009"]-->'
   assert.deepEqual(extractSuggestions(answer), ['Show open work orders', 'Chart power for T009'])
