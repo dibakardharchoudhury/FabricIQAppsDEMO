@@ -1,17 +1,18 @@
 import { useState, useSyncExternalStore } from 'react'
 import { Activity, Check, ClipboardCheck, ExternalLink, GitBranch, Search, Telescope, Workflow } from 'lucide-react'
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
+import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
 import { workOrderApprovals } from '../services/copilot/workOrderApproval'
-import { applicationInsightsLink, crewCommunications, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
+import { applicationInsightsLink, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../services/copilot/agentTrace'
 import './AgentCrewTrace.css'
 import { CopilotHelper } from './CopilotHelper'
 
 const CREW = [
-  { role: 'supervisor', name: 'Chief', job: 'Supervisor', quip: 'One clipboard. One plan.', icon: GitBranch },
-  { role: 'qa', name: 'Scout', job: 'Q&A', quip: 'Facts, not vibes.', icon: Telescope },
-  { role: 'rca', name: 'Sleuth', job: 'Root cause', quip: 'Suspicious of coincidences.', icon: Search },
-  { role: 'work-order', name: 'Fixer', job: 'Work orders', quip: 'You approve. Then we do.', icon: ClipboardCheck },
-  { role: 'fabric-iq', name: 'Sparky', job: 'Fabric IQ', quip: 'Right plug. Right source.', icon: Workflow },
+  { role: 'supervisor', job: 'Supervisor', quip: 'One clipboard. One plan.', icon: GitBranch },
+  { role: 'qa', job: 'Q&A', quip: 'Facts, not vibes.', icon: Telescope },
+  { role: 'work-order', job: 'Work orders', quip: 'You approve. Then we do.', icon: ClipboardCheck },
+  { role: 'rca', job: 'Root cause', quip: 'Suspicious of coincidences.', icon: Search },
+  { role: 'fabric-iq', job: 'Fabric IQ', quip: 'Right plug. Right source.', icon: Workflow },
 ] as const
 
 const STATUS_LABELS = {
@@ -27,7 +28,7 @@ function CommunicationPacket({ path, timestamp, reverse = false, failed = false 
     style={{ offsetPath: `path("${path}")`, animationDelay: `${-age}ms` }} />
 }
 
-export function AgentCrewTrace({ events, proposals = [] }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[] }) {
+export function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean }) {
   const [selected, setSelected] = useState<AgentRole>()
   const [paused, setPaused] = useState(false)
   const approvalSnapshot = useSyncExternalStore(workOrderApprovals.subscribe,
@@ -37,8 +38,17 @@ export function AgentCrewTrace({ events, proposals = [] }: { events?: Orchestrat
     : approvals.some(state => state === 'saving') ? 'running'
     : approvals.some(state => state === 'pending') ? 'approval' : 'completed'
   if (!events?.length) return null
-  const displayedEvents = events.map<OrchestrationEvent>(event => event.status === 'approval' && reviewStatus ? { ...event, status: reviewStatus } : event)
-  const status = executionStatus(displayedEvents)
+  const displayedEvents = events.map<OrchestrationEvent>(event => {
+    if (event.status !== 'approval') return event
+    const states = event.proposalIds?.map(id => workOrderApprovals.get(id)?.state ?? 'expired')
+    if (!states?.length) return reviewStatus ? { ...event, status: reviewStatus } : event
+    const status = states.some(state => state === 'uncertain' || state === 'expired') ? 'error'
+      : states.some(state => state === 'saving') ? 'running'
+      : states.some(state => state === 'pending') ? 'approval' : 'completed'
+    return { ...event, status }
+  })
+  const currentEvents = currentEventIds ? displayedEvents.filter(event => currentEventIds.includes(event.id)) : displayedEvents
+  const status = pending && !currentEvents.length ? 'queued' : executionStatus(currentEvents)
   const active = [...events].reverse().find(event => event.status === 'running')?.role
   const focused = selected ?? active ?? events.find(event => event.status === 'approval')?.role ?? events[0].role
   const invoked = new Set(events.map(event => event.role)).size
@@ -48,6 +58,8 @@ export function AgentCrewTrace({ events, proposals = [] }: { events?: Orchestrat
   const latest = focusedEvents[focusedEvents.length - 1]
   const member = CREW.find(member => member.role === focused)
   const communications = crewCommunications(events)
+  const currentCommunications = crewCommunications(currentEvents)
+  const handoffs = crewHandoffs(events)
   const recentActivity = events.flatMap(event => (event.trace ?? []).map(entry => ({ ...entry, role: event.role })))
     .sort((a, b) => a.timestamp - b.timestamp).slice(-3)
   const insightsLink = applicationInsightsLink(import.meta.env.VITE_RAYFIN_FOUNDRY_APP_INSIGHTS_RESOURCE_ID)
@@ -64,40 +76,46 @@ export function AgentCrewTrace({ events, proposals = [] }: { events?: Orchestrat
           const index = CREW.findIndex(member => member.role === flow.role) - 1
           const x = 100 + index * 200
           const path = `M400 0 C400 28 ${x} 28 ${x} 56`
-          return <g key={flow.id} className={`crew-wire${flow.waiting ? ' waiting' : ''}${flow.failed ? ' failed' : ''}`}>
+          return <g key={flow.id} className={`crew-wire${currentEventIds && !currentEventIds.includes(flow.id) ? ' historical' : ''}${flow.waiting ? ' waiting' : ''}${flow.failed ? ' failed' : ''}`}>
             <path d={path} />
             <CommunicationPacket path={path} timestamp={flow.sentAt} />
             {flow.receivedAt !== undefined && <CommunicationPacket key={`${flow.id}:return`} path={path} timestamp={flow.receivedAt} reverse failed={flow.failed} />}
           </g>
         })}
       </svg>
-      <span className="crew-wire-label">{communications.some(flow => flow.waiting) ? 'Task dispatched · awaiting specialist' : communications.some(flow => flow.failed) ? 'Specialist failure returned' : communications.length && communications.every(flow => flow.receivedAt !== undefined) ? 'Results returned through Supervisor' : status === 'running' ? 'Supervisor coordinating' : 'See execution receipts below'}</span>
+      <span className="crew-wire-label">{currentCommunications.some(flow => flow.waiting) ? 'Task dispatched · awaiting specialist' : currentCommunications.some(flow => flow.failed) ? 'Specialist failure returned' : currentCommunications.length && currentCommunications.every(flow => flow.receivedAt !== undefined) ? 'Results returned through Supervisor' : status === 'running' ? 'Supervisor coordinating' : 'See execution receipts below'}</span>
       {CREW.map(member => {
-        const runs = events.filter(event => event.role === member.role)
+        const runs = currentEvents.filter(event => event.role === member.role)
         const event = runs[runs.length - 1]
-        const state = event?.status === 'approval' && reviewStatus ? reviewStatus : event?.status ?? 'idle'
+        const state = event?.status ?? 'idle'
         const Icon = member.icon
-        const awaiting = member.role === 'supervisor' && communications.some(flow => flow.waiting)
+        const awaiting = member.role === 'supervisor' && currentCommunications.some(flow => flow.waiting)
         return <button type="button" key={member.role} className={`crew-station role-${member.role} state-${state}${awaiting ? ' awaiting-specialist' : ''}${focused === member.role ? ' selected' : ''}`}
-          aria-pressed={focused === member.role} aria-label={`${member.job}: ${STATUS_LABELS[state]}. Show execution details.`}
-          title={`${member.name}: ${member.quip}`}
+          aria-pressed={focused === member.role} aria-label={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${STATUS_LABELS[state]}. Show execution details.`}
+          title={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${member.quip}`}
           onClick={() => setSelected(member.role)}>
           <span className="crew-helper-slot"><span className="crew-work-ring" /><CopilotHelper /><span className="crew-role-badge"><Icon size={12} /></span></span>
+          <strong className="crew-name">{AGENT_DISPLAY_NAMES[member.role]}</strong>
           <span className="crew-job">{member.job}{state === 'completed' && <Check size={11} />}</span>
           <span className="crew-station-status">{awaiting ? 'Coordinating' : STATUS_LABELS[state]}</span>
         </button>
       })}
     </div>
+    {handoffs.length > 0 && <ol className="crew-route" aria-label="Recorded handoff sequence">
+      {handoffs.map((handoff, index) => <li key={handoff.id} className={handoff.failed ? 'failed' : ''}>
+        <span>{index + 1}</span>{handoff.from} <span aria-hidden="true">&rarr;</span> {handoff.to}{handoff.failed ? ' (failed)' : ''}
+      </li>)}
+    </ol>}
     {recentActivity.length > 0 && <ol className="crew-live-feed" aria-label="Recent execution activity">
       {recentActivity.map(entry => <li key={entry.id} className={entry.failed ? 'failed' : ''}>
         <span className={`crew-feed-icon${entry.activity === 'tool-start' ? ' tool-start' : ''}`} aria-hidden="true">{entry.failed ? '!' : entry.activity === 'delegation-return' ? '\u2190' : '\u2192'}</span>
-        <span><strong>{CREW.find(member => member.role === entry.role)?.name}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Browser coordination / tool'}</small></span>
+        <span><strong>{AGENT_DISPLAY_NAMES[entry.role]} - {CREW.find(member => member.role === entry.role)?.job}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Browser coordination / tool'}</small></span>
         <time>+{((entry.timestamp - start) / 1000).toFixed(1)}s</time>
       </li>)}
     </ol>}
     <div className="crew-activity" aria-live="polite">
       <span className="crew-activity-dot" aria-hidden="true" />
-      <span><strong>{member?.name}</strong> · {latest?.detail ?? 'Standing by; not invoked for this request.'}</span>
+      <span><strong>{member?.job}</strong> · {latest?.detail ?? 'Standing by; not invoked for this request.'}</span>
     </div>
     <div className="crew-controls">
       <span>{invoked} agents invoked · packets = recorded handoffs</span>

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery } from '../src/services/copilot/agentDefinitions.ts'
 import { createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal } from '../src/services/copilot/orchestration.ts'
@@ -78,7 +79,49 @@ test('separate measures produce separate charts rather than mixing units', () =>
   const { datasets } = readAnswerDatasets('```csv\ntimestamp,Temperature C,Speed rpm\n2026-10-07T12:00:00Z,80,1000\n```')
   const charts = datasetVisualizations(datasets[0], 'Dashboard')
   assert.equal(charts.length, 2)
-  assert.ok(charts.every(chart => chart.chartType === 'line' && chart.yColumns.length === 1))
+  assert.ok(charts.every(chart => chart.chartType === 'bar' && chart.yColumns.length === 1))
+})
+
+test('CSV presentation preserves invalid/raw evidence and rounds display only', () => {
+  const valid = '```csv\nAsset,Temperature C\nT1,80.123456789\n```'
+  assert.equal(hideRenderedCsv(`Findings\n${valid}\nSources`), 'Findings\n\nSources')
+  for (const invalid of ['```csv\nAsset,Value\nT1,2,extra\n```', '```csv\nAsset,Value\nT1,2']) {
+    assert.equal(hideRenderedCsv(invalid), invalid)
+  }
+  assert.equal(formatEvidenceCell('80.123456789', 'Temperature C'), '80.123')
+  assert.equal(formatEvidenceCell('0.000000123456', 'Power'), '0.0000001235')
+  assert.equal(formatEvidenceCell('001234', 'equipment_id'), '001234')
+  assert.equal(formatEvidenceCell('', 'Power'), 'Not supplied')
+  assert.equal(readAnswerDatasets(valid).datasets[0].rows[0][1], '80.123456789')
+})
+
+test('hourly station power is a grouped trend; latest turbine snapshots are bars', () => {
+  const trend = readAnswerDatasets('```csv\ntimestamp (ISO UTC),station,Power\n2026-10-07T01:00:00Z,Foyers,100\n2026-10-07T02:00:00Z,Foyers,101\n2026-10-07T01:00:00Z,Sloy,90\n```').datasets[0]
+  const [chart] = datasetVisualizations(trend, 'Chart power per station')
+  assert.equal(chart.chartType, 'line')
+  assert.equal(chart.xColumn, 'timestamp (ISO UTC)')
+  assert.equal(chart.groupBy, 'station')
+  const snapshot = readAnswerDatasets('```csv\ntimestamp_utc,turbine,Temperature C\n2026-10-07T01:00:00Z,T1,85\n2026-10-07T01:00:00Z,T2,90\n```').datasets[0]
+  const [bar] = datasetVisualizations(snapshot, 'Chart hottest turbines')
+  assert.equal(bar.chartType, 'bar')
+  assert.equal(bar.xColumn, 'turbine')
+  assert.equal(bar.groupBy, undefined)
+})
+
+test('related suggestions use real equipment and never imply voice/text approval', () => {
+  const suggestions = relatedSuggestions('EQUIP_RTI_T005 temperature is stale.')
+  assert.ok(suggestions.every(suggestion => suggestion.includes('EQUIP_RTI_T005')))
+  assert.match(suggestions[1], /editable.*human review/)
+  const review = relatedSuggestions('Draft offered.', ['EQUIP_RTI_T002'])
+  assert.match(review[0], /open work.*EQUIP_RTI_T002/)
+  assert.doesNotMatch(review.join('\n'), /confirm|approve|create/i)
+  assert.ok(relatedSuggestions('Telemetry result.').some(suggestion => /freshness/.test(suggestion)))
+})
+
+test('Supervisor requests a visible routing reason without breaking older agent versions', () => {
+  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason"\]/)
+  assert.equal(parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data"}').reason, 'Ontology-native instance data')
+  assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","reason":false}'), /reason/)
 })
 
 test('explicit chart CSV excludes unrelated table measures without dropping table evidence', () => {

@@ -225,6 +225,92 @@ Consent setup also no longer attempts blanket app-wide consent: only the declare
 grants are requested, while existing grants remain untouched. Forty focused tests,
 typecheck and lint pass. Further hosted acceptance is still required.
 
+Deployment `581fe05` subsequently completed with `SUCCESS` as version 1.0.723.
+Live browser checks returned an RCA with evidence gaps, the three requested Ontology
+facility instances, and a correct standalone native Data Agent hottest-five result.
+Foundry's HOT request still failed on model-generated KQL. The later user-reported
+BAD-today and `let` failures are not covered by those successful cases.
+
+### Supervisor routing and visible crew identities
+
+These are persistent Foundry prompt agents, not a hosted Agent Framework workflow.
+The Supervisor selects a structured delegation using its instructions; the browser
+executes that delegation and returns the specialist result. Routing intent is
+model-selected, **not a deterministic guarantee**. The requested routing reason is
+shown in the Supervisor's execution receipts; it is a short capability explanation,
+not private model reasoning.
+
+| Visible name and role | Foundry agent | Routing rule and source |
+|---|---|---|
+| Chief - Supervisor | `hydro-supervisor-agent` | Coordinates the request, preserves explicit source/scope/format, combines grounded results. Only this agent can delegate. |
+| Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
+| Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
+| Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
+| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit Data Agent requests or ontology-native semantic queries. Uses the two distinct connections below; it is not the default for all Fabric-hosted data. |
+
+Fabric IQ selects `fabriciq-data-agent` for an explicit Data Agent request and
+`fabriciq-ontology` for native ontology definitions, entities/relationships or instance
+properties. These are `fabric_iq_preview` tools, not the deprecated Data Agent tool.
+The current client verifies both configured v2 identities before invoking this
+specialist; it does not provide independent per-connection preflight availability.
+The Data Agent's known ontology-query product limitation does not establish failure
+of the separate direct Ontology endpoint. A schema-only response is insufficient
+when the user asked for instances. No silent endpoint substitution is authorized.
+
+Precedence and boundaries:
+
+- HOT/BAD plus *existing* open work is one Q&A task, not new-work authorization.
+  HOT uses latest raw temperature readings; BAD selects latest per signal before
+  literal quality filtering. Canonical snapshot tools join all equipment-level open
+  work and identify exact same-signal matches. `today` means midnight UTC to query time;
+  no readings in the requested window is not proof of healthy equipment.
+- Reading orders with status Draft remains read-only. Explicit new-work requests use
+  human approval even from the Data Agent/Battle entry point. Battle runs those requests
+  sequentially and labels that both sides use Foundry rather than claiming two
+  independent creation engines.
+- An explicit compound investigation can run RCA -> Supervisor -> Work Orders ->
+  Supervisor -> Q&A -> Supervisor. Relevant prior specialist results are passed to
+  later specialists. This is not direct peer-to-peer A2A.
+- Missing optional draft fields use editable defaults (Medium priority unless specified);
+  unresolved/ambiguous asset identity still requires clarification.
+- At most four distinct delegations per turn and six response rounds per invocation.
+  Repeated identical delegations fail. Local rejected JSON/KQL can be corrected only
+  within that budget and only when nothing executed. Source/network/runtime failures
+  propagate; no hidden fallback, uncertain write replay, or fabricated success.
+- SQL creation requires the card's explicit approval; rejection never writes.
+  Approval validation, duplicate-submission prevention and uncertain-write handling
+  are code controls, not an agent's judgment.
+- One conversation-level crew retains actual handoffs until New chat. Current-turn
+  status is separate from previous failures; receipts retain actual Foundry IDs.
+  The character order is Supervisor, Q&A, Work Orders, Root Cause, Fabric IQ.
+
+Potential future specialists, **not provisioned by this change**: Evidence Verification
+(deterministic freshness/identity/coverage checks plus evidence critique), Maintenance
+Planning (outage windows, dependencies and skills), and Parts & Readiness (stock and
+work prerequisites). Authorization and approvals must remain code-enforced.
+
+### Voice input and presentation acceptance
+
+Normal chat and Battle expose opt-in browser dictation. The notice explains that the
+browser vendor may process audio and that microphone permission is required. Final
+transcripts append to the editable input; interim speech is not sent. Sending remains
+an explicit action and voice never approves SQL work. No Speech resource, additional
+Entra scope or audio persistence is added. Unsupported/embedded browsers, policy or
+permission denials and speech-service failures display an explanation; typing remains
+available. Dictation is bounded to 60 seconds and cancelled on send/reset/unmount.
+This is browser-dependent dictation, not tenant-managed Azure Speech.
+
+Local validation for the subsequent correction passed 53 focused agent/presentation/
+consent/voice tests, 29 existing query/protocol tests, typecheck, lint and production
+build with the eager JavaScript below the 900 KB budget. An isolated synthetic browser
+fixture verified distinct names/roles/colours, retained history with healthy current
+status after a rejected draft, rounded table display with raw CSV preserved, contextual
+suggestions, and no horizontal overflow at 390 pixels. Mock speech verified editable
+transcript insertion, no automatic send, cancellation, permission errors and unsupported
+browser messaging. **Mock speech is not a real microphone/service acceptance test.**
+Hosted acceptance of these changes remains pending; the earlier compound native
+Data Agent BAD/HOT failure remains recorded above.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).

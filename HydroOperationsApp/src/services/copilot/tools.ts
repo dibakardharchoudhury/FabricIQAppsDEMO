@@ -6,7 +6,7 @@ import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
-  applyFilter, buildQualitySnapshotQuery, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -32,6 +32,8 @@ export function describeToolCall(name: string, args: ToolArguments): string {
       ].join(' · ')
     case 'query_signal_quality_snapshot':
       return [args.quality ?? 'BAD', args.lookback ?? '30m', args.equipment_type ?? 'all equipment'].join(' · ')
+    case 'query_turbine_temperature_snapshot':
+      return [args.lookback ?? '30m', args.threshold === undefined ? `top ${args.limit ?? 5}` : `${args.threshold_operator ?? 'gt'} ${args.threshold}`, 'latest raw temperatures + open work'].join(' · ')
     case 'run_kql':
       return (args.query ?? '').trim().split('\n')[0].slice(0, 72)
     case 'visualize_dataset':
@@ -132,8 +134,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: 'object',
         properties: {
           quality: { type: 'string', enum: ['GOOD', 'UNCERTAIN', 'BAD'], description: 'Requested latest quality. Default BAD.' },
-          lookback: { type: 'string', description: 'Window ending now, e.g. 30m or 6h. Default 30m.' },
+          lookback: { type: 'string', description: 'Window ending now: 30m, 6h, or today for since midnight UTC. Default 30m.' },
           equipment_type: { type: 'string', description: 'Optional equipment type substring, e.g. turbine.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_turbine_temperature_snapshot',
+      description: 'Get the hottest active turbines by their latest raw turbine_temp reading, with all open work joined and labeled by exact signal or equipment-level relation. Use for running hot questions instead of inventing KQL. Default top five over 30m; an explicit threshold returns all matches unless a limit is supplied. No quality-based exclusions or averages.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lookback: { type: 'string', description: 'Window ending now: 30m, 6h, or today for since midnight UTC. Default 30m.' },
+          limit: { type: 'integer', minimum: 1, description: 'Explicit requested count; default five without a threshold, otherwise all matches.' },
+          threshold: { type: 'number', description: 'Optional temperature threshold, in the returned instrument unit.' },
+          threshold_operator: { type: 'string', enum: ['gt', 'gte'], description: 'gt means above; gte means at least. Default gt.' },
+          equipment_ids: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Optional exact equipment IDs resolved from metadata for an explicitly requested scope. Omit for all turbines.' },
         },
       },
     },
@@ -218,6 +237,9 @@ export type ToolArguments = {
   priority?: string
   quality?: string
   equipment_type?: string
+  equipment_ids?: string[]
+  threshold?: number
+  threshold_operator?: string
 }
 
 function entityOrThrow(entities: CatalogEntity[], key: string | undefined, settings: CopilotSettings): CatalogEntity {
@@ -243,7 +265,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
       if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
       if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
       if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
-      if (tool.function.name === 'query_signal_quality_snapshot') {
+      if (tool.function.name === 'query_signal_quality_snapshot' || tool.function.name === 'query_turbine_temperature_snapshot') {
         return enabledKustoNames(settings).includes('OPCUAEvents')
           && enabledEntities(ASSET_ENTITIES).includes('equipment')
           && enabledEntities(ASSET_ENTITIES).includes('instruments')
@@ -350,11 +372,17 @@ export function createToolRuntime(
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
         return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }
       }
-      case 'query_signal_quality_snapshot': {
+      case 'query_signal_quality_snapshot':
+      case 'query_turbine_temperature_snapshot': {
+        const temperature = name === 'query_turbine_temperature_snapshot'
         if (!enabledKustoNames(settings).includes('OPCUAEvents')) throw new Error('The OPCUAEvents table is disabled in Administration.')
+        entityOrThrow(ASSET_ENTITIES, 'equipment', settings)
+        entityOrThrow(ASSET_ENTITIES, 'instruments', settings)
+        entityOrThrow(OPERATIONS_ENTITIES, 'work_orders', settings)
         if (!isRayfinConfigured()) throw new Error('The operational database is not configured in this build.')
         if (!isRayfinSignedIn()) throw new Error(SIGN_IN_HINT)
-        const csl = buildQualitySnapshotQuery(args.quality, args.lookback)
+        if (temperature && args.equipment_ids !== undefined && (!Array.isArray(args.equipment_ids) || !args.equipment_ids.length || args.equipment_ids.some(id => typeof id !== 'string' || !id.trim()))) throw new Error('Equipment scope must be a nonempty array of exact equipment IDs.')
+        const csl = temperature ? buildTemperatureSnapshotQuery(args.lookback) : buildQualitySnapshotQuery(args.quality, args.lookback)
         stid ??= queryStid()
         const [telemetryResult, data, workOrders] = await Promise.all([
           runKustoQuery(csl, MAX_ROWS),
@@ -362,13 +390,14 @@ export function createToolRuntime(
           loadOperations('work_orders'),
         ])
         if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
+        if (temperature && telemetryResult.rows.length >= MAX_ROWS) throw new Error('Temperature snapshot reached the source row limit; a complete hottest-turbine ranking cannot be verified.')
         const instruments = new Map(data.instruments
           .filter(instrument => instrument.is_active !== false)
           .map(instrument => [instrument.opcua_node_id, instrument]))
         const equipment = new Map(data.equipment
           .filter(asset => asset.is_active !== false)
           .map(asset => [asset.equipment_id, asset]))
-        const wantedType = args.equipment_type?.trim().toLowerCase()
+        const wantedType = temperature ? 'turbine' : args.equipment_type?.trim().toLowerCase()
         const unresolvedNodes: string[] = []
         const open = (status: unknown) => !['completed', 'cancelled'].includes(String(status ?? '').trim().toLowerCase())
         const rows = kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows).flatMap(reading => {
@@ -378,6 +407,7 @@ export function createToolRuntime(
           if (!instrument || !asset) { unresolvedNodes.push(node); return [] }
           const assetType = `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim()
           if (wantedType && !assetType.toLowerCase().includes(wantedType)) return []
+          if (temperature && args.equipment_ids && !args.equipment_ids.includes(asset.equipment_id)) return []
           const relatedWork = workOrders
             .filter(order => order.equipmentId === asset.equipment_id && open(order.status))
             .map(order => ({
@@ -405,13 +435,21 @@ export function createToolRuntime(
             open_work_orders: relatedWork,
           }]
         })
-        const { rows: capped, truncated } = truncateForModel(rows)
+        if (temperature && new Set(rows.map(row => row.unit)).size > 1) throw new Error('Temperature instruments use different units; a comparable ranking requires explicit unit conversion.')
+        const selected = temperature ? rankTemperatureRows(rows, args) : rows
+        const { rows: capped, truncated } = truncateForModel(selected)
         return {
           result: {
             rows: capped,
             row_count: capped.length,
-            latest_per_signal_then_quality_filter: true,
-            latest_quality_node_count: telemetryResult.rows.length,
+            ...(temperature ? {
+              latest_raw_temperature_ranked_descending: true,
+              lookback: args.lookback ?? '30m',
+              threshold: args.threshold,
+              threshold_operator: args.threshold_operator ?? 'gt',
+              requested_limit: args.limit ?? (args.threshold === undefined ? 5 : null),
+              requested_equipment_without_readings: (args.equipment_ids ?? []).filter(id => !rows.some(row => row.equipment_id === id)),
+            } : { latest_per_signal_then_quality_filter: true, latest_quality_node_count: telemetryResult.rows.length }),
             returned_active_equipment_signal_count: rows.length,
             unresolved_nodes: unresolvedNodes,
             truncated: truncated || telemetryResult.rows.length >= MAX_ROWS,

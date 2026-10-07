@@ -7,6 +7,7 @@ import { askFoundryCopilot, resetFoundryConversation, type FoundryAnswer } from 
 import { runAgentBattle, type AgentBattleEngine, type AgentBattleMode } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
 import { AgentElapsedTime } from './AgentElapsedTime'
+import { VoiceInput } from './VoiceInput'
 
 type BattleSide = {
   status: 'idle' | 'queued' | 'running' | 'completed' | 'error'
@@ -47,6 +48,7 @@ const asMessage = (answer: AgentAnswer | FoundryAnswer, elapsedMs: number): Copi
 export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
   const [prompt, setPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
+  const [voiceReset, setVoiceReset] = useState(0)
   const [mode, setMode] = useState<AgentBattleMode>('sequential')
   const [sides, setSides] = useState<BattleSides>(EMPTY_SIDES)
   const running = Object.values(sides).some(side => side.status === 'running' || side.status === 'queued')
@@ -122,6 +124,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
     setSides(EMPTY_SIDES)
     setLastPrompt('')
     setPrompt('')
+    setVoiceReset(value => value + 1)
     inputRef.current?.focus()
   }
 
@@ -178,6 +181,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
 
     <footer className="agent-battle-composer">
       <textarea ref={inputRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void run() } }} placeholder="Ask both agents the same question" />
+      <VoiceInput disabled={running} resetKey={voiceReset} onTranscript={text => setPrompt(current => `${current.trimEnd()} ${text}`.trimStart())} />
       <button type="button" disabled={running || !prompt.trim()} onClick={() => void run()}><Send size={17} />Ask both</button>
     </footer>
   </div>

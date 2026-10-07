@@ -50,6 +50,25 @@ export function extractSuggestions(markdown: string, limit = 5): string[] {
   return found
 }
 
+export function relatedSuggestions(markdown: string, draftEquipmentIds: string[] = []): string[] {
+  const declared = extractSuggestions(markdown)
+  if (declared.length) return declared
+  const equipment = draftEquipmentIds[0] ?? markdown.match(/\bEQUIP_RTI_[A-Za-z0-9]+\b/)?.[0]
+  if (draftEquipmentIds.length) return [
+    `Show all open work for ${equipment}.`,
+    `Explain the evidence and any uncertainty behind the draft for ${equipment}.`,
+  ]
+  if (equipment) return [
+    `Investigate possible causes for ${equipment}, separating facts from hypotheses.`,
+    `Prepare an editable inspection work-order draft for ${equipment} for human review.`,
+  ]
+  if (/telemetry|temperature|power|quality|```csv/i.test(markdown)) return [
+    'Show the supporting data as a table.',
+    'Explain data freshness and any missing periods in this result.',
+  ]
+  return ['Summarize the key findings and evidence gaps.', 'What related information can be checked next?']
+}
+
 /** Remove the machine-readable marker before copying or re-displaying an answer. */
 export function stripOptionsMarker(markdown: string): string {
   return (markdown ?? '').replace(OPTIONS_MARKER, '').trimEnd()

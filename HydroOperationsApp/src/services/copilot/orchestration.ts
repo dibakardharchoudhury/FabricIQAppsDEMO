@@ -1,4 +1,7 @@
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq'
+export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
+  supervisor: 'Chief', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky',
+}
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 
 export type AgentTraceEntry = {
@@ -27,6 +30,7 @@ export type OrchestrationEvent = {
   requestId?: string
   finishedAt?: number
   trace?: AgentTraceEntry[]
+  proposalIds?: string[]
 }
 
 export type WorkOrderProposal = {
@@ -40,9 +44,10 @@ export type WorkOrderProposal = {
   createdAt: number
 }
 
-const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate)\b.{0,40}\b(work\s*order|wo)\b|\b(work\s*order|wo)\b.{0,40}\b(create|raise|submit|log|make|generate)\b|^\s*(?:please\s+)?open\s+(?:(?:a|an|new)\s+)*(?:work\s*order|wo)\b/i
+const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work\s*orders?|wos?)\b|\b(work\s*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work\s*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work\s*orders?|wos?)\b/i
 export function isWorkOrderRequest(question: string): boolean {
-  return MUTATION_INTENT.test(question)
+  const positiveClauses = question.replace(/\b(?:do not|don't|never)\s+(?:create|raise|submit|log|make|generate|prepare|propose|draft)\b[^.!?\n]*/gi, '')
+  return MUTATION_INTENT.test(positiveClauses)
 }
 
 export function createOrchestrationEvent(
@@ -55,7 +60,7 @@ export function createOrchestrationEvent(
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     status,
-    label,
+    label: `${AGENT_DISPLAY_NAMES[role]} - ${label}`,
     detail,
     timestamp: Date.now(),
   }

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applicationInsightsLink, captureApplicationEvent, captureFoundryEvent, crewCommunications, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
+import { applicationInsightsLink, captureApplicationEvent, captureFoundryEvent, crewCommunications, crewHandoffs, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
 import { createOrchestrationEvent } from '../src/services/copilot/orchestration.ts'
 
 test('crew status never turns a failed or unstarted invocation into success', () => {
@@ -11,6 +11,29 @@ test('crew status never turns a failed or unstarted invocation into success', ()
   assert.equal(executionStatus([event]), 'error')
   event.status = 'approval'
   assert.equal(executionStatus([event]), 'approval')
+})
+
+test('multi-step handoffs retain names and roles and always return through Supervisor', () => {
+  const supervisor = createOrchestrationEvent('supervisor', 'completed', 'Finished')
+  const children = (['rca', 'work-order', 'qa'] as const).map((role, index) => {
+    const child = { ...createOrchestrationEvent(role, 'completed', 'Finished'), timestamp: 10 + index * 20, parentId: supervisor.id, parentCallId: `call${index}` }
+    captureApplicationEvent(supervisor, 'Returned', child.parentCallId, false, 'delegation-return')
+    supervisor.trace!.at(-1)!.timestamp = child.timestamp + 10
+    return child
+  })
+  const route = crewHandoffs([supervisor, ...children])
+  assert.equal(route.length, 6)
+  for (let index = 0; index < route.length; index += 2) {
+    assert.match(route[index].from, /Chief.*Supervisor/)
+    assert.match(route[index + 1].to, /Chief.*Supervisor/)
+  }
+  assert.match(route[0].to, /Sleuth.*RCA/)
+  assert.match(route[2].to, /Fixer.*Work Order/)
+  assert.match(route[4].to, /Gauge.*Q&A/)
+  assert.doesNotMatch(JSON.stringify(route), /Scout/)
+  const oldFailure = createOrchestrationEvent('qa', 'error', 'Previous turn failed')
+  assert.equal(executionStatus([oldFailure, supervisor]), 'error')
+  assert.equal(executionStatus([supervisor, ...children]), 'completed')
 })
 
 test('trace retains every real response identity without recording hidden reasoning or data payloads', () => {

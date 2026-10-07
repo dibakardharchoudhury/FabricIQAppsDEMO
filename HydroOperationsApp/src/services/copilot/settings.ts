@@ -5,7 +5,7 @@ import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './a
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
 // who is always limited to their own Entra permissions by the delegated token.
 
-export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
+export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export type CopilotSettings = {
@@ -178,7 +178,7 @@ export function renderSystemPrompt(settings: CopilotSettings, catalog: string, n
     .split(CATALOG_PLACEHOLDER).join(catalog)
     .split(TIME_PLACEHOLDER).join(now.toISOString())
   const extra = settings.promptExtra.trim()
-  return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`
+  return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\nFor running-hot or turbine-temperature rankings, use query_turbine_temperature_snapshot when enabled. It returns the complete joined evidence in one call; do not generate KQL or repeat inventory/work queries for a question that this tool can express. Preserve an explicit lookback, threshold, count and equipment scope. This replaces the earlier multi-query HOT procedure. For running bad today, call query_signal_quality_snapshot with quality BAD and lookback today (since midnight UTC); do not invent a TelemetryEnriched query.\n\n${ANSWER_PRESENTATION_CONTRACT}`
 }
 
 export function renderCoordinatorPrompt(settings: Pick<CopilotSettings, 'promptExtra'>, now = new Date()): string {

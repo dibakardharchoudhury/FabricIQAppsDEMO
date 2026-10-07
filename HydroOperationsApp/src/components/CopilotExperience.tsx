@@ -8,10 +8,12 @@ import type { AgentStep } from '../services/copilot/foundry'
 import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
-import { extractSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
+import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
+import { hideRenderedCsv } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
+import { VoiceInput } from './VoiceInput'
 
 // Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
 const AssetModelViewer = lazy(() => import('./AssetModelViewer').then(module => ({ default: module.AssetModelViewer })))
@@ -66,6 +68,9 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const conversationEvents = messages.flatMap(message => message.orchestrationEvents ?? [])
+  const conversationProposals = messages.flatMap(message => message.proposals ?? [])
+  const currentEventIds = messages[messages.length - 1]?.orchestrationEvents?.map(event => event.id) ?? []
   // Follow new content only while the user is already at the bottom; scrolling up opts out.
   const stickToBottom = useRef(true)
 
@@ -93,7 +98,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
 
   return <div className="v2-domain-page v2-copilot-page">
     <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
-    <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}`}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
         {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
           {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
@@ -113,25 +118,31 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
         </span>}
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
       </span></header>
+      {conversationEvents.length > 0 && <details className="v2-conversation-crew" open>
+        <summary>Conversation agent flow · {messages.filter(message => message.orchestrationEvents?.length).length} turns</summary>
+        <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} />
+      </details>}
       <div className="v2-messages" ref={listRef} onScroll={onScroll}>
         {messages.map((message, index) => {
           const last = index === messages.length - 1
           return <div className={`v2-message ${message.role}`} key={index} aria-busy={message.role === 'agent' && busy && last}>
             {message.role === 'agent'
-              ? <CopilotResponse message={message} streaming={busy && last} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
+              ? <CopilotResponse message={message} streaming={busy && last} showCrew={false} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
               : <p>{message.text}</p>}
-            {message.role === 'agent' && last && !busy && <SuggestionChips text={message.text} onCompose={compose} onSend={send} />}
+            {message.role === 'agent' && last && !busy && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
-      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" /><button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
+      <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
+        <VoiceInput disabled={busy} resetKey={messages.length} onTranscript={text => setQuestion(current => `${current.trimEnd()} ${text}`.trimStart())} />
+        <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>
 }
 
-function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose: (value: string) => void; onSend: (value: string) => void }) {
-  const suggestions = useMemo(() => extractSuggestions(text), [text])
+function SuggestionChips({ message, onCompose, onSend }: { message: CopilotMessage; onCompose: (value: string) => void; onSend: (value: string) => void }) {
+  const suggestions = useMemo(() => relatedSuggestions(message.text, message.proposals?.map(proposal => proposal.equipmentId)), [message.text, message.proposals])
   if (!suggestions.length) return null
   return <div className="v2-suggest-chips">{suggestions.map(suggestion => <span className="v2-suggest-chip" key={suggestion} title={suggestion}>
     <em>{suggestionLabel(suggestion)}</em>
@@ -140,14 +151,14 @@ function SuggestionChips({ text, onCompose, onSend }: { text: string; onCompose:
   </span>)}</div>
 }
 
-export function CopilotResponse({ message, streaming, question }: { message: CopilotMessage; streaming: boolean; question?: string }) {
+export function CopilotResponse({ message, streaming, question, showCrew = true }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew?: boolean }) {
   return <>
-    <AgentMessage message={message} streaming={streaming} question={question} />
+    <AgentMessage message={message} streaming={streaming} question={question} showCrew={showCrew} />
     {message.meta && <MessageFooter message={message} question={question} />}
   </>
 }
 
-function AgentMessage({ message, streaming, question }: { message: CopilotMessage; streaming: boolean; question?: string }) {
+function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
   const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
@@ -155,12 +166,12 @@ function AgentMessage({ message, streaming, question }: { message: CopilotMessag
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   return <>
-    <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />
+    {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     <CopilotSteps steps={message.steps} />
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripOptionsMarker(message.text)}</ReactMarkdown>}
+    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripOptionsMarker(streaming ? message.text : hideRenderedCsv(message.text))}</ReactMarkdown>}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}

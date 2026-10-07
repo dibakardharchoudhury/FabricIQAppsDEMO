@@ -9,15 +9,16 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
   'fabric-iq': 'hydro-fabric-iq-agent',
 }
 
-export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
 Delegate operational requests using delegate_to_agent. Choose qa for factual questions, rca for root cause investigations, work-order for drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.
 Reading existing work orders is Q&A, not a Work Order agent task. A compound question about turbine health and already-open work must go to qa as one complete request; its direct tools return both telemetry and related work. Use work-order only when the user explicitly requests drafting or creating new work.
+For an explicit draft request, delegate to work-order immediately. Do not respond with an optional-field questionnaire or ask for typed confirmation. The specialist resolves equipment and produces the editable review card; only unresolved or ambiguous equipment identity needs clarification. For an explicit multi-step investigation, preserve the requested sequence (for example RCA, then Work Order draft, then Q&A verification), routing each handoff through you and carrying forward the verified findings.
 The delegated question must preserve the user's exact scope, filters, time and requested format. You may use multiple specialists when the request genuinely needs them, but do not repeat successful requests. Never invent a specialist result or perform database writes. Return a specialist's answer faithfully, preserving its datasets and all material caveats. A draft is never a created work order.`,
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Answer from returned evidence. Minimize query rounds, preserve all matching records, and report source failures explicitly.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Separate observed facts, hypotheses with supporting/contradicting evidence, confidence, evidence gaps, and recommended checks. Do not assert an unverified cause.',
-  'work-order': 'You are the persistent Hydro Work Order agent. Resolve equipment and signal identity using direct tools, check all existing open work, then call propose_work_order through hydro_query for each requested draft. Proposals are shown as editable approval cards. Only the human can approve the SQL write. Never claim a draft was created in SQL. Do not ask for typed confirmation commands.',
+  'work-order': 'You are the persistent Hydro Work Order agent. Resolve equipment and signal identity using direct tools, check all existing open work, then call propose_work_order through hydro_query for each requested draft. Proposals are shown as editable approval cards. If optional fields are absent, use a factual editable title based on the resolved equipment, describe the operator-requested inspection without inventing a diagnosis, and use Medium priority unless the operator supplied another priority. Do not ask for optional title, description, priority, due date or assignee before showing the card. Ask only when equipment identity is missing or ambiguous. Only the human can approve the SQL write. Never claim a draft was created in SQL. Do not ask for typed confirmation commands.',
   'fabric-iq': 'You are the persistent Hydro Fabric IQ specialist. Use fabriciq-data-agent only for explicit Data Agent requests and fabriciq-ontology for explicit ontology-native queries. These are separate source connections. The Data Agent queries underlying tables directly while its ontology query path has a temporary product limitation. Direct Ontology access is independent; do not infer its health from that limitation. Schema discovery does not answer a request for instance rows: continue with a read-only data query for the requested property values, without asking permission again for the already-requested read. If instance execution is unavailable, report that limitation explicitly. Preserve returned facts, scope and source limitations. Report the source actually executed. Never silently substitute one endpoint for the other, ungrounded knowledge, or a deprecated Fabric Data Agent tool. A successful definition read is not evidence of query execution.',
 }
 
@@ -50,7 +51,8 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
       type: 'object', properties: {
         specialist: { type: 'string', enum: ['qa', 'rca', 'work-order', 'fabric-iq'] },
         question: { type: 'string' },
-      }, required: ['specialist', 'question'], additionalProperties: false,
+        reason: { type: 'string', description: 'One short user-visible explanation of the selected capability and source. Not private reasoning.' },
+      }, required: ['specialist', 'question', 'reason'], additionalProperties: false,
     }, strict: true,
   }] : usesFabricIq ? [
     { type: 'fabric_iq_preview', server_label: 'fabriciq-data-agent', project_connection_id: fabricIqConnection, require_approval: 'never' },
@@ -88,7 +90,7 @@ export function parseHydroQuery(raw: string):
   }
 }
 
-export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 'supervisor'>; question: string } {
+export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 'supervisor'>; question: string; reason?: string } {
   const value: unknown = JSON.parse(args)
   if (!value || typeof value !== 'object' || !('specialist' in value) || !('question' in value)
     || typeof value.question !== 'string' || !value.question.trim()) throw new Error('Invalid specialist delegation.')
@@ -96,5 +98,6 @@ export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 
   if (specialist !== 'qa' && specialist !== 'rca' && specialist !== 'work-order' && specialist !== 'fabric-iq') {
     throw new Error('Unknown Foundry specialist.')
   }
-  return { specialist, question: value.question }
+  if ('reason' in value && (typeof value.reason !== 'string' || !value.reason.trim())) throw new Error('Invalid delegation reason.')
+  return { specialist, question: value.question, ...('reason' in value && typeof value.reason === 'string' ? { reason: value.reason.trim() } : {}) }
 }

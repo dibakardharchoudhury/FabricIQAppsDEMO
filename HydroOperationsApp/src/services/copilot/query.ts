@@ -76,17 +76,41 @@ export type TelemetryQueryArgs = {
 }
 
 export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): string {
-  if (!KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use a value like 30m, 6h or 7d.`)
+  if (lookback !== 'today' && !KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use today (UTC), 30m, 6h or 7d.`)
   const normalizedQuality = quality.trim().toUpperCase()
   if (!['GOOD', 'UNCERTAIN', 'BAD'].includes(normalizedQuality)) {
     throw new Error("Invalid quality. Use GOOD, UNCERTAIN, or BAD.")
   }
   return `OPCUAEvents
-| where event_time > ago(${lookback})
+| where event_time ${lookback === 'today' ? '>= startofday(now())' : `> ago(${lookback})`}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
 | where toupper(quality) == '${normalizedQuality}'
 | project event_time, opcua_node_id, value, quality
 | order by opcua_node_id asc`
+}
+
+export function buildTemperatureSnapshotQuery(lookback = '30m'): string {
+  if (lookback !== 'today' && !KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use today (UTC), 30m, 6h or 7d.`)
+  return `OPCUAEvents
+| where event_time ${lookback === 'today' ? '>= startofday(now())' : `> ago(${lookback})`}
+| summarize arg_max(event_time, value, quality) by opcua_node_id
+| where opcua_node_id endswith '.turbine_temp'
+| project event_time, opcua_node_id, value, quality
+| order by opcua_node_id asc`
+}
+
+export function rankTemperatureRows<T extends { value: unknown; equipment_id: string }>(
+  rows: T[], options: { limit?: number; threshold?: number; threshold_operator?: string } = {},
+): T[] {
+  const { threshold, threshold_operator = 'gt' } = options
+  const limit = options.limit ?? (threshold === undefined ? 5 : rows.length)
+  if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) throw new Error('Temperature result limit must be a positive integer.')
+  if (threshold !== undefined && (typeof threshold !== 'number' || !Number.isFinite(threshold))) throw new Error('Temperature threshold must be a finite number.')
+  if (!['gt', 'gte'].includes(threshold_operator)) throw new Error('Temperature threshold operator must be gt or gte.')
+  if (rows.some(row => typeof row.value !== 'number' || !Number.isFinite(row.value))) throw new Error('Temperature snapshot contains a non-numeric reading; ranking is unavailable.')
+  return rows.filter(row => threshold === undefined || (threshold_operator === 'gte' ? Number(row.value) >= threshold : Number(row.value) > threshold))
+    .sort((a, b) => Number(b.value) - Number(a.value) || a.equipment_id.localeCompare(b.equipment_id))
+    .slice(0, limit)
 }
 
 /** Build the telemetry query from validated fragments — no model text reaches the query body.
@@ -129,6 +153,10 @@ const FORBIDDEN_KQL = [
 
 /** Blank out string literals before the forbidden-pattern scan. An OPC UA node id such as
  *  'ns=2;s=T004.power_output' contains a semicolon that would otherwise read as a statement break. */
+export class KqlValidationError extends Error {
+  override name = 'KqlValidationError'
+}
+
 function withoutStringLiterals(query: string): string {
   let output = ''
   let index = 0
@@ -139,7 +167,7 @@ function withoutStringLiterals(query: string): string {
     if (!quote) { output += char; index += 1; continue }
     let cursor = index + (verbatim ? 2 : 1)
     while (cursor < query.length && query[cursor] !== quote) cursor += !verbatim && query[cursor] === '\\' ? 2 : 1
-    if (cursor >= query.length) throw new Error('Rejected: the query has an unterminated string literal.')
+    if (cursor >= query.length) throw new KqlValidationError('Rejected: the query has an unterminated string literal.')
     output += ' '
     index = cursor + 1
   }
@@ -149,19 +177,20 @@ function withoutStringLiterals(query: string): string {
 /** Validate a model-authored KQL query against the catalog allow-list and cap its result size.
  *  Throws with a message the model can act on; the thrown text is fed back as the tool result. */
 export function validateKql(query: string, allowedSources: string[] = KUSTO_SOURCE_NAMES): string {
+  if (typeof query !== 'string') throw new KqlValidationError('The query must be a string.')
   const trimmed = (query ?? '').trim()
-  if (!trimmed) throw new Error('The query was empty.')
+  if (!trimmed) throw new KqlValidationError('The query was empty.')
   const scanned = withoutStringLiterals(trimmed)
   if (/^TelemetryEnriched\s*\(\s*(?:start|startTime|end|endTime|stations|turbines)\s*:/i.test(scanned)) {
-    throw new Error('Rejected: TelemetryEnriched arguments are positional. Call TelemetryEnriched(startTime, endTime, stations, turbines) without parameter names or colons; for example TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)).')
+    throw new KqlValidationError('Rejected: TelemetryEnriched arguments are positional. Call TelemetryEnriched(startTime, endTime, stations, turbines) without parameter names or colons; for example TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)).')
   }
   for (const rule of FORBIDDEN_KQL) {
-    if (rule.pattern.test(scanned)) throw new Error(`Rejected: ${rule.reason}.`)
+    if (rule.pattern.test(scanned)) throw new KqlValidationError(`Rejected: ${rule.reason}.`)
   }
   if (!allowedSources.length) throw new Error('Rejected: no Kusto sources are enabled.')
   const leading = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)/)?.[1]
   if (!leading || !allowedSources.includes(leading)) {
-    throw new Error(`Rejected: the query must start with one of ${allowedSources.join(', ')}.`)
+    throw new KqlValidationError(`Rejected: the query must start with one of ${allowedSources.join(', ')}.`)
   }
   return /\|\s*take\s+\d+\s*$/i.test(trimmed) ? trimmed : `${trimmed}\n| take ${MAX_ROWS}`
 }

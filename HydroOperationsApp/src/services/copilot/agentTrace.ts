@@ -36,6 +36,15 @@ export function crewCommunications(events: OrchestrationEvent[]) {
   })
 }
 
+export function crewHandoffs(events: OrchestrationEvent[]) {
+  return crewCommunications(events).flatMap(flow => [
+    { id: `${flow.id}:sent`, from: flow.from, to: flow.to, timestamp: flow.sentAt, failed: false },
+    ...(flow.receivedAt === undefined ? [] : [{
+      id: `${flow.id}:returned`, from: flow.to, to: flow.from, timestamp: flow.receivedAt, failed: flow.failed,
+    }]),
+  ]).sort((a, b) => a.timestamp - b.timestamp)
+}
+
 export function captureFoundryEvent(event: OrchestrationEvent, raw: unknown, timestamp = Date.now()): boolean {
   if (!record(raw) || typeof raw.type !== 'string') return false
   const response = record(raw.response) ? raw.response : undefined

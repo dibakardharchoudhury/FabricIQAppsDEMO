@@ -23,7 +23,7 @@ export type AnswerDataset = {
 }
 
 const numeric = (value: string) => value.trim() !== '' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())
-const timeColumn = (name: string) => /^(timestamp|event_time|time|datetime|date)(?: \(utc\))?$/i.test(name)
+const timeColumn = (name: string) => /^(timestamp|eventtime|time|datetime|date)(iso)?(utc)?$/.test(name.toLowerCase().replace(/[^a-z]/g, ''))
 const identifierColumn = (name: string) => /(?:^|[_\s])(id|rank|index|number)(?:$|[_\s])/i.test(name)
 
 export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; issues: string[] } {
@@ -68,18 +68,38 @@ export function answerVisualizations(datasets: AnswerDataset[], question: string
   return (explicit.length ? explicit : datasets).flatMap(dataset => datasetVisualizations(dataset, question))
 }
 
+export function hideRenderedCsv(text: string): string {
+  return text.replace(/```csv[^\S\r\n]*\r?\n[\s\S]*?```/gi, block => {
+    const parsed = readAnswerDatasets(block)
+    return parsed.datasets.length && !parsed.issues.length ? '' : block
+  })
+}
+
+export function formatEvidenceCell(value: string, column: string): string {
+  if (!value.trim()) return 'Not supplied'
+  if (numeric(value) && !identifierColumn(column)) {
+    const number = Number(value)
+    return Number.isFinite(number) ? new Intl.NumberFormat('en-GB', number !== 0 && Math.abs(number) < .001
+      ? { maximumSignificantDigits: 4 } : { maximumFractionDigits: 3 }).format(number) : value
+  }
+  return value
+}
+
 export function datasetVisualizations(dataset: AnswerDataset, question: string): AgentVisualization[] {
   const timeIndex = dataset.columns.findIndex(timeColumn)
-  const labelIndex = timeIndex >= 0 ? timeIndex : dataset.columns.findIndex((name, index) =>
+  const seriesIndex = dataset.columns.findIndex(name => /^(series|signal|opcua_node_id|station(?:_id|_name)?|facility(?:_id|_name)?|turbine(?:_tag)?|asset)$/i.test(name))
+  const multipleTimes = timeIndex >= 0 && new Set(dataset.rows.map(row => `${seriesIndex < 0 ? '' : row[seriesIndex]}\0${row[timeIndex]}`)).size
+    > (seriesIndex < 0 ? 1 : new Set(dataset.rows.map(row => row[seriesIndex])).size)
+  const labelIndex = timeIndex >= 0 && multipleTimes ? timeIndex : seriesIndex >= 0 ? seriesIndex : dataset.columns.findIndex((name, index) =>
     !identifierColumn(name) && dataset.rows.some(row => !numeric(row[index])))
   if (labelIndex < 0) return []
-  const groupBy = dataset.columns.find(name => /^(series|signal|opcua_node_id)$/i.test(name))
+  const groupBy = labelIndex === timeIndex && seriesIndex >= 0 ? dataset.columns[seriesIndex] : undefined
   return dataset.columns.flatMap((column, index) => {
     if (index === labelIndex || column === groupBy || identifierColumn(column)
       || !dataset.rows.every(row => numeric(row[index]))) return []
     return [{
       title: `${dataset.title} - ${column}`,
-      chartType: timeIndex >= 0 ? 'line' : /\bpie\b/i.test(question) ? 'pie' : 'bar',
+      chartType: labelIndex === timeIndex && multipleTimes ? 'line' : /\bpie\b/i.test(question) ? 'pie' : 'bar',
       xColumn: dataset.columns[labelIndex],
       yColumns: [column],
       groupBy,
