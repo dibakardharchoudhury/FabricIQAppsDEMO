@@ -34,6 +34,9 @@ reduced-motion preferences. Failed runs never receive a successful overall statu
 Human approval progress comes from the in-memory approval store, so creation/rejection
 does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
 application actions, not evidence that a model executed a database mutation.
+The 1.0.729 scientific test still produced an unsupported diagnostic threshold.
+The Supervisor's current review is instruction-driven, not a deterministic evidence
+validator; do not use its agreement as proof of causation or enterprise readiness.
 For a simple Gauge-only station-power chart with one completed source query, the app
 renders the final table, units, timestamps and freshness directly from the validated
 chart dataset. A model rewrite is not authoritative for these values. Compound

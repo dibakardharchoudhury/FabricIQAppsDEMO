@@ -5,6 +5,11 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
+**Current deployed release: 1.0.729 (`cf74231`).** UI, source-rendered station charts,
+UTC query handling and approval entry points have hosted checks. Scientific RCA and
+native-source reliability have unresolved acceptance failures; this is not an
+enterprise-readiness certification.
+
 ## Current implementation and limitations
 
 Five persistent **Foundry Prompt Agent definitions** execute through the Responses API.
@@ -188,6 +193,30 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
 
 ## Basic regression evidence
 
+### Latest hosted checks: 1.0.729
+
+There are now **34 scenario turns across the ten scenarios**, plus the two Battle
+invocations and a repeat simple-chart/UI check. The records below supersede only the
+specific behavior retested, not every historical failure.
+
+| Check | Measured outcome |
+|---|---|
+| Deployment | Canonical orchestrator printed SUCCESS and DEPLOYED_APP_URL. GraphQL/token preflights and POST contract checks passed; all 39 redirects preserved. |
+| Definitions | Supervisor 8, Q&A 10, RCA 10, Work Order 10, Fabric IQ 7, verified by definition readback (not runtime certification). |
+| Scenario 1 | 112s / 88s. Both turns completed. Existing same-signal Draft was correctly treated as open coverage; no duplicate proposal. `today` telemetry executed successfully. |
+| Scenario 8 | 95s / 110s. First turn staged a T005 inspection candidate; it was rejected. Follow-up returned an unsent notification with unresolved facts, rather than treating the message as a work order. |
+| Scenario 9 chart | 24.2s; repeat 17.2s. One source query, three SVG bars, MW axis, exact table/chart values and original event timestamps. No hourly re-query or kW rewrite. |
+| Scenario 9 RCA | 98.8s. **Failed scientific acceptance:** Sleuth invented a 5% diagnostic threshold and described a 30-day aggregate as a same-window/diurnal baseline; Gauge and Chief did not reject those unsupported assumptions. Model agreement is not validation. |
+| Battle work-order entry points | 82s total sequential run. Both panes showed editable cards with the exact requested title and Low priority. Both rejected successfully; no test SQL write. These are two Foundry approval runs, not independent native mutation engines. |
+| Hosted UI | Three actual chart bars, no horizontal overflow, maximize/restore worked, Escape preserved unsent input. Voice consent notice appeared; microphone capture was not started. |
+| Automated checks | 76 focused tests + 3 dictation lifecycle tests + 2 final built-bundle checks passed; typecheck, lint, required-environment validation and Node 24 production build passed. |
+
+The RCA failure is a concrete reason to add deterministic, source-referenced evidence
+validation before accepting diagnostic claims. More prompt wording or another agreeing
+model is insufficient. One conditional inspection run also selected High priority despite
+the instruction-level Medium default; proposal defaults and diagnostic prioritization
+still need deterministic enforcement. Human review remains mandatory.
+
 ### Corrective 1.0.728 runs
 
 The suite now has **28 live turns across all ten scenarios**, including eight repeated
@@ -270,8 +299,23 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 
 ## Remaining acceptance gates
 
-Publish/readback the changed tool definitions and bundle, then verify the map, warm
-navigation, structured chart and both Battle approval entry points in the hosted app.
-Run all ten first/follow-up pairs and record outcomes above. Resolve real source/CORS/
-capacity failures instead of disguising them with cached analytical values or timeouts.
-Do not claim zero bugs, independent causal proof or delivery readiness from these checks.
+- Add a structured RCA evidence contract with code-enforced checks for each diagnostic
+  threshold, baseline, quantitative claim and source reference. Reject unsupported
+  claims before Chief presents them as established findings. Repeat the scientific
+  scenarios; the latest RCA result is not accepted.
+- Resolve native Data Agent output-moderation and Ontology/native timeout cases with
+  their service traces, then repeat scenarios 2-5. Do not substitute a direct query and
+  label the native-source workflow successful.
+- Verify ingestion before calling conditions current: the final hosted checks showed
+  0/90 signals fresh, with latest source events around 20:20 UTC. Successful reads do
+  not make those readings live.
+- Enforce proposal defaults and justified prioritization deterministically. Approval
+  phase/race logic has unit coverage and rejection is hosted-tested; a new hosted
+  approved SQL write was deliberately not performed in this acceptance suite.
+- Complete physical microphone recognition and tenant-wide consent for enterprise
+  rollout. Browser feature detection and permission notice are not audio recognition.
+- Benchmark repeated cold/warm loads and agent latency under representative capacity;
+  single-run improvements are not p95/SLA evidence.
+
+Do not claim zero bugs, scientifically established causation or notification delivery
+readiness from these checks.

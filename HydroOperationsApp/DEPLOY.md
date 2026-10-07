@@ -6,6 +6,11 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
+Latest checked release: **1.0.729**. Canonical hosting/backend checks passed, but the
+[current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-checks-10729) records
+remaining native-source and scientific RCA failures. Historical results below must
+not be read as a current all-green certification.
+
 ## Start here: choose your interface, not a different deployment process
 
 | Goal | Simplest supported path |
