@@ -328,6 +328,8 @@ export async function askFoundryCopilot(
       && steps.filter(step => step.status === 'done').length === 1
     const checkedInvestigation = assessments.length ? [
       ...assessments,
+      ...specialistResults.filter(result => result.role === 'fabric-iq').map(result =>
+        `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
       ...stationSummaries.map(summary => `### Source-derived station summary\n\n${summary}`),
       ...(workDecisions.length || proposals.length ? [
         `### Work review\n\nEditable proposals staged: ${proposals.length}. No SQL write was performed. Structured decisions: ${workDecisions.join(', ') || 'proposal available for human review'}. Review the actual cards and open-work evidence; no diagnostic priority is inferred.`,

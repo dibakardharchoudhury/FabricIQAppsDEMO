@@ -119,3 +119,16 @@ test('native retrieval gets a self-contained assignment, not unrelated operator 
   assert.doesNotMatch(JSON.stringify(native.input), /PRIVATE_DOWNSTREAM_CONTEXT/)
   assert.equal(harness.reads.length, 1, 'Native reads never run the direct-source substitute')
 })
+
+test('compound RCA retains native claims separately from validated source references', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq'), { role: 'fabric-iq', text: 'Ontology instance: EQUIP_RTI_T005 at Foyers.' },
+    delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'An unsupported diagnostic conclusion.' })
+  const result = await askFoundryCopilot('Use ontology identity context, then investigate using direct readings.')
+  assert.match(result.text, /Native-source retrieval claims/)
+  assert.match(result.text, /> Ontology instance: EQUIP_RTI_T005 at Foyers/)
+  assert.match(result.text, /not a validated diagnosis/)
+  assert.doesNotMatch(result.text, /unsupported diagnostic conclusion/)
+})
