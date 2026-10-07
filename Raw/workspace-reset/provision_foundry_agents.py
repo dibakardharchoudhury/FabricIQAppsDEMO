@@ -7,10 +7,22 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 from urllib.parse import urlparse
 
 import requests
+
+
+def definition_operation_url(location: str) -> str:
+    parsed = urlparse(location)
+    host = parsed.hostname or ""
+    if (parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443)
+            or parsed.query or parsed.fragment
+            or not (host == "api.fabric.microsoft.com" or (host.startswith("wabi-") and host.endswith(".analysis.windows.net")))
+            or not re.fullmatch(r"/v1/operations/[0-9a-fA-F-]{36}", parsed.path)):
+        raise RuntimeError("Unexpected Fabric definition operation location.")
+    return "https://api.fabric.microsoft.com" + parsed.path
 
 
 def verify_published_identity(definition: dict, workspace: str, ontology: str) -> None:
@@ -84,9 +96,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     for agent in agents:
         response = request("POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/dataAgents/{agent['id']}/getDefinition", fabric_headers)
         if response.status_code == 202:
-            location = response.headers["Location"]
-            if not location.startswith("https://api.fabric.microsoft.com/"):
-                raise deploy.DeployError("Unexpected Fabric definition operation origin.")
+            location = definition_operation_url(response.headers["Location"])
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
                 operation = request("GET", location, fabric_headers).json()

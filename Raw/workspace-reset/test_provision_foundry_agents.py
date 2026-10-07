@@ -19,6 +19,15 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_regional_definition_operations_are_polled_on_canonical_origin(self):
+        path = "/v1/operations/46823fb9-2ddd-4c7b-8089-068435f979f0"
+        for host in ["api.fabric.microsoft.com", "wabi-us-central-b-primary-redirect.analysis.windows.net"]:
+            self.assertEqual(module.definition_operation_url("https://" + host + path), "https://api.fabric.microsoft.com" + path)
+        for invalid in ["https://example.org" + path, "http://api.fabric.microsoft.com" + path,
+                        "https://api.fabric.microsoft.com/not-an-operation"]:
+            with self.assertRaises(RuntimeError):
+                module.definition_operation_url(invalid)
+
     def test_exact_published_v2_identity_required(self):
         module.verify_published_identity(definition(), "workspace", "ontology")
         for invalid in [definition(stage="draft"), definition(workspace="other"), definition(ontology="other")]:
