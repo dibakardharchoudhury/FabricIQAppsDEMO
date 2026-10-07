@@ -5,10 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.729 (`cf74231`).** UI, source-rendered station charts,
-UTC query handling and approval entry points have hosted checks. Scientific RCA and
-native-source reliability have unresolved acceptance failures; this is not an
-enterprise-readiness certification.
+**Last successful deployment: 1.0.732 (`d044499`).** At 23:38 UTC on October 7,
+the hosted app stopped loading with `CapacityNotActive`. The Fabric API confirms that
+its assigned capacity is Inactive. Live acceptance is blocked, not passed.
+The source-reference RCA gate was exercised in 1.0.731; final chart deduplication and
+formatted-summary exclusion are committed source changes awaiting deployment.
+This is not an enterprise-readiness certification.
 
 ## Current implementation and limitations
 
@@ -137,7 +139,9 @@ This is **reference validation, not validation of causal relevance**. It does no
 baseline comparability, diagnostic thresholds or a causal inference engine. The report
 therefore leaves hypotheses untested and cause undetermined. Production reliability work
 still needs validated baselines, versioned procedures, approved limits and engineering
-review. No equipment controls are changed. Hosted verification of this change is pending.
+review. No equipment controls are changed. A 1.0.731 hosted follow-up verified this
+reference/claim boundary, not causal relevance. It also exposed duplicated chart/summary
+presentation, fixed in source and regression-tested but not yet hosted-verified.
 
 Proposal priority is now resolved from the explicit operator request before orchestration,
 otherwise Medium; model-generated priority cannot escalate it. Conflicting explicit values
@@ -202,6 +206,45 @@ Source failure is correctly surfaced behavior but is not a passed answer-quality
 Record no-draft outcomes as valid only with specific coverage/identity evidence.
 
 ## Basic regression evidence
+
+### Latest gate: capacity inactive
+
+- Canonical deployments of `03f886b` (1.0.731) and `d044499` (1.0.732) returned
+  `SUCCESS`, verified persistent agent readback and AppBackend contracts, and retained
+  all 39 SPA redirects. The last agent versions are Chief 8, Gauge 10, Sleuth 11,
+  Fixer 10 and Sparky 7. Current-user consent covers the operator; tenant-wide consent
+  still requires an administrator.
+- Before the capacity interruption, scenario 9's simple chart completed in **27.657s**:
+  one source query, three station values, MW units, matching table/chart and explicit
+  stale-reading labels.
+- Its scientific follow-up completed in **41.675s** through Sleuth and independent
+  Gauge verification. The final answer reported **cause undetermined**, retained actual
+  source references and did not present an invented threshold, numerical confidence or
+  validated-baseline claim. There was no page-width overflow.
+- The follow-up exposed a real presentation defect: the independent read repeated an
+  identical chart and station summary, and Sleuth cited a formatted summary as evidence.
+  The subsequent source fix deduplicates identical visualizations and equal station
+  datasets within the same window, retains both execution receipts and the latest read
+  clock, keeps distinct windows separate, and rejects presentation fields as RCA evidence.
+  Runtime tests exercise these cases. **This final fix is not deployed yet.**
+- The native reconciliation rerun never submitted its prompt: the app reload returned
+  HTTP 404 with `CapacityNotActive` at **2026-10-07T23:38:32Z**. Fabric subsequently
+  confirmed workspace `9c73201e-b2e5-48eb-81b9-3526d320faca` remains assigned to
+  `83981279-dc7a-4ffd-96a0-da463da8026c`, **joademoframework**, **F16**, **Sweden Central**,
+  state **Inactive**. No capacity resume, resize or reassignment was performed.
+- Hosted scenarios 1-8 and 10 retain their historical evidence below; they were **not**
+  all rerun against the new gate. Native failures are still unresolved, not repaired by
+  a successful definition read. Two more scenario turns were completed before interruption,
+  bringing the recorded scenario total to 36, in addition to the two Battle invocations.
+- After the capacity owner resumes it, run the same canonical deployment command and
+  require `SUCCESS`, then rerun native cases 2-5, duplicate-work coverage, conditional
+  Medium priority, explicit Low priority and both Battle entry points. Reject test cards.
+  No new test SQL record was created during these checks.
+- Final local verification passed **93 focused tests plus two built-bundle tests**,
+  TypeScript, ESLint, environment validation and production build. The runtime fixtures
+  exercise the real coordinator and real proposal-priority tool with isolated source/model
+  boundaries; they do not certify live cloud behavior. The eager JavaScript budget stayed
+  below 900 KB. The existing lazy 3D chunk-size warning remains.
 
 ### Latest hosted checks: 1.0.729
 
@@ -309,10 +352,13 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 
 ## Remaining acceptance gates
 
-- Deploy and exercise the new structured RCA reference gate. Local runtime tests reject
+- Deploy the final presentation correction and repeat the structured RCA flow. Local runtime tests reject
   prose/invalid reports, exclude Chief's unsupported threshold, propagate a source failure
   even after report submission, and preserve a single failed-turn history entry.
-  Repeat scientific scenarios; historical 1.0.729 RCA remains unaccepted.
+  The 1.0.731 hosted reference/claim boundary passed, but causal relevance is unvalidated
+  and the complete ten-flow suite remains unaccepted. Historical 1.0.729 RCA remains failed.
+- Resume the assigned Fabric capacity through its authorized owner before deployment or
+  additional hosted acceptance. Do not silently choose another capacity or endpoint.
 - Resolve native Data Agent output-moderation and Ontology/native timeout cases with
   their service traces, then repeat scenarios 2-5. Do not substitute a direct query and
   label the native-source workflow successful.

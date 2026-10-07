@@ -41,6 +41,10 @@ the returned values itself. Prose-only reports and unsupported fields are reject
 the existing round limit. Final RCA output excludes free-text diagnostic claims from
 Chief and Gauge. It preserves source-derived station summaries, returned open work,
 actual proposal counts and an explicitly unsent notification when requested.
+Native retrieval text is retained separately as claims for comparison, not promoted to
+a verified diagnosis. Local runtime tests also cover deterministic proposal priority:
+the actual proposal tool ignores model escalation, uses an explicit operator priority
+or Medium, and still requires human approval.
 This validates source references, **not causal relevance or baseline comparability**.
 Hypotheses remain untested and cause undetermined; no approved diagnostic-limit source
 or validated causal model is configured. See the acceptance report for deployment/live status.
@@ -49,6 +53,11 @@ renders the final table, units, timestamps and freshness directly from the valid
 chart dataset. A model rewrite is not authoritative for these values. Compound
 investigations preserve each queried station window separately and require engineering
 review of hypothesis relevance and missing evidence.
+The latest source correction deduplicates equal station datasets within one window
+and identical chart objects without removing either read receipt; distinct windows remain
+separate. Formatted summaries and chart metadata cannot serve as RCA observations.
+This correction awaits deployment because the assigned Fabric capacity became Inactive;
+see the [current acceptance gate](../HydroOperationsApp/AGENT-ACCEPTANCE.md#latest-gate-capacity-inactive).
 The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
 and full handoff history. Normal chat has a keyboard-operable flow-height slider and
 Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed

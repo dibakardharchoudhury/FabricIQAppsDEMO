@@ -5,10 +5,11 @@ import { after, test } from 'node:test'
 const harness = { reads: [], requests: [], responses: [], options: undefined }
 globalThis.__rcaRuntimeTest = harness
 const stubs = {
-  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => {}; export const verifyOntologyForFoundry = async () => {};',
+  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => {}; export const verifyOntologyForFoundry = async () => {}; export const queryStid = async () => { throw new Error("Unexpected STID read"); }; export const runKustoQuery = async () => { throw new Error("Unexpected Kusto read"); };',
+  '../rayfin.ts': 'export const isRayfinConfigured = () => true; export const isRayfinSignedIn = () => true; export const listWorkOrders = async () => []; export const listAsset3DModels = listWorkOrders; export const listInspections = listWorkOrders; export const listMaintenanceNotifications = listWorkOrders; export const listSpareParts = listWorkOrders;',
   './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test"}); export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
   './catalog.ts': 'export const catalogPrompt = () => "";',
-  './workOrderApproval.ts': `import { createApprovalStore } from ${JSON.stringify(new URL('../src/services/copilot/approvalStore.ts', import.meta.url).href)}; export const workOrderApprovals = createApprovalStore();`,
+  './workOrderApproval.ts': `import { createApprovalStore } from ${JSON.stringify(new URL('../src/services/copilot/approvalStore.ts', import.meta.url).href)}; export const workOrderApprovals = createApprovalStore(); export const validateWorkOrderTarget = async () => {};`,
   './tools.ts': `export const buildToolDefinitions = () => [];
     export const describeToolCall = name => name;
     export const createToolRuntime = (_settings, options) => {
@@ -23,13 +24,17 @@ const stubs = {
 }
 const hooks = registerHooks({
   resolve(specifier, context, next) {
-    if (context.parentURL?.endsWith('/copilot/foundry.ts') && Object.hasOwn(stubs, specifier)) {
+    const sourceBoundary = context.parentURL?.endsWith('/copilot/tools.ts')
+      && ['../fabric.ts', '../rayfin.ts', './workOrderApproval.ts'].includes(specifier)
+    if ((context.parentURL?.endsWith('/copilot/foundry.ts') || sourceBoundary) && Object.hasOwn(stubs, specifier)) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true }
     }
     return next(specifier, context)
   },
 })
 const { askFoundryCopilot, resetFoundryConversation } = await import('../src/services/copilot/foundry.ts')
+const { createToolRuntime } = await import('../src/services/copilot/tools.ts')
+const { defaultCopilotSettings } = await import('../src/services/copilot/settings.ts')
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (_url, init) => {
   const request = JSON.parse(init.body)
@@ -131,4 +136,50 @@ test('compound RCA retains native claims separately from validated source refere
   assert.match(result.text, /> Ontology instance: EQUIP_RTI_T005 at Foyers/)
   assert.match(result.text, /not a validated diagnosis/)
   assert.doesNotMatch(result.text, /unsupported diagnostic conclusion/)
+})
+
+test('independent verification retains both receipts but deduplicates identical charts and source summaries', async () => {
+  reset()
+  const visualization = { graphicType: 'barchart', title: '24h', inlineCsvData: 'Station,MW\nSloy,123.45' }
+  harness.reads[0].visualization = visualization
+  harness.reads.push({ ...harness.reads[0], groundedSummary: 'Latest verified mean: 123.45 MW.' })
+  harness.responses.push(delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    delegate('qa'), { role: 'qa', calls: [{ ...read, call_id: 'verification' }] },
+    { role: 'qa', text: 'Same values in independent verification.' },
+    { role: 'supervisor', text: 'Investigation complete.' })
+  const result = await askFoundryCopilot('Investigate station power, then independently verify it.')
+  assert.equal(result.visualizations.length, 1)
+  assert.equal(result.steps.length, 2)
+  assert.equal((result.text.match(/### Source-derived station summary/g) ?? []).length, 1)
+  assert.match(result.text, /Latest verified mean/)
+})
+
+test('different station windows remain distinct even when their values are equal', async () => {
+  reset()
+  harness.reads.push({ ...harness.reads[0], groundedSummary: 'Seven-day mean: 123.45 MW.' })
+  harness.responses.push(delegate('rca'), { role: 'rca', calls: [read,
+    call('seven_days', 'hydro_query', { tool_name: 'query_station_power', arguments: { lookback: '7d' } })] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'Comparison remains unvalidated.' })
+  const result = await askFoundryCopilot('Investigate station power over two windows.')
+  assert.equal((result.text.match(/### Source-derived station summary/g) ?? []).length, 2)
+})
+
+test('actual proposal tool cannot escalate priority from model arguments', async () => {
+  reset()
+  for (const explicit of [undefined, 'Low', 'Critical']) {
+    const staged = []
+    const run = createToolRuntime(defaultCopilotSettings(), {
+      proposalPriority: explicit, onWorkOrderProposal: proposal => staged.push(proposal),
+    })
+    const result = await run('propose_work_order', {
+      equipment_id: 'EQUIP_RTI_T005', title: 'Inspect reported measurement',
+      description: 'Operator-requested evidence review; no established physical fault.', priority: 'High',
+    })
+    assert.equal(result.result.proposal.priority, explicit ?? 'Medium')
+    assert.equal(staged.length, 1)
+    assert.equal(staged[0].priority, explicit ?? 'Medium')
+    assert.equal(result.result.confirmation_required, true)
+  }
 })

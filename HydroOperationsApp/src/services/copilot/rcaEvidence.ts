@@ -81,6 +81,9 @@ function evidenceValue(reference: EvidenceReference, receipts: readonly Evidence
   if (!reference.path.startsWith('/') || reference.path.length > 200 || /~(?![01])/.test(reference.path)) {
     throw new RcaEvidenceError('Use an explicit JSON pointer to an observation, not the entire evidence response.')
   }
+  if (/^\/(?:grounded_summary|visualization)(?:\/|$)/.test(reference.path)) {
+    throw new RcaEvidenceError('Reference source rows or fields, not formatted summaries or visualization metadata.')
+  }
   let value: unknown = receipt.result
   for (const segment of reference.path.slice(1).split('/')) {
     const key = segment.replace(/~1/g, '/').replace(/~0/g, '~')

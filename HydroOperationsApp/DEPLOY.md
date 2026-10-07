@@ -6,10 +6,12 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Latest checked release: **1.0.729**. Canonical hosting/backend checks passed, but the
-[current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-checks-10729) records
-remaining native-source and scientific RCA failures. Historical results below must
-not be read as a current all-green certification.
+Last successful deployment: **1.0.732**. The capacity subsequently became **Inactive**,
+and the hosted app returned `CapacityNotActive` at 23:38 UTC on October 7. The
+[current acceptance report](AGENT-ACCEPTANCE.md#latest-gate-capacity-inactive) records
+the verified RCA gate, remaining source/UX checks and undeployed presentation correction.
+Resume the assigned capacity through its owner, then use the same canonical command.
+Historical deployment success is not proof of current availability or all-green acceptance.
 
 ## Start here: choose your interface, not a different deployment process
 

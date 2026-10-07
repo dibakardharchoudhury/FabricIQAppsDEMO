@@ -38,6 +38,7 @@ test('RCA rejects fabricated references, paths and unsupported diagnostic fields
     { ...assessment, observations: [{ ...ref, path: '/rows/99' }] },
     { ...assessment, observations: [{ ...ref, path: '/constructor' }] },
     { ...assessment, observations: [{ ...ref, path: '/rows/0/~bad' }] },
+    { ...assessment, observations: [{ ...ref, path: '/grounded_summary' }] },
     { ...assessment, observations: [] },
     { ...assessment, hypotheses: [{ ...assessment.hypotheses[0], confidence: .99 }, assessment.hypotheses[1]] },
     { ...assessment, hypotheses: [{ ...assessment.hypotheses[0], category: 'confirmed_failure' }, assessment.hypotheses[1]] },

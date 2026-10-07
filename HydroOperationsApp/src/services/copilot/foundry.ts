@@ -72,7 +72,7 @@ export async function askFoundryCopilot(
   const receipts: EvidenceReceipt[] = []
   const assessments: string[] = []
   const workDecisions: Array<'no_draft' | 'needs_clarification'> = []
-  const stationSummaries: string[] = []
+  const stationSummaries = new Map<string, string>()
   try {
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
@@ -251,9 +251,15 @@ export async function askFoundryCopilot(
               try {
                 const proposalCount = proposals.length
                 const result = await runTool(parsed.toolName, args)
-                if (parsed.toolName === 'query_station_power' && result.groundedSummary) stationSummaries.push(result.groundedSummary)
+                if (parsed.toolName === 'query_station_power' && result.groundedSummary) {
+                  if (typeof result.result !== 'object' || result.result === null || !('rows' in result.result)
+                    || !Array.isArray(result.result.rows)) throw new Error('Station-power result omitted its source rows.')
+                  stationSummaries.set(JSON.stringify({ lookback: args.lookback ?? '24h', rows: result.result.rows }), result.groundedSummary)
+                }
                 if (proposals.length > proposalCount) event.proposalIds = [...(event.proposalIds ?? []), ...proposals.slice(proposalCount).map(proposal => proposal.id)]
-                if (result.visualization) visualizations.push(result.visualization)
+                if (result.visualization && !visualizations.some(value => JSON.stringify(value) === JSON.stringify(result.visualization))) {
+                  visualizations.push(result.visualization)
+                }
                 if (result.model3d) models.push(result.model3d)
                 const output = JSON.stringify(result.result)
                 Object.assign(step, { status: 'done', elapsedMs: Date.now() - started, summary: `${result.rowCount ?? 0} returned rows`, query: result.query, result: output })
@@ -323,14 +329,15 @@ export async function askFoundryCopilot(
       }
     }
     const narrative = await invoke('supervisor', question)
-    const directChart = stationSummaries.length === 1
+    const stationSummaryValues = [...stationSummaries.values()]
+    const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
     const checkedInvestigation = assessments.length ? [
       ...assessments,
       ...specialistResults.filter(result => result.role === 'fabric-iq').map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
-      ...stationSummaries.map(summary => `### Source-derived station summary\n\n${summary}`),
+      ...stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`),
       ...(workDecisions.length || proposals.length ? [
         `### Work review\n\nEditable proposals staged: ${proposals.length}. No SQL write was performed. Structured decisions: ${workDecisions.join(', ') || 'proposal available for human review'}. Review the actual cards and open-work evidence; no diagnostic priority is inferred.`,
       ] : []),
@@ -339,7 +346,7 @@ export async function askFoundryCopilot(
     ].join('\n\n') : undefined
     const text = checkedInvestigation
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
-      : directChart ? stationSummaries[0] : appendOmittedSnapshotWork(narrative, steps)
+      : directChart ? stationSummaryValues[0] : appendOmittedSnapshotWork(narrative, steps)
     if (checkedInvestigation) {
       captureApplicationEvent(events[0], 'Rendered the source-checked RCA assessment. Free-text diagnoses, thresholds and baseline claims from any agent were not used as the final investigation.')
       publish()
