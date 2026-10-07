@@ -975,23 +975,13 @@ RUNNING_BAD_INSTRUCTIONS = f"""
 
 {RUNNING_BAD_MARKER}
 
-- Interpret "Which turbines are running bad right now?" as literal telemetry quality `BAD`, not
-  an out-of-range numeric value. Resolve every active turbine and all of its active instruments;
-  do not silently narrow the request to temperature or another signal type.
-- Unless the user explicitly supplies another window or signal, use a 30-minute lookback and
-  select the single raw reading with greatest `event_time` for each resolved `opcua_node_id`. Do
-  not average or bin values. Include a turbine when at least one signal's latest row has quality
-  `BAD`, compared case-insensitively, and return every such BAD signal.
-- Return turbine tag, `equipment_id`, instrument/signal identity, `opcua_node_id`, latest value,
-  unit, quality, and `event_time`. Identify stale or missing telemetry instead of silently
-  changing the window.
-- For "what work is already open on it/them?", retrieve every work order for the affected
-  equipment whose status is neither `Completed` nor `Cancelled`. Label each order as same-signal
-  only when `opcuaNodeId` or `instrumentId` matches one of that turbine's BAD signals; otherwise
-  label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD
-  signal.
-- State this interpretation and the effective window briefly in the answer so Battle comparisons
-  expose their scope.
+- "Running bad right now" means literal telemetry quality `BAD`, not a numeric threshold. Unless
+  overridden, resolve all active signals, use a 30-minute window, and take the latest raw row by
+  `event_time` per `opcua_node_id`; return every turbine/signal whose latest quality is BAD.
+- Include tag, `equipment_id`, signal/instrument, node, value/unit, quality, and event time. Report
+  stale/missing data rather than widening scope.
+- Join all non-Completed/non-Cancelled work by equipment. Mark same-signal only for matching node or
+  instrument; otherwise mark equipment-level. State the interpretation and window.
 """
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'
@@ -999,24 +989,13 @@ RUNNING_HOT_INSTRUCTIONS = f"""
 
 {RUNNING_HOT_MARKER}
 
-- Interpret "Which turbines are running hot right now?" as turbine temperature, not telemetry
-  quality and not speed, vibration, pressure, power, or another signal type. Resolve every active
-  turbine's active `turbine_temp` instrument.
-- Unless the user explicitly supplies another window, use a 30-minute lookback and select the
-  single raw reading with greatest `event_time` for each resolved `turbine_temp` `opcua_node_id`.
-  Do not average or bin values. Rank the latest temperatures descending and, when no threshold or
-  result count is supplied, return the five hottest turbines.
-- Return turbine tag, `equipment_id`, `instrument_id`, `opcua_node_id`, latest temperature, unit,
-  quality, and `event_time`. Identify stale or missing telemetry instead of silently changing the
-  window. A high rank means hottest in the compared fleet; do not call a value abnormal,
-  overheating, or unsafe unless the user supplies a threshold or an authoritative operating limit
-  is available.
-- For "what work is already open on it/them?", retrieve every work order for the returned equipment
-  whose status is neither `Completed` nor `Cancelled`. Label each order as same-signal only when
-  `opcuaNodeId` or `instrumentId` matches that turbine's temperature signal; otherwise label it
-  equipment-level work. Do not claim that unrelated equipment-level work addresses temperature.
-- State this interpretation, effective window, and ranking/threshold rule briefly in the answer so
-  Battle comparisons expose their scope.
+- "Running hot right now" means `turbine_temp`, not quality or another signal. Unless overridden,
+  resolve each active turbine's temperature signal, use a 30-minute window, take its latest raw row,
+  rank descending, and return the five hottest when no threshold/count is supplied.
+- Include tag, equipment/instrument/node IDs, temperature/unit, quality, and event time. Report
+  stale/missing data. Rank alone does not mean abnormal/unsafe without an authoritative threshold.
+- Join all non-Completed/non-Cancelled work by equipment. Mark same-signal only for matching
+  temperature node/instrument; otherwise mark equipment-level. State scope, window, and rank rule.
 """
 
 ADAPTIVE_RESPONSE_MARKER = "### Adaptive response contract"
@@ -1024,28 +1003,16 @@ ADAPTIVE_RESPONSE_INSTRUCTIONS = f"""
 
 {ADAPTIVE_RESPONSE_MARKER}
 
-- Lead with the direct answer or conclusion. Briefly state only material interpretation choices,
-  filters, time window, freshness, ranking rule, or threshold that affect the result.
-- Choose the presentation that fits the evidence: concise prose for explanations, bullets for short
-  lists, a Markdown table for naturally tabular multi-row results, and a chart only when requested
-  or when it materially improves a comparison or trend. Never force every answer into one fixed
-  table or template.
-- For a table, use human-readable labels and include only columns needed to answer the question
-  while retaining material identifiers, timestamps, units, quality, status, and priority. Keep
-  column names, units, timestamp format, and terminology consistent within the answer.
-- Sort according to the user's question or the stated ranking rule. Use explicit `None` or
-  `No matching records` rather than an empty cell. Distinguish zero results, missing data, stale
-  data, truncation, and source failure; never treat them as equivalent.
-- Never silently change the requested signal, time range, asset, facility, population, aggregation,
-  or source scope. Separate facts returned by tools from interpretation, recommendations, and
-  assumptions.
-- For cross-source results, join only on documented canonical keys and state any material matching
-  rule. Distinguish directly related records from records that merely share an equipment or
-  facility.
-- Keep source attribution concise at the end. Do not expose engine-specific tool narration unless
-  it explains a limitation. Given the same evidence and question, preserve the same facts and scope
-  across the Data Agent, Foundry, and Battle panes even when the best rendering differs by result
-  shape.
+- Lead with the answer; state only material scope, time, freshness, rank, threshold, or assumptions.
+- Adapt rendering to evidence: prose for explanation, bullets for short lists, tables for tabular
+  rows, charts only when requested/useful. Never force one template. Tables keep only needed fields
+  while preserving material IDs, timestamps, units, quality, status, and priority consistently.
+- Sort by the question/rule. Use explicit `None`; distinguish zero, missing, stale, truncated, and
+  failed results. Never silently change signal, time, asset/facility, population, aggregation, or
+  source. Separate facts from interpretation/recommendations.
+- Cross-source joins use canonical keys and distinguish directly related from merely co-located
+  records. End with concise sources; hide tool narration unless it explains a limitation. Preserve
+  the same evidence and scope across Data Agent, Foundry, and Battle, while adapting presentation.
 """
 
 MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"

@@ -58,11 +58,11 @@ class AgentDeploymentContractTests(unittest.TestCase):
             "Canonical",
             "running bad",
             "literal telemetry quality",
-            "all of its active instruments",
-            "30-minute lookback",
-            "single raw reading with greatest",
+            "all active signals",
+            "30-minute window",
+            "latest raw row",
             "same-signal",
-            "equipment-level work",
+            "equipment-level",
         )
         for file in DATA_AGENT_NOTEBOOKS:
             with self.subTest(file=file.relative_to(REPO_ROOT)):
@@ -73,13 +73,12 @@ class AgentDeploymentContractTests(unittest.TestCase):
     def test_data_agent_has_canonical_running_hot_contract(self):
         required = (
             "running hot",
-            "turbine temperature",
             "turbine_temp",
-            "30-minute lookback",
-            "five hottest turbines",
-            "abnormal",
+            "30-minute window",
+            "five hottest",
+            "abnormal/unsafe",
             "same-signal",
-            "equipment-level work",
+            "equipment-level",
         )
         for file in DATA_AGENT_NOTEBOOKS:
             with self.subTest(file=file.relative_to(REPO_ROOT)):
@@ -90,11 +89,11 @@ class AgentDeploymentContractTests(unittest.TestCase):
     def test_data_agent_has_adaptive_response_contract(self):
         required = (
             "Adaptive response contract",
-            "presentation that fits the evidence",
-            "Never force every answer into one fixed",
-            "zero results, missing data, stale",
-            "Separate facts returned by tools",
-            "Data Agent, Foundry, and Battle panes",
+            "Adapt rendering to evidence",
+            "Never force one template",
+            "zero, missing, stale, truncated",
+            "Separate facts from interpretation",
+            "Data Agent, Foundry, and Battle",
         )
         for file in DATA_AGENT_NOTEBOOKS:
             with self.subTest(file=file.relative_to(REPO_ROOT)):
