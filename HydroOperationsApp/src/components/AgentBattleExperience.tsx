@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, Gauge, RotateCcw, Send, Swords } from 'lucide-react'
+import { Bot, Gauge, Maximize2, Minimize2, RotateCcw, Send, Swords } from 'lucide-react'
 import { resetDataAgentConversation, type AgentAnswer } from '../services/fabric'
 import { askCopilot } from '../services/copilot/askCopilot'
 import { isWorkOrderRequest } from '../services/copilot/orchestration'
@@ -8,6 +8,7 @@ import { runAgentBattle, type AgentBattleEngine, type AgentBattleMode } from '..
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
 import { AgentElapsedTime } from './AgentElapsedTime'
 import { VoiceInput } from './VoiceInput'
+import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
 
 type BattleSide = {
   status: 'idle' | 'queued' | 'running' | 'completed' | 'error'
@@ -46,6 +47,7 @@ const asMessage = (answer: AgentAnswer | FoundryAnswer, elapsedMs: number): Copi
 })
 
 export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
+  const battleView = useExpandedView()
   const [prompt, setPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
   const [voiceReset, setVoiceReset] = useState(0)
@@ -135,7 +137,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
     return dataTime <= foundryTime ? 'data-agent' : 'foundry'
   }, [sides])
 
-  return <div className="v2-domain-page v2-copilot-page agent-battle-page">
+  return <div className={`v2-domain-page v2-copilot-page agent-battle-page${battleView.expanded ? ' v2-expanded-view' : ''}`}>
     <section className="v2-page-head">
       <div><span className="v2-eyebrow">Controlled agent comparison</span><h1>Battle of the Agents</h1><p>The exact same prompt is sent to both configured runtimes. Timing is objective; review correctness and quality yourself.</p></div>
       <Swords size={28} />
@@ -148,6 +150,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
       </div>
       <small>{mode === 'sequential' ? 'Runs one agent at a time so shared Fabric capacity does not distort results.' : 'Runs both together for wall-clock speed; shared capacity contention can affect latency.'}</small>
       <span>
+        <button type="button" aria-label={battleView.expanded ? 'Restore battle' : 'Maximize battle'} aria-pressed={battleView.expanded} onClick={battleView.toggleExpanded}>{battleView.expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}{battleView.expanded ? 'Restore' : 'Maximize'}</button>
         <button type="button" disabled={running} onClick={reset}><RotateCcw size={14} />Reset</button>
         <button type="button" disabled={running} onClick={onExit}>Exit battle</button>
       </span>
@@ -181,7 +184,7 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
 
     <footer className="agent-battle-composer">
       <textarea ref={inputRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void run() } }} placeholder="Ask both agents the same question" />
-      <VoiceInput disabled={running} resetKey={voiceReset} onTranscript={text => setPrompt(current => `${current.trimEnd()} ${text}`.trimStart())} />
+      <VoiceInput key={voiceReset} disabled={running} resetKey={voiceReset} onTranscript={text => setPrompt(current => `${current.trimEnd()} ${text}`.trimStart())} />
       <button type="button" disabled={running || !prompt.trim()} onClick={() => void run()}><Send size={17} />Ask both</button>
     </footer>
   </div>

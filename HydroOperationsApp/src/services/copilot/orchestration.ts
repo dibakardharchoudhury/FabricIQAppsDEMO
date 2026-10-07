@@ -44,10 +44,28 @@ export type WorkOrderProposal = {
   createdAt: number
 }
 
-const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work\s*orders?|wos?)\b|\b(work\s*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work\s*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work\s*orders?|wos?)\b/i
+const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work\s*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work\s*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work\s*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work\s*orders?|wos?)\b/i
+const positiveActionClauses = (question: string) => question.replace(
+  /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
+
 export function isWorkOrderRequest(question: string): boolean {
-  const positiveClauses = question.replace(/\b(?:do not|don't|never)\s+(?:create|raise|submit|log|make|generate|prepare|propose|draft)\b[^.!?\n]*/gi, '')
+  const positiveClauses = positiveActionClauses(question).replace(
+    /\b(?:prepare|generate|make)\s+(?:(?:a|an|the|new)\s+)?(?:table|chart|report|summary|list|dashboard|comparison)\b/gi,
+    match => match.replace(/^\w+/, 'show'))
   return MUTATION_INTENT.test(positiveClauses)
+    || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork\s*orders?\b/i.test(positiveClauses))
+}
+
+export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
+  const missing: AgentRole[] = []
+  const positive = positiveActionClauses(question)
+  if (/\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b/i.test(positive) && !completed.includes('rca')) missing.push('rca')
+  const drafting = isWorkOrderRequest(question)
+  if (drafting && !completed.includes('work-order')) missing.push('work-order')
+  const verification = /\b(?:independently (?:check|verify)|independent (?:check|verification)|verify\b.{0,80}\bagain)\b/i.test(positive)
+  if (verification && (!completed.includes('qa') || (drafting
+    && (!completed.includes('work-order') || completed.lastIndexOf('qa') < completed.lastIndexOf('work-order'))))) missing.push('qa')
+  return missing
 }
 
 export function createOrchestrationEvent(

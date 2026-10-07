@@ -370,7 +370,7 @@ export function createToolRuntime(
         const csl = buildTelemetryQuery(args)
         const { columns, rows } = await runKustoQuery(csl, MAX_ROWS)
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
-        return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }
+        return { result: { rows: capped, row_count: capped.length, truncated, read_completed_at_utc: new Date().toISOString() }, rowCount: capped.length, query: csl }
       }
       case 'query_signal_quality_snapshot':
       case 'query_turbine_temperature_snapshot': {
@@ -440,6 +440,7 @@ export function createToolRuntime(
         const { rows: capped, truncated } = truncateForModel(selected)
         return {
           result: {
+            read_completed_at_utc: new Date().toISOString(),
             rows: capped,
             row_count: capped.length,
             ...(temperature ? {
@@ -462,7 +463,7 @@ export function createToolRuntime(
         const csl = validateKql(args.query ?? '', enabledKustoNames(settings))
         const { columns, rows } = await runKustoQuery(csl, MAX_ROWS)
         const { rows: capped, truncated } = truncateForModel(kustoRowsToObjects(columns, rows))
-        return { result: { rows: capped, row_count: capped.length, truncated }, rowCount: capped.length, query: csl }
+        return { result: { rows: capped, row_count: capped.length, truncated, read_completed_at_utc: new Date().toISOString() }, rowCount: capped.length, query: csl }
       }
       case 'visualize_dataset': {
         if (!args.chart_type || !args.x_column || !args.y_columns?.length || !args.inline_csv_data) {

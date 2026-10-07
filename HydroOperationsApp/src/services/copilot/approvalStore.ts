@@ -1,7 +1,7 @@
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 
 export type ProposalEdits = Pick<WorkOrderProposal, 'title' | 'description' | 'priority'>
-export type ApprovalState = 'pending' | 'saving' | 'created' | 'rejected' | 'uncertain'
+export type ApprovalState = 'pending' | 'saving' | 'created' | 'rejected' | 'withdrawn' | 'uncertain'
 
 export function createApprovalStore<T>() {
   const entries = new Map<string, { proposal: WorkOrderProposal; state: ApprovalState; result?: T }>()
@@ -23,6 +23,12 @@ export function createApprovalStore<T>() {
       const entry = entries.get(id)
       if (!entry || entry.state !== 'pending') throw new Error('This proposal is no longer awaiting approval.')
       entry.state = 'rejected'
+      notify()
+    },
+    withdraw(id: string) {
+      const entry = entries.get(id)
+      if (!entry || entry.state !== 'pending') throw new Error('Only a pending proposal can be withdrawn after an incomplete workflow.')
+      entry.state = 'withdrawn'
       notify()
     },
     async approve(id: string, edits: ProposalEdits, validate: (proposal: WorkOrderProposal) => Promise<void>, write: (proposal: WorkOrderProposal) => Promise<T>) {

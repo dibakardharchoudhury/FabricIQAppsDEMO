@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
+import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentArtifact, AgentVisualization } from '../services/fabric'
@@ -14,6 +14,7 @@ import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 import { VoiceInput } from './VoiceInput'
+import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
 
 // Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
 const AssetModelViewer = lazy(() => import('./AssetModelViewer').then(module => ({ default: module.AssetModelViewer })))
@@ -65,6 +66,7 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
 
 export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
+  const chatView = useExpandedView()
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -98,7 +100,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
 
   return <div className="v2-domain-page v2-copilot-page">
     <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
-    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}`}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
         {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
           {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
@@ -116,7 +118,8 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
             onClick={onBattle}
           >Battle</button>}
         </span>}
-        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={onReset}><SquarePen size={16} /></button>
+        <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+        <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
       {conversationEvents.length > 0 && <details className="v2-conversation-crew" open>
         <summary>Conversation agent flow · {messages.filter(message => message.orchestrationEvents?.length).length} turns</summary>
@@ -135,7 +138,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
       <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
-        <VoiceInput disabled={busy} resetKey={messages.length} onTranscript={text => setQuestion(current => `${current.trimEnd()} ${text}`.trimStart())} />
+        <VoiceInput key={messages.length} disabled={busy} resetKey={messages.length} onTranscript={text => setQuestion(current => `${current.trimEnd()} ${text}`.trimStart())} />
         <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>

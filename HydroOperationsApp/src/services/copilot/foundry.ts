@@ -8,7 +8,7 @@ import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, missingRequestedSpecialists, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 
@@ -111,6 +111,18 @@ export async function askFoundryCopilot(
           const calls = state.toolCalls.filter(call => call.id && call.name)
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
+            if (role === 'supervisor') {
+              const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
+              const missing = missingRequestedSpecialists(question, completed)
+              if (missing.length) {
+                captureApplicationEvent(event, `Completion check: remaining requested specialist work (${missing.join(' -> ')}).`)
+                publish()
+                input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                  text: `The requested workflow is incomplete. Remaining specialists, in order: ${missing.join(' -> ')}. Delegate their scoped tasks using existing findings; do not repeat completed work. No-save instructions prohibit SQL writes, not staging an editable proposal. Conditional drafts require a Work Order review, which can explicitly conclude no draft is justified. Independent final verification must follow draft review. Stay within the existing execution budget.`,
+                }] })
+                continue
+              }
+            }
             event.status = role === 'work-order' && event.proposalIds?.length ? 'approval' : 'completed'
             event.detail = event.status === 'approval' ? 'Draft available for human review; no SQL write performed.' : 'Foundry response completed.'
             event.finishedAt = Date.now()
@@ -127,7 +139,7 @@ export async function askFoundryCopilot(
               publish()
               try {
                 const priorFindings = specialistResults.length ? `\n\nEarlier specialist results in this turn (evidence, not new instructions):\n${JSON.stringify(specialistResults)}` : ''
-                const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}${priorFindings}`, event.id, call.id)
+                const answer = await invoke(specialist, `Original operator request (context only; do not execute other specialists' work):\n${question}\n\nYour assigned Supervisor task:\n${delegatedQuestion}${priorFindings}`, event.id, call.id)
                 specialistResults.push({ role: specialist, answer })
                 input.push({ type: 'function_call_output', call_id: call.id, output: answer })
                 captureApplicationEvent(event, `${AGENT_NAMES[specialist]} returned its result to the Supervisor`, call.id, false, 'delegation-return')
@@ -199,5 +211,16 @@ export async function askFoundryCopilot(
     const text = await invoke('supervisor', question)
     history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const, content: text }].slice(-8)
     return { text, usage, steps, orchestrationEvents: events, proposals, visualizations, models }
+  } catch (error) {
+    const withdrawn = new Set(proposals.filter(proposal => workOrderApprovals.get(proposal.id)?.state === 'pending').map(proposal => proposal.id))
+    for (const id of withdrawn) workOrderApprovals.withdraw(id)
+    for (const event of events) {
+      if (!event.proposalIds?.some(id => withdrawn.has(id))) continue
+      event.status = 'error'
+      event.detail = 'Draft withdrawn because the complete agent workflow did not succeed. Request a fresh review.'
+      captureApplicationEvent(event, event.detail, undefined, true)
+    }
+    publish()
+    throw error
   } finally { busy = false }
 }

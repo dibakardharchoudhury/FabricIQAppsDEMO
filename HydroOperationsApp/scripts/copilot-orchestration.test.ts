@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  createWorkOrderProposal, isWorkOrderRequest,
+  createWorkOrderProposal, isWorkOrderRequest, missingRequestedSpecialists,
 } from '../src/services/copilot/orchestration.ts'
 import { buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, validateKql, KqlValidationError } from '../src/services/copilot/query.ts'
 
@@ -19,6 +19,19 @@ test('draft requests route to approval while reading Draft orders remains read-o
   }
   for (const prompt of ['List Draft work orders.', 'What work is already open?', 'Do not create a work order. Show existing work.',
     "Don't draft a work order for T005."]) assert.equal(isWorkOrderRequest(prompt), false, prompt)
+})
+
+test('compound completion requires real specialist work, including verification after draft review', () => {
+  const prompt = 'Investigate it. Prepare an editable inspection draft only for an evidence-backed gap. Finally, independently check identity and coverage. Do not save a work order.'
+  assert.equal(isWorkOrderRequest(prompt), true)
+  assert.deepEqual(missingRequestedSpecialists(prompt, ['qa']), ['rca', 'work-order', 'qa'])
+  assert.deepEqual(missingRequestedSpecialists(prompt, ['qa', 'rca', 'work-order']), ['qa'])
+  assert.deepEqual(missingRequestedSpecialists(prompt, ['qa', 'rca', 'work-order', 'qa']), [])
+  assert.deepEqual(missingRequestedSpecialists('Show all open work orders.', ['qa']), [])
+  assert.equal(isWorkOrderRequest('Do not create a work order, but prepare an editable inspection draft.'), true)
+  assert.equal(isWorkOrderRequest('Inspect existing work orders. Prepare an editable follow-up draft only for a gap.'), true)
+  assert.equal(isWorkOrderRequest('Prepare a table of Draft work orders.'), false)
+  assert.deepEqual(missingRequestedSpecialists('Show work orders. Do not investigate or independently verify anything.', ['qa']), [])
 })
 
 test('today uses midnight UTC and local KQL rejection is distinct from runtime failures', () => {

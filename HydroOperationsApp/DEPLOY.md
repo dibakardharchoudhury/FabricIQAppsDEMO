@@ -277,9 +277,17 @@ Precedence and boundaries:
   Repeated identical delegations fail. Local rejected JSON/KQL can be corrected only
   within that budget and only when nothing executed. Source/network/runtime failures
   propagate; no hidden fallback, uncertain write replay, or fabricated success.
+- Completion checks require actual specialist runs for recognized explicit investigation/
+  diagnosis, work-order or inspection-draft requests, and final independent verification
+  after draft review. Missing steps return corrective guidance within the same budget;
+  they are not accepted as a completed workflow merely because Q&A wrote matching prose.
+  These checks supplement model routing, not guarantee interpretation of every phrasing.
+  A conditional Work Order review can conclude that no draft is justified.
 - SQL creation requires the card's explicit approval; rejection never writes.
   Approval validation, duplicate-submission prevention and uncertain-write handling
   are code controls, not an agent's judgment.
+  Pending drafts from an unsuccessful overall workflow are withdrawn with an application
+  receipt, not mislabeled as a human rejection or left awaiting an invisible approval.
 - One conversation-level crew retains actual handoffs until New chat. Current-turn
   status is separate from previous failures; receipts retain actual Foundry IDs.
   The character order is Supervisor, Q&A, Work Orders, Root Cause, Fabric IQ.
@@ -310,6 +318,117 @@ transcript insertion, no automatic send, cancellation, permission errors and uns
 browser messaging. **Mock speech is not a real microphone/service acceptance test.**
 Hosted acceptance of these changes remains pending; the earlier compound native
 Data Agent BAD/HOT failure remains recorded above.
+
+Version 1.0.724 (`e0ad6fb`) completed canonical deployment with backend/CORS checks
+and all 39 redirect URIs preserved. Live ordinary-language BAD-today succeeded in
+36.4 seconds using the canonical snapshot and correct complete work matching. HOT
+over six hours succeeded in 31.2 seconds using the temperature snapshot, but the
+requested chart did not render because the model returned labelled, unfenced CSV.
+The first compound acceptance prompt also failed: Q&A performed the whole task in
+prose without RCA/Work Order delegation or a real draft card. These are application
+acceptance failures despite the green deployment.
+
+Subsequent fixes normalize only structurally valid labelled CSV, add an explicit
+read-completion clock for direct telemetry freshness, scope specialists to their
+assigned task, and enforce the completion checks above. New chat also clears input
+and voice notices. Maximize/Restore for chat and Battle reuses the existing expanded-
+view hook, preserves messages/input, keeps the composer visible and restores with
+Escape. Local browser checks passed at 1200 and 390 pixels, including no horizontal
+overflow. These later fixes require redeployment and live regression acceptance.
+
+### Five complex orchestration acceptance scenarios
+
+These prompts are test inputs, not evidence that the scenarios have passed. Record
+observed routes and results separately. Every arrow below returns through Chief
+(Supervisor); there is no direct specialist-to-specialist transport. Each turn uses
+at most four delegations. A prerequisite failure must remain visible rather than
+forcing the remaining agents to invent a successful sequence.
+
+1. **Health triage, investigation, draft and verification**
+
+   > Which turbines have latest signal quality BAD today (UTC), and what work is
+   > already open on each? Select the turbine with the most BAD signals, breaking
+   > ties by equipment ID. Investigate it using available telemetry, inspections and
+   > existing work, separating facts from hypotheses. Prepare an editable inspection
+   > draft only for an evidence-backed gap not already covered by open work. Finally,
+   > independently check the selected equipment/signal identity and existing-work
+   > coverage, and summarize any changes needed to the draft. Show a findings table
+   > and distinguish stale readings from current conditions. Do not save a work order.
+
+   Expected capabilities: Gauge -> Sleuth -> Fixer -> Gauge. Assert latest-before-
+   quality filtering, complete open work, explicit coverage/gaps, and no SQL mutation.
+   No matching signals or no uncovered work is a valid no-draft outcome.
+
+2. **Ontology context to maintenance recommendation**
+
+   > Use the selected ontology directly to resolve T005's equipment identity,
+   > facility and available relationships; return actual instance values, not just
+   > schema. Using those verified IDs, inspect its latest raw telemetry within the
+   > last six hours and all open SQL work. Investigate any supported concerns and
+   > prepare an editable inspection draft only if a specific uncovered issue warrants
+   > one. Show the ontology context, evidence timestamps, work coverage and uncertainty
+   > in separate sections. Do not create a SQL record.
+
+   Expected capabilities: Sparky (Ontology) -> Gauge -> Sleuth -> Fixer. Assert the
+   Ontology endpoint actually executed, downstream IDs match returned instances,
+   schema-only output is not accepted, and stale telemetry is disclosed.
+
+3. **Data Agent backlog to evidence-backed follow-up**
+
+   > Ask the published Fabric Data Agent for every open operational SQL work order,
+   > including equipment ID, order number, title, priority and status. Verify that
+   > inventory against direct SQL reads, without treating SQL as a work category.
+   > Choose the equipment with the most open orders, breaking ties by equipment ID,
+   > and investigate whether its recent telemetry and inspections justify additional
+   > work. Prepare an editable follow-up draft only for a demonstrated coverage gap;
+   > otherwise explain why no new order is justified. Include a backlog table and
+   > orders-per-equipment chart. Do not save anything.
+
+   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth -> Fixer. Assert
+   matching IDs/counts/status filters, explicit discrepancies, no duplicate-work
+   claim without evidence, and chart totals equal the returned work inventory.
+
+4. **Conflicting BAD/HOT answers across sources**
+
+   > Ask the published Fabric Data Agent which turbines have latest signal quality
+   > BAD today (UTC), the five hottest turbines from latest raw temperature readings
+   > today, and all open work on those turbines. Independently verify both sets using
+   > direct telemetry snapshots and SQL work records. Investigate any disagreement:
+   > distinguish signal quality from temperature, same-signal from equipment-level
+   > work, averaging from latest raw readings, and stale from current data. Return
+   > a reconciliation table showing source claims, verified evidence and unresolved
+   > differences. Do not silently prefer an answer or propose new work.
+
+   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth. Assert true
+   independent source receipts, exact top-five membership, complete BAD set and
+   work relations. An unresolved inconsistency must be reported, not voted away.
+
+5. **Conversation continuity with a new requested sequence**
+
+   > Use the selected ontology directly to list facility instances. Ask the published
+   > Fabric Data Agent for open operational SQL work by equipment. Reconcile those
+   > results with direct asset and work-order records, then show a facility-level
+   > backlog table and chart. Preserve unmatched IDs and source limitations instead
+   > of guessing relationships. This turn is read-only.
+
+   Expected first-turn capabilities: Sparky (both connections) -> Gauge. Then send:
+
+   > Now investigate T005 using the latest available telemetry within six hours and
+   > recorded inspections. Prepare one editable Low-priority inspection draft titled
+   > "Acceptance review - T005 - DO NOT DISPATCH", clearly distinguishing verified
+   > observations from unknowns. After preparing it, verify the asset identity and
+   > existing-work overlap again. Keep the previous source-comparison flow visible.
+   > I will review the card; do not save a SQL record.
+
+   Expected follow-up capabilities: Sleuth -> Fixer -> Gauge. Assert earlier receipts
+   remain visible in one crew board, the new sequence returns through Chief, the
+   explicit title/priority survive, and rejecting the card leaves SQL unchanged.
+
+Across all five, inspect real response IDs, parent/call relationships and returned
+receipts; never infer agent execution from friendly character animation. Verify
+requested source preservation, evidence passed to later specialists, table/chart
+consistency, errors and no automatic approval. Explicit route-sequence tests complement,
+not replace, ordinary-language routing tests such as "running bad today".
 
 ## Ontology v2 prerequisite and capability boundaries
 

@@ -4,7 +4,7 @@ import type { AgentVisualization } from '../assistantStream.ts'
 export const OPERATIONAL_EVIDENCE_CONTRACT = `Operational evidence contract:
 "Operational SQL work orders" means records from the operational SQL data source, not a work-order type or category. Do not invent a SQL/type/category filter. Open means status neither Completed nor Cancelled.
 For each affected equipment ID, include EVERY open work order and its number, title, status and priority. Same-signal work requires an exact instrument ID or OPC UA node match to the signal being discussed. EVERY other open order on that equipment is equipment-level work, including orders linked to a different signal; equipment-level does not mean only orders with null signal IDs. These two groups must account for all open orders on that equipment.
-Compare telemetry event timestamps with the supplied current UTC time, not with the newest event as an invented query time. Explicitly label readings older than 60 seconds as stale. Never describe a reading as fresh merely because it falls inside the lookback window.
+Compare telemetry event timestamps with the tool's read_completed_at_utc when provided; it is the actual read-completion clock, not the request-start clock. For remote telemetry queries, request the query's UTC clock with the evidence when supported. Otherwise identify the supplied current UTC time as the request-start reference, not an invented query time. A reading received after request start does not establish source clock skew. Never use the newest event as the current clock. Explicitly label readings older than 60 seconds as stale; readings ahead of the actual read-completion clock have uncertain freshness. Never describe a reading as fresh merely because it falls inside the lookback window.
 When forwarding a request to another agent or remote tool, preserve these source and matching rules, the current time, and the original scope.`
 
 export const ANSWER_PRESENTATION_CONTRACT = `Response presentation contract:
@@ -26,10 +26,37 @@ const numeric = (value: string) => value.trim() !== '' && /^[+-]?(?:\d+(?:\.\d*)
 const timeColumn = (name: string) => /^(timestamp|eventtime|time|datetime|date)(iso)?(utc)?$/.test(name.toLowerCase().replace(/[^a-z]/g, ''))
 const identifierColumn = (name: string) => /(?:^|[_\s])(id|rank|index|number)(?:$|[_\s])/i.test(name)
 
+function normalizeLabeledCsv(text: string): string {
+  const lines = text.split(/\r?\n/)
+  const output: string[] = []
+  let fenced = false
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (/^\s*```/.test(line)) fenced = !fenced
+    if (!fenced && /^\s*CSV:\s*\S/i.test(line)) {
+      let start = index + 1
+      while (start < lines.length && !lines[start].trim()) start++
+      let end = start
+      while (end < lines.length && lines[end].includes(',') && !/^\s*(?:```|#|\|)/.test(lines[end])) end++
+      const parsed = Papa.parse<string[]>(lines.slice(start, end).join('\n'), { skipEmptyLines: 'greedy' })
+      const columns = parsed.data[0] ?? []
+      if (!parsed.errors.length && parsed.data.length > 1 && columns.length > 1
+        && columns.every(column => column.trim()) && new Set(columns).size === columns.length
+        && parsed.data.every(row => row.length === columns.length)) {
+        output.push(`### ${line.replace(/^\s*CSV:\s*/i, '')}`, '```csv', ...lines.slice(start, end), '```')
+        index = end - 1
+        continue
+      }
+    }
+    output.push(line)
+  }
+  return output.join('\n')
+}
+
 export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; issues: string[] } {
   const datasets: AnswerDataset[] = []
   const issues: string[] = []
-  const lines = text.split(/\r?\n/)
+  const lines = normalizeLabeledCsv(text).split(/\r?\n/)
   let title = 'Findings'
   const add = (columns: string[], rows: string[][], format: AnswerDataset['format']) => {
     if (!columns.length || !rows.length || new Set(columns).size !== columns.length || rows.some(row => row.length !== columns.length)) {
@@ -69,7 +96,7 @@ export function answerVisualizations(datasets: AnswerDataset[], question: string
 }
 
 export function hideRenderedCsv(text: string): string {
-  return text.replace(/```csv[^\S\r\n]*\r?\n[\s\S]*?```/gi, block => {
+  return normalizeLabeledCsv(text).replace(/```csv[^\S\r\n]*\r?\n[\s\S]*?```/gi, block => {
     const parsed = readAnswerDatasets(block)
     return parsed.datasets.length && !parsed.issues.length ? '' : block
   })

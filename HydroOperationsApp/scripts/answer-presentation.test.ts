@@ -108,6 +108,24 @@ test('hourly station power is a grouped trend; latest turbine snapshots are bars
   assert.equal(bar.groupBy, undefined)
 })
 
+test('live labelled CSV without fences renders a five-turbine chart without inventing rows', () => {
+  const text = 'CSV: Latest temperature points for top-5 turbines\n'
+    + 'timestamp_UTC,turbine,temperature_C\n'
+    + '2026-10-07T19:59:25Z,T014,94.51\n2026-10-07T19:59:32Z,T003,92.277\n'
+    + '2026-10-07T19:59:33Z,T004,88.844\n2026-10-07T19:59:35Z,T007,77.692\n2026-10-07T19:59:34Z,T005,74.871'
+  const { datasets } = readAnswerDatasets(text)
+  const [chart] = answerVisualizations(datasets, 'temperature chart')
+  assert.equal(datasets[0].rows.length, 5)
+  assert.equal(chart.chartType, 'bar')
+  assert.equal(chart.xColumn, 'turbine')
+  assert.deepEqual(chart.yColumns, ['temperature_C'])
+  assert.doesNotMatch(hideRenderedCsv(text), /94\.51/)
+  assert.equal(datasets[0].rows[0][2], '94.51')
+  const malformed = 'CSV: Broken\nA,B\nT1,2,3'
+  assert.equal(hideRenderedCsv(malformed), malformed)
+  assert.deepEqual(readAnswerDatasets(`\`\`\`text\n${text}\n\`\`\``).datasets, [])
+})
+
 test('related suggestions use real equipment and never imply voice/text approval', () => {
   const suggestions = relatedSuggestions('EQUIP_RTI_T005 temperature is stale.')
   assert.ok(suggestions.every(suggestion => suggestion.includes('EQUIP_RTI_T005')))
@@ -116,6 +134,18 @@ test('related suggestions use real equipment and never imply voice/text approval
   assert.match(review[0], /open work.*EQUIP_RTI_T002/)
   assert.doesNotMatch(review.join('\n'), /confirm|approve|create/i)
   assert.ok(relatedSuggestions('Telemetry result.').some(suggestion => /freshness/.test(suggestion)))
+})
+
+test('a draft from an incomplete workflow is withdrawn, not treated as human rejection', async () => {
+  const store = createApprovalStore<string>()
+  const proposal = createWorkOrderProposal({ equipmentId: 'EQUIP_RTI_T005', title: 'Incomplete investigation', priority: 'Low' })
+  store.stage(proposal)
+  store.withdraw(proposal.id)
+  assert.equal(store.get(proposal.id)?.state, 'withdrawn')
+  let writes = 0
+  await assert.rejects(store.approve(proposal.id, proposal, async () => {}, async () => { writes++; return 'created' }), /withdrawn/)
+  assert.equal(writes, 0)
+  assert.throws(() => store.withdraw(proposal.id), /Only a pending/)
 })
 
 test('Supervisor requests a visible routing reason without breaking older agent versions', () => {
@@ -162,6 +192,8 @@ test('persistent agents share source semantics, complete equipment work and real
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /not a work-order type or category/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /including orders linked to a different signal/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /older than 60 seconds as stale/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /read_completed_at_utc/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /received after request start does not establish source clock skew/)
   for (const role of ['supervisor', 'qa', 'rca', 'work-order', 'fabric-iq'] as const) {
     assert.ok(agentDefinition(role, 'test', 'data', 'ontology').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
   }
