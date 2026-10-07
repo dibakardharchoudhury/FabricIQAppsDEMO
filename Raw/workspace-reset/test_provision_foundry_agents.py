@@ -3,6 +3,9 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, call, patch
+
+import requests
 
 spec = importlib.util.spec_from_file_location("provision_foundry_agents", Path(__file__).with_name("provision_foundry_agents.py"))
 module = importlib.util.module_from_spec(spec)
@@ -19,6 +22,45 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_transient_get_failures_retry_with_bounded_backoff(self):
+        response = Mock(status_code=200)
+        with patch.object(module.requests, "request", side_effect=[
+            requests.ConnectionError("DNS unavailable"), requests.Timeout("read timed out"), response,
+        ]) as request, patch.object(module.time, "sleep") as sleep:
+            self.assertIs(module.request_with_read_retry("GET", "https://example.test/agents", timeout=60), response)
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual(sleep.call_args_list, [call(2), call(4)])
+
+    def test_exhausted_read_failure_propagates(self):
+        error = requests.ConnectionError("DNS unavailable")
+        with patch.object(module.requests, "request", side_effect=error) as request, patch.object(module.time, "sleep") as sleep:
+            with self.assertRaises(requests.ConnectionError) as caught:
+                module.request_with_read_retry("GET", "https://example.test/agents", timeout=60)
+            self.assertIs(caught.exception, error)
+            self.assertEqual(request.call_count, 4)
+            self.assertEqual(sleep.call_args_list, [call(2), call(4), call(8)])
+
+    def test_mutations_and_certificate_failures_are_never_retried(self):
+        for method, error in [
+            ("POST", requests.ConnectionError("unknown write outcome")),
+            ("PUT", requests.Timeout("unknown write outcome")),
+            ("GET", requests.exceptions.SSLError("invalid certificate")),
+        ]:
+            with self.subTest(method=method, error=type(error).__name__):
+                with patch.object(module.requests, "request", side_effect=error) as request, patch.object(module.time, "sleep") as sleep:
+                    with self.assertRaises(type(error)):
+                        module.request_with_read_retry(method, "https://example.test/agents", timeout=60)
+                    self.assertEqual(request.call_count, 1)
+                    sleep.assert_not_called()
+
+    def test_http_errors_are_not_retried_or_hidden(self):
+        for status in (401, 403, 404, 429, 500):
+            response = Mock(status_code=status)
+            with patch.object(module.requests, "request", return_value=response) as request, patch.object(module.time, "sleep") as sleep:
+                self.assertIs(module.request_with_read_retry("GET", "https://example.test/agents", timeout=60), response)
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+
     def test_linked_insights_identity_is_required_and_never_inferred_by_name(self):
         resource_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/demo/providers/Microsoft.Insights/components/demo"
         connection = {"properties": {"category": "AppInsights", "target": resource_id}}

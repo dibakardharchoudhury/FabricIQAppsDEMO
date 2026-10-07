@@ -14,6 +14,26 @@ from urllib.parse import urlparse
 import requests
 
 
+def request_with_read_retry(method: str, url: str, **kwargs) -> requests.Response:
+    method = method.upper()
+    for attempt in range(4):
+        try:
+            return requests.request(method, url, **kwargs)
+        except requests.exceptions.SSLError:
+            raise
+        except (requests.ConnectionError, requests.Timeout) as error:
+            if method != "GET" or attempt == 3:
+                raise
+            delay = 2 ** (attempt + 1)
+            print(
+                f"Provisioning GET to {urlparse(url).hostname} failed "
+                f"({type(error).__name__}); retry {attempt + 1}/3 in {delay}s.",
+                flush=True,
+            )
+            time.sleep(delay)
+    raise AssertionError("Unreachable provisioning retry state.")
+
+
 def definition_operation_url(location: str) -> str:
     parsed = urlparse(location)
     host = parsed.hostname or ""
@@ -91,7 +111,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     fabric_headers = deploy.fabric_headers(tenant)
 
     def request(method, url, headers, **kwargs):
-        response = requests.request(method, url, headers=headers, timeout=180, **kwargs)
+        response = request_with_read_retry(method, url, headers=headers, timeout=180, **kwargs)
         if not response.ok:
             raise deploy.DeployError(f"Foundry provisioning failed: {method} {url}: HTTP {response.status_code}: {response.text[:800]}")
         return response
@@ -168,7 +188,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     ), cwd=deploy.APP_DIR))
     for name, definition in definitions.items():
         url = f"{endpoint}/agents/{name}"
-        response = requests.get(url + "?api-version=v1", headers=agent_headers, timeout=60)
+        response = request_with_read_retry("GET", url + "?api-version=v1", headers=agent_headers, timeout=60)
         if response.status_code not in (200, 404):
             raise deploy.DeployError(f"Cannot read Foundry agent {name}: HTTP {response.status_code}")
         previous = response.json().get("versions", {}).get("latest", {}) if response.ok else {}

@@ -154,6 +154,12 @@ The hosted bundle therefore remains the earlier deployment, not these source cha
 The final committed source still passes the Node 24 build, lint and startup budget locally.
 No DNS settings, endpoint identities, permission checks, or existing consent grants were bypassed.
 
+Foundry provisioning now retries only read-only GET connection/time-out failures, at most
+three times after the original attempt with 2/4/8-second backoff and explicit diagnostics.
+This follows the existing workspace-sync read-retry pattern. Certificate failures, HTTP
+authorization/product errors, and all POST/PUT mutations still propagate without replay.
+Exhaustion is a deployment failure, never an inferred readback success.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
