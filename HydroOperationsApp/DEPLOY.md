@@ -113,6 +113,37 @@ Supervisor/Fabric IQ as well as direct specialists. These follow-ups passed 25
 focused TypeScript tests, typecheck, lint, a Node 24 build, and 82 deployment tests;
 they require deployment after the live prerequisites are resolved.
 
+The crew/startup follow-up reuses the existing Signal Sprint helper rather
+than separate SVG robots. The initial compact row was subsequently replaced by
+an event-driven Supervisor/specialist diagram with request and matching return/failure
+packets, per-role working motions, and a provenance-labeled activity feed.
+Local browser fixtures verify narrow layout, paused/reduced motion, and nonanimated idle agents. Both UI layouts'
+eight tabs load in a production preview, and an intentionally failed page-chunk
+download shows a reload action while navigation to Maintenance still works.
+The measured production Maintenance startup downloads 751,740 bytes of JavaScript
+including its selected page, compared with the prior hosted 2,080,457-byte entry.
+The entry itself is about 743 KB; `node --test scripts/startup-bundle.test.mjs`
+enforces an entry/preload budget below 900 KB after building. No analytical data
+was persisted or substituted to achieve this. This measures payload reduction,
+not live API latency; the observed 8.6-second STID query remains a separate concern.
+
+The subsequent Supervisor-only/animated-flow follow-up passed 77 focused Node tests
+(trace, consent setup, orchestration, settings, formatting, charts, Battle, approvals,
+streaming and response protocol), 82 Python deployment tests, typecheck, lint and the
+production startup-byte budget. The production build entry was approximately 743 KB.
+Browser visual fixtures verified outward/return packet movement, failure propagation,
+pause, reduced motion, no replay of old packets, and a 56-pixel communication gap with
+no horizontal overflow at narrow width in light/dark themes. Fixtures are not live agent
+execution. Two stale test expectations were corrected to match the shipped human-approval
+prompt and latest-row-before-quality-filter semantics; runtime semantics were not weakened.
+
+The hosted Foundry request at approximately 17:52 UTC failed before receiving HTTP with
+browser `net::ERR_NAME_NOT_RESOLVED`. A second browser probe reproduced the DNS failure;
+Windows DNS resolution and unauthenticated HTTPS reached the same hostname successfully.
+This is not evidence of missing consent. Network failures now display an explicit
+no-HTTP-response diagnostic without automatic retries or inferred agent success.
+Live answer parity and approval-to-SQL readback remain unverified until browser access works.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
@@ -502,28 +533,18 @@ and deployment state. Metadata-resolution failures stop before source writes or 
   Ontology/GraphModel identities must match. The orchestrator never selects a graph by name,
   sole-graph presence, or sampled structure and never materializes or changes the graph.
 
-### Optional: the Azure AI Foundry copilot
+### Supervisor-led Hydro Intelligence
 
-The Copilot page ships two engines, not two ontology generations. **Data Agent** requires supported
-v2 onboarding and a published source matching the selected live v2 ontology/workspace; the app
-verifies this before invoking MCP and propagates runtime failures. **Foundry** is a separate engine
-that runs an Azure AI Foundry model in the browser with tools scoped to the
-Lakehouse `silver_*` tables, the Eventhouse and the app database. Add these to `rayfin/.env` to
-enable it — the engine toggle only appears when both are set:
+Both layouts use the persistent Foundry Supervisor for ordinary chat. Direct Data Agent access
+is retained only in optional Battle comparisons; it still requires live generation-2 identity
+and verified published source readback. Explicit Data Agent requests in normal chat use the
+Fabric IQ specialist. Missing Foundry configuration is an error, not an implicit engine fallback.
 
-```ini
-RAYFIN_PUBLIC_FOUNDRY_ENDPOINT=https://<resource>.services.ai.azure.com/openai/v1/responses
-RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT=<model deployment name>
-```
-
-Set the complete model inference URL. The app sends every model request to this exact value; it
-does not replace the host or append an API route. For an `AIServices` resource, use the URL ending
-in `/openai/v1/responses`. Do not use the Foundry project endpoint ending in
-`/api/projects/<project-name>`; that URL is for project SDK and management operations.
-
-The deployed values seed **Administration → Foundry Copilot**. Changes made there are stored in the
-current browser and apply to the next question without rebuilding or redeploying the app. The
-deployment value is sent as the Responses API `model`; there is no separate API-version setting.
+The canonical orchestrator provisions and verifies agents using
+`HYDRO_FOUNDRY_PROJECT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>`.
+It exports the verified project endpoint for **Administration → Foundry Copilot**. Requests go to
+the project's `/openai/v1/responses` with `agent_reference`, not a model-inference URL. Model selection
+belongs to provisioning (`HYDRO_FOUNDRY_MODEL`), not a browser deployment-name field.
 
 **The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
 authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
@@ -531,9 +552,11 @@ token with 401 no matter what RBAC you assign — Azure evaluates RBAC in the re
 tenant. Check with `az account list --all` before creating it; a personal or corp subscription is
 easy to pick by accident. Put it in the workspace capacity's region too (Sweden Central here).
 
-One manual step after creation, because it is resource-scoped rather than tenant-scoped: grant each
-app user the **`Cognitive Services OpenAI User`** role on the resource. The delegated Entra scope
-authorizes the audience, not the data-plane call.
+The user needs **Foundry User** access to the project in addition to the delegated
+`https://ai.azure.com/user_impersonation` scope. `setup-live-auth`, called by the orchestrator,
+bundles delegated permissions and consent. The obsolete Cognitive Services inference scope is
+no longer required. Existing grants are not revoked automatically. Fabric IQ source-definition
+verification uses read scopes; only direct Data Agent execution requests `DataAgent.Execute.All`.
 
 No CORS configuration is needed — the data plane already returns `Access-Control-Allow-Origin: *`
 and permits `Authorization` on POST. Do keep the resource on **public network access**: a private
@@ -657,9 +680,10 @@ origin plus `localhost:5173` as **SPA redirect URIs** on the Entra
 app (fixes **AADSTS50011**); (2) adds **Azure Data Explorer** `user_impersonation` and the
 **Power BI Service / Microsoft Fabric** scopes `GraphQLApi.Execute.All`, `Workspace.Read.All`,
 **`Item.Read.All`** (needed for live telemetry — the Eventhouse query URI), and `Item.Execute.All`,
-plus **Microsoft Cognitive Services** `user_impersonation` (the Foundry copilot),
-then grants admin consent tenant‑wide (fixes **AADSTS650057 / 65001**). Because these are pre‑granted,
-**no in‑app consent popup appears** on Seed & provision or Connect telemetry.
+plus `DataAgent.Execute.All`, `Fabric.Embed`, and **Microsoft Foundry Agent Service**
+`user_impersonation`, then attempts bundled tenant-wide admin consent (fixes **AADSTS650057 / 65001**).
+Verified consent avoids incremental permission prompts for those scopes; sign-in/MFA or tenant
+policy challenges can still occur. The app uses silent acquisition first, not forced consent.
 
 Where the signed‑in identity lacks a role, the script **prints the exact manual action and continues** —
 complete those on the app registration in the Entra portal (see [Identities and permissions → App SPA](#b-app-spa-created-once-then-automated)).

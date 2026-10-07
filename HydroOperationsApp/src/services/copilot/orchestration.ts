@@ -9,6 +9,7 @@ export type AgentTraceEntry = {
   responseId?: string
   callId?: string
   failed?: boolean
+  activity?: 'tool-start' | 'tool-end' | 'delegation-return'
 }
 
 export type OrchestrationEvent = {
@@ -21,6 +22,7 @@ export type OrchestrationEvent = {
   agentName?: string
   responseId?: string
   parentId?: string
+  parentCallId?: string
   responseIds?: string[]
   requestId?: string
   finishedAt?: number

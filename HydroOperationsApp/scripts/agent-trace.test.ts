@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applicationInsightsLink, captureApplicationEvent, captureFoundryEvent, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
+import { applicationInsightsLink, captureApplicationEvent, captureFoundryEvent, crewCommunications, executionStatus, responseTraceQuery } from '../src/services/copilot/agentTrace.ts'
 import { createOrchestrationEvent } from '../src/services/copilot/orchestration.ts'
 
 test('crew status never turns a failed or unstarted invocation into success', () => {
@@ -45,4 +45,23 @@ test('telemetry links require a resource identity and queries only include real 
   const query = responseTraceQuery(['resp_real', 'resp_real', 'resp_"injected'])
   assert.match(query ?? '', /in \("resp_real"\)/)
   assert.doesNotMatch(query ?? '', /injected/)
+})
+
+test('communication flow requires a real parent and matching returned call, never inferred success', () => {
+  const supervisor = createOrchestrationEvent('supervisor', 'running', 'Delegating')
+  const qa = { ...createOrchestrationEvent('qa', 'running', 'Querying'), parentId: supervisor.id, parentCallId: 'call1' }
+  const unused = createOrchestrationEvent('rca', 'queued', 'No parent')
+  assert.deepEqual(crewCommunications([supervisor, unused]), [])
+  assert.equal(crewCommunications([supervisor, qa])[0].waiting, true)
+  qa.status = 'completed'
+  assert.equal(crewCommunications([supervisor, qa])[0].receivedAt, undefined)
+  captureApplicationEvent(supervisor, 'Unrelated result', 'call2', false, 'delegation-return')
+  assert.equal(crewCommunications([supervisor, qa])[0].receivedAt, undefined)
+  captureApplicationEvent(supervisor, 'Received result', 'call1', false, 'delegation-return')
+  const [flow] = crewCommunications([supervisor, qa])
+  assert.equal(flow.waiting, false)
+  assert.equal(flow.failed, false)
+  assert.equal(typeof flow.receivedAt, 'number')
+  supervisor.trace!.at(-1)!.failed = true
+  assert.equal(crewCommunications([supervisor, qa])[0].failed, true)
 })

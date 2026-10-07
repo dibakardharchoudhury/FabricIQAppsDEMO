@@ -47,7 +47,10 @@ queryable: missing, deleted, or failed sources clear the corresponding UI data r
 a persisted snapshot.
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
-and CSS. Normal navigation pages are available without page-level lazy-loading delays. The
+and CSS. Each layout loads only the selected navigation page; graph, map, telemetry embed,
+and chat rendering libraries are deferred until their page needs them. The Data Agent MCP
+client/transport is loaded only when establishing an agent session, not on application startup.
+Page loading has a visible fallback and an explicit reload action on failure. The
 interactive Digital Twin model remains lazy-loaded when a selected asset supports it, then renders
 automatically without an additional operator action. The bootstrap uses local system fonts and does
 not wait on a third-party font stylesheet.
@@ -232,12 +235,35 @@ agent by its Foundry identity and executes its allowed direct tools as the signe
 code-mediated agent delegation, not local role-prompt switching, not native server-to-server A2A,
 and not Foundry Workflows. Microsoft Agent Framework is not required for this client-coordinated
 design; a hosted Framework coordinator would need a separate delegated tool/authentication boundary.
+Browser coordination is intended for user-attended requests, not durable enterprise workflows:
+closing/reloading the tab interrupts coordination and loses in-memory approval state. Durable
+resumption, unattended jobs, centrally enforced orchestration policy, and durable approvals require
+server-side implementation; adding a Framework library alone does not provide those guarantees.
 Q&A and RCA retain direct Lakehouse, Eventhouse, and operational SQL tools. The Fabric IQ
 specialist uses `fabric_iq_preview` with separate Data Agent and Ontology connections; the
 deprecated `fabric_dataagent_preview` tool is not used. Data Agent direct-table queries do not
 depend on its currently limited ontology query runtime. The independent direct Ontology endpoint
 requires its own runtime acceptance; configuration is not proof that it executes successfully.
 The trace records real Foundry response IDs and agent identities; it does not expose hidden reasoning.
+
+Hydro Intelligence in both layouts now starts with the Supervisor, regardless of an old saved
+engine preference. There is no separate Data Agent selector in ordinary chat; explicit Data Agent
+requests route through the Fabric IQ specialist. Direct Data Agent access remains in the optional
+Battle comparison. Missing Foundry configuration fails explicitly instead of silently changing engines.
+
+The animated crew reuses the existing yellow Signal Sprint helpers. Real parent/call IDs drive
+Supervisor-to-specialist request packets and matching return/failure packets, with distinct working
+motions per role. Packets play once for recent recorded handoffs, not continuously while waiting
+or when reopening old results. The activity feed distinguishes browser tool receipts from Foundry
+events. Pause and reduced-motion controls preserve all textual status and diagnostics.
+
+Authentication reuses the signed-in user's delegated identity and silent token cache. The current
+Foundry Agent Service audience replaces the obsolete Cognitive Services inference audience in
+deployment requirements. Fabric IQ source-definition verification requests ordinary Fabric read
+scopes, not Data Agent execution consent. Direct Data Agent execution in Battle still requests
+`DataAgent.Execute.All`. Setup bundles the required scopes in one idempotent provisioning step;
+tenant policy may require an administrator to consent. Existing grants are not automatically revoked,
+and consent does not replace resource access/RBAC or MFA.
 
 Work-order requests from either engine use the Foundry approval flow. A structured draft appears
 in an editable card with Yes/No buttons. Equipment and signal identity cannot be changed through

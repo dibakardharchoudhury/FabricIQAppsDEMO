@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { contextualizeDataAgentQuestion } from '../src/services/dataAgentConversation'
-import { extractDataAgentVisualizations } from '../src/services/dataAgentVisualizations'
+import { contextualizeDataAgentQuestion } from '../src/services/dataAgentConversation.ts'
+import { extractDataAgentVisualizations } from '../src/services/dataAgentVisualizations.ts'
 
 test('standalone Data Agent questions remain byte-for-byte unchanged', () => {
   const question = 'Summarize all facilities and open work orders.'

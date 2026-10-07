@@ -37,7 +37,7 @@ type CopilotExperienceProps = {
   battleEnabled?: boolean
   onSend: (question: string) => void
   onReset: () => void
-  onEngineChange: (engine: CopilotEngine) => void
+  onEngineChange?: (engine: CopilotEngine) => void
   onBattle?: () => void
 }
 
@@ -95,8 +95,8 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
     <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
     <section className="v2-copilot"><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
-        {foundryAvailable && <span className="v2-engine-toggle" role="group" aria-label="Copilot engine">
-          {(['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
+        {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
+          {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
             key={option}
             type="button"
             className={option === engine ? 'on' : ''}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Radio } from 'lucide-react'
+import { CopilotHelper } from './CopilotHelper'
 
 const LANE_COUNT = 5
 
@@ -40,15 +41,7 @@ export function CopilotThinking() {
         }}
       >
         <span className="copilot-signal" style={{ left: `${signalLane * 20 + 7}%` }} aria-hidden="true"><Radio size={13} /></span>
-        <span className="copilot-helper" style={{ left: `${helperLane * 20 + 3}%` }} aria-hidden="true">
-        <i className="copilot-helper-antenna" />
-        <i className="copilot-helper-visor" />
-        <i className="copilot-helper-mouth" />
-        <i className="copilot-helper-arm left" />
-        <i className="copilot-helper-arm right" />
-        <i className="copilot-helper-leg left" />
-        <i className="copilot-helper-leg right" />
-        </span>
+        <CopilotHelper style={{ left: `${helperLane * 20 + 3}%` }} />
       </span>
       <span className="copilot-sprint-controls">
         <button type="button" onClick={() => move(-1)} disabled={helperLane === 0} title="Move left" aria-label="Move helper left"><ChevronLeft size={14} /></button>

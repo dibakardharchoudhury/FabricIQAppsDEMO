@@ -23,13 +23,23 @@ which data each tool can reach.
 
 ## Live crew and execution tracing
 
-The shared chat/Battle renderer shows five original robot characters: Chief (Supervisor),
-Scout (Q&A), Sleuth (RCA), Fixer (work orders), and Sparky (Fabric IQ). Only actual invoked
+The shared chat/Battle renderer reuses the existing yellow Signal Sprint helper in a
+Supervisor-led communication diagram, with role badges: Chief (Supervisor), Scout (Q&A), Sleuth (RCA),
+Fixer (work orders), and Sparky (Fabric IQ). The thinking game and crew share the same
+`CopilotHelper` component and existing character styles; there is no separate SVG mascot.
+Execution receipts are collapsed by default so the answer retains the screen space. Only actual running
 agents animate; unused agents remain standing by. Animations can be paused and respect
 reduced-motion preferences. Failed runs never receive a successful overall status.
 Human approval progress comes from the in-memory approval store, so creation/rejection
 does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
 application actions, not evidence that a model executed a database mutation.
+
+Request packets originate only from actual child invocations with a recorded parent.
+Return/failure packets require the matching delegation call receipt, not just a completed
+model response. Recent packets play once; historical results do not replay live traffic.
+Role-specific working motions indicate an active invocation, not continuous network transfer.
+The live feed labels browser coordination/tool execution separately from streamed Foundry events.
+Normal chat is Supervisor-only; direct Data Agent execution remains available through optional Battle.
 
 Execution receipts retain actual Foundry response IDs, exposed request IDs, stable
 parent invocation IDs, and lifecycle/tool events. Browser tool execution is labeled
@@ -59,8 +69,8 @@ workspace/item before forwarding a question to MCP. Draft-only, missing, mismatc
 sources block invocation. Matching source identity is not runtime certification: product errors
 still propagate. See [the app's v2 contract](../HydroOperationsApp/README.md#ontology-v2-only)
 and [agent provisioning policies](../README.md#ontology-generations-and-optional-agents).
-Agent provisioning defaults to `enabled`; `auto` also attempts actual provisioning and only
-`disabled` opts out. Foundry success is not evidence that the separate Data Agent, Operations
+The Data Agent and both Operations Agents are always provisioned; there are no agent-mode flags.
+Foundry success is not evidence that the separate Data Agent, Operations
 Agent, playbook/actions, or alert delivery succeeded.
 
 In the latest V3 live check, the separate Fabric Data Agent published its selected ontology and
@@ -135,10 +145,11 @@ requested as **named scopes rather than `.default`**.
 
 | Path | Scope | Resource |
 | --- | --- | --- |
-| Foundry inference | `https://cognitiveservices.azure.com/user_impersonation` | Microsoft Cognitive Services (`7d312290-…`) |
+| Supervisor and specialists | `https://ai.azure.com/user_impersonation` | Microsoft Foundry Agent Service (`18a66f5f-…`) |
 | Telemetry (Kusto) | `<cluster>/user_impersonation` | Azure Data Explorer (`2746ea77-…`) |
 | Asset metadata | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
 | Workspace discovery | `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All` | Power BI Service |
+| Direct Data Agent execution (Battle) | `DataAgent.Execute.All` with the Fabric scopes | Power BI Service / Microsoft Fabric |
 | Operational records | *(none — Rayfin session cookie)* | Rayfin backend |
 
 > [!NOTE]
@@ -159,10 +170,10 @@ flowchart TD
   M -->|cluster/user_impersonation| K[Eventhouse / Kusto]
   M -->|GraphQLApi.Execute.All| G[Lakehouse GraphQL]
   R[Rayfin session] --> S[(App SQL database)]
-  F -.->|RBAC check in resource tenant| RB{{Cognitive Services<br/>OpenAI User}}
+  F -.->|RBAC check in resource tenant| RB{{Foundry User}}
 ```
 
-`foundryToken()` tries silent acquisition first and only falls back to a popup when the call was
+`foundryAgentToken()` tries silent acquisition first and only falls back to a popup when the call was
 started by a user gesture — redirects are blocked inside the Fabric iframe.
 
 ### Consent and RBAC
@@ -172,13 +183,17 @@ Two separate things, often confused:
 | | Grants what | Applied by |
 | --- | --- | --- |
 | Delegated **scope** | Permission to request a token for that audience | `npm run setup-live-auth` (idempotent) |
-| **`Cognitive Services OpenAI User`** role | Permission to actually invoke the deployment | `az role assignment create`, per user, per resource |
+| **Foundry User** role | Permission to invoke the project agents | Resource administrator |
 
 Both are required. The scope alone yields a token that the data plane rejects.
 
-Tenant-wide admin consent is *optional* here: all requested scopes are `type: User`, so each user
-self-consents on first use. `setup-live-auth` attempts the blanket grant, prints the manual fallback
-if it lacks Privileged Role Administrator, and continues — that warning is expected, not a failure.
+Tenant-wide admin consent avoids per-user permission prompts. Personal consent is supported where
+tenant policy permits it. `setup-live-auth` attempts the bundled grant and prints the exact missing
+administrator action when denied; the orchestrator still fails if effective consent remains incomplete.
+The obsolete Cognitive Services inference audience is no longer requested or required. Existing grants
+are preserved rather than revoked automatically. Fabric IQ definition verification uses ordinary
+Fabric scopes; it does not execute the Data Agent and does not request `DataAgent.Execute.All`.
+The Foundry Fabric IQ connection remains a separate project authorization boundary.
 
 No CORS configuration is needed. The Azure OpenAI data plane returns `Access-Control-Allow-Origin: *`
 and permits `Authorization` on POST. Keep the resource on **public network access**, though: a

@@ -51,7 +51,7 @@ export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; 
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
 export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
-type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string>; copilotEngine?: CopilotEngine }
+type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
@@ -120,8 +120,8 @@ function useHydroOperationsDataController() {
   const [jobs, setJobs] = useState<Record<string, ProgressJob>>(() => readPersistedJobs())
   const [now, setNow] = useState(() => Date.now())
   const [telemetrySelections, setTelemetrySelections] = useState<Record<string, TelemetryExplorerSelection>>({})
-  const [copilotEngine, setCopilotEngineState] = useState<CopilotEngine>(() => persisted.copilotEngine === 'foundry' && isFoundryConfigured() ? 'foundry' : 'data-agent')
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES[persisted.copilotEngine === 'foundry' && isFoundryConfigured() ? 'foundry' : 'data-agent']])
+  const copilotEngine: CopilotEngine = 'foundry'
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [INITIAL_MESSAGES.foundry])
   const [copilotBusy, setCopilotBusy] = useState(false)
   const [mutationKey, setMutationKey] = useState<string>()
 
@@ -810,15 +810,6 @@ function useHydroOperationsDataController() {
     setMessages([INITIAL_MESSAGES[copilotEngine]])
   }, [copilotBusy, copilotEngine])
 
-  const setCopilotEngine = useCallback((engine: CopilotEngine) => {
-    if (copilotBusy || engine === copilotEngine) return
-    resetDataAgentConversation()
-    resetFoundryConversation()
-    setCopilotEngineState(engine)
-    setMessages([INITIAL_MESSAGES[engine]])
-    writePersistedSetup({ copilotEngine: engine })
-  }, [copilotBusy, copilotEngine])
-
   return {
     user,
     notice,
@@ -890,7 +881,6 @@ function useHydroOperationsDataController() {
       removeWorkOrder,
       sendCopilotQuestion,
       resetCopilot,
-      setCopilotEngine,
       refreshDiscovery: clearWorkspaceConfigCache,
     },
   }

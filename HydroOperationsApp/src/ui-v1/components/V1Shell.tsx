@@ -3,6 +3,7 @@ import { Database, Factory, Radio, RefreshCw } from 'lucide-react'
 import { V1_TABS, resolveV1Tab, type V1Tab } from '../navigation'
 import { TabViewActions } from '../../ui-shared/components/TabViewActions'
 import { HeaderMeta } from '../../ui-shared/components/HeaderMeta'
+import { PageErrorBoundary } from '../../ui-shared/components/PageErrorBoundary'
 import { ExplorerModeProvider } from '../../ui-shared/hooks/ExplorerModeProvider'
 import { HydroOperationsDataProvider, useHydroOperationsData } from '../../ui-shared/hooks/useHydroOperationsData'
 
@@ -75,9 +76,9 @@ function V1ShellContent() {
     </nav>
 
     <main className="v2-main">
-      <Suspense fallback={<div className="v2-page-loading"><span />Loading {activeTab.title}…</div>}>
+      <PageErrorBoundary key={activeTab.id}><Suspense fallback={<div className="v2-page-loading"><span />Loading {activeTab.title}…</div>}>
         <ActivePage />
-      </Suspense>
+      </Suspense></PageErrorBoundary>
     </main>
   </div>
 }

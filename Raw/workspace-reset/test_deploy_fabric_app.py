@@ -916,9 +916,10 @@ class DeployOrderTests(unittest.TestCase):
 
     def test_live_auth_contract_covers_foundry_and_fabric_embed(self):
         self.assertEqual(
-            DEPLOY.REQUIRED_DELEGATED["7d312290-28c8-473c-a0ed-8e53749b6d6d"],
+            DEPLOY.REQUIRED_DELEGATED["18a66f5f-dbdf-4c17-9dd7-1634712a9cbe"],
             {"user_impersonation"},
         )
+        self.assertNotIn("7d312290-28c8-473c-a0ed-8e53749b6d6d", DEPLOY.REQUIRED_DELEGATED)
         self.assertIn(
             "Fabric.Embed",
             DEPLOY.REQUIRED_DELEGATED["00000009-0000-0000-c000-000000000000"],

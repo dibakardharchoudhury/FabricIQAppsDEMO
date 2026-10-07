@@ -52,9 +52,13 @@ test('time and numeric axes retain their own scales and single-string tooltips',
 
 test('saved shipped Foundry prompt upgrades without replacing custom instructions', () => {
   const current = defaultCopilotSettings().systemPrompt
-  const legacy = current.split('\n\nOperational counts and rankings:')[0]
+  const historical = current.replace(
+    '- Queries are read-only. Work-order proposals require human review and approval in the application before any SQL write.',
+    '- You are read-only. You cannot create, modify or delete anything; say so if asked.',
+  )
+  const legacy = historical.split('\n\nOperational counts and rankings:')[0]
   assert.equal(mergeCopilotSettings({ systemPrompt: legacy }).systemPrompt, current)
-  const countVersion = current.split('\n\nAsset resolution and latest readings:')[0]
+  const countVersion = historical.split('\n\nAsset resolution and latest readings:')[0]
   assert.equal(mergeCopilotSettings({ systemPrompt: countVersion }).systemPrompt, current)
   assert.equal(mergeCopilotSettings({ systemPrompt: 'My custom policy' }).systemPrompt, 'My custom policy')
   assert.match(current, /two status ne filters/)

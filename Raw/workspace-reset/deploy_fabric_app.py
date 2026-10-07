@@ -56,13 +56,11 @@ REQUIRED_DELEGATED = {
         "DataAgent.Execute.All",
         "Fabric.Embed",
     },
-    "7d312290-28c8-473c-a0ed-8e53749b6d6d": {"user_impersonation"},
 }
 RESOURCE_NAMES = {
     "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": "Microsoft Foundry Agent Service",
     "2746ea77-4702-4b45-80ca-3c97e680e8b7": "Azure Data Explorer",
     "00000009-0000-0000-c000-000000000000": "Power BI Service / Microsoft Fabric",
-    "7d312290-28c8-473c-a0ed-8e53749b6d6d": "Microsoft Cognitive Services",
 }
 STALE_TOKEN_CHALLENGE_RE = re.compile(
     r"TokenCreatedWithOutdatedPolicies|Continuous access evaluation|InteractionRequired|"

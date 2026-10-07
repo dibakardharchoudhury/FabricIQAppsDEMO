@@ -64,8 +64,8 @@ export async function askFoundryCopilot(
   try {
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
-    const invoke = async (role: AgentRole, prompt: string, parentId?: string): Promise<string> => {
-      const event: OrchestrationEvent = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId }
+    const invoke = async (role: AgentRole, prompt: string, parentId?: string, parentCallId?: string): Promise<string> => {
+      const event: OrchestrationEvent = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId, parentCallId }
       events.push(event)
       publish()
       const definitions = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
@@ -84,6 +84,11 @@ export async function askFoundryCopilot(
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
             }),
             signal: AbortSignal.timeout(180_000),
+          }).catch((error: unknown) => {
+            if (error instanceof TypeError) {
+              throw new Error(`No HTTP response was received from Foundry Agent Service at ${new URL(endpoint).hostname}. Check browser network/DNS, proxy and CORS diagnostics. This is not evidence of a missing consent grant; the request was not retried automatically.`, { cause: error })
+            }
+            throw error
           })
           if (!response.ok || !response.body) {
             const detail = await response.text()
@@ -118,8 +123,16 @@ export async function askFoundryCopilot(
               delegated.add(key)
               captureApplicationEvent(event, `Handed task to ${AGENT_NAMES[specialist]}`, call.id)
               publish()
-              const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}`, event.id)
-              input.push({ type: 'function_call_output', call_id: call.id, output: answer })
+              try {
+                const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}`, event.id, call.id)
+                input.push({ type: 'function_call_output', call_id: call.id, output: answer })
+                captureApplicationEvent(event, `${AGENT_NAMES[specialist]} returned its result to the Supervisor`, call.id, false, 'delegation-return')
+                publish()
+              } catch (error) {
+                captureApplicationEvent(event, `${AGENT_NAMES[specialist]} returned a failure to the Supervisor`, call.id, true, 'delegation-return')
+                publish()
+                throw error
+              }
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
               const parsed: unknown = JSON.parse(call.arguments)
               if (!parsed || typeof parsed !== 'object' || !('tool_name' in parsed) || !('arguments_json' in parsed)
@@ -131,7 +144,7 @@ export async function askFoundryCopilot(
               const started = Date.now()
               const step: AgentStep = { tool: parsed.tool_name, status: 'running', detail: describeToolCall(parsed.tool_name, args), summary: 'running', elapsedMs: 0, args: parsed.arguments_json }
               steps.push(step)
-              captureApplicationEvent(event, `Executing ${parsed.tool_name}`, call.id)
+              captureApplicationEvent(event, `Executing ${parsed.tool_name}`, call.id, false, 'tool-start')
               publish()
               publishSteps()
               try {
@@ -140,11 +153,11 @@ export async function askFoundryCopilot(
                 if (result.model3d) models.push(result.model3d)
                 const output = JSON.stringify(result.result)
                 Object.assign(step, { status: 'done', elapsedMs: Date.now() - started, summary: `${result.rowCount ?? 0} returned rows`, query: result.query, result: output })
-                captureApplicationEvent(event, `${parsed.tool_name} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id)
+                captureApplicationEvent(event, `${parsed.tool_name} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id, false, 'tool-end')
                 input.push({ type: 'function_call_output', call_id: call.id, output })
               } catch (error) {
                 Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
-                captureApplicationEvent(event, `${parsed.tool_name} failed`, call.id, true)
+                captureApplicationEvent(event, `${parsed.tool_name} failed`, call.id, true, 'tool-end')
                 throw error
               } finally { publishSteps(); publish() }
             } else {

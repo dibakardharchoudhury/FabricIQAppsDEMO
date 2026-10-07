@@ -1,6 +1,5 @@
 import { PublicClientApplication } from '@azure/msal-browser'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { AgentStep } from './agentSteps'
 import { type AgentAnswer } from './assistantStream'
 import { invokeVerifiedDataAgent, requireDataAgentEndpoint, selectDataAgent } from './artifactDiscovery'
@@ -60,7 +59,6 @@ const DATA_AGENT_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/D
 const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
 // Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
 // `Cognitive Services OpenAI User` role on the Foundry resource for the token to be authorized.
-const FOUNDRY_SCOPES = ['https://cognitiveservices.azure.com/user_impersonation']
 const FOUNDRY_AGENT_SCOPES = ['https://ai.azure.com/user_impersonation']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
@@ -295,16 +293,6 @@ export async function fabricEmbedToken(interactive: boolean, requested?: string[
   if (silent) return silent
   if (!interactive) return null
   return popupToken(scopes)
-}
-
-/** A token for the Azure AI Foundry data plane. Silent first; popup only when interactive is allowed. */
-export async function foundryToken(interactive: boolean): Promise<string | null> {
-  // Consent may have been granted after this page loaded. Bypass MSAL's cached token so the
-  // first Foundry turn immediately observes the new grant instead of requiring a hard refresh.
-  const silent = await silentToken(FOUNDRY_SCOPES, true)
-  if (silent) return silent
-  if (!interactive) return null
-  return popupToken(FOUNDRY_SCOPES)
 }
 
 export async function foundryAgentToken(interactive: boolean): Promise<string | null> {
@@ -1017,7 +1005,7 @@ export async function verifyDataAgentForFoundry(): Promise<void> {
   if (config?.ontologyError) throw new Error(config.ontologyError)
   requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
   if (!config?.ontologyId || !config.dataAgentId) throw new Error('Verified Data Agent source identity is unavailable.')
-  const token = await fabricToken(true, DATA_AGENT_SCOPES)
+  const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
   await verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
 }
@@ -1060,6 +1048,10 @@ async function getDataAgentMcpSession(endpoint: string, token: string): Promise<
   }
   if (!dataAgentMcpSessionPromise) {
     dataAgentMcpSessionPromise = (async () => {
+      const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+        import('@modelcontextprotocol/sdk/client/index.js'),
+        import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+      ])
       const client = new Client({ name: 'hydro-operations-app', version: __APP_VERSION__ })
       const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
         requestInit: { headers: { Authorization: 'Bearer ' + token, ActivityId: crypto.randomUUID() } },

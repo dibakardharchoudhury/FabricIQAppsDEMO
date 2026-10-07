@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
+  REQUIRED_DELEGATED,
   activateFreshTenantAzureCliCache,
   recoverStaleToken,
   runWithStaleTokenRecovery,
@@ -12,6 +13,17 @@ import {
   selectCurrentHostingOrigin,
   synchronizeRedirectUris,
 } from './setup-live-auth.mjs'
+
+test('current agent deployment needs only Foundry, Fabric and Kusto resources, not legacy inference', () => {
+  assert.deepEqual(REQUIRED_DELEGATED.map(resource => resource.resourceAppId).sort(), [
+    '00000009-0000-0000-c000-000000000000',
+    '18a66f5f-dbdf-4c17-9dd7-1634712a9cbe',
+    '2746ea77-4702-4b45-80ca-3c97e680e8b7',
+  ])
+  const fabric = REQUIRED_DELEGATED.find(resource => resource.resourceAppId === '00000009-0000-0000-c000-000000000000')
+  assert.ok(fabric.scopeValues.includes('DataAgent.Execute.All'))
+  assert.ok(REQUIRED_DELEGATED.every(resource => !resource.scopeValues.some(scope => scope.includes('ReadWrite'))))
+})
 
 test('selects only the latest configured Fabric host for addition', () => {
   const historical = 'https://historical.webapp.fabricapps.net'
