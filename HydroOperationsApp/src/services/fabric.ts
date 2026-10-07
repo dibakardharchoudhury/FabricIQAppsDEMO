@@ -55,6 +55,7 @@ const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/use
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
 const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
+const DATA_AGENT_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/DataAgent.Execute.All']
 // Fabric Embed needs its own delegated scope. Named, not `.default`, for the same reason as kustoScope.
 const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
 // Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
@@ -109,12 +110,12 @@ async function popupToken(scopes: string[]): Promise<string> {
 }
 
 /** A Fabric REST token (read + execute). Silent first, popup only when interactive is allowed. */
-async function fabricToken(interactive: boolean): Promise<string | null> {
-  const silent = await silentToken(FABRIC_SCOPES)
+async function fabricToken(interactive: boolean, scopes = FABRIC_SCOPES): Promise<string | null> {
+  const silent = await silentToken(scopes)
   if (silent) return silent
   if (!interactive) return null
   try {
-    return await popupToken(FABRIC_SCOPES)
+    return await popupToken(scopes)
   } catch (error) {
     console.warn('Fabric permission consent did not complete.', error)
     throw new Error('Fabric permission consent is required before this action can run. Complete the consent popup and try again.', { cause: error })
@@ -993,7 +994,7 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   if (config?.ontologyError) throw new Error(config.ontologyError)
   const endpoint = requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
   if (!config?.ontologyId || !config.dataAgentId) throw new Error('Data Agent source identity is unavailable. Refresh Ontology v2 discovery before asking the agent.')
-  const token = await fabricToken(true)
+  const token = await fabricToken(true, DATA_AGENT_SCOPES)
   if (!token) throw new Error('Fabric sign-in is required.')
   const verification = verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
   try {
@@ -1016,7 +1017,7 @@ export async function verifyDataAgentForFoundry(): Promise<void> {
   if (config?.ontologyError) throw new Error(config.ontologyError)
   requireDataAgentEndpoint(config?.dataAgentUrl, config?.ontologyGeneration)
   if (!config?.ontologyId || !config.dataAgentId) throw new Error('Verified Data Agent source identity is unavailable.')
-  const token = await fabricToken(true)
+  const token = await fabricToken(true, DATA_AGENT_SCOPES)
   if (!token) throw new Error('Fabric sign-in is required.')
   await verifyDataAgentSource(config.dataAgentId, config.ontologyId, config.ontologyGeneration, token)
 }
@@ -1039,7 +1040,7 @@ export async function warmDataAgentMcp(): Promise<void> {
   const config = await ensureConfig(false)
   if (!config || config.ontologyError || !config.dataAgentUrl || !config.dataAgentId || !config.ontologyId) return
   const endpoint = requireDataAgentEndpoint(config.dataAgentUrl, config.ontologyGeneration)
-  const token = await fabricToken(false)
+  const token = await fabricToken(false, DATA_AGENT_SCOPES)
   if (!token) return
   try {
     await Promise.all([

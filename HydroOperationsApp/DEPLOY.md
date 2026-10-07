@@ -69,6 +69,10 @@ for the current identity. A subsequent browser HTTP 400 was separately reproduce
 as missing explicit message types in the Responses input. Typed message input and
 tool-output continuation passed live HTTP 200 checks; the client correction requires
 redeployment and must not be described as already active on the hosted page.
+The Data Agent execution path now requests `DataAgent.Execute.All` explicitly alongside
+its existing Fabric scopes. If tenant policy permits personal consent, asking a Data
+Agent question presents the **Execute data agents** permission once; warm-up never opens
+a popup. Ordinary telemetry and direct Q&A reads do not request this additional scope.
 
 ## Ontology v2 prerequisite and capability boundaries
 
