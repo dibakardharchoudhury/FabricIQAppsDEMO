@@ -125,7 +125,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         connection_url = f"https://management.azure.com{project_id}/connections/{connection_name}?api-version=2025-10-01-preview"
         connection = {
             "category": "RemoteTool", "authType": "UserEntraToken", "target": target,
-            "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": True,
+            "audience": "https://analysis.windows.net/powerbi/api", "isSharedToAll": False,
         }
         request("PUT", connection_url, arm_headers, json={"properties": connection})
         readback = request("GET", connection_url, arm_headers).json()["properties"]
