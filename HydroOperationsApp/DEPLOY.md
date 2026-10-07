@@ -209,6 +209,22 @@ automatic execution retries. All agent paths now share source/matching/freshness
 and explicit chart CSV takes precedence over unrelated numeric table columns. Thirty
 focused tests, typecheck and lint pass; live revalidation of these corrections is pending.
 
+Deployment `2d1fb34` completed with `SUCCESS` as version 1.0.722. Fabric IQ -> Data Agent
+then returned the independently verified open-work count of 10. Its paired Ontology call
+returned schema rather than the requested instances; the answer disclosed that gap.
+The compound BAD/HOT comparison is **not accepted**: the native Data Agent omitted T015
+from its hottest-five ranking and associated unrelated T003 work with T012. Foundry
+correctly rejected malformed nested arguments, but exhausted its bounded execution budget.
+These failures remain recorded rather than replaced with a successful-looking answer.
+
+The corrective transport now passes Hydro tool arguments as a structured object, removing
+the nested JSON-string encoding that caused repeated invalid escaping. Tool allowlists,
+runtime validation, visible rejection receipts and the six-round bound remain in place.
+Fabric IQ is instructed to finish requested instance reads rather than stop at schema.
+Consent setup also no longer attempts blanket app-wide consent: only the declared resource
+grants are requested, while existing grants remain untouched. Forty focused tests,
+typecheck and lint pass. Further hosted acceptance is still required.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
@@ -436,8 +452,9 @@ The orchestrator invokes `setup-live-auth` to configure SPA redirects and bundle
 required delegated permissions and consent checks. The full application currently uses
 **three API resources / eight scopes**, not a separate grant for each agent. Existing
 grants are preserved; obsolete inference permission is no longer requested by runtime
-or required by deployment. Only perform manual actions that the script explicitly reports
-it cannot perform.
+or required by deployment. Setup uses targeted grants for these declared requirements,
+not blanket app-wide consent that could also grant unrelated historical permissions.
+Only perform manual actions that the script explicitly reports it cannot perform.
 
 #### Why the enterprise application / service principal is required
 

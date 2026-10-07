@@ -99,18 +99,20 @@ test('identical table and CSV retain explicit chart intent without duplicate dat
   assert.equal(answerVisualizations(datasets, 'chart').length, 1)
 })
 
-test('malformed nested tool JSON is rejected without repairing or executing it', () => {
-  const invalid = parseHydroQuery(JSON.stringify({
-    tool_name: 'run_kql', arguments_json: String.raw`{"query":"OPCUAEvents | where opcua_node_id matches regex '\.turbine_temp$'"}`,
-  }))
+test('tool arguments are structured objects, with no nested JSON serialization', () => {
+  const invalid = parseHydroQuery(String.raw`{"tool_name":"run_kql","arguments":{"query":"OPCUAEvents | where opcua_node_id matches regex '\.turbine_temp$'"}}`)
   assert.equal(invalid.ok, false)
   if (invalid.ok === false) assert.match(invalid.error, /Invalid tool JSON.*escaped backslashes/)
-  for (const raw of ['{', '{}', '{"tool_name":"run_kql","arguments_json":"null"}',
-    '{"tool_name":"run_kql","arguments_json":"[]"}']) assert.equal(parseHydroQuery(raw).ok, false)
+  for (const raw of ['{', '{}', '{"tool_name":"run_kql","arguments":null}',
+    '{"tool_name":"run_kql","arguments":[]}', '{"tool_name":"run_kql","arguments":"{}"}',
+    '{"tool_name":"run_kql","arguments_json":"{}"}']) assert.equal(parseHydroQuery(raw).ok, false)
   const args = { query: String.raw`OPCUAEvents | where opcua_node_id matches regex '\.turbine_temp$'` }
-  const corrected = parseHydroQuery(JSON.stringify({ tool_name: 'run_kql', arguments_json: JSON.stringify(args) }))
+  const corrected = parseHydroQuery(JSON.stringify({ tool_name: 'run_kql', arguments: args }))
   assert.equal(corrected.ok, true)
   if (corrected.ok) assert.deepEqual(corrected.args, args)
+  const tool = agentDefinition('qa', 'test').tools[0]
+  assert.match(JSON.stringify(tool), /"arguments":\{"type":"object"/)
+  assert.doesNotMatch(JSON.stringify(tool), /arguments_json/)
 })
 
 test('persistent agents share source semantics, complete equipment work and real freshness time', () => {

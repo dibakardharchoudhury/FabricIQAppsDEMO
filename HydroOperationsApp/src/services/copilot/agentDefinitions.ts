@@ -18,7 +18,7 @@ The delegated question must preserve the user's exact scope, filters, time and r
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Answer from returned evidence. Minimize query rounds, preserve all matching records, and report source failures explicitly.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Separate observed facts, hypotheses with supporting/contradicting evidence, confidence, evidence gaps, and recommended checks. Do not assert an unverified cause.',
   'work-order': 'You are the persistent Hydro Work Order agent. Resolve equipment and signal identity using direct tools, check all existing open work, then call propose_work_order through hydro_query for each requested draft. Proposals are shown as editable approval cards. Only the human can approve the SQL write. Never claim a draft was created in SQL. Do not ask for typed confirmation commands.',
-  'fabric-iq': 'You are the persistent Hydro Fabric IQ specialist. Use fabriciq-data-agent only for explicit Data Agent requests and fabriciq-ontology for explicit ontology-native queries. These are separate source connections. The Data Agent queries underlying tables directly while its ontology query path has a temporary product limitation. Direct Ontology access is independent; do not infer its health from that limitation. Preserve returned facts, scope and source limitations. Report the source actually executed. Never silently substitute one endpoint for the other, ungrounded knowledge, or a deprecated Fabric Data Agent tool. A successful definition read is not evidence of query execution.',
+  'fabric-iq': 'You are the persistent Hydro Fabric IQ specialist. Use fabriciq-data-agent only for explicit Data Agent requests and fabriciq-ontology for explicit ontology-native queries. These are separate source connections. The Data Agent queries underlying tables directly while its ontology query path has a temporary product limitation. Direct Ontology access is independent; do not infer its health from that limitation. Schema discovery does not answer a request for instance rows: continue with a read-only data query for the requested property values, without asking permission again for the already-requested read. If instance execution is unavailable, report that limitation explicitly. Preserve returned facts, scope and source limitations. Report the source actually executed. Never silently substitute one endpoint for the other, ungrounded knowledge, or a deprecated Fabric Data Agent tool. A successful definition read is not evidence of query execution.',
 }
 
 export function buildAgentInput(
@@ -57,13 +57,13 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
     { type: 'fabric_iq_preview', server_label: 'fabriciq-ontology', project_connection_id: ontologyConnection, require_approval: 'never' },
   ] : [{
     type: 'function', name: 'hydro_query',
-    description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. arguments_json must contain valid serialized JSON matching that tool schema. Escape backslashes inside JSON strings; prefer exact identifiers or non-regex KQL when possible.',
+    description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. Pass arguments as a structured object matching the selected tool schema, never a JSON-encoded string. Prefer exact identifiers or non-regex KQL when possible.',
     parameters: {
       type: 'object', properties: {
         tool_name: { type: 'string', enum: [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
-        arguments_json: { type: 'string' },
-      }, required: ['tool_name', 'arguments_json'], additionalProperties: false,
-    }, strict: true,
+        arguments: { type: 'object', additionalProperties: true },
+      }, required: ['tool_name', 'arguments'], additionalProperties: false,
+    }, strict: false,
   }]
   return {
     kind: 'prompt', model, instructions: `${AGENT_INSTRUCTIONS[role]}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
@@ -78,12 +78,10 @@ export function parseHydroQuery(raw: string):
     Boolean(value) && typeof value === 'object' && !Array.isArray(value)
   try {
     const value: unknown = JSON.parse(raw)
-    if (!record(value) || typeof value.tool_name !== 'string' || typeof value.arguments_json !== 'string') {
-      return { ok: false, error: 'hydro_query requires tool_name and arguments_json strings.' }
+    if (!record(value) || typeof value.tool_name !== 'string' || !record(value.arguments)) {
+      return { ok: false, error: 'hydro_query requires a tool_name string and an arguments object, not JSON encoded inside a string.' }
     }
-    const args: unknown = JSON.parse(value.arguments_json)
-    if (!record(args)) return { ok: false, error: 'arguments_json must encode a JSON object.' }
-    return { ok: true, toolName: value.tool_name, argumentsJson: value.arguments_json, args }
+    return { ok: true, toolName: value.tool_name, argumentsJson: JSON.stringify(value.arguments), args: value.arguments }
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error
     return { ok: false, error: `Invalid tool JSON: ${error.message}. Serialize valid JSON, including escaped backslashes.` }

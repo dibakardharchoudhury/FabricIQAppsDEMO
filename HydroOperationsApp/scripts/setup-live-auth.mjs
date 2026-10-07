@@ -491,21 +491,7 @@ function grantDelegatedPermissions(clientId) {
     return
   }
 
-  // Blanket admin consent first (Graph + Power BI + ADX). It can silently skip
-  // some resources, so we ALSO create each delegated grant directly below.
-  console.log('Granting admin consent for the app...')
-  try {
-    az(['ad', 'app', 'permission', 'admin-consent', '--id', clientId])
-    console.log('\u2713 Admin consent requested for the app.')
-  } catch (err) {
-    console.warn(
-      '\u26a0 Could not grant blanket admin consent (need Privileged Role ' +
-        'Administrator / Global Administrator). Will still try the targeted grants ' +
-        `below. (Underlying error: ${err.message ?? err})`,
-    )
-  }
-
-  // Ensure each delegated grant exists specifically (admin-consent can skip them).
+  // Grant only declared requirements, not unrelated historical app permissions.
   let clientSpId
   try {
     clientSpId = az(['ad', 'sp', 'show', '--id', clientId, '--query', 'id', '-o', 'tsv']).trim()

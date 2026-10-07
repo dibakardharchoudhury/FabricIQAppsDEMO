@@ -23,6 +23,13 @@ test('current agent deployment needs only Foundry, Fabric and Kusto resources, n
   const fabric = REQUIRED_DELEGATED.find(resource => resource.resourceAppId === '00000009-0000-0000-c000-000000000000')
   assert.ok(fabric.scopeValues.includes('DataAgent.Execute.All'))
   assert.ok(REQUIRED_DELEGATED.every(resource => !resource.scopeValues.some(scope => scope.includes('ReadWrite'))))
+  assert.equal(REQUIRED_DELEGATED.reduce((count, resource) => count + resource.scopeValues.length, 0), 8)
+})
+
+test('consent setup never invokes blanket consent for unrelated historical permissions', () => {
+  const source = fs.readFileSync(new URL('./setup-live-auth.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /['"]admin-consent['"]/)
+  assert.match(source, /for \(const req of resolved\)/)
 })
 
 test('selects only the latest configured Fabric host for addition', () => {
