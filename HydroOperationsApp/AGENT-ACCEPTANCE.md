@@ -37,9 +37,11 @@ The Python deployment orchestrator provisions/readbacks agent definitions and ap
 it is not an RCA script or a runtime specialist. Fabric setup notebooks provision data,
 ontology and native agents. Model-generated text alone cannot create a SQL work order.
 
-Full prior conversation is provided to Chief only. Each specialist receives its scoped
+Full prior conversation is provided to Chief only. Direct specialists receive their scoped
 assignment, the original request as context and current-turn specialist evidence.
-Chief must include relevant prior-turn IDs/constraints in a self-contained assignment.
+Sparky receives only its self-contained native retrieval assignment, not the original
+compound workflow or unrelated specialist narrative. Chief must include relevant
+prior-turn IDs/constraints in each self-contained assignment.
 Current-turn evidence is still carried forward; measured runtime improvements need live
 verification rather than inferring speed from reduced input construction.
 
