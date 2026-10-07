@@ -55,7 +55,7 @@ type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetr
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live telemetry, or maintenance work. I run an Azure AI Foundry model over the Lakehouse asset tables, the Eventhouse telemetry and the operational database, and show you every query I ran.' },
+  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, or maintenance work. The Foundry Supervisor delegates to specialist agents and shows their execution receipts. Q&A and RCA use direct data tools; explicit Data Agent or ontology requests use Fabric IQ. Work-order drafts require your review and approval before any SQL write.' },
 }
 
 function readPersistedSetup(): PersistedSetup {

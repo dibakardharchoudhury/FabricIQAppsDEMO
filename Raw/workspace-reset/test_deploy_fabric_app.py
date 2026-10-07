@@ -40,6 +40,44 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
 
 
 class DeployOrderTests(unittest.TestCase):
+    def test_consent_combines_tenant_grants_with_only_the_current_users_grants(self):
+        origin = "https://app.webapp.fabricapps.net"
+        app = {
+            "spa": {"redirectUris": [origin]},
+            "requiredResourceAccess": [{
+                "resourceAppId": "resource-app",
+                "resourceAccess": [{"id": name, "type": "Scope"} for name in ("Read", "Execute")],
+            }],
+        }
+        resource = {
+            "id": "resource-sp",
+            "oauth2PermissionScopes": [{"id": name, "value": name} for name in ("Read", "Execute")],
+        }
+        for principal_id, scope, valid in [
+            ("current-user", "Execute", True),
+            ("other-user", "Execute", False),
+            ("current-user", "Read", False),
+        ]:
+            with self.subTest(principal_id=principal_id, scope=scope):
+                grants = [
+                    {"resourceId": "resource-sp", "consentType": "AllPrincipals", "scope": "Read"},
+                    {"resourceId": "resource-sp", "consentType": "Principal", "principalId": principal_id, "scope": scope},
+                ]
+                with (
+                    patch.object(DEPLOY, "REQUIRED_DELEGATED", {"resource-app": {"Read", "Execute"}}),
+                    patch.object(DEPLOY, "RESOURCE_NAMES", {"resource-app": "Test API"}),
+                    patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+                    patch.object(DEPLOY, "run_capture", side_effect=[
+                        json.dumps(app), json.dumps(resource), "client-sp", json.dumps(grants),
+                        json.dumps({"id": "current-user", "userPrincipalName": "operator@example.test"}),
+                    ]),
+                ):
+                    if valid:
+                        DEPLOY.validate_entra_live_auth("client-app", origin)
+                    else:
+                        with self.assertRaisesRegex(DEPLOY.DeployError, "missing consent for Execute"):
+                            DEPLOY.validate_entra_live_auth("client-app", origin)
+
     def test_frontend_export_runs_the_repository_producer_on_node24(self):
         with (
             patch.object(DEPLOY, "node24_script", return_value=["node24", "export-env.mjs"]) as node_script,

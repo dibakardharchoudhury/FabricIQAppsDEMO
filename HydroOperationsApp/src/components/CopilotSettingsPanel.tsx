@@ -74,44 +74,19 @@ export function CopilotSettingsPanel() {
       </label></li></ul>
     </div>
     <div className="copilot-settings-group">
-      <h4>Foundry Agent Service</h4>
-      <p>Uses the persistent Hydro Supervisor, Q&amp;A, RCA, Work Order, and Fabric IQ specialist agents. Provision their definitions before use.</p>
-      <label>Project endpoint<input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} /></label>
-    </div>
-    <div className="copilot-settings-group">
-      <h4>Model endpoint
-        <button type="button" className="copilot-settings-inline" disabled={draft.endpoint === defaults.endpoint && draft.deployment === defaults.deployment} onClick={() => setDraft(current => ({ ...current, ...FOUNDRY_ENV_DEFAULTS }))}>Restore from rayfin/.env</button>
+      <h4>Foundry Agent Service
+        <button type="button" className="copilot-settings-inline" disabled={draft.projectEndpoint === defaults.projectEndpoint} onClick={() => setDraft(current => ({ ...current, projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint }))}>Restore deployed project</button>
       </h4>
-      <p>Use the model inference URL ending in <code>/openai/v1/responses</code>, not the Foundry project URL.</p>
-      <div className="copilot-settings-fields">
-        <label>
-          <span>Endpoint</span>
-          <input
-            type="url"
-            value={draft.endpoint}
-            spellCheck={false}
-            placeholder="https://<resource>.services.ai.azure.com/openai/v1/responses"
-            onChange={event => setDraft(current => ({ ...current, endpoint: event.target.value }))}
-          />
-        </label>
-        <label>
-          <span>Deployment</span>
-          <input
-            value={draft.deployment}
-            spellCheck={false}
-            placeholder="gpt-5-mini"
-            onChange={event => setDraft(current => ({ ...current, deployment: event.target.value }))}
-          />
-        </label>
-      </div>
+      <p>Every Foundry request goes through the persistent Hydro Supervisor, which delegates to Q&amp;A, RCA, Work Order, or Fabric IQ specialists. The deployment orchestrator provisions their definitions and model selection; no separate model-inference endpoint is used here.</p>
+      <label>Project endpoint<input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} /></label>
     </div>
 
     <div className="copilot-settings-group">
-      <h4>System prompt
+      <h4>Direct-source specialist prompt
         <button type="button" className="copilot-settings-inline" disabled={draft.systemPrompt === defaults.systemPrompt} onClick={() => setDraft(current => ({ ...current, systemPrompt: defaults.systemPrompt }))}>Restore default</button>
       </h4>
       <p>
-        The base instructions sent with every question. <code>{CATALOG_PLACEHOLDER}</code> is replaced with the
+        The context sent to Q&amp;A, RCA, and Work Order specialists. <code>{CATALOG_PLACEHOLDER}</code> is replaced with the
         enabled schema and <code>{TIME_PLACEHOLDER}</code> with the current timestamp.
       </p>
       <textarea
@@ -128,7 +103,7 @@ export function CopilotSettingsPanel() {
 
     <div className="copilot-settings-group">
       <h4>Additional instructions</h4>
-      <p>Appended after the system prompt. Use it for tone, domain shorthand, or house rules.</p>
+      <p>Included for the Supervisor and every Foundry specialist. Use it for tone, domain shorthand, or house rules; registered agent permissions and human approval requirements still apply.</p>
       <textarea
         value={draft.promptExtra}
         rows={4}
@@ -150,7 +125,7 @@ export function CopilotSettingsPanel() {
       'kustoSources')}
 
     <details className="copilot-settings-preview">
-      <summary>Preview the full prompt sent to the model</summary>
+      <summary>Preview direct-source specialist context</summary>
       <pre>{renderSystemPrompt(draft, catalogPrompt(draft))}</pre>
     </details>
 

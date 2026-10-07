@@ -4,10 +4,9 @@ import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
 import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
-import { loadCopilotSettings, renderSystemPrompt } from './settings.ts'
+import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
-import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
 import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
@@ -71,7 +70,7 @@ export async function askFoundryCopilot(
       publish()
       const definitions = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
       const context = role === 'supervisor' || role === 'fabric-iq'
-          ? `${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${new Date().toISOString()}`
+          ? renderCoordinatorPrompt(settings)
           : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.`
       const input: unknown[] = buildAgentInput(context, history, prompt)
       try {

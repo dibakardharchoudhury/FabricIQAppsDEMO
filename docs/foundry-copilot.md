@@ -12,6 +12,12 @@
 > Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
 > Shared presentation and safety tests do not certify live response parity or agent latency.
 
+Administration configures the current project endpoint, not a direct model-inference
+endpoint. Model selection belongs to the canonical agent provisioner. Operator additional
+instructions reach the Supervisor and all Foundry specialists; the editable direct-source
+prompt/catalog applies to Q&A, RCA, and Work Order specialists. These settings do not
+replace registered agent permissions or the human SQL approval boundary.
+
 How the **Foundry** Copilot engine authenticates, what happens during a single answer, and exactly
 which data each tool can reach.
 

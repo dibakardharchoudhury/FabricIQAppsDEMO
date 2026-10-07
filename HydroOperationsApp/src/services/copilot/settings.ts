@@ -181,6 +181,11 @@ export function renderSystemPrompt(settings: CopilotSettings, catalog: string, n
   return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${ANSWER_PRESENTATION_CONTRACT}`
 }
 
+export function renderCoordinatorPrompt(settings: Pick<CopilotSettings, 'promptExtra'>, now = new Date()): string {
+  const extra = settings.promptExtra.trim()
+  return `${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${now.toISOString()}${extra ? `\n\nAdditional operator instructions:\n${extra}` : ''}`
+}
+
 export function loadCopilotSettings(): CopilotSettings {
   try { return mergeCopilotSettings(JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as Partial<CopilotSettings>) }
   catch { return defaultCopilotSettings() }

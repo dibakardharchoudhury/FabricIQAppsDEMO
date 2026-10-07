@@ -80,6 +80,11 @@ its existing Fabric scopes. If tenant policy permits personal consent, asking a 
 Agent question presents the **Execute data agents** permission once; warm-up never opens
 a popup. Ordinary telemetry and direct Q&A reads do not request this additional scope.
 
+Consent verification combines tenant-wide grants with grants belonging to the current
+signed-in user. It does not require already tenant-approved scopes to be granted again
+per user, and it never counts another user's personal consent. Missing scopes still
+fail verification. Consent coverage alone does not prove application runtime readiness.
+
 The later October 7 deployment of commit `9a81e14` read back Supervisor v2, Q&A v2,
 RCA v2, Work Order v2, and Fabric IQ v1 and published the crew/trace UI plus the typed
 message and Data Agent scope corrections. It reused the existing SPA and hosting
@@ -97,6 +102,16 @@ rejection updating the UI without a SQL write. The linked Application Insights
 resource returned real Supervisor/tool spans for a verified response ID. These
 checks do not certify browser answer parity, a live SQL approval, or a hosted
 Microsoft Agent Framework coordinator; those remain outstanding.
+
+Follow-up checks reproduced the sign-in gate's explicit **Please allow pop-ups and
+try again** message and confirmed that `azd` remains signed out. A read-only live
+consent check, including combined tenant/current-user coverage, still identifies
+only `DataAgent.Execute.All` as missing. No authorization check was bypassed.
+Subsequent source fixes remove unused model-endpoint controls, align the Foundry
+greeting with Supervisor routing, and pass additional operator instructions to the
+Supervisor/Fabric IQ as well as direct specialists. These follow-ups passed 25
+focused TypeScript tests, typecheck, lint, a Node 24 build, and 82 deployment tests;
+they require deployment after the live prerequisites are resolved.
 
 ## Ontology v2 prerequisite and capability boundaries
 

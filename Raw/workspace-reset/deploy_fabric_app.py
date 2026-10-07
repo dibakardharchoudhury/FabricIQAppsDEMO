@@ -1514,7 +1514,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             and grant.get("principalId") == current_user_id
             for scope in str(grant.get("scope") or "").split()
         }
-        principal_missing = scope_values - principal_scopes
+        principal_missing = missing - principal_scopes
         if principal_missing:
             other_user_grants = [
                 grant
@@ -1539,7 +1539,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
             "Delegated API scopes are configured, but OAuth consent is not granted:\n"
             + "\n".join(consent_issues)
             + "\nThe API permissions list declares requested scopes; it is not proof of consent. "
-            "In its Status column, each API must show 'Granted for <tenant>'.\n"
+            "Every required scope needs tenant-wide consent or consent for the current user.\n"
             f"Fix: Entra admin center > App registrations > {APP_DISPLAY_NAME} > "
             "API permissions > Grant admin consent for <tenant>. A disabled button means the "
             "signed-in administrator lacks a consent-granting directory role. Alternatively, if "
@@ -1549,7 +1549,7 @@ def validate_entra_live_auth(client_id: str, hosting_url: str) -> None:
     if principal_fallbacks:
         print(
             "WARNING: live-auth consent is current-user only for resources "
-            f"{', '.join(principal_fallbacks)}. The app works for this operator, but an enterprise "
+            f"{', '.join(principal_fallbacks)}. Consent covers this operator, but an enterprise "
             "rollout requires Privileged Role Administrator / Global Administrator to grant "
             "tenant-wide admin consent (AllPrincipals).",
             flush=True,
