@@ -79,11 +79,11 @@ export async function askFoundryCopilot(
       try {
         if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
         for (let round = 0; round < 6; round++) {
-          const response = await fetch(`${endpoint}/openai/responses?api-version=v1`, {
+          const response = await fetch(`${endpoint}/openai/v1/responses`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              agent: { type: 'agent_reference', name: AGENT_NAMES[role] },
+              agent_reference: { type: 'agent_reference', name: AGENT_NAMES[role] },
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
             }),
             signal: AbortSignal.timeout(180_000),
