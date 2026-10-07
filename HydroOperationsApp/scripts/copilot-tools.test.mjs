@@ -238,6 +238,14 @@ test('prompt gives running hot a temperature-only cross-agent meaning', () => {
   assert.match(DEFAULT_SYSTEM_PROMPT, /same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal/)
 })
 
+test('prompt uses an adaptive generic response contract', () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /presentation that fits the evidence/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Never force every answer into one fixed table or template/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Distinguish zero results, missing data, stale data, truncation, and source failure/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Separate facts returned by tools from interpretation/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /preserve the same facts and scope across the Data Agent, Foundry, and Battle panes/)
+})
+
 test('prefers the declared options marker over the prose heuristic', () => {
   const answer = 'Here are the results.\n\nNext steps:\n- Guessed from prose\n\n<!--options: ["Show open work orders", "Chart power for T009"]-->'
   assert.deepEqual(extractSuggestions(answer), ['Show open work orders', 'Chart power for T009'])

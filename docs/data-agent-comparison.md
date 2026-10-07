@@ -1,5 +1,17 @@
 # Data Agent and Foundry: five-prompt investigation
 
+## Shared adaptive response contract
+
+The engines share presentation principles rather than one rigid answer template. Each response leads
+with the direct answer, states only material scope and interpretation choices, and chooses concise
+prose, bullets, a Markdown table, or a chart according to the evidence and the user's request.
+Tabular answers retain the identifiers, timestamps, units, quality, status, and priority needed for
+the question without forcing irrelevant columns into every response. Both engines distinguish zero
+results, missing or stale data, truncation, and source failure; separate source facts from
+interpretation; use documented canonical keys for cross-source matching; and preserve the same
+facts and scope in the normal and Battle panes. Rendering may vary with the result shape, but the
+evidence and semantics may not.
+
 ## Canonical meaning of "running bad"
 
 The Battle view sends the same text to two independent planners, so ambiguous operational phrases

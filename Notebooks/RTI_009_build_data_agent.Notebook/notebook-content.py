@@ -1019,6 +1019,35 @@ RUNNING_HOT_INSTRUCTIONS = f"""
   Battle comparisons expose their scope.
 """
 
+ADAPTIVE_RESPONSE_MARKER = "### Adaptive response contract"
+ADAPTIVE_RESPONSE_INSTRUCTIONS = f"""
+
+{ADAPTIVE_RESPONSE_MARKER}
+
+- Lead with the direct answer or conclusion. Briefly state only material interpretation choices,
+  filters, time window, freshness, ranking rule, or threshold that affect the result.
+- Choose the presentation that fits the evidence: concise prose for explanations, bullets for short
+  lists, a Markdown table for naturally tabular multi-row results, and a chart only when requested
+  or when it materially improves a comparison or trend. Never force every answer into one fixed
+  table or template.
+- For a table, use human-readable labels and include only columns needed to answer the question
+  while retaining material identifiers, timestamps, units, quality, status, and priority. Keep
+  column names, units, timestamp format, and terminology consistent within the answer.
+- Sort according to the user's question or the stated ranking rule. Use explicit `None` or
+  `No matching records` rather than an empty cell. Distinguish zero results, missing data, stale
+  data, truncation, and source failure; never treat them as equivalent.
+- Never silently change the requested signal, time range, asset, facility, population, aggregation,
+  or source scope. Separate facts returned by tools from interpretation, recommendations, and
+  assumptions.
+- For cross-source results, join only on documented canonical keys and state any material matching
+  rule. Distinguish directly related records from records that merely share an equipment or
+  facility.
+- Keep source attribution concise at the end. Do not expose engine-specific tool narration unless
+  it explains a limitation. Given the same evidence and question, preserve the same facts and scope
+  across the Data Agent, Foundry, and Battle panes even when the best rendering differs by result
+  shape.
+"""
+
 MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"
 MCP_FOLLOWUP_INSTRUCTIONS = f"""
 
@@ -1312,6 +1341,7 @@ def build_stage_obj(existing: dict) -> dict:
         (GLOBAL_SCOPE_MARKER, GLOBAL_SCOPE_INSTRUCTIONS),
         (RUNNING_BAD_MARKER, RUNNING_BAD_INSTRUCTIONS),
         (RUNNING_HOT_MARKER, RUNNING_HOT_INSTRUCTIONS),
+        (ADAPTIVE_RESPONSE_MARKER, ADAPTIVE_RESPONSE_INSTRUCTIONS),
         (MCP_FOLLOWUP_MARKER, MCP_FOLLOWUP_INSTRUCTIONS),
         (DIRECT_RUNTIME_ROUTING_MARKER, DIRECT_RUNTIME_ROUTING_INSTRUCTIONS),
     ):

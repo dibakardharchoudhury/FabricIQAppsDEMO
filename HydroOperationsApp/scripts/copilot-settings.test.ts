@@ -13,7 +13,7 @@ test('Battle of the Agents is enabled only by an explicit true setting', () => {
 })
 
 test('previous shipped prompt upgrades while operator customization remains intact', () => {
-  const previousDefault = DEFAULT_SYSTEM_PROMPT.split('\n\nCanonical "running hot" questions:')[0]
+  const previousDefault = DEFAULT_SYSTEM_PROMPT.split('\n\nAdaptive response contract:')[0]
   assert.equal(mergeCopilotSettings({ systemPrompt: previousDefault }).systemPrompt, DEFAULT_SYSTEM_PROMPT)
   assert.equal(mergeCopilotSettings({ systemPrompt: 'Use the approved operator policy.' }).systemPrompt, 'Use the approved operator policy.')
 })

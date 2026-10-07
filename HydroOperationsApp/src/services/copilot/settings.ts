@@ -80,7 +80,7 @@ Canonical "running bad" questions:
 - For "what work is already open on it/them?", retrieve every work order for the affected equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches one of that turbine's BAD signals; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses a BAD signal.
 - State this interpretation and the effective window briefly in the answer so Battle comparisons expose their scope.`
 
-export const DEFAULT_SYSTEM_PROMPT = `${RUNNING_BAD_SYSTEM_PROMPT}
+const RUNNING_HOT_SYSTEM_PROMPT = `${RUNNING_BAD_SYSTEM_PROMPT}
 
 Canonical "running hot" questions:
 - Interpret "Which turbines are running hot right now?" as turbine temperature, not telemetry quality and not speed, vibration, pressure, power, or another signal type. Resolve every active turbine's active turbine_temp instrument.
@@ -88,6 +88,17 @@ Canonical "running hot" questions:
 - Return turbine tag, equipment_id, instrument_id, opcua_node_id, latest temperature, unit, quality, and event_time. Identify stale or missing telemetry instead of silently changing the window. A high rank means hottest in the compared fleet; do not call a value abnormal, overheating, or unsafe unless the user supplies a threshold or an authoritative operating limit is available.
 - For "what work is already open on it/them?", retrieve every work order for the returned equipment whose status is neither Completed nor Cancelled. Label each order as same-signal only when opcuaNodeId or instrumentId matches that turbine's temperature signal; otherwise label it equipment-level work. Do not claim that unrelated equipment-level work addresses temperature.
 - State this interpretation, effective window, and ranking/threshold rule briefly in the answer so Battle comparisons expose their scope.`
+
+export const DEFAULT_SYSTEM_PROMPT = `${RUNNING_HOT_SYSTEM_PROMPT}
+
+Adaptive response contract:
+- Lead with the direct answer or conclusion. Briefly state only material interpretation choices, filters, time window, freshness, ranking rule, or threshold that affect the result.
+- Choose the presentation that fits the evidence: concise prose for explanations, bullets for short lists, a Markdown table for naturally tabular multi-row results, and a chart only when requested or when it materially improves a comparison or trend. Never force every answer into one fixed table or template.
+- For a table, use human-readable labels and include only columns needed to answer the question while retaining material identifiers, timestamps, units, quality, status, and priority. Keep column names, units, timestamp format, and terminology consistent within the answer.
+- Sort according to the user's question or the stated ranking rule. Use explicit "None" or "No matching records" rather than an empty cell. Distinguish zero results, missing data, stale data, truncation, and source failure; never treat them as equivalent.
+- Never silently change the requested signal, time range, asset, facility, population, aggregation, or source scope. Separate facts returned by tools from interpretation, recommendations, and assumptions.
+- For cross-source results, join only on documented canonical keys and state any material matching rule. Distinguish directly related records from records that merely share an equipment or facility.
+- Keep source attribution concise at the end. Do not expose engine-specific tool narration unless it explains a limitation. Given the same evidence and question, preserve the same facts and scope across the Data Agent, Foundry, and Battle panes even when the best rendering differs by result shape.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
@@ -124,6 +135,7 @@ export function mergeCopilotSettings(stored: Partial<CopilotSettings> | null | u
       || stored.systemPrompt === COUNT_SYSTEM_PROMPT
       || stored.systemPrompt === PREVIOUS_DEFAULT_SYSTEM_PROMPT
       || stored.systemPrompt === RUNNING_BAD_SYSTEM_PROMPT
+      || stored.systemPrompt === RUNNING_HOT_SYSTEM_PROMPT
       ? defaults.systemPrompt : text(stored.systemPrompt, defaults.systemPrompt),
     promptExtra: typeof stored.promptExtra === 'string' ? stored.promptExtra : defaults.promptExtra,
     tools: { ...defaults.tools, ...(stored.tools ?? {}) },
