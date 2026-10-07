@@ -64,6 +64,7 @@ export async function askFoundryCopilot(
   const runTool = createToolRuntime(settings, { onWorkOrderProposal: proposal => proposals.push(proposal) })
   const delegated = new Set<string>()
   const specialistResults: Array<{ role: AgentRole; answer: string }> = []
+  let stationSummary: string | undefined
   try {
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
@@ -78,7 +79,7 @@ export async function askFoundryCopilot(
       const scope = role === 'supervisor'
         ? 'You retain the conversation history; specialists do not. Make each delegation self-contained: resolve references from previous turns and include relevant IDs, user constraints and evidence. Do not copy unrelated previous answers. For RCA, check evidence timestamps, units, quality, competing explanations and contradictory evidence before synthesis; request independent factual verification when the user asks for it. Verification of facts does not establish a physical cause. Keep the final answer concise without omitting requested records; do not repeat editable card fields in prose.'
         : role === 'rca'
-          ? 'Use a scientific RCA structure: define the observed failure and time window; check identity, units, quality, freshness and missingness; compare against a justified baseline or comparable operating regime. Separate sensor/data faults from physical equipment hypotheses. For each competing hypothesis give supporting and contradictory source observations, unknowns, qualitative confidence with justification, and a safe discriminating inspection/test for qualified personnel. Correlation alone is not causation. Do not invent thresholds, probabilities or maintenance manuals. If evidence is insufficient, state that the cause is undetermined. Prefer source-side counts, trends and bounded summaries over raw dumps; do not omit requested evidence.'
+          ? 'Use a scientific RCA structure: define the observed failure and time window; check identity, units, quality, freshness and missingness; compare against a justified baseline or comparable operating regime. A longer-window aggregate is not automatically a validated baseline: disclose overlap, actual coverage and unverified operating/load comparability. Small differences between means do not establish normal variation without dispersion and matched-regime evidence. Separate sensor/data faults from physical equipment hypotheses. For each competing hypothesis give supporting and contradictory source observations, unknowns, qualitative confidence with justification, and a safe discriminating inspection/test for qualified personnel. Correlation alone is not causation. Do not invent thresholds, probabilities or maintenance manuals. If evidence is insufficient, state that the cause is undetermined. Prefer source-side counts, trends and bounded summaries over raw dumps; do not omit requested evidence.'
           : 'Execute only the assigned task using the current evidence. For mean power-output readings per station use query_station_power when enabled: it returns authoritative unit-normalized rows and a structured chart in one call. It is not total station generation or energy. Do not run a generic Signal contains power query or guess units. For other requested charts use visualize_dataset with the retrieved dataset rather than unfenced CSV prose.'
       const chartScope = 'A request for average power output per station over a window means one mean per station, unless the operator explicitly requests hourly bins or a time-series trend. Preserve that scope in delegation and the final answer. query_station_power already renders its chart: use its exact returned rows, units, semantics and read-completion clock. Do not add hourly queries, convert to a different display unit, or emit a second CSV for that completed request. Additional investigation explicitly requested by the operator remains separate.'
       const readDiscipline = 'Resolve short asset tags such as T005 against equipment.tag, not equipment_id. Use the returned canonical equipment_id in operational equipmentId filters; never infer no work from an unresolved tag. Reuse verified current-turn identities and results. A successful zero-row result with total_matched=0 and truncated=false is a complete empty result for those exact filters; do not repeat it merely to confirm emptiness. Batch independent reads. When available sources are exhausted, return an evidence-limited conclusion rather than searching the same sources again. If a requested native source fails, report failure and do not silently replace it with direct queries.'
@@ -212,6 +213,7 @@ export async function askFoundryCopilot(
               try {
                 const proposalCount = proposals.length
                 const result = await runTool(parsed.toolName, args)
+                if (parsed.toolName === 'query_station_power') stationSummary = result.groundedSummary
                 if (proposals.length > proposalCount) event.proposalIds = [...(event.proposalIds ?? []), ...proposals.slice(proposalCount).map(proposal => proposal.id)]
                 if (result.visualization) visualizations.push(result.visualization)
                 if (result.model3d) models.push(result.model3d)
@@ -271,8 +273,14 @@ export async function askFoundryCopilot(
       }
     }
     const narrative = await invoke('supervisor', question)
-    const text = appendOmittedSnapshotWork(narrative, steps)
-    if (text !== narrative) {
+    const directChart = stationSummary !== undefined
+      && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
+      && steps.filter(step => step.status === 'done').length === 1
+    const text = directChart && stationSummary !== undefined ? stationSummary : appendOmittedSnapshotWork(narrative, steps)
+    if (directChart) {
+      captureApplicationEvent(events[0], 'Rendered the station summary directly from the validated chart dataset, preserving its MW values and source timestamps.')
+      publish()
+    } else if (text !== narrative) {
       captureApplicationEvent(events[0], 'Preserved open-work evidence omitted from the Supervisor narrative.')
       publish()
     }

@@ -6,7 +6,7 @@ import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
-  applyFilter, buildStationPowerQuery, stationPowerEvidence, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -15,7 +15,7 @@ export type ToolDefinition = {
   function: { name: string; description: string; parameters: Record<string, unknown> }
 }
 
-export type ToolOutcome = { result: unknown; visualization?: AgentVisualization; model3d?: Asset3DModelRecord; rowCount?: number; query?: string }
+export type ToolOutcome = { result: unknown; visualization?: AgentVisualization; model3d?: Asset3DModelRecord; rowCount?: number; query?: string; groundedSummary?: string }
 
 /** A short label of what a call asked for, shown on the collapsed trace row in the chat. */
 export function describeToolCall(name: string, args: ToolArguments): string {
@@ -69,7 +69,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: 'query_station_power',
       description: 'Return and chart mean power-output readings per station over a window (default 24h). Uses exact power_output node suffix, authoritative station/unit metadata, sample-weighted means converted to MW. Includes all qualities and reports BAD sample counts. Not total station generation or energy.',
-      parameters: { type: 'object', properties: { lookback: { type: 'string', description: 'Positive duration, e.g. 24h or 7d.' } } },
+      parameters: { type: 'object', properties: { lookback: { type: 'string', description: 'Positive duration, e.g. 24h or 7d, or today (since midnight UTC).' } } },
     },
   },
   {
@@ -115,7 +115,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: 'object',
         properties: {
           opcua_node_ids: { type: 'array', items: { type: 'string' }, description: 'Signals to include. Omit for all signals.' },
-          lookback: { type: 'string', description: 'Window ending now, e.g. 30m, 6h, 7d. Default 24h.' },
+          lookback: { type: 'string', description: 'Window ending now: today (since midnight UTC) or a positive duration such as 30m, 6h, 7d. Default 24h.' },
           bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none".' },
           aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings rather than bucketed values.' },
           limit: { type: 'integer', description: `How many of the most recent rows to return (default ${MAX_ROWS}, max ${MAX_ROWS}).` },
@@ -370,12 +370,16 @@ export function createToolRuntime(
         const query = buildStationPowerQuery(lookback)
         const data = await runKustoQuery(query, MAX_ROWS)
         const evidence = stationPowerEvidence(kustoRowsToObjects(data.columns, data.rows), lookback)
+        const readCompletedAt = new Date().toISOString()
+        const groundedSummary = stationPowerSummary(evidence.rows, lookback, readCompletedAt)
         return {
           result: { rows: evidence.rows, row_count: evidence.rows.length, lookback,
+            grounded_summary: groundedSummary,
             chart_rendered: Boolean(evidence.visualization),
             chart: evidence.visualization,
             semantics: 'Sample-weighted arithmetic mean of individual power_output readings across turbines, converted to MW using metadata. All qualities included; not total station output, time-weighted mean or energy.',
-            read_completed_at_utc: new Date().toISOString() },
+            read_completed_at_utc: readCompletedAt },
+          groundedSummary,
           rowCount: evidence.rows.length, visualization: evidence.visualization, query,
         }
       }

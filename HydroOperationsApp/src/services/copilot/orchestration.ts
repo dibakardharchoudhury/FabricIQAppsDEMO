@@ -71,6 +71,10 @@ export function missingRequestedSpecialists(question: string, completed: readonl
 }
 
 export function delegationOrderError(question: string, next: AgentRole, completed: readonly AgentRole[]): string | undefined {
+  if (next === 'work-order' && !isWorkOrderRequest(question)
+    && /\bdraft\b.{0,80}\b(?:notification|email|message)\b/i.test(positiveActionClauses(question))) {
+    return 'The requested notification/email/message draft is prose, not an editable work-order request. Obtain factual evidence from qa/rca as needed, then compose the requested unsent message. No notification delivery tool is available. This rejected delegation did not consume a slot.'
+  }
   const missing = missingRequestedSpecialists(question, completed)
   if (next === 'qa' && completed.includes('qa') && missing.includes('qa')) {
     const prerequisites = missing.filter(role => role !== 'qa')

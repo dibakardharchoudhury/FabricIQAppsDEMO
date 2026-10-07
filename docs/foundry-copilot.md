@@ -34,6 +34,10 @@ reduced-motion preferences. Failed runs never receive a successful overall statu
 Human approval progress comes from the in-memory approval store, so creation/rejection
 does not leave the crew waiting indefinitely. SQL validation and writes are explicitly
 application actions, not evidence that a model executed a database mutation.
+For a simple Gauge-only station-power chart with one completed source query, the app
+renders the final table, units, timestamps and freshness directly from the validated
+chart dataset. A model rewrite is not authoritative for these values. Compound
+investigations still require separate review of their model-generated explanations.
 The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
 and full handoff history. Normal chat has a keyboard-operable flow-height slider and
 Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed

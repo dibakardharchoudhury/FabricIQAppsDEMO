@@ -64,17 +64,26 @@ export function escapeKqlString(value: string): string {
 const KQL_TIMESPAN = /^\d+(\.\d+)?(s|m|h|d)$/
 const KQL_BIN = KQL_TIMESPAN
 
+function lookbackStart(lookback: string): string {
+  if (lookback === 'today') return '>= startofday(now())'
+  if (!KQL_TIMESPAN.test(lookback) || Number.parseFloat(lookback) <= 0) {
+    throw new Error(`Invalid lookback '${lookback}'. Use today (UTC) or a positive duration such as 30m, 6h or 7d.`)
+  }
+  return `> ago(${lookback})`
+}
+
 export function buildStationPowerQuery(lookback = '24h'): string {
-  if (!KQL_TIMESPAN.test(lookback) || Number.parseFloat(lookback) <= 0) throw new Error('Invalid lookback for station power. Use a positive duration such as 24h.')
   return `OPCUAEvents
-| where event_time > ago(${lookback}) and event_time <= now()
+| where event_time ${lookbackStart(lookback)} and event_time <= now()
 | where opcua_node_id endswith_cs '.power_output'
 | join kind=leftouter (AssetMaster() | summarize mappings = count(), Station = take_any(Station), Unit = take_any(Unit) by opcua_node_id | extend Unit = iff(mappings == 1, Unit, '')) on opcua_node_id
 | summarize average = avg(value), samples = count(), invalid_values = countif(isnull(value) or not(isfinite(value))), bad_samples = countif(toupper(quality) == 'BAD'), latest_event_time = max(event_time) by Station, Unit
 | order by Station asc, Unit asc`
 }
 
-export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: string): { rows: Record<string, unknown>[]; visualization?: AgentVisualization } {
+type StationPowerRow = { Station: string; average_power_MW: number; samples: number; bad_samples: number; latest_event_time: string }
+
+export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: string): { rows: StationPowerRow[]; visualization?: AgentVisualization } {
   if (rows.length >= MAX_ROWS) throw new Error('Station power reached the source row limit; a complete chart cannot be verified.')
   const factors: Record<string, number> = { W: .000001, kW: .001, MW: 1, GW: 1000 }
   const stations = new Map<string, { sum: number; samples: number; bad: number; latest: string }>()
@@ -107,6 +116,23 @@ export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: 
     inlineCsvData: csv,
   } : undefined }
 }
+
+export function stationPowerSummary(rows: StationPowerRow[], lookback: string, readCompletedAt: string): string {
+  const readTime = Date.parse(readCompletedAt)
+  if (!Number.isFinite(readTime)) throw new Error('Station power read-completion time is invalid.')
+  const source = `Source: query_station_power, lookback ${lookback}; read completed ${readCompletedAt}.`
+  if (!rows.length) return `No power-output readings were returned in the ${lookback} window. No chart was produced; this does not establish zero generation or healthy equipment.\n\n${source}`
+  const table = [
+    '| Station | Mean power reading (MW) | Samples | BAD samples | Latest event (UTC) | Latest-reading freshness |',
+    '|---|---:|---:|---:|---|---|',
+    ...rows.map(row => {
+      const age = readTime - Date.parse(row.latest_event_time)
+      const freshness = age < 0 ? 'Uncertain (future timestamp)' : age > 60_000 ? 'Stale (>60s)' : 'Within 60s'
+      return `| ${row.Station.replace(/\|/g, '\\|').replace(/[\r\n]/g, ' ')} | ${row.average_power_MW} | ${row.samples} | ${row.bad_samples} | ${row.latest_event_time} | ${freshness} |`
+    }),
+  ].join('\n')
+  return `**Average power-output reading by station (${lookback}), in MW.** The table and chart use the same source values.\n\n${table}\n\nThis is a sample-weighted arithmetic mean of individual readings, including all quality flags. It is not total station generation, a time-weighted mean or energy. BAD samples are included and counted above. Latest-event freshness does not establish complete coverage of the window or a performance fault.\n\n${source}`
+}
 const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }
@@ -121,13 +147,12 @@ export type TelemetryQueryArgs = {
 }
 
 export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): string {
-  if (lookback !== 'today' && !KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use today (UTC), 30m, 6h or 7d.`)
   const normalizedQuality = quality.trim().toUpperCase()
   if (!['GOOD', 'UNCERTAIN', 'BAD'].includes(normalizedQuality)) {
     throw new Error("Invalid quality. Use GOOD, UNCERTAIN, or BAD.")
   }
   return `OPCUAEvents
-| where event_time ${lookback === 'today' ? '>= startofday(now())' : `> ago(${lookback})`}
+| where event_time ${lookbackStart(lookback)}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
 | where toupper(quality) == '${normalizedQuality}'
 | project event_time, opcua_node_id, value, quality
@@ -135,9 +160,8 @@ export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): st
 }
 
 export function buildTemperatureSnapshotQuery(lookback = '30m'): string {
-  if (lookback !== 'today' && !KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use today (UTC), 30m, 6h or 7d.`)
   return `OPCUAEvents
-| where event_time ${lookback === 'today' ? '>= startofday(now())' : `> ago(${lookback})`}
+| where event_time ${lookbackStart(lookback)}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
 | where opcua_node_id endswith '.turbine_temp'
 | project event_time, opcua_node_id, value, quality
@@ -162,7 +186,6 @@ export function rankTemperatureRows<T extends { value: unknown; equipment_id: st
  *  Always keeps the NEWEST rows so "the last N readings" is answerable. */
 export function buildTelemetryQuery(args: TelemetryQueryArgs): string {
   const lookback = args.lookback ?? '24h'
-  if (!KQL_TIMESPAN.test(lookback)) throw new Error(`Invalid lookback '${lookback}'. Use a value like 30m, 6h or 7d.`)
   const aggregation = args.aggregation ?? 'avg'
   if (!TELEMETRY_AGGREGATIONS.includes(aggregation)) {
     throw new Error(`Invalid aggregation '${args.aggregation}'. Use one of ${TELEMETRY_AGGREGATIONS.join(', ')}.`)
@@ -180,7 +203,7 @@ export function buildTelemetryQuery(args: TelemetryQueryArgs): string {
     shape = `| summarize value = ${AGGREGATIONS[aggregation]}, bad = countif(tolower(quality) == 'bad') by opcua_node_id, event_time = bin(event_time, ${bin})`
   }
   return `OPCUAEvents
-| where event_time > ago(${lookback})${nodeFilter}
+| where event_time ${lookbackStart(lookback)}${nodeFilter}
 ${shape}
 | top ${limit} by event_time desc
 | order by event_time asc`

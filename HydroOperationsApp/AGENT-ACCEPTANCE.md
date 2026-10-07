@@ -188,6 +188,27 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
 
 ## Basic regression evidence
 
+### Corrective 1.0.728 runs
+
+The suite now has **28 live turns across all ten scenarios**, including eight repeated
+turns. This is not 28 passes. All test cards were rejected; no SQL work or notification
+was created by the suite.
+
+| Flow | First/follow-up seconds | Observed result |
+|---|---|---|
+| 1 | 161 / 16 | Four-agent first turn completed, but incorrectly justified overlapping work because an existing order was Draft. Follow-up failed because generic telemetry did not accept `today`. Both require correction, not a pass. |
+| 6 | 134 / 123 | Completed both turns, correctly distinguished business restock dates from unknown synchronization freshness and refused to infer uncovered parts requirements without BOM/materials. No draft staged. |
+| 8 | 109 / 89 | First turn resolved T005 and staged a review card. Follow-up misrouted a requested notification message to Fixer and withheld the message. Not accepted. |
+| 9 | 28 / 75 | One station query replaced the extra hourly query, but prose still converted MW to kW and misstated one timestamp. RCA correctly declined to establish a fault, but its baseline/normal-variation claims are not scientifically certified. Chart consistency not accepted. |
+| 10 | 48 / 87 | Explicit Low-priority T005 card appeared, coverage verification completed; follow-up reported no established physical fault. Test card rejected. This verifies proposal/analysis, not an SQL write. |
+
+The next correction makes simple single-tool station chart answers source-rendered
+instead of relying on a model to recopy units/numbers/times. Compound analysis remains
+model-generated. `today` uses the same midnight-UTC query helper across snapshots,
+telemetry and station power. Notification-message drafts are kept separate from Fixer.
+The evidence policy explicitly forbids treating an unexecuted Draft as an uncovered gap.
+These changes require their own hosted checks.
+
 ### Completed 1.0.727 baseline: 18 turns, not an accepted suite
 
 These are sequential live browser runs on October 7, 2026. Times are first/follow-up

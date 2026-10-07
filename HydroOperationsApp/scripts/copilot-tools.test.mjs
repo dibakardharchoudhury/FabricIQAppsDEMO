@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyFilter, buildStationPowerQuery, stationPowerEvidence, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
 import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
 import { catalogPrompt } from '../src/services/copilot/catalog.ts'
 import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'
@@ -32,6 +32,21 @@ test('station chart uses sample-weighted MW conversions and preserves exact char
   assert.equal(stationPowerEvidence([], '24h').visualization, undefined)
 })
 
+test('station answer preserves exact chart values, MW units, source times and freshness', () => {
+  const evidence = stationPowerEvidence([{ Station: 'Sloy', Unit: 'MW', average: 1315.0626405438807,
+    samples: 4045, bad_samples: 212, invalid_values: 0, latest_event_time: '2026-10-07T20:20:15.102362Z' }], '24h')
+  const text = stationPowerSummary(evidence.rows, '24h', '2026-10-07T22:25:08.713Z')
+  assert.match(text, /1315\.0626405438807/)
+  assert.match(text, /20:20:15\.102362Z/)
+  assert.match(text, /Stale \(>60s\)/)
+  assert.doesNotMatch(text, /kW|02:20:/)
+  assert.ok(evidence.visualization.inlineCsvData.includes(String(evidence.rows[0].average_power_MW)))
+  assert.match(stationPowerSummary(evidence.rows, '24h', '2026-10-07T20:20:16Z'), /Within 60s/)
+  assert.match(stationPowerSummary(evidence.rows, '24h', '2026-10-07T20:00:00Z'), /Uncertain/)
+  assert.match(stationPowerSummary([], '24h', '2026-10-07T22:00:00Z'), /does not establish zero generation/)
+  assert.throws(() => stationPowerSummary([], '24h', 'invalid'), /time is invalid/)
+})
+
 test('rejects KQL control commands and cross-cluster access', () => {
   assert.throws(() => validateKql('.drop table OPCUAEvents'), /control commands/)
   assert.throws(() => validateKql('OPCUAEvents | join cluster("other").database("db").T on x'), /cross-cluster/)
@@ -55,6 +70,12 @@ test('telemetry returns the most recent rows, raw when aggregation is none', () 
   const binned = buildTelemetryQuery({ bin: '1m', limit: 10_000 })
   assert.match(binned, /summarize value = avg\(value\)/)
   assert.match(binned, /\| top 500 by event_time desc/)
+})
+
+test('today keeps midnight UTC semantics in telemetry and station charts', () => {
+  assert.match(buildTelemetryQuery({ lookback: 'today', aggregation: 'none' }), /event_time >= startofday\(now\(\)\)/)
+  assert.match(buildStationPowerQuery('today'), /event_time >= startofday\(now\(\)\)/)
+  assert.throws(() => buildTelemetryQuery({ lookback: '0h' }), /Invalid lookback/)
 })
 
 test('rejects tables outside the catalog', () => {

@@ -29,6 +29,14 @@ test('independent final verification cannot consume the slot needed for draft re
   assert.deepEqual(missingRequestedSpecialists(investigationOnly, ['qa', 'rca', 'qa']), [])
 })
 
+test('an unsent notification draft is not delegated to the work-order proposal specialist', () => {
+  const prompt = 'Investigate inconsistencies, then draft a short notification with unknown facts marked. Do not send it.'
+  assert.equal(isWorkOrderRequest(prompt), false)
+  assert.match(delegationOrderError(prompt, 'work-order', ['qa', 'rca']), /prose, not an editable work-order/)
+  assert.equal(delegationOrderError(prompt, 'rca', ['qa']), undefined)
+  assert.equal(delegationOrderError('Prepare a work order and draft a notification. Do not save.', 'work-order', []), undefined)
+})
+
 test('failed native tool items propagate even when the enclosing response completes', async () => {
   await assert.rejects(readResponsesStream(responseStream([
     { type: 'response.output_item.done', item: { type: 'mcp_call', name: 'fabric-query', status: 'failed', error: { message: 'Output moderation failed' } } },
@@ -42,6 +50,7 @@ test('failed native tool items propagate even when the enclosing response comple
 test('inventory freshness is distinct from telemetry age and unconnected sources are not tools', () => {
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /Do not declare inventory stale from an old restock date alone/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /evidence requirements, not callable tools/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /Do not justify a second conditional draft merely because the existing order is Draft/)
 })
 
 test('only Work Orders can record a structured no-draft review, never a pretend staged card', () => {
