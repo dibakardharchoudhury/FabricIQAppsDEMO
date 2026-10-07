@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations } from '../src/services/copilot/answerPresentation.ts'
-import { agentDefinition, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, buildAgentInput, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
 import { createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -14,6 +14,20 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('every Foundry input message has explicit item and content types, including history', () => {
+  const input = buildAgentInput('policy', [
+    { role: 'user', content: 'previous question' },
+    { role: 'assistant', content: 'previous answer' },
+  ], 'current question')
+  assert.deepEqual(input, [
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'policy' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'previous question' }] },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'previous answer', annotations: [] }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'current question' }] },
+  ])
+  assert.equal(buildAgentInput('policy', [], 'question').length, 2)
+})
 
 test('native continuation preserves output items and actual response identity', async () => {
   const output = [{ type: 'reasoning', encrypted_content: 'opaque' }, { type: 'function_call', call_id: 'call1', name: 'hydro_query', arguments: '{}' }]

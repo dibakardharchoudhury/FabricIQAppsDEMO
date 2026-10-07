@@ -62,6 +62,14 @@ Browser answer parity, end-to-end latency, chart interaction, and edited Yes/No
 approval followed by SQL readback remain unverified. Do not infer them from the
 successful build, cloud definition readback, or these bounded endpoint tests.
 
+Later verification confirmed Foundry consent for the current user after interactive
+approval; only `DataAgent.Execute.All` remained missing. Tenant-wide admin consent is
+not the only supported route: the validator also accepts complete per-user grants
+for the current identity. A subsequent browser HTTP 400 was separately reproduced
+as missing explicit message types in the Responses input. Typed message input and
+tool-output continuation passed live HTTP 200 checks; the client correction requires
+redeployment and must not be described as already active on the hosted page.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).

@@ -6,7 +6,7 @@ import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
 import { loadCopilotSettings, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import { AGENT_NAMES, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
+import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
 import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
@@ -69,13 +69,10 @@ export async function askFoundryCopilot(
       events.push(event)
       publish()
       const definitions = buildToolDefinitions(settings).filter(tool => role === 'work-order' || tool.function.name !== 'propose_work_order')
-      const input: unknown[] = [
-        { role: 'developer', content: role === 'supervisor' || role === 'fabric-iq'
+      const context = role === 'supervisor' || role === 'fabric-iq'
           ? `${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${new Date().toISOString()}`
-          : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.` },
-        ...history,
-        { role: 'user', content: prompt },
-      ]
+          : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.`
+      const input: unknown[] = buildAgentInput(context, history, prompt)
       try {
         if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
         for (let round = 0; round < 6; round++) {
@@ -122,7 +119,7 @@ export async function askFoundryCopilot(
               const key = `${specialist}:${delegatedQuestion}`
               if (delegated.has(key) || delegated.size >= 4) throw new Error('Supervisor attempted repeated or excessive delegation.')
               delegated.add(key)
-              const answer = await invoke(specialist, delegatedQuestion, event.responseId)
+              const answer = await invoke(specialist, `Original operator request:\n${question}\n\nSupervisor task:\n${delegatedQuestion}`, event.responseId)
               input.push({ type: 'function_call_output', call_id: call.id, output: answer })
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
               const parsed: unknown = JSON.parse(call.arguments)

@@ -173,7 +173,7 @@ function AgentMessage({ message, streaming, question }: { message: CopilotMessag
 function AgentOrchestrationTrace({ events }: { events?: OrchestrationEvent[] }) {
   if (!events?.length) return null
   return <div className="v2-agent-orchestration" aria-label="Multi-agent interaction">
-    <div className="v2-agent-orchestration-title"><Bot size={13} /><strong>Live agent flow</strong><small>{events.some(event => event.status === 'running') ? 'active' : 'complete'}</small></div>
+    <div className="v2-agent-orchestration-title"><Bot size={13} /><strong>Live agent flow</strong><small>{events.some(event => event.status === 'error') ? 'failed' : events.some(event => event.status === 'running' || event.status === 'queued') ? 'active' : events.some(event => event.status === 'approval') ? 'awaiting approval' : 'complete'}</small></div>
     <div className="v2-agent-orchestration-flow">
       {events.map((event, index) => <div className={`v2-agent-event ${event.status}`} key={event.id}>
         {index > 0 && <span className="v2-agent-event-link" aria-hidden="true">→</span>}
