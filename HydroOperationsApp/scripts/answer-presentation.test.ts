@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations } from '../src/services/copilot/answerPresentation.ts'
-import { agentDefinition, buildAgentInput, parseDelegation } from '../src/services/copilot/agentDefinitions.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery } from '../src/services/copilot/agentDefinitions.ts'
 import { createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -79,6 +79,47 @@ test('separate measures produce separate charts rather than mixing units', () =>
   const charts = datasetVisualizations(datasets[0], 'Dashboard')
   assert.equal(charts.length, 2)
   assert.ok(charts.every(chart => chart.chartType === 'line' && chart.yColumns.length === 1))
+})
+
+test('explicit chart CSV excludes unrelated table measures without dropping table evidence', () => {
+  const { datasets } = readAnswerDatasets(
+    '| Turbine | Temperature C | Open WOs |\n| --- | --- | --- |\n| T1 | 80 | 2 |\n| T2 | 70 | 1 |\n'
+    + '### Latest temperatures\n```csv\nTurbine,Temperature C\nT1,80\nT2,70\n```')
+  assert.equal(datasets.length, 2)
+  const charts = answerVisualizations(datasets, 'Show open work and a temperature chart')
+  assert.equal(charts.length, 1)
+  assert.deepEqual(charts[0].yColumns, ['Temperature C'])
+  assert.equal(charts[0].inlineCsvData, 'Turbine,Temperature C\r\nT1,80\r\nT2,70')
+})
+
+test('identical table and CSV retain explicit chart intent without duplicate datasets', () => {
+  const { datasets } = readAnswerDatasets('| Asset | Count |\n| --- | --- |\n| T1 | 2 |\n```csv\nAsset,Count\nT1,2\n```')
+  assert.equal(datasets.length, 1)
+  assert.equal(datasets[0].format, 'csv')
+  assert.equal(answerVisualizations(datasets, 'chart').length, 1)
+})
+
+test('malformed nested tool JSON is rejected without repairing or executing it', () => {
+  const invalid = parseHydroQuery(JSON.stringify({
+    tool_name: 'run_kql', arguments_json: String.raw`{"query":"OPCUAEvents | where opcua_node_id matches regex '\.turbine_temp$'"}`,
+  }))
+  assert.equal(invalid.ok, false)
+  if (invalid.ok === false) assert.match(invalid.error, /Invalid tool JSON.*escaped backslashes/)
+  for (const raw of ['{', '{}', '{"tool_name":"run_kql","arguments_json":"null"}',
+    '{"tool_name":"run_kql","arguments_json":"[]"}']) assert.equal(parseHydroQuery(raw).ok, false)
+  const args = { query: String.raw`OPCUAEvents | where opcua_node_id matches regex '\.turbine_temp$'` }
+  const corrected = parseHydroQuery(JSON.stringify({ tool_name: 'run_kql', arguments_json: JSON.stringify(args) }))
+  assert.equal(corrected.ok, true)
+  if (corrected.ok) assert.deepEqual(corrected.args, args)
+})
+
+test('persistent agents share source semantics, complete equipment work and real freshness time', () => {
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /not a work-order type or category/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /including orders linked to a different signal/)
+  assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /older than 60 seconds as stale/)
+  for (const role of ['supervisor', 'qa', 'rca', 'work-order', 'fabric-iq'] as const) {
+    assert.ok(agentDefinition(role, 'test', 'data', 'ontology').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
+  }
 })
 
 test('native specialists do not depend on Fabric; only IQ has the IQ tool', () => {

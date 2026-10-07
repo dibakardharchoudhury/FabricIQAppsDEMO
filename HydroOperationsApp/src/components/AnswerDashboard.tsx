@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { readAnswerDatasets, datasetVisualizations } from '../services/copilot/answerPresentation'
+import { readAnswerDatasets, answerVisualizations } from '../services/copilot/answerPresentation'
 import type { AgentVisualization } from '../services/assistantStream'
 import { AgentVisualizationView } from './AgentVisualizationView'
 
@@ -19,9 +19,9 @@ export function AnswerDashboard({ text, question = '', visualizations = [] }: {
   }, [text, visualizations])
   const [view, setView] = useState<'table' | 'chart'>('chart')
   const requested = /\b(chart|plot|graph|dashboard|visuali[sz]e|trend)\b/i.test(question)
-  const charts = datasets.flatMap(dataset => datasetVisualizations(dataset, question))
+  const charts = answerVisualizations(datasets, question)
   if (!requested && !visualizations.length && !issues.length) return null
-  // Prefer the visible answer's rows so the chart cannot disagree with its table.
+  // Explicit chart datasets take precedence over unrelated numeric table columns.
   const specs = charts.length ? charts : visualizations
   return <section className="v2-answer-dashboard" aria-label="Answer evidence dashboard">
     {issues.map(issue => <p role="alert" key={issue}>{issue}</p>)}

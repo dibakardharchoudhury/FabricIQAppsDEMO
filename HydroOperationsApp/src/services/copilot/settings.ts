@@ -1,5 +1,5 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
-import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
+import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './answerPresentation.ts'
 
 // Operator-tunable copilot configuration, edited in Administration and persisted per browser.
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
@@ -178,12 +178,12 @@ export function renderSystemPrompt(settings: CopilotSettings, catalog: string, n
     .split(CATALOG_PLACEHOLDER).join(catalog)
     .split(TIME_PLACEHOLDER).join(now.toISOString())
   const extra = settings.promptExtra.trim()
-  return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${ANSWER_PRESENTATION_CONTRACT}`
+  return `${extra ? `${base}\n\nAdditional operator instructions:\n${extra}` : base}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`
 }
 
 export function renderCoordinatorPrompt(settings: Pick<CopilotSettings, 'promptExtra'>, now = new Date()): string {
   const extra = settings.promptExtra.trim()
-  return `${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${now.toISOString()}${extra ? `\n\nAdditional operator instructions:\n${extra}` : ''}`
+  return `${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}\nCurrent time: ${now.toISOString()}${extra ? `\n\nAdditional operator instructions:\n${extra}` : ''}`
 }
 
 export function loadCopilotSettings(): CopilotSettings {

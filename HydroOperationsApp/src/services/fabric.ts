@@ -14,7 +14,7 @@ import { createSingleFlight } from './singleFlight'
 import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
-import { ANSWER_PRESENTATION_CONTRACT } from './copilot/answerPresentation'
+import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -993,7 +993,7 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   }
 
   const contextualizedQuestion = contextualizeDataAgentQuestion(question, dataAgentUserQuestions)
-  const answer = await callDataAgentMcp(endpoint, token, `${contextualizedQuestion}\n\n${ANSWER_PRESENTATION_CONTRACT}`, onProgress, onSteps)
+  const answer = await callDataAgentMcp(endpoint, token, `${contextualizedQuestion}\n\nCurrent UTC time: ${new Date().toISOString()}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`, onProgress, onSteps)
   dataAgentUserQuestions.push(question)
   if (dataAgentUserQuestions.length > 4) dataAgentUserQuestions = dataAgentUserQuestions.slice(-4)
   const visualizations = extractDataAgentVisualizations(answer.text, question)

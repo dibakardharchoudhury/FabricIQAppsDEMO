@@ -6,7 +6,7 @@ import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
 import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation } from './agentDefinitions.ts'
+import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
 import { createOrchestrationEvent, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
@@ -134,30 +134,38 @@ export async function askFoundryCopilot(
                 throw error
               }
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
-              const parsed: unknown = JSON.parse(call.arguments)
-              if (!parsed || typeof parsed !== 'object' || !('tool_name' in parsed) || !('arguments_json' in parsed)
-                || typeof parsed.tool_name !== 'string' || typeof parsed.arguments_json !== 'string') throw new Error('Invalid Hydro tool call.')
+              const parsed = parseHydroQuery(call.arguments)
+              if (parsed.ok === false) {
+                steps.push({ tool: 'hydro_query', status: 'error', detail: 'Rejected before execution', summary: 'Invalid arguments; not executed', error: parsed.error, elapsedMs: 0 })
+                captureApplicationEvent(event, `Tool arguments rejected before execution: ${parsed.error}`, call.id, true, 'tool-end')
+                publishSteps()
+                publish()
+                input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
+                  error: parsed.error, executed: false,
+                  instruction: 'Correct only this rejected call. No tool ran. Do not repeat previously successful calls.',
+                }) })
+                continue
+              }
               const allowed: readonly string[] = role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
-              if (!allowed.includes(parsed.tool_name)) throw new Error(`Tool ${parsed.tool_name} is not permitted for ${role}.`)
-              const args: ToolArguments = JSON.parse(parsed.arguments_json)
-              if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Hydro tool arguments must be an object.')
+              if (!allowed.includes(parsed.toolName)) throw new Error(`Tool ${parsed.toolName} is not permitted for ${role}.`)
+              const args: ToolArguments = parsed.args
               const started = Date.now()
-              const step: AgentStep = { tool: parsed.tool_name, status: 'running', detail: describeToolCall(parsed.tool_name, args), summary: 'running', elapsedMs: 0, args: parsed.arguments_json }
+              const step: AgentStep = { tool: parsed.toolName, status: 'running', detail: describeToolCall(parsed.toolName, args), summary: 'running', elapsedMs: 0, args: parsed.argumentsJson }
               steps.push(step)
-              captureApplicationEvent(event, `Executing ${parsed.tool_name}`, call.id, false, 'tool-start')
+              captureApplicationEvent(event, `Executing ${parsed.toolName}`, call.id, false, 'tool-start')
               publish()
               publishSteps()
               try {
-                const result = await runTool(parsed.tool_name, args)
+                const result = await runTool(parsed.toolName, args)
                 if (result.visualization) visualizations.push(result.visualization)
                 if (result.model3d) models.push(result.model3d)
                 const output = JSON.stringify(result.result)
                 Object.assign(step, { status: 'done', elapsedMs: Date.now() - started, summary: `${result.rowCount ?? 0} returned rows`, query: result.query, result: output })
-                captureApplicationEvent(event, `${parsed.tool_name} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id, false, 'tool-end')
+                captureApplicationEvent(event, `${parsed.toolName} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id, false, 'tool-end')
                 input.push({ type: 'function_call_output', call_id: call.id, output })
               } catch (error) {
                 Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
-                captureApplicationEvent(event, `${parsed.tool_name} failed`, call.id, true, 'tool-end')
+                captureApplicationEvent(event, `${parsed.toolName} failed`, call.id, true, 'tool-end')
                 throw error
               } finally { publishSteps(); publish() }
             } else {

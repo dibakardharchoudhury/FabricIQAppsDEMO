@@ -1,4 +1,4 @@
-import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
+import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './answerPresentation.ts'
 import type { AgentRole } from './orchestration.ts'
 
 export const AGENT_NAMES: Record<AgentRole, string> = {
@@ -57,7 +57,7 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
     { type: 'fabric_iq_preview', server_label: 'fabriciq-ontology', project_connection_id: ontologyConnection, require_approval: 'never' },
   ] : [{
     type: 'function', name: 'hydro_query',
-    description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. arguments_json must be a JSON object matching that tool schema.',
+    description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. arguments_json must contain valid serialized JSON matching that tool schema. Escape backslashes inside JSON strings; prefer exact identifiers or non-regex KQL when possible.',
     parameters: {
       type: 'object', properties: {
         tool_name: { type: 'string', enum: [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
@@ -66,8 +66,27 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
     }, strict: true,
   }]
   return {
-    kind: 'prompt', model, instructions: `${AGENT_INSTRUCTIONS[role]}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
+    kind: 'prompt', model, instructions: `${AGENT_INSTRUCTIONS[role]}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
     tools, reasoning: { effort: 'low' },
+  }
+}
+
+export function parseHydroQuery(raw: string):
+  | { ok: true; toolName: string; argumentsJson: string; args: Record<string, unknown> }
+  | { ok: false; error: string } {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (!record(value) || typeof value.tool_name !== 'string' || typeof value.arguments_json !== 'string') {
+      return { ok: false, error: 'hydro_query requires tool_name and arguments_json strings.' }
+    }
+    const args: unknown = JSON.parse(value.arguments_json)
+    if (!record(args)) return { ok: false, error: 'arguments_json must encode a JSON object.' }
+    return { ok: true, toolName: value.tool_name, argumentsJson: value.arguments_json, args }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error
+    return { ok: false, error: `Invalid tool JSON: ${error.message}. Serialize valid JSON, including escaped backslashes.` }
   }
 }
 

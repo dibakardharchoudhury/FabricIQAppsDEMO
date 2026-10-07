@@ -182,6 +182,33 @@ state replaced the streamed message. The fix preserves its collected steps/agent
 while displaying the error. Work-order comparisons also show the actual sequential queue
 state even if the operator selected Parallel for ordinary questions.
 
+The following canonical deployment (`f7d62e3`, hosted version 1.0.721) also printed
+`SUCCESS`. Once DNS was reachable, the actual Supervisor -> Q&A -> SQL/chart tools ->
+Supervisor path completed in 25.1 seconds, returning the same 10 open orders as the
+direct Data Agent and independently checked SQL records. No consent popup appeared in
+either successful runtime path. This does not establish a permanent repair of the
+intermittent network failures.
+
+Live human-approval acceptance passed: rejecting the first T005 test draft left SQL
+unchanged; editing the second draft's title, description and priority, then approving
+once, created exactly one Draft. A separate browser's fresh SQL GraphQL response verified
+all edited fields and the returned work-order number. Only that test record was deleted,
+and T005's queue returned to zero. AppInsights independently matched six browser response
+IDs to 10 successful server spans for Supervisor v2 and Work Order v2.
+
+The live Maintenance page loaded 752,264 JavaScript bytes in total, including the
+743,421-byte entry and its selected lazy chunks. The observed 648 ms DOMContentLoaded was
+a warm/cached browser observation, not a cold-load benchmark.
+
+Broader browser acceptance then exposed malformed nested tool JSON, a Fabric IQ
+misinterpretation of SQL as a work-order category, incomplete equipment-level matching
+in the Data Agent answer, stale-time wording, and excessive derived charts. Corrections
+reject malformed arguments before any execution and return explicit corrective feedback
+within the existing six-round budget; source/runtime failures still propagate without
+automatic execution retries. All agent paths now share source/matching/freshness rules,
+and explicit chart CSV takes precedence over unrelated numeric table columns. Thirty
+focused tests, typecheck and lint pass; live revalidation of these corrections is pending.
+
 ## Ontology v2 prerequisite and capability boundaries
 
 The RTI setup and app require **Ontology v2 only** (`properties.generation == 2`).
@@ -383,9 +410,9 @@ This solution uses **two separate Entra identities** — they are not interchang
 |---|---|---|
 | Entra app type | Confidential client — **has a secret** | Public client / **single-page app — no secret** |
 | Auth mode | **App-only** (client credentials) | **Delegated** (the signed-in user's token) |
-| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, STID GraphQL, Fabric REST |
+| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, STID GraphQL, Fabric REST, Foundry Agent Service |
 | Secret storage | **Azure Key Vault** (3 secrets) | none — no secret is ever stored |
-| Who provisions it | Platform/security admin, **before** Step 1 | Deployer, **once** (portal or `az`), then Step 8 configures it |
+| Who provisions it | Platform/security admin, **before** Step 1 | Canonical orchestrator discovers/reuses or attempts creation; live-auth setup configures it |
 | Recorded in repo | KV secret **names** in `Pipe_Setup` params (not values) | `RAYFIN_PUBLIC_AAD_CLIENT_ID` in `rayfin/.env` |
 
 ### A. Notebook SPN (pre-provision first)
@@ -399,17 +426,18 @@ The pipeline only asks for **Key Vault coordinates** (vault URI + three secret *
 
 ### B. App SPA (created once, then automated)
 
-The browser app signs the **user** in through a delegated SPA registration (no secret). Creating that registration is the one manual step; Step 8 (`npm run setup-live-auth`) automates everything after it.
+The browser app signs the **user** in through a delegated SPA registration (no secret).
+The canonical deployment orchestrator discovers and reuses the tenant SPA, or attempts
+creation when none exists. Registration creation can require an administrator if tenant
+self-service registration is disabled. Supply `--client-id` only to select a specific
+registration; the orchestrator verifies it in the target tenant before publication.
 
-**Create the SPA** — `az` one-liner or portal:
-
-```powershell
-az ad app create --display-name "Hydro Operations Fabric Client" --sign-in-audience AzureADMyOrg --query appId -o tsv
-```
-
-…or Entra portal → **App registrations → New registration** → name it, *Accounts in this organizational directory only* → **Register**. Copy the **Application (client) ID** into `rayfin/.env` → `RAYFIN_PUBLIC_AAD_CLIENT_ID` (Step 3). Creating an app registration needs **Application Administrator** (or tenant self-service app registration enabled).
-
-**Step 8 then configures that app automatically:** SPA redirect URIs, the two delegated permissions, and admin consent.
+The orchestrator invokes `setup-live-auth` to configure SPA redirects and bundle the
+required delegated permissions and consent checks. The full application currently uses
+**three API resources / eight scopes**, not a separate grant for each agent. Existing
+grants are preserved; obsolete inference permission is no longer requested by runtime
+or required by deployment. Only perform manual actions that the script explicitly reports
+it cannot perform.
 
 #### Why the enterprise application / service principal is required
 
@@ -422,13 +450,9 @@ The SPA has two related Entra objects with different jobs:
 
 The browser authenticates as the signed-in **user**, not as an app-only daemon. The SPA has no
 secret and the service principal gets no Fabric workspace role. It is required because Microsoft
-Graph stores `oauth2PermissionGrants` against the client service principal. Without it,
-`az ad sp show --id <client-id>` and consent creation fail even if the app registration exists.
-Create the missing tenant instance with:
-
-```powershell
-az ad sp create --id <spa-client-id>
-```
+Graph stores `oauth2PermissionGrants` against the client service principal. The live-auth
+setup ensures this tenant instance exists before granting consent; do not create a second
+SPA to work around a missing enterprise application.
 
 The complete live-auth contract is:
 
@@ -438,7 +462,12 @@ The complete live-auth contract is:
   local `rayfin.yml` configuration are not recreated.
 - **Requested delegated permissions on the app registration:** Azure Data Explorer
   `user_impersonation`; Power BI Service/Microsoft Fabric `GraphQLApi.Execute.All`,
-  `Workspace.Read.All`, `Item.Read.All`, and `Item.Execute.All`.
+  `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All`, `DataAgent.Execute.All`,
+  and `Fabric.Embed`; Microsoft Foundry Agent Service `user_impersonation`.
+  `DataAgent.Execute.All` is requested for direct Data Agent execution, not ordinary
+  Fabric source-definition verification. `Fabric.Embed` supports the embedded RT dashboard.
+  Foundry Agent Service is a different token audience from the former model-inference API:
+  the logged-in user's identity is still used, but an inference grant cannot authorize it.
 - **Consent on the enterprise application/service principal:** tenant-wide `AllPrincipals`
   admin consent is the enterprise target. If tenant policy allows user consent, a per-user
   `Principal` grant works only for that consenting user.
@@ -446,7 +475,7 @@ The complete live-auth contract is:
   Eventhouse and allow each deployed hosting origin in Eventhouse CORS. These are not permissions
   granted to the SPA service principal.
 
-> **Configured does not mean consented.** The API permissions page can list all five delegated
+> **Configured does not mean consented.** The API permissions page can list all eight delegated
 > scopes while runtime tokens still cannot contain them. The app registration's list only declares
 > what the SPA may request. Consent is a separate `oauth2PermissionGrant` on the enterprise
 > application. In Entra, the **Status** column must show **Granted for &lt;tenant&gt;** for tenant-wide
@@ -460,9 +489,13 @@ The complete live-auth contract is:
 2. **API permissions → Add a permission → APIs my organization uses** → add these **Delegated** scopes:
    - **Azure Data Explorer** → `user_impersonation` — Eventhouse telemetry (resource app id `2746ea77-4702-4b45-80ca-3c97e680e8b7`).
    - **Power BI Service** (resource app id `00000009-0000-0000-c000-000000000000`) → `GraphQLApi.Execute.All` (STID Lakehouse GraphQL), `Workspace.Read.All` (workspace item discovery), **`Item.Read.All`** (read the Eventhouse query URI — **required for live telemetry**; without it the app reports “No Eventhouse found”), and `Item.Execute.All` (run notebooks/pipelines from the app).
+     Also `DataAgent.Execute.All` (direct Data Agent execution) and `Fabric.Embed`
+     (embedded Real-Time Dashboard).
+   - **Microsoft Foundry Agent Service** (resource app id `18a66f5f-dbdf-4c17-9dd7-1634712a9cbe`)
+     → `user_impersonation` (persistent Supervisor and specialist agents).
 
    *Fixes AADSTS650057.*
-3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* Needs **Application Administrator / Cloud Application Administrator**. If you can't and **user consent is allowed**, each user is prompted to consent on first sign-in instead — all five scopes are user-consentable, so this step is optional in most tenants.
+3. **Grant admin consent** for the directory (the *Grant admin consent* button). *Fixes AADSTS65001.* An authorized consent administrator is required. Where tenant policy permits user consent, a user's own grants can satisfy that user's runtime requirements instead. The orchestrator verifies effective tenant-plus-current-user coverage; that does not certify consent for other users.
 
 `setup-live-auth` normally grants **all** of the above automatically (tenant‑wide, `AllPrincipals`),
 so no in-app consent popup should appear after setup. If Entra serves edge-cached configuration for
