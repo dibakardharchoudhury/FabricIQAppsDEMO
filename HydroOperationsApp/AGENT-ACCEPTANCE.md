@@ -235,6 +235,37 @@ nor SQL/combined-source answer correctness merely because a native call complete
 
 ### Fixes following this rerun
 
+Latest source fixes (deployment and hosted reruns still pending):
+
+- Chief supplies an explicit native-source selection. Sparky's Responses request restricts
+  tools to that connection; the application checks a completed MCP receipt with the exact
+  server label. Prose-only and mismatched-source responses fail. Only the selected source is
+  verified for an invocation; both connections remain provisioned. Simple single-source
+  request checks are not a general natural-language intent classifier.
+- A live request using the proposed restriction returned HTTP 200 and a completed
+  `DataAgent_RTI_Demo_Agent_V11` call labeled `fabriciq-data-agent`. This verifies that
+  request shape against the preview service, not correctness of its reported SQL count.
+- Invalid proposal field types/lengths return actionable, bounded model correction before
+  target reads or card staging. Limits remain title 200 / description 4000 characters;
+  source and target failures still propagate. Approval safety tests include existing
+  proposal metadata and duplicate/concurrent-write prevention.
+- Requested unsent notifications use source-grounded presentation rather than Chief's
+  contradictory authorization request. Empty work reads retain their scoped coverage.
+- Editable WO cards render first, with duplicate narrative in closed **Supporting findings
+  and sources**. Read-only supporting evidence sections are collapsed without deleting data;
+  normal limitations remain visible. Copy/export retains the full response.
+- The animated crew defaults to a compact strip. Expanded flow occupies a separate,
+  keyboard-resizable 280-420px side panel on desktop; narrow layouts use a bounded panel.
+  Composer height is protected. Shared card/evidence presentation also applies to Battle.
+- Local validation: **121 targeted tests passed**. Browser checks at 1440x900 and 390x844
+  verified card-first order, closed narrative, width adjustment, non-overlapping panes,
+  Maximize/Escape input preservation, pause, receipt expansion and rejection with no SQL
+  write. The desktop compact panel measured 105px; mobile 123px. No horizontal overflow
+  or page errors were observed; the existing Rayfin `useProxy` deprecation warning remains.
+
+These checks do not supersede the failed hosted scenarios below/above. Maintenance
+Planning remains a recommendation, not a sixth deployed agent or certified integration.
+
 - Committed `bdf8301`: safe latest-per-node telemetry template, local rejection of the
   reproduced missing enriched column, and mandatory RCA gating for investigation
   reassessment/review/continuation.
@@ -248,9 +279,9 @@ nor SQL/combined-source answer correctness merely because a native call complete
 - These new corrections are **not hosted-certified**. The deployment attempt required
   interactive Azure sign-in and was stopped while awaiting it; no `SUCCESS` was observed.
   The acceptance browser remained on 1.0.737.
-- Still requiring implementation/verification: enforce native-source selection, recover
-  oversized proposal arguments without relaxing field limits, ensure requested prose
-  notifications are actually produced, preserve requested reconciliation/chart conclusions,
+- Still requiring hosted verification: native-source selection, bounded oversized-proposal
+  repair and requested unsent notification completion. Further completeness work remains:
+  preserve requested reconciliation/chart conclusions,
   improve long-flow latency, and rerun affected scenarios after deployment.
 
 ### Historical prompts and results

@@ -13,6 +13,8 @@ When forwarding a request to another agent or remote tool, preserve these source
 
 export const ANSWER_PRESENTATION_CONTRACT = `Response presentation contract:
 Start with a concise direct answer. Use these headings only when relevant: Findings, Open work, Recommendations, Limitations, Sources.
+Default to at most two summary sentences and three short action/limitation bullets, plus any requested records or charts. Do not repeat the question, tool payloads, filters or the same numbers in multiple sections. Never end with an unsolicited menu or permission question.
+When actual editable work-order cards were staged, those cards are the only draft presentation. Do not repeat titles, descriptions, field lists, acceptance criteria or copy/paste templates in prose. At most say the cards are ready for review; retain only separately requested findings and material limitations. No card means no claim that an editable draft exists.
 For multiple comparable records, return a compact Markdown table with a header separator and one record per row. Use human-readable labels, explicit units, UTC timestamps, and canonical identifiers where needed. Do not replace a complete result with selected examples.
 For charts or dashboards, provide the exact supporting rows as fenced csv with a header. Use a descriptive heading immediately before each dataset. Numeric measures must be plain numbers; put units in column names. Use timestamp for the time axis and series for multiple signals. Never mix incompatible units in one measure column. Tables and charts must use the same rows, filters and labels, not independent recounts.
 If a specific chart is requested, emit CSV only for that chart's requested labels and measures, not unrelated numeric columns or the full inventory behind a top-N table. A top-five temperature chart must contain exactly the same five turbines as its table.
@@ -24,6 +26,30 @@ export type AnswerDataset = {
   columns: string[]
   rows: string[][]
   csv: string
+}
+
+export function answerSections(text: string): Array<{ title?: string; markdown: string; collapsed: boolean }> {
+  // Reference-style links and footnotes have document-wide scope.
+  if (/^ {0,3}\[[^\]]+\]:/m.test(text)) return [{ markdown: text, collapsed: false }]
+  const sections: Array<{ title?: string; lines: string[] }> = [{ lines: [] }]
+  let fence: string | undefined
+  for (const line of text.split('\n')) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (marker) {
+      if (!fence) fence = marker[1]
+      else if (new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = undefined
+      sections[sections.length - 1].lines.push(line)
+      continue
+    }
+    const heading = !fence && line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/)
+    if (heading) sections.push({ title: heading[1], lines: [line] })
+    else sections[sections.length - 1].lines.push(line)
+  }
+  return sections.filter(section => section.lines.length).map(section => ({
+    title: section.title,
+    markdown: section.lines.join('\n'),
+    collapsed: /^(?:Sources?|Source observations|Returned source inventory:.*|Additional verified open work|Native-source retrieval claims|Competing hypotheses - untested|Work-order query coverage)$/i.test(section.title ?? ''),
+  }))
 }
 
 export function appendOmittedSnapshotWork(text: string, steps: readonly Pick<AgentStep, 'tool' | 'status' | 'result'>[]): string {

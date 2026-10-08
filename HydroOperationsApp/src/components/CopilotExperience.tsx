@@ -9,7 +9,7 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { hideRenderedCsv } from '../services/copilot/answerPresentation'
+import { hideRenderedCsv, answerSections } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
@@ -66,7 +66,8 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
 
 export function CopilotExperience({ messages, busy, engine, foundryAvailable, battleEnabled, onSend, onReset, onEngineChange, onBattle }: CopilotExperienceProps) {
   const [question, setQuestion] = useState('')
-  const [flowHeight, setFlowHeight] = useState(240)
+  const [flowExpanded, setFlowExpanded] = useState(false)
+  const [flowWidth, setFlowWidth] = useState(320)
   const chatView = useExpandedView()
   const prompts = useMemo(() => PROMPTS[engine], [engine])
   const listRef = useRef<HTMLDivElement>(null)
@@ -101,7 +102,8 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
 
   return <div className="v2-domain-page v2-copilot-page">
     <section className="v2-page-head"><div><span className="v2-eyebrow">{ENGINE_LABELS[engine].source}</span><h1>Hydro Intelligence</h1><p>Ask grounded questions across facilities, equipment, signals, and operational work.</p></div><Bot size={28} /></section>
-    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
+    <section className={`v2-copilot${conversationEvents.length ? ' has-conversation-crew' : ''}${flowExpanded && conversationEvents.length ? ' has-expanded-flow' : ''}${chatView.expanded ? ' v2-expanded-view' : ''}`}
+      style={{ '--flow-width': `${flowWidth}px` } as React.CSSProperties}><header><span><Bot size={17} /><strong>Hydro Operations</strong><small>{ENGINE_LABELS[engine].source}</small></span>
       <span className="v2-copilot-actions">
         {foundryAvailable && (onEngineChange || battleEnabled) && <span className="v2-engine-toggle" role="group" aria-label="Copilot options">
           {onEngineChange && (['data-agent', 'foundry'] as CopilotEngine[]).map(option => <button
@@ -122,11 +124,10 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
         <button className="v2-icon-action" type="button" title={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-label={chatView.expanded ? 'Restore chat' : 'Maximize chat'} aria-pressed={chatView.expanded} onClick={chatView.toggleExpanded}>{chatView.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="v2-icon-action" type="button" title="New chat" disabled={busy || messages.length === 1} onClick={() => { setQuestion(''); onReset() }}><SquarePen size={16} /></button>
       </span></header>
-      {conversationEvents.length > 0 && <details className="v2-conversation-crew" open>
-        <summary>Conversation agent flow · {messages.filter(message => message.orchestrationEvents?.length).length} turns</summary>
-        <label className="v2-flow-resize">Flow height<input aria-label="Agent flow height" type="range" min="140" max="420" step="20" value={flowHeight} onChange={event => setFlowHeight(Number(event.target.value))} /></label>
-        <div className="v2-flow-content" style={{ maxHeight: `min(${flowHeight}px, 40vh)` }}><AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} /></div>
-      </details>}
+      {conversationEvents.length > 0 && <aside className="v2-conversation-crew" aria-label="Conversation agent flow">
+        {flowExpanded && <label className="v2-flow-resize">Panel width<input aria-label="Agent panel width" type="range" min="280" max="420" step="20" value={flowWidth} onChange={event => setFlowWidth(Number(event.target.value))} /></label>}
+        <AgentCrewTrace events={conversationEvents} proposals={conversationProposals} currentEventIds={currentEventIds} pending={busy} expanded={flowExpanded} onExpandedChange={setFlowExpanded} />
+      </aside>}
       <div className="v2-messages" ref={listRef} onScroll={onScroll}>
         {messages.map((message, index) => {
           const last = index === messages.length - 1
@@ -170,21 +171,30 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   // A running tool already shows its own progress, so only flag the gap where the model itself
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
+  const draftReady = !streaming && Boolean(message.proposals?.length)
+  const answer = message.text && <AnswerText text={stripOptionsMarker(streaming ? message.text : hideRenderedCsv(message.text))} streaming={streaming} />
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
+    {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
     <CopilotSteps steps={message.steps} />
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {message.text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripOptionsMarker(streaming ? message.text : hideRenderedCsv(message.text))}</ReactMarkdown>}
+    {draftReady ? <details className="v2-answer-support"><summary>Supporting findings and sources</summary>{answer}</details> : answer}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
     {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} />}
-    {!streaming && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
+}
+
+function AnswerText({ text, streaming }: { text: string; streaming: boolean }) {
+  if (streaming) return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+  return answerSections(text).map((section, index) => section.collapsed
+    ? <details className="v2-answer-support" key={index}><summary>{section.title}</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.markdown}</ReactMarkdown></details>
+    : <ReactMarkdown remarkPlugins={[remarkGfm]} key={index}>{section.markdown}</ReactMarkdown>)
 }
 
 function AgentModel({ model }: { model: Asset3DModelRecord }) {

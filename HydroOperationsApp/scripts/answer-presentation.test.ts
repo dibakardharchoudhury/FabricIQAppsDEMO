@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, OPERATIONAL_EVIDENCE_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
@@ -15,6 +15,24 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('supporting sections collapse without removing evidence or hiding limitation sections', () => {
+  const text = 'Cause undetermined.\n\n### Source observations\n\n| ID | Value |\n| --- | --- |\n| T005 | 12 |\n\n### Limitations\n\nTelemetry is stale.\n\n### Sources\n\nEventhouse receipt 12.'
+  const sections = answerSections(text)
+  assert.equal(sections.map(section => section.markdown).join('\n'), text)
+  assert.equal(sections.find(section => section.title === 'Source observations')?.collapsed, true)
+  assert.equal(sections.find(section => section.title === 'Sources')?.collapsed, true)
+  assert.equal(sections.find(section => section.title === 'Limitations')?.collapsed, false)
+})
+
+test('section folding preserves fenced headings and document-wide references', () => {
+  const text = 'Result.\n\n```text\n### Sources\nnot a section\n```\n\n### Sources\nActual source.'
+  assert.equal(answerSections(text).filter(section => section.collapsed).length, 1)
+  assert.equal(answerSections(text).map(section => section.markdown).join('\n'), text)
+  const references = 'See [source][1].\n\n### Sources\n[1]: https://example.com'
+  assert.deepEqual(answerSections(references), [{ markdown: references, collapsed: false }])
+  assert.match(ANSWER_PRESENTATION_CONTRACT, /cards are the only draft presentation/)
+})
 
 test('independent final verification cannot consume the slot needed for draft review', () => {
   const prompt = 'Read T005 telemetry, investigate its condition, prepare an editable work-order draft and finally independently verify identity and coverage. Do not save.'
@@ -252,7 +270,7 @@ test('a draft from an incomplete workflow is withdrawn, not treated as human rej
 })
 
 test('Supervisor requests a visible routing reason without breaking older agent versions', () => {
-  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason"\]/)
+  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason","native_source"\]/)
   assert.equal(parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data"}').reason, 'Ontology-native instance data')
   assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","reason":false}'), /reason/)
 })

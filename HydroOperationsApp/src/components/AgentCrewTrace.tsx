@@ -28,10 +28,12 @@ function CommunicationPacket({ path, timestamp, reverse = false, failed = false 
     style={{ offsetPath: `path("${path}")`, animationDelay: `${-age}ms` }} />
 }
 
-export function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean }) {
+export function AgentCrewTrace({ events, proposals = [], currentEventIds, pending = false, expanded, onExpandedChange }: { events?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; currentEventIds?: string[]; pending?: boolean; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const [selected, setSelected] = useState<AgentRole>()
   const [paused, setPaused] = useState(false)
-  const [compact, setCompact] = useState(true)
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const compact = !(expanded ?? localExpanded)
+  const setExpanded = (value: boolean) => { setLocalExpanded(value); onExpandedChange?.(value) }
   const approvalSnapshot = useSyncExternalStore(workOrderApprovals.subscribe,
     () => proposals.map(proposal => workOrderApprovals.get(proposal.id)?.state ?? 'expired').join(','), () => '')
   const approvals = approvalSnapshot ? approvalSnapshot.split(',') : []
@@ -69,7 +71,8 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       <Activity size={14} />
       <strong>Agent crew</strong>
       <span className="crew-run-status" role="status">{STATUS_LABELS[status]}</span>
-      <button type="button" className="crew-size-toggle" aria-expanded={!compact} onClick={() => setCompact(value => !value)}>{compact ? 'Expand flow' : 'Compact flow'}</button>
+      <button type="button" className="crew-size-toggle" aria-expanded={!compact} onClick={() => setExpanded(compact)}>{compact ? 'Expand flow' : 'Compact flow'}</button>
+      <button type="button" className="crew-motion-toggle" onClick={() => setPaused(value => !value)} aria-pressed={paused}>{paused ? 'Resume motion' : 'Pause motion'}</button>
     </header>
     <div className="crew-stage">
       <svg className="crew-wires" viewBox="0 0 800 56" preserveAspectRatio="none" aria-hidden="true">
@@ -94,7 +97,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
         return <button type="button" key={member.role} className={`crew-station role-${member.role} state-${state}${awaiting ? ' awaiting-specialist' : ''}${focused === member.role ? ' selected' : ''}`}
           aria-pressed={focused === member.role} aria-label={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${STATUS_LABELS[state]}. Show execution details.`}
           title={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${member.quip}`}
-          onClick={() => setSelected(member.role)}>
+          onClick={() => { setSelected(member.role); setExpanded(true) }}>
           <span className="crew-helper-slot"><span className="crew-work-ring" /><CopilotHelper /><span className="crew-role-badge"><Icon size={12} /></span></span>
           <strong className="crew-name">{AGENT_DISPLAY_NAMES[member.role]}</strong>
           <span className="crew-job">{member.job}{state === 'completed' && <Check size={11} />}</span>
@@ -123,7 +126,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       <button type="button" onClick={() => setPaused(value => !value)} aria-pressed={paused}>{paused ? 'Resume animations' : 'Pause animations'}</button>
     </div>
     {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('validating') && ' Checking identity and existing work; no SQL write yet.'}{approvals.includes('saving') && ' Writing the approved SQL draft; do not submit again.'}</p>}
-    <details className="crew-diagnostics">
+    {!compact && <details className="crew-diagnostics">
       <summary>Execution receipts <span>{trace.length} events for {CREW.find(member => member.role === focused)?.job}</span></summary>
       <p>Foundry stream events and browser-executed tools are labeled separately. These are execution records, not private reasoning or an Application Insights span export.</p>
       {insightsLink && <a className="crew-insights-link" href={insightsLink} target="_blank" rel="noreferrer">Open linked Application Insights <ExternalLink size={12} /></a>}
@@ -139,6 +142,6 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
         <time>+{((entry.timestamp - start) / 1000).toFixed(1)}s</time>
         <span><b>{entry.source === 'foundry' ? 'Foundry' : 'App tool / coordination'}</b>{entry.label}{entry.callId && <code>{entry.callId}</code>}</span>
       </li>)}</ol> : <p>No execution events recorded for this agent.</p>}
-    </details>
+    </details>}
   </section>
 }

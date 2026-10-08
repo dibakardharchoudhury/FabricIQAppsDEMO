@@ -33,7 +33,7 @@ export function WorkOrderApprovalCard({ proposal }: { proposal: WorkOrderProposa
         const priority = event.target.value
         if (priority === 'Low' || priority === 'Medium' || priority === 'High' || priority === 'Critical') setDraft({ ...draft, priority })
       }}>{['Low', 'Medium', 'High', 'Critical'].map(priority => <option key={priority}>{priority}</option>)}</select></label>
-      <p className="wo-review-boundary"><ShieldCheck size={18} />Review existing work in the evidence above. Only your approval creates a Draft in the operational SQL database.</p>
+      <p className="wo-review-boundary"><ShieldCheck size={18} />Check existing work in Supporting findings and sources. Only your approval saves this Draft.</p>
       <div className="wo-review-actions"><button type="button" className="wo-approve" disabled={!draft.title.trim() || !draft.description.trim()} onClick={() => void approve()}><Check size={15} />Yes, create work order</button>
       <button type="button" onClick={reject}><X size={15} />No, reject</button></div>
     </fieldset>

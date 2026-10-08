@@ -180,7 +180,12 @@ export function renderOpenWorkEvidence(receipts: readonly EvidenceReceipt[]): st
     }
   }
   const open = [...orders.values()].filter(row => !['completed', 'cancelled'].includes(String(row.status).toLowerCase()))
-  if (!open.length) return ''
+  if (!open.length) {
+    const emptyReads = receipts.filter(receipt => receipt.tool === 'query_operations' && receipt.entity === 'work_orders'
+      && record(receipt.result) && Array.isArray(receipt.result.rows) && receipt.result.rows.length === 0)
+    return emptyReads.length ? '\n\n### Work-order query coverage\n\n' + emptyReads.map(receipt =>
+      `- Source ${cell(receipt.id)}, completed ${cell(receipt.completedAt)}: zero rows returned for the filters recorded in its execution receipt. This is not a claim about records outside those filters.`).join('\n') : ''
+  }
   return '\n\n### Open work returned by direct queries\n\n' + [
     '| Work order | Equipment | Title | Status | Priority | Instrument | OPC UA node |',
     '|---|---|---|---|---|---|---|',

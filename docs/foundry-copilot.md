@@ -77,13 +77,22 @@ window, without averages or quality exclusions. A direct missing-node-column fil
 the enriched function is rejected locally with repair guidance; actual source failures
 still propagate. This does not turn the KQL allow-list into a complete semantic compiler.
 The pointer/inventory/latest-telemetry and follow-up-routing changes after that rerun are
-not hosted-certified; deployment needs interactive sign-in. The twenty-turn report also
-records unresolved native-source selection, oversized-proposal and notification-completion
-defects. Do not read the architectural capabilities above as all-green runtime acceptance.
-The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
-and full handoff history. Normal chat has a keyboard-operable flow-height slider and
-Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed
-delta or composer edit. Cards remain outside collapsed evidence sections.
+not hosted-certified; the latest deployment attempt needed interactive sign-in.
+Native-source selection now restricts each Sparky invocation to its explicit MCP server
+label and requires a completed matching execution receipt. Both connections remain
+provisioned; no alternate source is used on failure. A live preview-service probe accepted
+the restriction and returned the requested Data Agent receipt, not proof of SQL answer correctness.
+Proposal input validation is locally repairable within the existing round budget;
+real source/target errors still propagate. Unsent notifications use checked source
+presentation without treating prose authorization requests as successful completion.
+Do not read these changes as all-green hosted runtime acceptance.
+The crew defaults to a slim animated five-agent strip. Expand flow moves detailed
+communication/receipts into a separate, resizable desktop side panel; on narrow screens
+it uses a bounded-height panel. Normal chat retains Maximize/Restore and protects composer
+space. Completed messages are memoized rather than reparsed on every streamed delta.
+WO cards appear before narrative; **Supporting findings and sources** is initially closed.
+Source/reference sections can be expanded without losing records or copy/export content.
+Approval controls and validation errors are never inside collapsed evidence.
 
 Request packets originate only from actual child invocations with a recorded parent.
 Return/failure packets require the matching delegation call receipt, not just a completed

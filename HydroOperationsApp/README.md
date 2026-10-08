@@ -276,6 +276,14 @@ them. A failed write response is marked uncertain and is not retried automatical
 write displays the returned work-order number and refreshes the operational views. Battle runs
 mutation requests sequentially and labels this as the shared approval flow, not independent Q&A.
 
+Draft cards appear first; duplicate prose is collapsed under **Supporting findings and
+sources**. Short answers, material limitations and requested results take precedence over
+repeated tool explanations. Supporting evidence remains expandable and in transcript
+exports. The animated crew uses a compact strip by default, with an optional resizable
+desktop side panel (bounded-height on mobile), rather than taking over the answer area.
+These latest source changes require the hosted acceptance gate documented in
+[AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md).
+
 All chat and Battle surfaces share the same presentation contract and evidence dashboard. Charts
 are derived from the same returned table/CSV rows, without a top-16 UI cap or treating empty values
 as zero. Different measures get separate charts. This is presentation consistency, not a guarantee

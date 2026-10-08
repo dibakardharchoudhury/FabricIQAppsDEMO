@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 import { after, test } from 'node:test'
 
-const harness = { reads: [], requests: [], responses: [], options: undefined }
+const harness = { reads: [], requests: [], responses: [], verifiedSources: [], options: undefined }
 globalThis.__rcaRuntimeTest = harness
 const stubs = {
-  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => {}; export const verifyOntologyForFoundry = async () => {}; export const queryStid = async () => { throw new Error("Unexpected STID read"); }; export const runKustoQuery = async () => { throw new Error("Unexpected Kusto read"); };',
+  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("data-agent"); }; export const verifyOntologyForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("ontology"); }; export const queryStid = async () => { throw new Error("Unexpected STID read"); }; export const runKustoQuery = async () => { throw new Error("Unexpected Kusto read"); };',
   '../rayfin.ts': 'export const isRayfinConfigured = () => true; export const isRayfinSignedIn = () => true; export const listWorkOrders = async () => []; export const listAsset3DModels = listWorkOrders; export const listInspections = listWorkOrders; export const listMaintenanceNotifications = listWorkOrders; export const listSpareParts = listWorkOrders;',
   './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test"}); export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
   './catalog.ts': 'export const catalogPrompt = () => "";',
@@ -14,9 +14,10 @@ const stubs = {
     export const describeToolCall = name => name;
     export const createToolRuntime = (_settings, options) => {
       globalThis.__rcaRuntimeTest.options = options;
-      return async () => {
+      return async (name, args) => {
         const value = globalThis.__rcaRuntimeTest.reads.shift();
         if (value instanceof Error) throw value;
+        if (typeof value === "function") return value(options, name, args);
         if (!value) throw new Error("Unexpected source read");
         return value;
       };
@@ -35,6 +36,7 @@ const hooks = registerHooks({
 const { askFoundryCopilot, resetFoundryConversation } = await import('../src/services/copilot/foundry.ts')
 const { createToolRuntime } = await import('../src/services/copilot/tools.ts')
 const { defaultCopilotSettings } = await import('../src/services/copilot/settings.ts')
+const { WorkOrderProposalValidationError } = await import('../src/services/copilot/orchestration.ts')
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (_url, init) => {
   const request = JSON.parse(init.body)
@@ -56,7 +58,9 @@ after(() => {
   delete globalThis.__rcaRuntimeTest
 })
 const call = (id, name, args) => ({ type: 'function_call', call_id: id, name, arguments: JSON.stringify(args) })
-const delegate = role => ({ role: 'supervisor', calls: [call(`delegate_${role}`, 'delegate_to_agent', { specialist: role, question: 'Read the assigned evidence.' })] })
+const delegate = (role, source = 'data-agent') => ({ role: 'supervisor', calls: [call(`delegate_${role}`, 'delegate_to_agent', { specialist: role, question: 'Read the assigned evidence.', native_source: role === 'fabric-iq' ? source : null })] })
+const nativeReply = (text, source = 'data-agent') => ({ role: 'fabric-iq', text,
+  calls: [{ type: 'mcp_call', id: 'native_receipt', server_label: `fabriciq-${source}`, name: source === 'ontology' ? 'ask_ontology' : 'PublishedDataAgent', status: 'completed', output: text }] })
 const read = call('source', 'hydro_query', { tool_name: 'query_station_power', arguments: { lookback: '24h' } })
 const ref = { evidence_id: 'source', path: '/rows/0' }
 const report = {
@@ -68,6 +72,7 @@ const report = {
 function reset() {
   resetFoundryConversation()
   harness.requests.length = harness.responses.length = harness.reads.length = 0
+  harness.verifiedSources.length = 0
   harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 123.45 }] }, rowCount: 1, groundedSummary: 'Measured mean: 123.45 MW.' })
 }
 
@@ -164,7 +169,7 @@ test('conflicting priority does not leave chat busy and explicit priority reache
 test('native retrieval gets a self-contained assignment, not unrelated operator workflow text', async () => {
   reset()
   harness.responses.push(delegate('fabric-iq'),
-    { role: 'fabric-iq', text: 'Native inventory returned.' },
+    nativeReply('Native inventory returned.'),
     { role: 'supervisor', text: 'Notification draft not sent.' })
   await askFoundryCopilot('Use the Data Agent for work inventory, then draft a notification for PRIVATE_DOWNSTREAM_CONTEXT.')
   const native = harness.requests.find(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
@@ -175,7 +180,7 @@ test('native retrieval gets a self-contained assignment, not unrelated operator 
 
 test('compound RCA retains native claims separately from validated source references', async () => {
   reset()
-  harness.responses.push(delegate('fabric-iq'), { role: 'fabric-iq', text: 'Ontology instance: EQUIP_RTI_T005 at Foyers.' },
+  harness.responses.push(delegate('fabric-iq', 'ontology'), nativeReply('Ontology instance: EQUIP_RTI_T005 at Foyers.', 'ontology'),
     delegate('rca'), { role: 'rca', calls: [read] },
     { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
     { role: 'supervisor', text: 'An unsupported diagnostic conclusion.' })
@@ -184,6 +189,80 @@ test('compound RCA retains native claims separately from validated source refere
   assert.match(result.text, /> Ontology instance: EQUIP_RTI_T005 at Foyers/)
   assert.match(result.text, /not a validated diagnosis/)
   assert.doesNotMatch(result.text, /unsupported diagnostic conclusion/)
+})
+
+test('native requests restrict tools and reject a different source or prose-only completion', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq'), nativeReply('Wrong source.', 'ontology'))
+  await assert.rejects(askFoundryCopilot('Ask the Data Agent for inventory.'), /Native source mismatch/)
+  const request = harness.requests.find(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
+  assert.deepEqual(request.tool_choice, { type: 'allowed_tools', mode: 'required', tools: [{ type: 'mcp', server_label: 'fabriciq-data-agent' }] })
+  assert.deepEqual(harness.verifiedSources, ['data-agent'])
+  reset()
+  harness.responses.push(delegate('fabric-iq'), { role: 'fabric-iq', text: 'Invented native answer.' })
+  await assert.rejects(askFoundryCopilot('Ask the Data Agent for inventory.'), /without a matching native-source/)
+})
+
+test('incorrect native delegation is rejected before a source is invoked', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq', 'ontology'), delegate('fabric-iq'),
+    nativeReply('Correct source.'), { role: 'supervisor', text: 'Correct source.' })
+  await askFoundryCopilot('Ask the published Fabric Data Agent for work.')
+  assert.equal(harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent').length, 1)
+  assert.ok(harness.requests[1].input.some(item => /operator requested the Data Agent/.test(item.output ?? '')))
+})
+
+test('both native sources can receive the same retrieval assignment without substitution', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq'), nativeReply('Data Agent evidence.'),
+    delegate('fabric-iq', 'ontology'), nativeReply('Ontology evidence.', 'ontology'),
+    { role: 'supervisor', text: 'Both sources returned evidence.' })
+  await askFoundryCopilot('Compare the Data Agent and ontology results.')
+  assert.deepEqual(harness.verifiedSources, ['data-agent', 'ontology'])
+  assert.deepEqual(harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
+    .map(request => request.tool_choice.tools[0].server_label), ['fabriciq-data-agent', 'fabriciq-ontology'])
+})
+
+test('oversized proposals are locally repairable without staging or weakening field limits', async () => {
+  reset()
+  const invalid = { equipment_id: 'T005', title: 'Acceptance', description: 'x'.repeat(4001) }
+  const staged = []
+  const realTool = createToolRuntime(defaultCopilotSettings(), { onWorkOrderProposal: proposal => staged.push(proposal) })
+  await assert.rejects(realTool('propose_work_order', invalid), WorkOrderProposalValidationError)
+  await assert.rejects(realTool('propose_work_order', { ...invalid, description: 17 }), /description must be a string/)
+  assert.equal(staged.length, 0)
+  harness.reads.length = 0
+  const executeRealTool = (options, name, args) => createToolRuntime(defaultCopilotSettings(), options)(name, args)
+  harness.reads.push(executeRealTool, executeRealTool)
+  const propose = (id, args) => call(id, 'hydro_query', { tool_name: 'propose_work_order', arguments: args })
+  harness.responses.push(delegate('work-order'), { role: 'work-order', calls: [propose('too_long', invalid)] },
+    { role: 'work-order', calls: [propose('repaired', { ...invalid, description: 'Source-grounded summary.' })] }, { role: 'work-order', text: 'Card staged.' },
+    { role: 'supervisor', text: 'Review the card.' })
+  const progress = []
+  const result = await askFoundryCopilot('Prepare a Low-priority work order.', text => progress.push(text))
+  assert.equal(result.proposals.length, 1)
+  assert.equal(result.proposals[0].description, 'Source-grounded summary.')
+  assert.equal(result.proposals[0].priority, 'Low')
+  assert.deepEqual(progress, [], 'Draft narrative is not streamed ahead of the editable cards')
+  assert.ok(harness.requests.some(request => request.input.some(item => /"staged":false,"sql_writes":0/.test(item.output ?? ''))))
+})
+
+test('requested unsent notification is rendered even when Chief asks for unnecessary authorization', async () => {
+  reset()
+  harness.reads[0] = { result: { rows: [{ equipment_id: 'EQUIP_RTI_T005' }] }, rowCount: 1 }
+  harness.reads.push({ result: { rows: [], total_matched: 0, truncated: false }, rowCount: 0 })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [
+    call('identity', 'hydro_query', { tool_name: 'query_assets', arguments: { entity: 'equipment' } }),
+    call('work', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'work_orders' } }),
+  ] }, { role: 'qa', text: 'No matching work.' }, { role: 'supervisor', text: 'Authorize a notification before I can write it.' })
+  const progress = []
+  const result = await askFoundryCopilot('Verify coverage and draft a short notification. Do not send.', text => progress.push(text))
+  assert.match(result.text, /Notification draft - not sent/)
+  assert.match(result.text, /EQUIP\\_RTI\\_T005/)
+  assert.match(result.text, /zero rows returned/)
+  assert.doesNotMatch(result.text, /Authorize/)
+  assert.deepEqual(progress, [])
+  assert.equal(result.proposals.length, 0)
 })
 
 test('independent verification retains both receipts but deduplicates identical charts and source summaries', async () => {

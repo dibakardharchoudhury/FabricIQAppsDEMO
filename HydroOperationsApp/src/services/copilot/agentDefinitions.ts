@@ -55,7 +55,8 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
         specialist: { type: 'string', enum: ['qa', 'rca', 'work-order', 'fabric-iq'] },
         question: { type: 'string' },
         reason: { type: 'string', description: 'One short user-visible explanation of the selected capability and source. Not private reasoning.' },
-      }, required: ['specialist', 'question', 'reason'], additionalProperties: false,
+        native_source: { type: ['string', 'null'], enum: ['data-agent', 'ontology', null], description: 'For fabric-iq, select exactly the native source requested by the operator. Use separate delegations when both are requested. For other specialists use null.' },
+      }, required: ['specialist', 'question', 'reason', 'native_source'], additionalProperties: false,
     }, strict: true,
   }] : usesFabricIq ? [
     { type: 'fabric_iq_preview', server_label: 'fabriciq-data-agent', project_connection_id: fabricIqConnection, require_approval: 'never' },
@@ -112,7 +113,33 @@ export function parseHydroQuery(raw: string):
   }
 }
 
-export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 'supervisor'>; question: string; reason?: string } {
+export type NativeSource = 'data-agent' | 'ontology'
+
+export function nativeSourceError(question: string, source: unknown): string | undefined {
+  if (source !== 'data-agent' && source !== 'ontology') return 'fabric-iq requires native_source data-agent or ontology. Select one requested source per delegation.'
+  const dataAgent = /\bdata[\s-]+agent\b/i.test(question)
+  const ontology = /\bontology\b/i.test(question)
+  if (dataAgent && !ontology && source !== 'data-agent') return 'The operator requested the Data Agent, not direct Ontology. Set native_source to data-agent; no substitution is permitted.'
+  if (ontology && !dataAgent && source !== 'ontology') return 'The operator requested Ontology, not the Data Agent. Set native_source to ontology; no substitution is permitted.'
+  return undefined
+}
+
+export function nativeToolChoice(source: NativeSource) {
+  return { type: 'allowed_tools', mode: 'required', tools: [{ type: 'mcp', server_label: `fabriciq-${source}` }] }
+}
+
+export function verifyNativeReceipt(item: unknown, source: NativeSource): boolean {
+  if (!item || typeof item !== 'object' || !('type' in item) || item.type !== 'mcp_call') return false
+  if (!('server_label' in item) || item.server_label !== `fabriciq-${source}`) {
+    throw new Error(`Native source mismatch: expected fabriciq-${source}. The response was not accepted and no source substitution was performed.`)
+  }
+  if (!('status' in item) || item.status !== 'completed' || ('error' in item && item.error)) {
+    throw new Error(`Native source fabriciq-${source} did not return a successful execution receipt.`)
+  }
+  return true
+}
+
+export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 'supervisor'>; question: string; reason?: string; nativeSource?: NativeSource } {
   const value: unknown = JSON.parse(args)
   if (!value || typeof value !== 'object' || !('specialist' in value) || !('question' in value)
     || typeof value.question !== 'string' || !value.question.trim()) throw new Error('Invalid specialist delegation.')
@@ -121,5 +148,7 @@ export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 
     throw new Error('Unknown Foundry specialist.')
   }
   if ('reason' in value && (typeof value.reason !== 'string' || !value.reason.trim())) throw new Error('Invalid delegation reason.')
-  return { specialist, question: value.question, ...('reason' in value && typeof value.reason === 'string' ? { reason: value.reason.trim() } : {}) }
+  return { specialist, question: value.question,
+    ...('native_source' in value && (value.native_source === 'data-agent' || value.native_source === 'ontology') ? { nativeSource: value.native_source } : {}),
+    ...('reason' in value && typeof value.reason === 'string' ? { reason: value.reason.trim() } : {}) }
 }

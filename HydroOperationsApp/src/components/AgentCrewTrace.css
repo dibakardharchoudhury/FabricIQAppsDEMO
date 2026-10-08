@@ -11,13 +11,25 @@
 .agent-crew-heading { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 11px; }
 .agent-crew-heading > svg { color: var(--cp-accent); }
 .crew-size-toggle { padding: 3px 7px; border: 1px solid var(--cp-border); border-radius: 5px; background: var(--cp-bg-elevated); color: var(--cp-text); font: inherit; cursor: pointer; }
+.crew-motion-toggle { padding: 3px 5px; border: 0; background: transparent; color: var(--cp-text-muted); font: inherit; cursor: pointer; }
 .agent-crew.compact .crew-stage { grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: auto; gap: 3px; background: none; }
 .agent-crew.compact .crew-station.role-supervisor { grid-column: auto; width: 100%; }
-.agent-crew.compact .crew-helper-slot { transform: scale(.65); margin: -10px 0; }
+.agent-crew.compact .crew-helper-slot { transform: scale(.5); margin: -16px -12px; grid-row: 1 / 3; }
+.agent-crew.compact .crew-station { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: 18px 15px; text-align: left; align-content: center; min-height: 43px; }
+.agent-crew.compact .crew-name, .agent-crew.compact .crew-station-status { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-crew.compact .crew-job, .agent-crew.compact .crew-route { display: none; }
+.agent-crew.compact .crew-review-status { display: none; }
+.agent-crew.compact.status-error .crew-review-status { display: block; padding: 4px 12px; font-size: 10px; }
 .agent-crew.compact .crew-wires, .agent-crew.compact .crew-wire-label,
 .agent-crew.compact .crew-live-feed, .agent-crew.compact .crew-activity,
 .agent-crew.compact .crew-controls { display: none; }
 .agent-crew.compact.status-error .crew-activity { display: flex; }
+@container (max-width: 480px) {
+  .agent-crew.compact .crew-station { display: flex; gap: 0; padding: 2px; }
+  .agent-crew.compact .crew-helper-slot { margin: -16px 0; }
+  .agent-crew.compact .crew-station-status { font-size: 8px; max-width: 100%; }
+  .agent-crew-heading { flex-wrap: wrap; gap: 5px; }
+}
 .crew-run-status { margin-left: auto; color: var(--cp-text-muted); font-size: 10px; }
 .status-error .crew-run-status { color: var(--cp-danger); }
 .status-approval .crew-run-status { color: var(--cp-warning); }

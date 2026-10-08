@@ -6,9 +6,9 @@ import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
 import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, parseDelegation, parseHydroQuery, parseWorkOrderReview } from './agentDefinitions.ts'
+import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, workOrderPriorityForRequest, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
@@ -76,7 +76,7 @@ export async function askFoundryCopilot(
   try {
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
-    const invoke = async (role: AgentRole, prompt: string, parentId?: string, parentCallId?: string): Promise<string> => {
+    const invoke = async (role: AgentRole, prompt: string, parentId?: string, parentCallId?: string, nativeSource?: NativeSource): Promise<string> => {
       const event: OrchestrationEvent = { ...createOrchestrationEvent(role, 'queued', 'Awaiting Foundry execution.'), agentName: AGENT_NAMES[role], parentId, parentCallId }
       events.push(event)
       publish()
@@ -98,8 +98,12 @@ export async function askFoundryCopilot(
       let requestDeadline: AbortSignal | undefined
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       let rcaReport: string | undefined
+      let nativeExecuted = false
       try {
-        if (role === 'fabric-iq') await Promise.all([verifyDataAgentForFoundry(), verifyOntologyForFoundry()])
+        if (role === 'fabric-iq') {
+          if (!nativeSource) throw new Error('A native source must be selected before invoking Fabric IQ.')
+          await (nativeSource === 'data-agent' ? verifyDataAgentForFoundry() : verifyOntologyForFoundry())
+        }
         const maxRounds = role === 'supervisor' || role === 'fabric-iq' ? 6 : 8
         for (let round = 0; round < maxRounds; round++) {
           requestDeadline = AbortSignal.timeout(180_000)
@@ -109,6 +113,7 @@ export async function askFoundryCopilot(
             body: JSON.stringify({
               agent_reference: { type: 'agent_reference', name: AGENT_NAMES[role] },
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
+              ...(nativeSource ? { tool_choice: nativeToolChoice(nativeSource) } : {}),
             }),
             signal: requestDeadline,
           }).catch((error: unknown) => {
@@ -123,12 +128,15 @@ export async function askFoundryCopilot(
           }
           event.requestId = response.headers.get('x-request-id') ?? response.headers.get('apim-request-id') ?? response.headers.get('x-ms-request-id') ?? undefined
           const state = await readResponsesStream(response.body, role === 'supervisor'
-            && !missingRequestedSpecialists(question, []).includes('rca') && !events.some(entry => entry.role === 'rca')
+            && !isWorkOrderRequest(question) && !isNotificationDraftRequest(question) && !missingRequestedSpecialists(question, []).includes('rca') && !events.some(entry => entry.role === 'rca')
             ? onProgress : undefined, raw => {
             if (captureFoundryEvent(event, raw)) publish()
           })
           requestDeadline = undefined
           if (!state.completed) throw new Error('Foundry stream ended without a completed response. No success was inferred.')
+          if (nativeSource) for (const item of state.output ?? []) {
+            if (verifyNativeReceipt(item, nativeSource)) nativeExecuted = true
+          }
           if (state.usage) usage = {
             prompt: (usage?.prompt ?? 0) + state.usage.prompt,
             completion: (usage?.completion ?? 0) + state.usage.completion,
@@ -139,6 +147,7 @@ export async function askFoundryCopilot(
           const calls = state.toolCalls.filter(call => call.id && call.name)
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
+            if (nativeSource && !nativeExecuted) throw new Error('Fabric IQ returned prose without a matching native-source execution receipt.')
             if (role === 'rca') {
               input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
                 text: 'The investigation is incomplete. Call complete_rca_assessment with real evidence references, at least two competing hypotheses and missing-evidence categories. Prose diagnoses, thresholds and baseline claims cannot replace the source-checked report.',
@@ -177,16 +186,17 @@ export async function askFoundryCopilot(
           }
           for (const call of calls) {
             if (role === 'supervisor' && call.name === 'delegate_to_agent') {
-              const { specialist, question: delegatedQuestion, reason } = parseDelegation(call.arguments)
+              const { specialist, question: delegatedQuestion, reason, nativeSource: delegatedSource } = parseDelegation(call.arguments)
               const completed = events.filter(entry => entry.status === 'completed' || entry.status === 'approval').map(entry => entry.role)
               const orderError = delegationOrderError(question, specialist, completed)
+                ?? (specialist === 'fabric-iq' ? nativeSourceError(question, delegatedSource) : undefined)
               if (orderError) {
                 input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ error: orderError, executed: false }) })
                 captureApplicationEvent(event, orderError, call.id, true)
                 publish()
                 continue
               }
-              const key = `${specialist}:${delegatedQuestion}`
+              const key = `${specialist}:${specialist === 'fabric-iq' ? delegatedSource : ''}:${delegatedQuestion}`
               if (delegated.has(key) || delegated.size >= 4) throw new Error('Supervisor attempted repeated or excessive delegation.')
               delegated.add(key)
               captureApplicationEvent(event, `Handed task to ${AGENT_NAMES[specialist]}${reason ? `: ${reason}` : ''}`, call.id)
@@ -196,7 +206,7 @@ export async function askFoundryCopilot(
                 const assignment = specialist === 'fabric-iq'
                   ? `Your complete assigned native-source task:\n${delegatedQuestion}\n\nExecute only this retrieval. Do not expand it into downstream direct verification, diagnosis, work planning or mutation. If the named source fails, propagate that failure; do not substitute another connection.`
                   : `Original operator request (context only; do not execute other specialists' work):\n${question}\n\nYour assigned Supervisor task:\n${delegatedQuestion}${priorFindings}`
-                const answer = await invoke(specialist, assignment, event.id, call.id)
+                const answer = await invoke(specialist, assignment, event.id, call.id, specialist === 'fabric-iq' ? delegatedSource : undefined)
                 specialistResults.push({ role: specialist, answer })
                 input.push({ type: 'function_call_output', call_id: call.id, output: answer })
                 captureApplicationEvent(event, `${AGENT_NAMES[specialist]} returned its result to the Supervisor`, call.id, false, 'delegation-return')
@@ -282,6 +292,13 @@ export async function askFoundryCopilot(
                   }) })
                   continue
                 }
+                if (error instanceof WorkOrderProposalValidationError) {
+                  input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
+                    error: error.message, staged: false, sql_writes: 0,
+                    instruction: 'Correct the proposal fields within the existing round budget. No approval card exists from this rejected call. Never truncate silently or change an explicit operator title; summarize the description and retain the evidence IDs.',
+                  }) })
+                  continue
+                }
                 throw error
               } finally { publishSteps(); publish() }
             } else {
@@ -333,7 +350,7 @@ export async function askFoundryCopilot(
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
-    const checkedInvestigation = assessments.length ? [
+    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) ? [
       ...assessments,
       ...specialistResults.filter(result => result.role === 'fabric-iq').map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
@@ -349,7 +366,7 @@ export async function askFoundryCopilot(
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
       : directChart ? stationSummaryValues[0] : appendOmittedSnapshotWork(narrative, steps)
     if (checkedInvestigation) {
-      captureApplicationEvent(events[0], 'Rendered the source-checked RCA assessment. Free-text diagnoses, thresholds and baseline claims from any agent were not used as the final investigation.')
+      captureApplicationEvent(events[0], 'Rendered the source-checked workflow and any requested unsent notification. Unvalidated agent narrative was not used as the final assessment or notification.')
       publish()
     } else if (directChart) {
       captureApplicationEvent(events[0], 'Rendered the station summary directly from the validated chart dataset, preserving its MW values and source timestamps.')

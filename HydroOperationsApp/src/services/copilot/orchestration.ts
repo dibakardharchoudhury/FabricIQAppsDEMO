@@ -124,6 +124,8 @@ export function createOrchestrationEvent(
   }
 }
 
+export class WorkOrderProposalValidationError extends Error {}
+
 export function createWorkOrderProposal(input: {
   equipmentId?: string
   instrumentId?: string
@@ -132,14 +134,20 @@ export function createWorkOrderProposal(input: {
   description?: string
   priority?: string
 }): WorkOrderProposal {
+  for (const field of ['equipmentId', 'instrumentId', 'opcuaNodeId', 'title', 'description', 'priority'] as const) {
+    const value = input[field]
+    if (value !== undefined && typeof value !== 'string') {
+      throw new WorkOrderProposalValidationError(`${field} must be a string when supplied.`)
+    }
+  }
   const equipmentId = input.equipmentId?.trim()
-  if (!equipmentId) throw new Error('equipment_id is required before a work order can be proposed.')
+  if (!equipmentId) throw new WorkOrderProposalValidationError('equipment_id is required before a work order can be proposed.')
   const title = input.title?.trim()
-  if (!title) throw new Error('title is required before a work order can be proposed.')
-  if (title.length > 200 || (input.description?.length ?? 0) > 4000) throw new Error('Work-order title or description exceeds the allowed length.')
+  if (!title) throw new WorkOrderProposalValidationError('title is required before a work order can be proposed.')
+  if (title.length > 200 || (input.description?.length ?? 0) > 4000) throw new WorkOrderProposalValidationError('Work-order title or description exceeds the allowed length: title maximum 200 characters, description maximum 4000 characters. Summarize evidence instead of copying raw rows; preserve the operator title.')
   const priority = input.priority?.trim()
   if (!priority || !['Low', 'Medium', 'High', 'Critical'].includes(priority)) {
-    throw new Error('priority must be Low, Medium, High, or Critical.')
+    throw new WorkOrderProposalValidationError('priority must be Low, Medium, High, or Critical.')
   }
   return {
     id: `wo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
