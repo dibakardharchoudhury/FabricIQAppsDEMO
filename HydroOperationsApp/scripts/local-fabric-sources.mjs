@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, kustoRowsToObjects } from '../src/services/copilot/query.ts'
+import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 
 const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
@@ -219,9 +220,11 @@ async function main() {
   let input = ''
   for await (const chunk of process.stdin) {
     input += chunk
-    if (input.length > 65536) throw new Error('Local adapter request exceeds its input bound.')
+    if (input.length > 262144) throw new Error('Local adapter request exceeds its input bound.')
   }
   const request = JSON.parse(input)
+  if (request.action === 'rca_contract') return { tool: RCA_REPORT_TOOL }
+  if (request.action === 'validate_rca') return parseRcaAssessment(request.report, request.receipts)
   const config = await configuration()
   if (request.action === 'configuration') {
     const { api_url: _url, publishable_key: _key, ...identity } = config
@@ -230,9 +233,14 @@ async function main() {
   if (request.configuration_digest !== config.configuration_digest) throw new Error('Source configuration changed; restart the local source adapter.')
   const metadata = await discover(config, request.tokens.fabric)
   if (request.action === 'discover') return metadata
-  if (!['read', 'probe'].includes(request.action) || typeof request.equipment_id !== 'string'
+  if (!['read', 'probe', 'telemetry_only'].includes(request.action) || typeof request.equipment_id !== 'string'
     || !request.equipment_id.trim() || request.equipment_id.length > 200 || request.cluster !== metadata.cluster) {
     throw new Error('Invalid local source request or changed KQL endpoint.')
+  }
+  if (request.action === 'telemetry_only') {
+    const telemetry = await readTelemetry(config, metadata, request.equipment_id, request.tokens)
+    return { ...telemetry, source: metadata.source, equipment_id: request.equipment_id, open_work_numbers: [],
+      missing_sources: [...telemetry.missing_sources, 'work_orders_not_requested', 'inspections_not_requested'] }
   }
   const results = await Promise.allSettled([
     readTelemetry(config, metadata, request.equipment_id, request.tokens),
@@ -249,7 +257,9 @@ async function main() {
   }
   if (failures.length) throw new Error(failures.map(item => `${item.source}: ${item.message}`).join('; '))
   const [telemetry, work] = results.map(result => result.value)
+  const completedAt = new Date().toISOString()
   return { ...telemetry, source: metadata.source, equipment_id: request.equipment_id,
+    read_completed_at: completedAt, work_orders_read_at: completedAt,
     open_work_numbers: work.map(item => item.workOrderNumber) }
 }
 
@@ -258,7 +268,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.stdout.write(JSON.stringify({ ok: true, result: await main() }))
   } catch (error) {
     // Do not serialize SDK exceptions, request headers, tokens or response bodies.
-    const message = error instanceof Error && error.constructor === Error ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
+    const message = error instanceof RcaEvidenceError || (error instanceof Error && error.constructor === Error)
+      ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
     process.stdout.write(JSON.stringify({ ok: false, error: message }))
     process.exitCode = 1
   }

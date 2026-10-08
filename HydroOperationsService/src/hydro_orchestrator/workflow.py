@@ -14,7 +14,10 @@ from agent_framework import (
     response_handler,
 )
 
-from .contracts import Approval, Assessment, Evidence, Observation, Outcome, Proposal, ReviewRequest, SourceIdentity, utc_now
+from .contracts import (
+    AgentReceipt, Approval, Assessment, Evidence, EvidenceReference, Observation, Outcome,
+    Proposal, RcaHypothesis, RcaReport, ReviewRequest, SourceIdentity, utc_now,
+)
 
 
 class ReviewAdapters(Protocol):
@@ -35,7 +38,8 @@ class RequiredCheckpointStorage(FileCheckpointStorage):
     """The SDK logs save failures and continues; Hydro must fail closed instead."""
 
     def __init__(self, path: Path):
-        contracts = (ReviewRequest, SourceIdentity, Observation, Evidence, Assessment, Proposal, Approval, Outcome)
+        contracts = (ReviewRequest, SourceIdentity, Observation, Evidence, Assessment, Proposal, Approval, Outcome,
+                     EvidenceReference, RcaHypothesis, RcaReport, AgentReceipt)
         super().__init__(
             path, allowed_checkpoint_types=[f"{item.__module__}:{item.__qualname__}" for item in contracts],
         )

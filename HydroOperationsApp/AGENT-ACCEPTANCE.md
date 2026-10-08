@@ -37,7 +37,7 @@ The full ten-flow matrix has not been rerun on 1.0.758.
 
 **Architecture correction, local only:** the isolated
 [Agent Framework service milestone](../HydroOperationsService/README.md) now has
-24 passing local tests and a clean Python typecheck. Tests cover real process exit,
+34 passing local tests and a clean Python typecheck. Tests cover real process exit,
 HTTP disconnect, source/step failure, checkpoint-write failure/corruption, concurrent
 approval, rejection/expiry, and recovery after both a committed local operation and
 the final workflow checkpoint. Provider adapters are synthetic and writes go only to
@@ -52,11 +52,23 @@ six STID-mapped T005 telemetry samples. They are explicitly stale. The work-orde
 read failed with `EXCHANGE_NOT_ENABLED`; it did not return an empty work list.
 The installed SDK also requires delegated `Item.Execute.All`, absent from the
 inspected CLI Fabric token. Production authentication was not changed. Ten new
-Node contract tests and seven of the 24 Python tests cover the source boundary,
+Node contract tests and seven of the Python tests cover the source boundary,
 including KQL completion errors, pagination, configuration drift, cancellation and
 the guarantee that a failed source cannot reach investigation or approval.
 These are not new hosted prompt passes or real backend Foundry invocations.
 See the [reader command and authentication prerequisites](../HydroOperationsService/README.md#live-source-adapter-verified-access-and-blocking-prerequisites).
+
+**Live local RCA, October 8:** the new backend RCA adapter invoked the actual
+Sleuth v13 against six freshly retrieved, but stale, T005 telemetry samples.
+The single model call completed in **14.38 seconds** (2,392 input / 1,728 output
+tokens), returned a shared-parser-validated report and retained an undetermined
+cause. The explicit telemetry-only probe did not query SQL or create a proposal.
+Ten additional Python tests cover live-agent schema matching, malformed responses,
+invented references, immutable input receipts and checkpoint recovery without another
+invocation. A completed work-source read is now independently mandatory for proposals,
+and approval expiry is bounded to 15 minutes from that read.
+This is not the ten-prompt hosted acceptance matrix or proof of multiple agents working
+together. [Invocation IDs and reproducible command](../HydroOperationsService/README.md#live-scientific-rca-adapter).
 
 **1.0.756 exact fleet rerun: bounded comparison passed in 3m54s.** Actual Chief,
 Sparky, Gauge and Sleuth Responses invocations produced six recorded handoffs through

@@ -10,9 +10,9 @@ readiness/run submission, and reports `live_fabric_connected: false`. It does no
 substitute bundled data for Fabric. Synthetic adapters exist only in tests.
 The four framework executors are application steps, not evidence that four Foundry
 agents have executed. No production UI is pointed at this service.
-A separate read-only source adapter and diagnostic command now verify live Fabric
-identities and exercise source access. They are not a complete Foundry provider or
-a switch to production orchestration.
+Separate read-only source and Foundry RCA adapters now verify live Fabric identities,
+exercise source access and invoke the existing persistent Sleuth agent. They are not
+a complete multi-agent provider or a switch to production orchestration.
 
 ## Implemented boundary
 
@@ -45,6 +45,9 @@ Authenticated local request + idempotency key
 - Approval is bound to the exact proposal digest and expiry. Decisions cannot be
   changed after recording. Concurrent duplicate approvals and replay after a
   committed operation produce one **local validation record**, never a Fabric WO.
+- A proposal requires an explicit completed work-order read, including when zero
+  rows were returned. Its expiry cannot exceed 15 minutes from that read. A resumed
+  workflow cannot turn old coverage into a new 15-minute approval window.
 - The terminal outcome and any local validation write commit in one transaction.
   Recovery uses that authoritative receipt if a process stops after the framework's
   final checkpoint but before the run journal is marked complete; it does not
@@ -118,13 +121,60 @@ setting for delegated exchange, but it was not changed or deployed.
 The SDK also requires delegated `Item.Execute.All`, owning-tenant identity and
 item Execute permission. The inspected Fabric token from the existing CLI session
 lacked that named scope; enabling the setting alone is not a verified solution.
+An explicit Azure CLI scope request returned `AADSTS65002`: that first-party client
+is not preauthorized for this scope. This is not repaired by repeatedly signing in
+or granting customer-tenant admin consent. The documented `RayfinAuth` silent-token
+alternative was also tested and had no usable cached login. A supported interactive
+Rayfin identity or a properly authorized server-side delegated/OBO path is still
+required; no browser token extraction, app-only substitution or auth bypass was used.
 Approve and implement the supported delegated authentication path through the
 canonical deployer before claiming end-to-end SQL access.
 
 The workflow regression verifies that this failure produces a failed run with
 no investigation, proposal or approvable card. It cannot become "no open work."
-The read adapter is ready for composition only after its live prerequisites pass;
-Foundry investigation/proposal adapters and SPA integration remain unimplemented.
+The complete read adapter is ready for composition only after its live prerequisites
+pass. The independent telemetry-only investigation below does not substitute for
+the failed work-order read. The proposal adapter and SPA integration remain pending.
+
+## Live scientific RCA adapter
+
+The RCA adapter reads back the existing `hydro-rca-agent`, pins its returned version,
+and checks its completion-tool schema against the app's shared `RCA_REPORT_TOOL`.
+Foundry rejects a request-level `tools` override when an agent reference is supplied;
+the adapter uses the verified persisted tool and a forced completion choice instead.
+It makes one model invocation, with no automatic retry or model-directed query loop.
+HTTP errors, deadlines, incomplete output, narrative answers and unexpected/duplicate
+calls fail explicitly.
+
+The returned report passes the same `parseRcaAssessment` implementation used by the
+SPA. References must point into actual supplied source receipts; invented paths,
+free-text diagnoses and duplicate hypotheses are rejected. The typed assessment
+retains supporting/contradictory references, missing evidence, a source-input digest,
+the requested agent version and the service response/request IDs. Checkpoint recovery
+preserves this report without repeating the completed invocation. Reference validity
+does not prove causal relevance: the conclusion remains `cause_undetermined`.
+
+```powershell
+$env:HYDRO_FOUNDRY_PROJECT_ENDPOINT = '<existing project endpoint>'
+.\.venv\Scripts\python.exe -m hydro_orchestrator --probe-live-rca EQUIP_RTI_T005
+```
+
+This explicit **telemetry-only** diagnostic never reads SQL, proposes work or sends
+notifications. It marks work orders/inspections as not requested rather than claiming
+none exist. The proposal contract independently rejects this incomplete coverage.
+
+**Observed live result, October 8:** Sleuth v13 processed six verified T005 samples
+in one invocation lasting **14.38 seconds**, using 2,392 input and 1,728 output
+tokens. Response ID: `resp_0a5e2d14804d33bb016ac7b88f67f081939ff231b4f22fe555`;
+request ID: `2fea9529-d38a-448d-8091-57ee2de118c4`. Its three competing hypotheses
+remained untested; stale telemetry, missing maintenance/inspection evidence,
+approved limits and matched-baseline gaps were retained. This timing is for the
+model invocation, not end-to-end source discovery or an interactive performance SLA.
+It is one actual specialist call, not a completed multi-agent workflow.
+
+Older local validation proposals without an explicit work-read clock are no longer
+approvable under the strengthened contract. Preserve their state for audit and start
+a new run/state directory; do not rewrite receipts or delete deployment state.
 
 ## Run the checks
 
@@ -138,12 +188,15 @@ python -m venv .venv
 node --test ..\HydroOperationsApp\scripts\local-fabric-sources.test.mjs
 ```
 
-The 24 Python tests use the actual Agent Framework engine, file checkpoints, SQLite transactions
+The 34 Python tests use the actual Agent Framework engine, file checkpoints, SQLite transactions
 and an ephemeral loopback HTTP listener. Providers are synthetic: these tests do not
 certify Foundry, native Fabric endpoint availability or live WO creation.
 Ten Node tests additionally cover live-reader contracts with mocked transports:
 generation/capacity checks, KQL completion/partial failures, exact equipment mapping,
 units, quality, freshness, source errors and work-order pagination.
+The RCA tests run the real shared JavaScript parser against mocked Foundry responses,
+including schema drift, invalid references, output failures and typed-report recovery.
+The live diagnostic above is separate evidence, not a mocked test result.
 
 The fault suite covers real process exit/recovery, HTTP disconnect, interrupted
 investigation, a failure after a committed local write, checkpoint-write failure,

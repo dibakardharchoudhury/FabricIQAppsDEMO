@@ -51,6 +51,7 @@ class TestAdapters:
                 event_time=clock - timedelta(hours=2), quality="BAD",
             ),),
             open_work_numbers=("TEST-WO-1",), missing_sources=("inspections",),
+            work_orders_read_at=clock,
         )
 
     async def investigate(self, evidence: Evidence) -> Assessment:
@@ -68,7 +69,7 @@ class TestAdapters:
         return Proposal(
             request=assessment.evidence.request, assessment=assessment,
             description="Operator-requested inspection; no physical cause established.",
-            expires_at=utc_now() + timedelta(minutes=15),
+            expires_at=assessment.evidence.work_orders_read_at + timedelta(minutes=15),
         )
 
 

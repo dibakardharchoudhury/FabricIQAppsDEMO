@@ -22,6 +22,12 @@ live STID-mapped telemetry. SQL access remains blocked by disabled delegated exc
 the existing CLI token also lacks the documented `Item.Execute.All` scope.
 Source failures block investigation/approval, not just answer formatting.
 No production authentication settings or hosted agent paths were changed.
+The local RCA adapter now performs a version-pinned real Sleuth invocation, validates
+its returned references with the SPA's shared parser and persists typed invocation
+receipts in workflow checkpoints when composed into the validation workflow.
+Its live telemetry-only probe completed one model call in 14.38 seconds; it did
+not execute work-order or multi-agent stages. Proposals require their own completed
+work-source read and cannot renew its 15-minute approval window on recovery.
 Operator-ready [ten test prompts](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) are
 separate from the historical acceptance logs.
 

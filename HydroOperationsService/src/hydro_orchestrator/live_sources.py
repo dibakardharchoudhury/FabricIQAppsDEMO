@@ -134,6 +134,15 @@ class LiveSources:
         result = await self._call(request.equipment_id, "read")
         return Evidence.model_validate({**result, "request": request})
 
+    async def read_telemetry_only(self, request: ReviewRequest) -> Evidence:
+        if request.source != self.discovery.source:
+            raise SourceFailure("Requested source does not match the verified local source configuration.")
+        result = await self._call(request.equipment_id, "telemetry_only")
+        evidence = Evidence.model_validate({**result, "request": request})
+        if "work_orders_not_requested" not in evidence.missing_sources or evidence.open_work_numbers:
+            raise SourceFailure("Telemetry-only response misrepresented work-order coverage.")
+        return evidence
+
 
 async def probe_live_sources(equipment_id: str) -> bool:
     sources = await LiveSources.open()

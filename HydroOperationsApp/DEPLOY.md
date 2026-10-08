@@ -36,8 +36,9 @@ rollout still requires tenant-wide administrator consent.
 
 The separate [Agent Framework local service](../HydroOperationsService/README.md)
 is **not deployed by this command or wired into the SPA**. Its read-only diagnostic
-verified live v2/STID/telemetry, but SQL delegated exchange is blocked and it has no
-live Foundry investigation/proposal adapters. It cannot create production work orders.
+verified live v2/STID/telemetry and the RCA adapter invoked Sleuth v13 successfully.
+SQL delegated exchange remains blocked; the proposal adapter is not implemented.
+It cannot create production work orders.
 See its [explicit authentication prerequisites](../HydroOperationsService/README.md#live-source-adapter-verified-access-and-blocking-prerequisites);
 do not treat a disabled exchange or missing delegated scope as an empty source.
 New cloud hosting/authentication
