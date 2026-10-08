@@ -400,6 +400,14 @@ grid. Staleness/truncation warnings remain visible; timing detail and raw payloa
 are collapsed. The 12-panel source-chart bound remains explicit; every returned
 table row is retained.
 
+Model chart calls must preserve exact source columns, values and row multiplicity,
+or match application-derived record counts. Unsupported values/unit combinations
+are rejected before display; the application supplies factual chart labels.
+Application-checked RCA and reconciliation tables remain visible alongside raw
+source tables. Quoted native claims are not promoted to verified findings.
+Factual Q&A without source evidence fails explicitly. These checks establish
+traceable data provenance, not a physical diagnosis or a zero-defect guarantee.
+
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,
 and final acknowledgement. RCA requests require tool calls rather than accepting

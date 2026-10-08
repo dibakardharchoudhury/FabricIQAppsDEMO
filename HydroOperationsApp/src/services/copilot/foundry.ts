@@ -17,7 +17,7 @@ import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation,
 import { missingFacilityEvidence, renderFacilityReconciliation } from './facilityReconciliation.ts'
 import { checkRequestedKql, renderQueryChecks } from './queryEvidence.ts'
 import { stationSnapshot, stationPowerComparison, StationComparisonError, type StationSnapshot } from './stationComparison.ts'
-import { presentSourceRows } from './sourcePresentation.ts'
+import { ChartGroundingError, groundVisualization, presentSourceRows } from './sourcePresentation.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -421,6 +421,9 @@ export async function askFoundryCopilot(
                   stationSummaries.set(JSON.stringify({ lookback: args.lookback ?? '24h', rows: result.result.rows }), result.groundedSummary)
                 }
                 if (proposals.length > proposalCount) event.proposalIds = [...(event.proposalIds ?? []), ...proposals.slice(proposalCount).map(proposal => proposal.id)]
+                if (parsed.toolName === 'visualize_dataset' && result.visualization) {
+                  result.visualization = groundVisualization(result.visualization, steps)
+                }
                 if (result.visualization && !visualizations.some(value => JSON.stringify(value) === JSON.stringify(result.visualization))) {
                   visualizations.push(result.visualization)
                 }
@@ -443,6 +446,14 @@ export async function askFoundryCopilot(
               } catch (error) {
                 Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
                 captureApplicationEvent(event, `${parsed.toolName} failed`, call.id, true, 'tool-end')
+                if (error instanceof ChartGroundingError) {
+                  pendingToolInputError = error.message
+                  input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
+                    error: error.message, rendered: false,
+                    instruction: 'Use exact columns and values from successful source receipts, or application-derived record counts. Do not invent, relabel units, duplicate rows, or mix measurement units. Correct this chart within the remaining round budget.',
+                  }) })
+                  continue
+                }
                 if (error instanceof QueryInputValidationError) {
                   pendingToolInputError = error.message
                   input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
@@ -516,7 +527,13 @@ export async function askFoundryCopilot(
         throw failure
       }
     }
-    const narrative = await invoke('supervisor', question)
+    let narrative = await invoke('supervisor', question)
+    if (!receipts.length && !completedNativeSources.size && !workDecisions.length && !proposals.length) {
+      if (!/\b(?:capabilities|what can you query|what sources are available|what happened|why did.*(?:fail|error))\b/i.test(question)) {
+        throw new Error('No source evidence was returned. A factual answer cannot be verified; no data conclusion or SQL write is certified.')
+      }
+      narrative = 'No source read was executed in this turn. Inspect the configured tool catalog and prior execution receipts for capabilities or failures. Source availability and equipment condition have not been verified by this response.'
+    }
     const fleetComparison = fleetScope ? renderFleetReconciliation(fleetScope, receipts, nativeReceipts) : undefined
     const facilityComparison = facilityBacklog ? renderFacilityReconciliation(receipts, nativeReceipts) : undefined
     if (facilityComparison) visualizations.splice(0, visualizations.length, facilityComparison.visualization)
@@ -553,7 +570,17 @@ export async function askFoundryCopilot(
     const snapshotAnswer = snapshotPresentation
       ? `Latest returned readings per signal within the requested lookback, not a complete history of quality transitions. Temperature ranks are not approved fault thresholds.\n\n${snapshotPresentation.summary.split('\n\n').filter(line => !snapshotPresentation.issues.includes(line)).join('\n\n')}\n\nReturned signals and their open work are shown in the source-linked tables. Stale readings do not establish current equipment condition.`
       : undefined
-    const checkedInvestigation = assessments.length || sourceChartSummary || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
+    const directRead = events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
+      && steps.some(step => step.status === 'done')
+      && steps.every(step => step.status === 'done' && [
+        'query_assets', 'query_operations', 'query_telemetry', 'run_kql', 'query_station_power',
+        'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'visualize_dataset', 'show_3d_model',
+      ].includes(step.tool))
+    const directPresentation = directRead ? presentSourceRows(steps, question) : undefined
+    const directAnswer = directPresentation?.hasSourceResults
+      ? `Returned source records are shown in the source-linked tables. These findings describe the returned query scope, not an independently established equipment diagnosis.\n\n${directPresentation.summary}`
+      : undefined
+    const checkedInvestigation = assessments.length || workDecisions.length || proposals.length || sourceChartSummary || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
       ...(facilityComparison ? [facilityComparison.text] : []),
       ...(queryEvidence ? [queryEvidence] : []),
       ...(sourceChartSummary ? [sourceChartSummary] : []),
@@ -576,18 +603,21 @@ export async function askFoundryCopilot(
       : [stationSummaryValues[0], stationComparison?.text].filter(Boolean).join('\n\n')
     const answer = checkedInvestigation
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
-      : snapshotAnswer ?? (directChart ? stationAnswer : appendOmittedSnapshotWork(narrative, steps))
+      : snapshotAnswer ?? (directChart ? stationAnswer : directAnswer ?? appendOmittedSnapshotWork(narrative, steps))
     const text = requiresChartOutput(question) && !visualizations.length
       ? `${answer}\n\nRequested chart incomplete: no structured chart was produced. Missing data must not be plotted as zero.`
       : answer
     if (checkedInvestigation) {
-      captureApplicationEvent(events[0], 'Rendered the source-checked workflow and any requested unsent notification. Unvalidated agent narrative was not used as the final assessment or notification.')
+      captureApplicationEvent(events[0], 'Rendered the source-checked workflow and any requested unsent notification. Unvalidated agent narrative was not used as the final assessment or notification.', undefined, false, 'checked-presentation')
       publish()
     } else if (directSnapshot) {
       captureApplicationEvent(events[0], 'Rendered snapshot findings directly from source receipts; unchecked model counts and follow-up offers were not used.')
       publish()
     } else if (directChart) {
       captureApplicationEvent(events[0], 'Rendered the station summary directly from the validated chart dataset, preserving its MW values and source timestamps.')
+      publish()
+    } else if (directAnswer) {
+      captureApplicationEvent(events[0], 'Rendered factual Q&A from actual source receipts; unverified model conclusions were not used.')
       publish()
     } else if (text !== narrative) {
       captureApplicationEvent(events[0], 'Preserved open-work evidence omitted from the Supervisor narrative.')

@@ -68,6 +68,59 @@ test('snapshot work counts stay in tables without repeating count charts for eve
   assert.doesNotMatch(result.visualizations[0].inlineCsvData, /open_work_count/)
 })
 
+test('checked RCA and reconciliation tables survive alongside raw source tables', () => {
+  const text = '### Competing hypotheses - untested\n| Hypothesis | Missing evidence |\n| --- | --- |\n| Sensor issue | Calibration |\n| Equipment issue | Approved limits |'
+  const props = { text, steps: sourceSteps(returnedRows) }
+  const unverified = renderToStaticMarkup(createElement(AnswerDashboard, props))
+  assert.doesNotMatch(unverified, /Sensor issue|Equipment issue/)
+  const checked = renderToStaticMarkup(createElement(AnswerDashboard, { ...props, checkedText: true }))
+  assert.match(checked, /Sensor issue/)
+  assert.match(checked, /Equipment issue/)
+  assert.match(checked, /application-checked findings/)
+  assert.equal((checked.match(/<table>/g) ?? []).length, 2)
+  const failed = renderToStaticMarkup(createElement(AnswerDashboard, { ...props, checkedText: true,
+    steps: [...props.steps, { tool: 'query_telemetry', status: 'error' }] }))
+  assert.doesNotMatch(failed, /Sensor issue|Equipment issue/)
+  const nativeClaim = '\n### Native-source retrieval claims\n> | Claim | Value | | --- | --- | | Invented | 999 |'
+  const quoted = renderToStaticMarkup(createElement(AnswerDashboard, { ...props, text: text + nativeClaim, checkedText: true }))
+  assert.doesNotMatch(quoted, /Invented|999/)
+})
+
+test('model charts require exact source projections and cannot invent labels or amplify rows', () => {
+  const steps = sourceSteps([{ turbine: 'T1', value: 70, unit: 'C' }, { turbine: 'T2', value: 75, unit: 'C' }])
+  const spec = { chartType: 'bar', title: 'A fault is proven', xColumn: 'turbine', yColumns: ['value'],
+    xAxisTitle: 'Unsafe label', yAxisTitle: 'MW', inlineCsvData: 'turbine,value\nT1,70\nT2,75' }
+  const checked = sourcePresentation.groundVisualization(spec, steps)
+  assert.doesNotMatch(checked.title, /fault/)
+  assert.match(checked.yAxisTitle, /\(C\)/)
+  for (const csv of ['turbine,value\nT1,999', 'turbine,value\nT1,70\nT1,70', 'turbine,value\nT3,70']) {
+    assert.throws(() => sourcePresentation.groundVisualization({ ...spec, inlineCsvData: csv }, steps), sourcePresentation.ChartGroundingError)
+  }
+  assert.throws(() => sourcePresentation.groundVisualization(spec, []), sourcePresentation.ChartGroundingError)
+  const mixed = sourceSteps([{ turbine: 'T1', value: 70, unit: 'C' }, { turbine: 'T2', value: 75, unit: 'MW' }])
+  assert.throws(() => sourcePresentation.groundVisualization(spec, mixed), sourcePresentation.ChartGroundingError)
+  const unknown = sourceSteps([{ turbine: 'T1', signal: 'temperature', value: 70 }, { turbine: 'T2', signal: 'power', value: 75 }])
+  assert.throws(() => sourcePresentation.groundVisualization(spec, unknown), sourcePresentation.ChartGroundingError)
+  const native = [{ tool: 'native_agent', status: 'done', result: JSON.stringify({ rows: [{ turbine: 'T1', value: 70 }, { turbine: 'T2', value: 75 }] }) }]
+  assert.throws(() => sourcePresentation.groundVisualization(spec, native), sourcePresentation.ChartGroundingError)
+})
+
+test('deterministic category counts are permitted chart sources', () => {
+  const steps = [{ tool: 'query_operations', status: 'done', result: JSON.stringify({
+    rows: [{ status: 'Draft' }, { status: 'Approved' }, { status: 'Draft' }],
+  }) }]
+  const spec = { chartType: 'bar', title: 'Backlog', xColumn: 'status', yColumns: ['record_count'],
+    inlineCsvData: 'status,record_count\nDraft,2\nApproved,1' }
+  assert.match(sourcePresentation.groundVisualization(spec, steps).title, /Source-backed/)
+  const workSteps = [{ tool: 'query_operations', status: 'done', result: JSON.stringify({ rows: [
+    { workOrderNumber: 'WO-1', equipmentId: 'T1', status: 'Draft' },
+    { workOrderNumber: 'WO-2', equipmentId: 'T1', status: 'Draft' },
+    { workOrderNumber: 'WO-3', equipmentId: 'T2', status: 'Draft' },
+  ] }) }]
+  assert.match(sourcePresentation.groundVisualization({ ...spec, xColumn: 'equipmentId',
+    inlineCsvData: 'equipmentId,record_count\nT1,2\nT2,1' }, workSteps).title, /Source-backed/)
+})
+
 test('invalid or streaming structured output is not dumped into narrative', () => {
   for (const text of ['```csv\na,b\n"broken', '```json\n{"broken"', '| turbine | quality |']) {
     assert.equal(answerPresentation.hideRenderedData(text, true).trim(), '')

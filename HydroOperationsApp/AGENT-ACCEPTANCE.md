@@ -8,7 +8,7 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.768 (`64e4d8f`).** Canonical deployment returned
+**Current deployed release: 1.0.769 (`33167af`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
@@ -65,6 +65,37 @@ equipment IDs. It also repeated an unsolicited follow-up menu. A follow-up
 correction now derives simple snapshot answers from source receipts and removes
 repeated work-count charts from each measurement-unit group. Its 117 targeted
 tests, typecheck and targeted lint passed; a new deployment/rerun is required.
+
+**1.0.769 targeted hosted recovery:** canonical deployment and backend contract
+checks passed; the authenticated browser confirmed `33167af`. The exact
+BAD/UNCERTAIN rerun completed in 36.8 seconds with four source tables (3/2/6/7
+rows), eight unit-separated measurement charts and resolving receipt links.
+The final summary used actual read clocks and latest-per-signal semantics,
+retained stale-data warnings, and no longer contained the invented turbine count
+or follow-up menu. No additional browser consent prompt was observed on these
+two successive hosted runs. This does not certify tenant-wide consent or the
+ten-flow matrix, which is being run separately.
+
+**1.0.769 compound observations:** scenario 1 completed in 1m45s with Chief,
+Gauge, Sleuth and Fixer, seven tool receipts and a no-draft outcome. Scenario 2
+completed in 3m05s with all five agents, ontology retrieval, six telemetry rows
+and an empty scoped work read. Both retained explicit stale-data/causal limits.
+Neither is accepted as complete presentation: checked RCA observation and
+hypothesis tables were hidden when raw source tables took precedence.
+
+**Follow-up grounding/presentation correction, not yet deployed:** application
+trace markers distinguish checked RCA/reconciliation tables from model tables;
+the checked tables are retained alongside raw receipts without promoting quoted
+native claims to verified findings. Model chart calls must match exact returned
+source projections or deterministic record counts. Invented values, duplicate
+amplification and incompatible/unknown measurement-unit combinations are rejected
+before rendering. Labels come from source fields, not model diagnostic titles.
+Factual Q&A summaries use source receipts; source-free factual answers fail
+explicitly. Typed work-review outcomes cannot be replaced by Chief's prose.
+These controls do not certify causal relevance, native internal provenance or a
+zero-hallucination/zero-defect guarantee.
+The expanded 123-test targeted suite, typecheck and targeted lint passed before
+deployment. Hosted acceptance of this follow-up remains pending.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

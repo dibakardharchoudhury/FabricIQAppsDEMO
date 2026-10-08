@@ -13,6 +13,43 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const scalar = (value: unknown) => value == null || typeof value === 'string'
   || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))
 
+export class ChartGroundingError extends Error {}
+
+export function groundVisualization(spec: AgentVisualization, steps: readonly Pick<AgentStep, 'tool' | 'status' | 'result'>[]): AgentVisualization {
+  const parsed = readAnswerDatasets(`\`\`\`csv\n${spec.inlineCsvData}\n\`\`\``)
+  const requested = parsed.datasets[0]
+  if (parsed.issues.length || !requested || requested.rows.length > 500
+    || ![spec.xColumn, ...spec.yColumns].every(column => requested.columns.includes(column))) {
+    throw new ChartGroundingError('Chart data must contain bounded, consistent source columns and rows.')
+  }
+  const source = presentSourceRows(steps.filter(step => Object.hasOwn(titles, step.tool)), '')
+  const candidates = [...source.datasets, ...source.visualizations.flatMap(chart =>
+    readAnswerDatasets(`\`\`\`csv\n${chart.inlineCsvData}\n\`\`\``).datasets)]
+  for (const dataset of candidates) {
+    const indexes = requested.columns.map(column => dataset.columns.indexOf(column))
+    if (indexes.some(index => index < 0)) continue
+    const available = dataset.rows.map((row, index) => ({ row, index }))
+    const matched: string[][] = []
+    for (const row of requested.rows) {
+      const match = available.findIndex(candidate => indexes.every((column, index) => candidate.row[column] === row[index]))
+      if (match < 0) break
+      matched.push(available.splice(match, 1)[0].row)
+    }
+    if (matched.length !== requested.rows.length) continue
+    const unitIndex = dataset.columns.findIndex(column => /^units?$/i.test(column))
+    const units = unitIndex < 0 ? [] : [...new Set(matched.map(row => row[unitIndex]))]
+    if (spec.yColumns.some(column => /^(value|avg_value|min_value|max_value)$/i.test(column))) {
+      if (units.length > 1) continue
+      const signalIndex = dataset.columns.findIndex(column => /^(signal|opcua_node_id|series)$/i.test(column))
+      if ((!units.length || !units[0]) && signalIndex >= 0 && new Set(matched.map(row => row[signalIndex])).size > 1) continue
+    }
+    const unit = units.length === 1 && units[0] ? ` (${units[0]})` : ''
+    return { ...spec, title: `Source-backed ${spec.yColumns.join(', ')} by ${spec.xColumn}${unit}`,
+      xAxisTitle: spec.xColumn, yAxisTitle: `${spec.yColumns.join(', ')}${unit}` }
+  }
+  throw new ChartGroundingError('Chart values do not match returned source rows or application-derived record counts. No chart was rendered.')
+}
+
 export function presentSourceRows(
   steps: readonly Pick<AgentStep, 'tool' | 'status' | 'result'>[], question: string,
 ): { datasets: AnswerDataset[]; visualizations: AgentVisualization[]; issues: string[]; summary: string; hasSourceResults: boolean; invalidated: boolean } {

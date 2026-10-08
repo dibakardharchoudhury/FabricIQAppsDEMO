@@ -5,12 +5,19 @@ import type { AgentStep } from '../services/agentSteps'
 import { presentSourceRows } from '../services/copilot/sourcePresentation'
 import { AgentVisualizationView } from './AgentVisualizationView'
 
-export function AnswerDashboard({ text, question = '', visualizations = [], steps = [], receiptPrefix }: {
-  text: string; question?: string; visualizations?: AgentVisualization[]; steps?: AgentStep[]; receiptPrefix?: string
+export function AnswerDashboard({ text, question = '', visualizations = [], steps = [], receiptPrefix, checkedText = false }: {
+  text: string; question?: string; visualizations?: AgentVisualization[]; steps?: AgentStep[]; receiptPrefix?: string; checkedText?: boolean
 }) {
   const source = useMemo(() => presentSourceRows(steps, question), [steps, question])
   const { datasets, issues } = useMemo(() => {
-    if (source.hasSourceResults) return source
+    if (source.hasSourceResults) {
+      if (!checkedText || source.invalidated) return source
+      const checked = readAnswerDatasets(text.replace(/^[ \t]*>.*$/gm, ''))
+      return { ...source, datasets: [
+        ...checked.datasets.filter(dataset => !source.datasets.some(existing => existing.csv === dataset.csv)),
+        ...source.datasets,
+      ], issues: [...source.issues, ...checked.issues] }
+    }
     const result = readAnswerDatasets(visualizations.length ? '' : text)
     if (visualizations.length) {
       for (const spec of visualizations) {
@@ -22,17 +29,22 @@ export function AnswerDashboard({ text, question = '', visualizations = [], step
       }
     }
     return result
-  }, [text, visualizations, source])
+  }, [text, visualizations, source, checkedText])
   const requested = /\b(chart|plot|graph|dashboard|visuali[sz]e|trend)\b/i.test(question)
   const [view, setView] = useState<'table' | 'chart'>('chart')
   const usingSource = source.hasSourceResults
-  const charts = usingSource ? source.visualizations : answerVisualizations(datasets, question)
+  const charts = usingSource ? [
+    ...source.visualizations,
+    ...(checkedText && !source.invalidated ? answerVisualizations(datasets.filter(dataset => dataset.sourceStep === undefined), question) : []),
+  ] : answerVisualizations(datasets, question)
   if (!requested && !visualizations.length && !issues.length && !datasets.length) return null
   // Explicit chart datasets take precedence over unrelated numeric table columns.
-  const specs = visualizations.length && !source.invalidated ? visualizations : charts
+  const availableSpecs = visualizations.length && !source.invalidated ? visualizations : charts
+  const specs = availableSpecs.slice(0, 12)
   const showCharts = view === 'chart' && specs.length > 0
   return <section className="v2-answer-dashboard" aria-label="Answer evidence dashboard">
     {issues.map(issue => <p role="alert" key={issue}>{issue}</p>)}
+    {availableSpecs.length > 12 && <p role="status">Chart display is limited to 12 panels. All returned table rows remain available.</p>}
     {source.hasSourceResults && <details className="v2-answer-support"><summary>Source timing and coverage</summary><p>{source.summary.split('\n\n').filter(line => !source.issues.includes(line)).join('\n\n')}</p></details>}
     <div className="v2-chart-tabs" role="group" aria-label="Evidence view">
       <button type="button" className={!showCharts ? 'on' : ''} aria-pressed={!showCharts} onClick={() => setView('table')}>Table only</button>
@@ -42,7 +54,7 @@ export function AnswerDashboard({ text, question = '', visualizations = [], step
       <strong>{dataset.title}</strong><small> {dataset.rows.length} returned rows</small>
       {dataset.sourceStep !== undefined && receiptPrefix
         ? <a className="v2-answer-citation" href={`#${receiptPrefix}-source-${dataset.sourceStep}`}>Source {dataset.sourceStep + 1}: {steps[dataset.sourceStep]?.tool}</a>
-        : <small className="v2-answer-citation">{dataset.sourceStep !== undefined ? `Source: ${steps[dataset.sourceStep]?.tool}` : 'Source: agent response; not independently verified'}</small>}
+        : <small className="v2-answer-citation">{dataset.sourceStep !== undefined ? `Source: ${steps[dataset.sourceStep]?.tool}` : checkedText ? 'Source: application-checked findings; inspect the agent and tool receipts. Causation is not established.' : 'Source: agent response; not independently verified'}</small>}
       <table><thead><tr>{dataset.columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
         <tbody>{dataset.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} title={cell}>{formatEvidenceCell(cell, dataset.columns[cellIndex])}</td>)}</tr>)}</tbody>
       </table>

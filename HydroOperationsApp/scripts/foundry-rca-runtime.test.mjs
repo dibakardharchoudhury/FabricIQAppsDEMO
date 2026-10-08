@@ -520,12 +520,50 @@ test('Gauge must render an explicitly requested chart rather than offer it after
   harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
     { role: 'qa', text: 'I can produce the chart if you want.' },
     { role: 'qa', calls: [call('chart', 'hydro_query', { tool_name: 'visualize_dataset', arguments: {
-      chart_type: 'bar', title: 'Measured station power', x_column: 'Station', y_columns: ['MW'], inline_csv_data: 'Station,MW\nSloy,123.45',
+      chart_type: 'bar', title: 'Measured station power', x_column: 'Station', y_columns: ['average_power_MW'], inline_csv_data: 'Station,average_power_MW\nSloy,123.45',
     } })] }, { role: 'qa', text: 'Chart rendered.' }, { role: 'supervisor', text: 'Chart rendered.' })
   const result = await askFoundryCopilot('Show a chart of the returned station measurements.')
   assert.equal(result.visualizations.length, 1)
-  assert.equal(result.visualizations[0].inlineCsvData, 'Station,MW\nSloy,123.45')
+  assert.equal(result.visualizations[0].inlineCsvData, 'Station,average_power_MW\nSloy,123.45')
   assert.ok(harness.requests.some(request => request.input.some(item => JSON.stringify(item).includes('no chart has been rendered'))))
+})
+
+test('invented chart values are rejected before display and repaired using exact source data', async () => {
+  reset()
+  for (let index = 0; index < 2; index++) {
+    harness.reads.push((options, name, args) => createToolRuntime(defaultCopilotSettings(), options)(name, args))
+  }
+  const chart = value => call(`chart_${value}`, 'hydro_query', { tool_name: 'visualize_dataset', arguments: {
+    chart_type: 'bar', title: 'Fault proved', x_column: 'Station', y_columns: ['average_power_MW'],
+    inline_csv_data: `Station,average_power_MW\nSloy,${value}`,
+  } })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', calls: [chart(999)] }, { role: 'qa', calls: [chart(123.45)] },
+    { role: 'qa', text: 'Chart rendered.' }, { role: 'supervisor', text: 'Chart rendered.' })
+  const result = await askFoundryCopilot('Show a chart of the returned station measurements.')
+  assert.equal(result.visualizations.length, 1)
+  assert.doesNotMatch(result.visualizations[0].inlineCsvData, /999/)
+  assert.doesNotMatch(result.visualizations[0].title, /Fault/)
+  assert.ok(result.steps.some(step => step.status === 'error' && /do not match/.test(step.error)))
+  assert.ok(harness.requests.some(request => request.input.some(item => /"rendered":false/.test(item.output ?? ''))))
+})
+
+test('factual operational Q&A cannot replace source rows with an invented model conclusion', async () => {
+  reset()
+  harness.reads.length = 0
+  harness.reads.push({ result: { rows: [{ workOrderNumber: 'WO-1', status: 'Draft' }] }, rowCount: 1 })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [call('work', 'hydro_query', {
+    tool_name: 'query_operations', arguments: { entity: 'work_orders' },
+  })] }, { role: 'qa', text: 'All work is completed.' }, { role: 'supervisor', text: 'All work is completed.' })
+  const result = await askFoundryCopilot('List operational work orders.')
+  assert.doesNotMatch(result.text, /All work is completed/)
+  assert.match(result.text, /Operational records: 1 returned rows/)
+})
+
+test('a factual answer with no executed source evidence fails closed', async () => {
+  reset()
+  harness.responses.push({ role: 'supervisor', text: 'Every turbine is healthy and no work is open.' })
+  await assert.rejects(askFoundryCopilot('Which equipment is healthy?'), /No source evidence was returned/)
 })
 
 test('RCA requires actual tool use and gives one completion-only repair for a final-round invalid pointer', async () => {

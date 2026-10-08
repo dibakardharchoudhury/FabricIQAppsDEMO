@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.768 / `64e4d8f`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; authenticated browser build identity verified. Hosted matrix pending; earlier compound results are not a same-build pass |
+| Hosted Fabric app | Release **1.0.769 / `33167af`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; authenticated browser build identity and snapshot recovery verified. Hosted matrix pending; earlier compound results are not a same-build pass |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -102,6 +102,41 @@ summaries; compound RCA/native/work-review synthesis keeps its existing checked
 path. Derived work counts stay in tables rather than creating redundant charts
 for every measurement unit. The expanded 117-test suite, typecheck and targeted
 lint passed. This failure is retained, not relabelled as an accepted run.
+The correction deployed as 1.0.769 / `33167af`; its exact hosted rerun completed
+in 36.8 seconds, retained all source rows and links, and generated eight
+unit-separated measurement charts. The false count and follow-up menu were gone.
+The broader compound matrix remains a separate acceptance gate.
+
+### Stronger grounding and RCA presentation follow-up
+
+Hosted scenarios 1 and 2 exercised four and five agents respectively (1m45s and
+3m05s). They exposed a presentation defect: raw-source precedence suppressed the
+application-checked RCA observation/hypothesis tables. The follow-up uses a typed
+application trace activity to retain those tables. Model/native quoted tables do
+not become verified merely because they appear in the same answer.
+
+Chart calls now undergo deterministic source validation before display. Every
+column/value must match a returned row projection, including row multiplicity,
+or an application-derived record-count dataset. Mixed measurement units and
+unknown-unit cross-signal combinations are rejected. The application generates
+factual labels so a model cannot rename a measurement chart into a proven-fault
+claim. Rejected charts have an explicit trace and bounded correction path.
+
+Factual Q&A uses source-derived summaries. A factual turn with no executed source
+evidence fails explicitly rather than presenting model prose as data. Non-data
+capability/failure questions receive a qualified static explanation; they do not
+certify source health. Native completion still requires its matching verified
+execution receipt, but does not attest the native agent's internal query
+provenance. Work-review summaries use typed outcomes, not unverified claims of
+SQL creation.
+
+RCA remains evidence-checked investigation, not automatic physical-cause proof.
+References must resolve to actual returned data; unknown IDs/paths, invented
+diagnostic thresholds and free-text confidence/diagnosis fields are rejected.
+Competing explanations, contradictory observations and missing engineering
+evidence remain explicit. Source availability, freshness, appropriate baselines,
+approved limits and qualified engineering review cannot be manufactured by
+prompting or by adopting Agent Framework.
 
 The earlier chart/authentication corrections below were locally verified and
 deployed in **1.0.766**; complete hosted-agent acceptance remains pending:

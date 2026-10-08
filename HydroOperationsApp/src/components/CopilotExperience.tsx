@@ -173,6 +173,8 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   const draftReady = !streaming && Boolean(message.proposals?.length)
+  const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
+    entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false
   const answer = message.text && <AnswerText text={stripOptionsMarker(hideRenderedData(message.text, streaming))} streaming={streaming} />
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
@@ -185,7 +187,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} />}
+    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
