@@ -8,11 +8,11 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.773 (`da4423c`).** Canonical deployment returned
+**Current deployed release: 1.0.775 (`41d458a`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
-as required by the readiness contract. The built bundle contains version 1.0.773.
+as required by the readiness contract. The built bundle contains version 1.0.775.
 After this deployment, the previously authenticated browser returned to Fabric's
 private hosting sign-in gate and the integrated browser blocked the popup.
 The existing broker had no opener; normal pointer/keyboard sign-in attempts did
@@ -172,8 +172,13 @@ by the generic and strict native parsers. Native JSON now enters the strict
 validator once; incomplete, nested, inconsistent and count-mismatched sets remain
 unverified. Literal bullet-record BAD/work identities can be compared; missing
 temperature OPC nodes are not inferred from names or instrument IDs. All 200
-affected tests, typecheck and targeted lint passed. These latest changes still
-require deployment and hosted acceptance.
+affected tests, typecheck and targeted lint passed. These changes deployed as
+1.0.775. The first attempt failed hosting verification with a connection reset;
+the same canonical command then returned `SUCCESS`, with both backend preflights
+200, GraphQL POST 200 and the incomplete token POST 400. All 39 redirects were
+preserved. Browser reload still shows private-hosting sign-in, and the operator
+was unavailable to complete it. Hosted acceptance remains blocked; no failed
+readiness or authentication check was bypassed.
 
 **Teams communication recovered:** the verified existing self-chat message
 endpoint accepted updates at 18:22 and 18:38 UTC; the first message was read back
@@ -182,6 +187,9 @@ while work continues. This is progress communication, not certification of the
 app's operational notification delivery or a permanent scheduler. Further updates
 were accepted at 18:51, 19:08 and 19:24 UTC. The session-bound reminder is stopped
 while hosted testing awaits operator sign-in; no unattended schedule is claimed.
+A further update at 19:50 UTC covered the additional implementation and fixture
+verification. The fixture server and its temporary script were cleaned up; the
+reminder is again stopped while the latest hosted sign-in remains unavailable.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

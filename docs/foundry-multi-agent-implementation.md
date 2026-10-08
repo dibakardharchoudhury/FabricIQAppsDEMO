@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.773 / `da4423c`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed. Latest browser acceptance is blocked by an expired private-hosting session and blocked sign-in popup; full matrix not accepted |
+| Hosted Fabric app | Release **1.0.775 / `41d458a`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed. Latest browser acceptance is blocked by an expired private-hosting session and blocked sign-in popup; full matrix not accepted |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -183,8 +183,11 @@ The expanded reconciliation suite also exposed and fixed duplicate JSON ingestio
 by generic and strict native parsers. Native JSON is now validated exactly once.
 Literal BAD/work identities from supported bullet records can be compared, while
 missing temperature node IDs remain explicitly unverified. All 200 affected
-tests, typecheck and targeted lint passed. Deployment and hosted acceptance of
-this follow-up remain separate gates.
+tests, typecheck and targeted lint passed. This follow-up deployed as 1.0.775.
+A transient hosting connection reset failed the first attempt; the canonical
+retry passed all backend/readiness checks and preserved all 39 redirects.
+Browser reload still shows protected-hosting sign-in, and the operator was
+unavailable to complete it. No hosting or authorization check was bypassed.
 
 On refresh after deployment, the Fabric private-hosting session expired and its
 sign-in popup was blocked. The operator was unavailable to complete normal
@@ -201,6 +204,9 @@ notifications are delivered.
 Further progress updates were accepted at 18:51, 19:08 and 19:24 UTC. The attached
 reminder is stopped while testing awaits operator sign-in; there is no continuing
 unattended notification scheduler.
+A further update at 19:50 UTC reported the additional native presentation/parser
+fixes and fixture verification. Its temporary server/script were cleaned up;
+session reminders are again stopped while hosted sign-in is unavailable.
 
 The earlier chart/authentication corrections below were locally verified and
 deployed in **1.0.766**; complete hosted-agent acceptance remains pending:

@@ -8,7 +8,7 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.773 (`da4423c`)**. The October 8 deployment completed
+Current deployed release: **1.0.775 (`41d458a`)**. The October 8 deployment completed
 through the canonical deployer after its supported tenant-switch flow. It printed
 `SUCCESS` and `DEPLOYED_APP_URL`, preserved all 39 redirects, verified the five
 agent definitions and passed AppBackend preflight/POST checks. Hosting verification
@@ -20,6 +20,11 @@ normal hosting sign-in before current browser identity and live acceptance can
 resume. This is not a new application-consent requirement. No protected-hosting
 or authorization check was bypassed. Universal tables and automatic charts are
 deployed; the same-build live compound-flow matrix remains a separate gate.
+The 1.0.775 native-record presentation/reconciliation follow-up passed 200 affected
+tests and a recorded-response browser fixture. Its first publication attempt
+failed hosting verification with a connection reset; the canonical retry passed
+all readiness checks. Browser reload still requires normal protected-hosting
+sign-in. The fixture is not hosted runtime acceptance.
 
 Earlier release **1.0.758 (`4c0e1a1`)**: the owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
