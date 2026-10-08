@@ -34,6 +34,18 @@ test('section folding preserves fenced headings and document-wide references', (
   assert.match(ANSWER_PRESENTATION_CONTRACT, /cards are the only draft presentation/)
 })
 
+test('nested hydro_query envelopes are rejected with the exact flat retry payload', () => {
+  const fields = { equipment_id: 'EQUIP_RTI_T005', title: 'Acceptance', description: 'Inspect only.', priority: 'Low' }
+  const parsed = parseHydroQuery(JSON.stringify({ tool_name: 'propose_work_order', arguments: { arguments: fields } }))
+  assert.equal(parsed.ok, false)
+  if (!parsed.ok) {
+    assert.match(parsed.error, /arguments\.arguments wrapper/)
+    assert.ok(parsed.error.includes(JSON.stringify({ tool_name: 'propose_work_order', arguments: fields })))
+  }
+  const corrected = parseHydroQuery(JSON.stringify({ tool_name: 'propose_work_order', arguments: fields }))
+  assert.equal(corrected.ok, true)
+})
+
 test('independent final verification cannot consume the slot needed for draft review', () => {
   const prompt = 'Read T005 telemetry, investigate its condition, prepare an editable work-order draft and finally independently verify identity and coverage. Do not save.'
   assert.equal(delegationOrderError(prompt, 'qa', []), undefined)

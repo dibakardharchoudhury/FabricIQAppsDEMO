@@ -99,6 +99,7 @@ export async function askFoundryCopilot(
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       let rcaReport: string | undefined
       let nativeExecuted = false
+      let pendingToolInputError: string | undefined
       try {
         if (role === 'fabric-iq') {
           if (!nativeSource) throw new Error('A native source must be selected before invoking Fabric IQ.')
@@ -232,6 +233,15 @@ export async function askFoundryCopilot(
               }
               publish()
             } else if (role === 'work-order' && call.name === 'complete_work_order_review') {
+              if (pendingToolInputError) {
+                input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
+                  accepted: false, error: pendingToolInputError,
+                  instruction: 'A local tool-input error is not an operator clarification or a no-draft decision. Correct the tool payload within the remaining budget. Do not ask the operator to provide an identity already returned by the source.',
+                }) })
+                captureApplicationEvent(event, 'Rejected work review with an unresolved local tool-input error.', call.id, true)
+                publish()
+                continue
+              }
               if (event.proposalIds?.length || workReview) throw new Error('Work-order review cannot overwrite an existing draft or decision.')
               workReview = parseWorkOrderReview(call.arguments)
               workDecisions.push(workReview.decision)
@@ -241,6 +251,7 @@ export async function askFoundryCopilot(
             } else if (role !== 'supervisor' && role !== 'fabric-iq' && call.name === 'hydro_query') {
               const parsed = parseHydroQuery(call.arguments)
               if (parsed.ok === false) {
+                pendingToolInputError = parsed.error
                 steps.push({ tool: 'hydro_query', status: 'error', detail: 'Rejected before execution', summary: 'Invalid arguments; not executed', error: parsed.error, elapsedMs: 0 })
                 captureApplicationEvent(event, `Tool arguments rejected before execution: ${parsed.error}`, call.id, true, 'tool-end')
                 publishSteps()
@@ -264,6 +275,7 @@ export async function askFoundryCopilot(
               try {
                 const proposalCount = proposals.length
                 const result = await runTool(parsed.toolName, args)
+                pendingToolInputError = undefined
                 if (parsed.toolName === 'query_station_power' && result.groundedSummary) {
                   if (typeof result.result !== 'object' || result.result === null || !('rows' in result.result)
                     || !Array.isArray(result.result.rows)) throw new Error('Station-power result omitted its source rows.')
@@ -296,6 +308,7 @@ export async function askFoundryCopilot(
                   continue
                 }
                 if (error instanceof WorkOrderProposalValidationError) {
+                  pendingToolInputError = error.message
                   input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
                     error: error.message, staged: false, sql_writes: 0,
                     instruction: 'Correct the proposal fields within the existing round budget. No approval card exists from this rejected call. Never truncate silently or change an explicit operator title; summarize the description and retain the evidence IDs.',

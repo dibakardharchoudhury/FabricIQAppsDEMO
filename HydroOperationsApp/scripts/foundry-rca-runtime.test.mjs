@@ -279,6 +279,23 @@ test('requested unsent notification is rendered even when Chief asks for unneces
   assert.equal(result.proposals.length, 0)
 })
 
+test('nested WO arguments cannot be mislabeled as an operator clarification and recover to a real card', async () => {
+  reset()
+  harness.reads.length = 0
+  harness.reads.push((options, name, args) => createToolRuntime(defaultCopilotSettings(), options)(name, args))
+  const fields = { equipment_id: 'EQUIP_RTI_T005', title: 'Acceptance', description: 'Inspect only.', priority: 'Low' }
+  harness.responses.push(delegate('work-order'),
+    { role: 'work-order', calls: [call('nested', 'hydro_query', { tool_name: 'propose_work_order', arguments: { arguments: fields } })] },
+    { role: 'work-order', calls: [call('false_clarification', 'complete_work_order_review', { decision: 'needs_clarification', reason: 'The tool failed, ask the operator to fix it.' })] },
+    { role: 'work-order', calls: [call('corrected', 'hydro_query', { tool_name: 'propose_work_order', arguments: fields })] },
+    { role: 'work-order', text: 'Card ready.' }, { role: 'supervisor', text: 'Review the card.' })
+  const result = await askFoundryCopilot('Prepare a Low-priority work order for T005.')
+  assert.equal(result.proposals.length, 1)
+  assert.equal(result.proposals[0].equipmentId, fields.equipment_id)
+  assert.ok(harness.requests.some(request => request.input.some(item => /not an operator clarification/.test(item.output ?? ''))))
+  assert.equal(harness.reads.length, 0, 'Malformed envelopes never reach the source or staging tool')
+})
+
 test('independent verification retains both receipts but deduplicates identical charts and source summaries', async () => {
   reset()
   const visualization = { graphicType: 'barchart', title: '24h', inlineCsvData: 'Station,MW\nSloy,123.45' }

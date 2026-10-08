@@ -106,6 +106,11 @@ export function parseHydroQuery(raw: string):
     if (!record(value) || typeof value.tool_name !== 'string' || !record(value.arguments)) {
       return { ok: false, error: 'hydro_query requires a tool_name string and an arguments object, not JSON encoded inside a string.' }
     }
+    if (Object.hasOwn(value.arguments, 'arguments')) {
+      const corrected = record(value.arguments.arguments)
+        ? JSON.stringify({ tool_name: value.tool_name, arguments: value.arguments.arguments }) : undefined
+      return { ok: false, error: `Unexpected arguments.arguments wrapper. Put the selected tool's fields directly inside arguments, with no second arguments object.${corrected && corrected.length <= 2400 ? ` Retry this flat payload: ${corrected}` : ''}` }
+    }
     return { ok: true, toolName: value.tool_name, argumentsJson: JSON.stringify(value.arguments), args: value.arguments }
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error

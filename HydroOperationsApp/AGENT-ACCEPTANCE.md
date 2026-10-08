@@ -242,11 +242,19 @@ submitted `rows/1` rather than `/rows/1`. The generic rejection did not explain 
 missing leading slash, so all eight rounds were consumed. It also tried to finish
 without reading the explicitly requested inspection source. This is a failed acceptance
 result, not a passed test because the error was surfaced.
-The follow-up correction constrains JSON-pointer syntax and array sizes in the actual
+The follow-up correction, deployed as 1.0.741 (`314a9ba`, Sleuth v13), constrains JSON-pointer syntax and array sizes in the actual
 tool schema, gives precise leading-slash feedback, and requires a successful inspection
 read before completion when that evidence was explicitly requested. Empty inspection
 results remain valid evidence; they do not establish a physical fault. Local regression,
-typecheck, lint, environment validation and build passed; a fresh deployment/rerun is needed.
+typecheck, lint, environment validation and build passed; hosted reruns remain required.
+
+The explicit-draft / independent-verification flow on 1.0.740 also failed (62.2s).
+Chief, Gauge and Fixer executed, but Fixer sent `arguments.arguments.equipment_id`
+instead of the required flat `arguments.equipment_id`, twice. It then incorrectly treated
+that integration error as an operator clarification. No card or SQL record was created.
+The correction rejects the extra wrapper with the exact flat retry payload and prevents
+an unresolved local input error from becoming a successful no-draft/clarification review.
+Regression tests exercise the real proposal tool after correction, not a mock success.
 
 Latest source fixes (deployed in 1.0.740; hosted reruns still pending):
 
