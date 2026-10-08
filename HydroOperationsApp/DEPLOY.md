@@ -6,9 +6,9 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Current deployed release: **1.0.745 (`d024940`)**. The owner-restored capacity was
+Current deployed release: **1.0.746 (`d619241`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
-[current acceptance report](AGENT-ACCEPTANCE.md#latest-gate-restored-capacity) records
+[current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
 the fresh deployment and the completed, **not accepted**, twenty-turn hosted rerun. The earlier explicit
 capacity suspension remains documented as historical evidence.
 Deployment success is not proof of complete multi-agent runtime acceptance.

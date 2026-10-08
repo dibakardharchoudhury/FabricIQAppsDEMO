@@ -273,6 +273,10 @@ export function validateKql(query: string, allowedSources: string[] = KUSTO_SOUR
   if (/^TelemetryEnriched\b[^|]*\|\s*where\b[^|]*\bopcua_node_id\b/i.test(scanned)) {
     throw new KqlValidationError('Rejected: TelemetryEnriched does not return opcua_node_id. Use query_telemetry with verified opcua_node_ids and aggregation latest for the latest raw row per signal, or query OPCUAEvents directly. Do not invent a node column on the enriched function.')
   }
+  const latestProjection = scanned.match(/\|\s*summarize\s+arg_max\s*\(\s*event_time\s*,\s*value\s*,\s*quality\s*\)\s+by\s+opcua_node_id\s*\|\s*project\b([^|]*)/i)?.[1]
+  if (latestProjection && /\barg_max_(?:event_time|value|quality)\b(?!\s*=(?!=))/i.test(latestProjection)) {
+    throw new KqlValidationError('Rejected: unaliased arg_max(event_time, value, quality) returns event_time, value and quality, not arg_max_event_time, arg_max_value or arg_max_quality. Project the original names, or use query_telemetry with aggregation latest and the verified node IDs/window.')
+  }
   for (const rule of FORBIDDEN_KQL) {
     if (rule.pattern.test(scanned)) throw new KqlValidationError(`Rejected: ${rule.reason}.`)
   }

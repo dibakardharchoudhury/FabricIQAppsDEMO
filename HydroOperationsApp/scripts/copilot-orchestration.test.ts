@@ -16,6 +16,16 @@ test('chart completion applies to requested output, not discussion or prohibited
   }
 })
 
+test('latest-raw KQL rejects invented arg_max output columns before a source request', () => {
+  const latest = 'OPCUAEvents | summarize arg_max(event_time, value, quality) by opcua_node_id'
+  for (const column of ['event_time', 'value', 'quality']) {
+    assert.throws(() => validateKql(`${latest} | project opcua_node_id, ${column}=arg_max_${column}`), KqlValidationError)
+  }
+  assert.match(validateKql(`${latest} | project opcua_node_id, event_time, value, quality`), /take 500/)
+  assert.match(validateKql(`${latest} | project arg_max_value=value`), /take 500/)
+  assert.match(validateKql('OPCUAEvents | summarize (arg_max_event_time, arg_max_value, arg_max_quality) = arg_max(event_time, value, quality) by opcua_node_id | project arg_max_value'), /take 500/)
+})
+
 test('only explicit work-order requests leave the read-only Data Agent path', () => {
   assert.equal(isWorkOrderRequest('Which turbines are running hot right now?'), false)
   assert.equal(isWorkOrderRequest('Why did T004 temperature spike? Perform an RCA.'), false)

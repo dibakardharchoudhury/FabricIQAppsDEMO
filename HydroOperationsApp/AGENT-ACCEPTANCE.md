@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.745 (`d024940`).** Canonical deployment completed on
+**Current deployed release: 1.0.746 (`d619241`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Hosted reruns are in progress.
-The corrected release passed 139 targeted regressions, typecheck, lint, the canonical
+The corrected release passed 141 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +21,21 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+The 1.0.746 targeted conversation rerun completed flow 10's exact editable card and
+physical-fault follow-up in 1m9s / 55.2s. The follow-up used four actual RCA requests,
+all with `tool_choice: required`, corrected an invalid assessment and returned the
+source-checked cause-undetermined report. The visible conversation retained eight
+real outgoing/return handoffs across both turns; the card was rejected.
+
+Flow 4 reached the native Data Agent and Gauge, but failed before RCA on an invalid
+model-authored KQL projection: it invented `arg_max_event_time`, `arg_max_value` and
+`arg_max_quality` after an unaliased `arg_max`. Eventhouse rejected that query with
+HTTP 400. The next source guard rejects this reproduced pattern locally, tells Gauge
+the real column names or the equivalent typed latest-reading tool, and uses the
+existing bounded input-correction path. Real source failures still propagate.
+This correction is not yet deployed. Full records are retained in
+`rca-followup-1.0.746.json` and `reconciliation-1.0.746.json`.
 
 The **1.0.745 compound rerun** completed all ten first prompts plus follow-ups for
 flows 9 and 10: **twelve turns, three runtime failures**. Every first prompt requested
@@ -58,10 +73,11 @@ Additional exact hosted checks on 1.0.745:
   at 4.44s, with no horizontal overflow at 1024x768. This is not a cold-load or
   cross-tab navigation benchmark and does not establish a performance SLA.
 
-The next RCA correction requires actual tool calls and gives a final invalid structured
+The 1.0.746 RCA correction requires actual tool calls and gives a final invalid structured
 report one bounded completion-only repair using existing evidence. No further reads,
 weaker reference validation, automatic source retry or native-source substitution is
-allowed in that repair. Hosted verification of this correction is still pending.
+allowed in that repair. The flow 10 conversation rerun above verifies actual required-tool
+requests; the completion-only ninth-round bound has local runtime regression coverage.
 
 The 1.0.744 targeted rerun completed ten turns: both turns of flows 3, 4, 5 and 10,
 and first turns of flows 6 and 9. No terminal runtime failure was observed in those

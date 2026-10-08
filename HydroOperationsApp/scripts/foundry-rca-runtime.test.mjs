@@ -322,6 +322,29 @@ test('The final RCA correction cannot read more sources or grant itself another 
   }
 })
 
+test('Gauge corrects the reproduced arg_max alias error locally before executing its source query', async () => {
+  reset()
+  harness.reads.splice(0, 1, (options, name, args) => createToolRuntime(defaultCopilotSettings(), options)(name, args))
+  harness.reads.push({ result: { rows: [{ opcua_node_id: 'ns=2;s=T003.turbine_temp',
+    event_time: '2026-10-08T09:00:00Z', value: 76, quality: 'GOOD' }] }, rowCount: 1 })
+  harness.responses.push(delegate('qa'),
+    { role: 'qa', calls: [call('invalid_kql', 'hydro_query', { tool_name: 'run_kql', arguments: {
+      query: 'OPCUAEvents | summarize arg_max(event_time, value, quality) by opcua_node_id | project value=arg_max_value',
+    } })] },
+    { role: 'qa', calls: [call('latest', 'hydro_query', { tool_name: 'query_telemetry', arguments: {
+      opcua_node_ids: ['ns=2;s=T003.turbine_temp'], lookback: 'today', aggregation: 'latest',
+    } })] },
+    { role: 'qa', text: 'The requested latest raw value is 76.' },
+    { role: 'supervisor', text: 'The requested latest raw value is 76.' })
+  const result = await askFoundryCopilot('Read the latest raw temperature for the specified signal today.')
+  assert.match(result.text, /76/)
+  assert.ok(harness.requests.some(request => request.input.some(item =>
+    item.type === 'function_call_output' && item.call_id === 'invalid_kql'
+    && JSON.parse(item.output).executed === false)))
+  assert.equal(harness.responses.length, 0)
+  assert.equal(harness.reads.length, 0)
+})
+
 test('A chart correction is bounded and cannot force a chart from unrelated source rows', async () => {
   reset()
   harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
