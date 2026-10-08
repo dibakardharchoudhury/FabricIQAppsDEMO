@@ -19,6 +19,30 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+The 1.0.742 run completed **all ten compound scenarios and twenty conversation turns**.
+Six turns ended in explicit runtime failures. Other turns have content/routing defects;
+fourteen non-error responses do **not** mean fourteen acceptance passes. Two browser
+sessions were used; times below are the app's displayed execution times, not background-tab
+polling delays or a controlled latency benchmark. Every staged test card was rejected.
+
+| Flow | Actual first-turn agents (Chief coordinates every handoff) | First / follow-up | Observed result |
+|---|---|---|---|
+| 1: BAD, work coverage, RCA, conditional draft, independent check | Gauge -> Sleuth -> Fixer -> Gauge | 100s / 51s | Completed; selected T004, read inspections, retained all eight BAD-signal rows, returned no-draft review and subsequent evidence-limited reassessment. |
+| 2: Ontology identity, direct evidence, RCA, conditional work | Sparky; downstream stopped on failure | 21s / 138s | Failed twice: native entity-name pattern error, then native MCP LRO ended without a JSON-RPC reply. No source substitution. |
+| 3: Native backlog, SQL comparison/chart, RCA, conditional work | Sparky -> Gauge -> Gauge -> Sleuth | 218s / 29s | First turn failed before Fixer because the extra Gauge invocation exhausted delegation slots; requested chart was missing. Follow-up returned direct work coverage, not a retroactive pass. |
+| 4: Native/direct BAD and HOT reconciliation, RCA | Sparky -> Sleuth | 169s / 64s | Chief incorrectly requested a plan-only RCA with no execution; eight prose rounds failed. Follow-up read sources but repeatedly submitted a malformed `/rows/1},{` pointer. |
+| 5: Both native sources, direct facility backlog/chart; investigation/draft follow-up | Sparky (Ontology only) -> Gauge | 171s / 108s | First turn omitted the explicitly requested native Data Agent and mislabeled native provenance in prose; seven chart SVGs were detected rather than a concise single result. Follow-up used Sleuth -> Fixer -> Gauge and staged the exact Low-priority review card. |
+| 6: Parts/reorder risk, investigation, conditional work | Sparky -> Gauge -> Sleuth -> Fixer | 165s / 47s | Returned evidence-limited no-draft review and BOM/compatibility/lead-time gaps, but native retrieval was not requested and unnecessarily increased latency. |
+| 7: Telemetry/work, downtime evidence, independent verification | Gauge -> Sleuth | 125s / 36s | Did not establish downtime from BAD/stale data. Follow-up reported its empty queried window and missing dispatch/calendar sources; concise-answer and query-scope quality remain review items. |
+| 8: Notifications/work, investigation, conditional draft; unsent message | Gauge -> Sleuth -> Fixer | 62s / 39s | Returned zero-row source coverage, no-draft review and an explicitly unsent notification with unresolved facts. No delivery was claimed. |
+| 9: Station means chart, scientific review, independent check | Gauge -> Sleuth | 76s / 70s | Both turns rendered three MW station means, sample/BAD counts and stale timestamps. No total-generation/energy or physical-fault claim was made. The separate 1.0.741 chart-metadata reference defect still requires its corrected-release rerun. |
+| 10: Exact Low-priority acceptance card, coverage; fault-evidence follow-up | Gauge -> Fixer -> Gauge | 53s / 38s | Exact editable card worked; follow-up failed because a Foundry HTTP 200 stream ended without completion. No successful RCA was inferred. |
+
+Each first prompt asked for multiple capabilities; these are not ten isolated agent pings.
+Failed native calls still count as failures, not as proof that the requested downstream
+orchestration executed. Full request/return records, prompts, field values and source
+errors were retained in the session evidence file `compound-flows-1.0.742.json`.
+
 - The explicit Low-priority T005 acceptance card now appeared in 54.7 seconds, with
   its exact requested title, no claimed fault, and Chief -> Gauge -> Fixer -> Gauge
   request/return execution. The card was rejected, not saved. This repairs the
@@ -45,6 +69,19 @@ multi-agent runtime correctness is not yet certified.
   displayed only a generic failure. The stream reader now preserves messages from
   all supported error envelopes and incomplete-response reasons. This is a diagnostics
   correction, not a claim that ontology-native instance retrieval works.
+- The native backlog compound flow exhausted four delegation slots after Chief used
+  Gauge twice before Sleuth, leaving no slot for the requested Fixer review. The
+  coordinator now reserves slots for still-required RCA/work/verification capabilities,
+  rejecting the extra factual read before execution. Chief is instructed to include
+  requested tables/charts in the first Gauge assignment; Sleuth can read its own
+  missing investigation evidence. A runtime regression reproduces the five requested
+  delegations and completes the four necessary handoffs without raising the budget.
+- Mixed-source completion now requires each explicitly requested native source, not
+  merely any successful Sparky invocation. Returned evidence carries its verified
+  source identity, and unfulfilled native sources reserve delegation capacity.
+- A plan-only RCA assignment that prohibits its evidence reads is rejected back to
+  Chief before Sleuth runs. Invalid pointers now report actual valid sibling paths;
+  the application does not silently rewrite an assessment or accept malformed evidence.
 
 ## Current implementation and limitations
 

@@ -85,6 +85,13 @@ test('reproduced slashless pointers receive exact repair guidance and are constr
   assert.equal(requiresInspectionEvidence('Investigate telemetry. Do not query inspections.'), false)
 })
 
+test('a pointer containing JSON separators receives actual sibling paths, without automatic repair', () => {
+  const sources = [{ ...receipts[0], result: { rows: [{ value: 1 }, { value: 2 }] } }]
+  assert.throws(() => parseRcaAssessment(JSON.stringify({
+    ...assessment, observations: [{ ...ref, path: '/rows/1},{' }],
+  }), sources), /Invalid segment: "1},\{"\. Valid paths here: "\/rows\/0", "\/rows\/1"/)
+})
+
 test('only Sleuth can submit the structured RCA completion tool', () => {
   assert.match(JSON.stringify(agentDefinition('rca', 'test').tools), /complete_rca_assessment/)
   for (const role of ['qa', 'work-order', 'supervisor'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_rca_assessment/)

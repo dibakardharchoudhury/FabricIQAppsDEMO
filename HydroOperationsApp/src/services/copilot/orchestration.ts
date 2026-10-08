@@ -45,11 +45,18 @@ export type WorkOrderProposal = {
 }
 
 const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work[\s-]*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work[\s-]*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work[\s-]*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work[\s-]*orders?|wos?)\b/i
-const positiveActionClauses = (question: string) => question.replace(
-  /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue|read|query|retrieve|inspect)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
+export const positiveActionClauses = (question: string) => question.replace(
+  /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue|read|query|retrieve|inspect|use|ask)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
 
 export function requiresInspectionEvidence(question: string): boolean {
   return /\b(?:investigate|inspect|review|verify|check|compare|read|query|retrieve|using)\b[^.!?;\n]{0,160}\b(?:inspections|inspection (?:evidence|history|records|results))\b/i.test(positiveActionClauses(question))
+}
+
+export function rcaAssignmentError(task: string): string | undefined {
+  if (/\breturn only (?:the )?(?:verification )?(?:plan|queries)\b|\b(?:do not|don't|never) (?:run|execute) (?:them|(?:any|the|these) queries)\b/i.test(task)) {
+    return 'Sleuth completes an actual source-referenced investigation, not a prose-only query plan. Assign factual verification to Gauge or allow Sleuth to read the required evidence and complete_rca_assessment. Do not prohibit the evidence reads needed by this specialist. No agent was invoked.'
+  }
+  return undefined
 }
 
 export function isWorkOrderRequest(question: string): boolean {
@@ -100,7 +107,10 @@ export function missingRequestedSpecialists(question: string, completed: readonl
   return missing
 }
 
-export function delegationOrderError(question: string, next: AgentRole, completed: readonly AgentRole[]): string | undefined {
+export function delegationOrderError(question: string, next: AgentRole, completed: readonly AgentRole[], remainingDelegations?: number): string | undefined {
+  if (remainingDelegations !== undefined && remainingDelegations < 1) {
+    return 'No unreserved delegation slots remain. Complete the outstanding explicitly requested native sources, or synthesize the completed workflow without another delegation.'
+  }
   if (next === 'work-order' && !isWorkOrderRequest(question) && isNotificationDraftRequest(question)) {
     return 'The requested notification/email/message draft is prose, not an editable work-order request. Obtain factual evidence from qa/rca as needed, then compose the requested unsent message. No notification delivery tool is available. This rejected delegation did not consume a slot.'
   }
@@ -108,6 +118,10 @@ export function delegationOrderError(question: string, next: AgentRole, complete
   if (next === 'qa' && completed.includes('qa') && missing.includes('qa')) {
     const prerequisites = missing.filter(role => role !== 'qa')
     if (prerequisites.length) return `Independent final verification is premature. Complete ${prerequisites.join(' -> ')} first, then delegate verification to qa. This rejected delegation did not invoke an agent or consume a delegation slot.`
+  }
+  const stillRequired = missingRequestedSpecialists(question, [...completed, next])
+  if (remainingDelegations !== undefined && stillRequired.length && stillRequired.length > remainingDelegations - 1) {
+    return `This delegation would exhaust slots needed for requested work. Reserve the remaining ${remainingDelegations} delegations for ${missing.join(' -> ')}. Sleuth can retrieve missing investigation evidence itself; do not insert another factual-read delegation first. This rejected delegation did not invoke an agent or consume a slot.`
   }
   return undefined
 }

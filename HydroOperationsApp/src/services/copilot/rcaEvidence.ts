@@ -91,12 +91,17 @@ function evidenceValue(reference: EvidenceReference, receipts: readonly Evidence
     throw new RcaEvidenceError('Reference source rows or fields, not formatted summaries or visualization metadata.')
   }
   let value: unknown = receipt.result
+  let parentPath = ''
   for (const segment of reference.path.slice(1).split('/')) {
     const key = segment.replace(/~1/g, '/').replace(/~0/g, '~')
     if ((!record(value) && !Array.isArray(value)) || !Object.hasOwn(value, key)) {
-      throw new RcaEvidenceError(`Evidence path ${reference.path} does not exist in ${reference.evidence_id}. Paths are relative to data: omit the /data envelope and reference an actual row such as /rows/0 or an existing field. Do not invent a path.`)
+      const validPaths = record(value) || Array.isArray(value)
+        ? Object.keys(value).slice(0, 8).map(field => `${parentPath}/${field.replace(/~/g, '~0').replace(/\//g, '~1')}`).filter(path => path.length <= 200)
+        : []
+      throw new RcaEvidenceError(`Evidence path ${JSON.stringify(reference.path)} does not exist in ${reference.evidence_id}. Invalid segment: ${JSON.stringify(key)}. ${validPaths.length ? `Valid paths here: ${validPaths.map(path => JSON.stringify(path)).join(', ')}.` : 'There are no nested fields here.'} Paths are relative to data: omit the /data envelope and reference an actual row such as /rows/0 or an existing field. Do not invent a path or include JSON object separators inside it.`)
     }
     value = Object.getOwnPropertyDescriptor(value, key)?.value
+    parentPath += `/${segment}`
   }
   const encoded = JSON.stringify(value)
   if (encoded === undefined || encoded.length > 2400) throw new RcaEvidenceError(`Evidence ${reference.evidence_id} at ${reference.path} is too large or not serializable. Reference a smaller source row or field (maximum 2400 characters), such as /rows/0 rather than the whole /rows array.`)

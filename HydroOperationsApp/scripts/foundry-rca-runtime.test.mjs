@@ -237,6 +237,34 @@ test('unrequested native inventory delegation returns to Chief before invoking o
   assert.ok(harness.requests[1].input.some(item => /not requested a native/.test(item.output ?? '')))
 })
 
+test('a repeated factual-read assignment cannot consume slots reserved for RCA and work review', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq'), nativeReply('Native inventory.'),
+    delegate('qa'), { role: 'qa', calls: [read] }, { role: 'qa', text: 'Verified inventory.' },
+    delegate('qa'),
+    delegate('rca'), { role: 'rca', calls: [call('assessment', 'complete_rca_assessment', report)] },
+    delegate('work-order'), { role: 'work-order', calls: [call('decision', 'complete_work_order_review', { decision: 'no_draft', reason: 'No verified uncovered issue.' })] },
+    { role: 'supervisor', text: 'Investigation and work review completed.' })
+  const result = await askFoundryCopilot('Ask the published Data Agent for open work, verify it, investigate the selected equipment and prepare a work-order draft only if justified.')
+  assert.deepEqual(result.orchestrationEvents.map(event => event.role), ['supervisor', 'fabric-iq', 'qa', 'rca', 'work-order'])
+  assert.ok(harness.requests.some(request => request.input.some(item => /Reserve the remaining 2 delegations for rca -> work-order/.test(item.output ?? ''))))
+  assert.match(result.text, /no_draft/)
+  assert.equal(harness.responses.length, 0)
+})
+
+test('Chief cannot trap Sleuth in a plan-only assignment that prohibits the required evidence reads', async () => {
+  reset()
+  harness.responses.push({ role: 'supervisor', calls: [call('plan', 'delegate_to_agent', {
+    specialist: 'rca', question: 'Return only the verification plan and prioritized queries; do not run them.', native_source: null,
+  })] }, delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('assessment', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'Investigation completed.' })
+  const result = await askFoundryCopilot('Investigate the discrepancy using actual source observations.')
+  assert.equal(result.orchestrationEvents.filter(event => event.role === 'rca').length, 1)
+  assert.ok(harness.requests[1].input.some(item => /not a prose-only query plan/.test(item.output ?? '')))
+  assert.match(result.text, /Cause undetermined/)
+})
+
 test('both native sources can receive the same retrieval assignment without substitution', async () => {
   reset()
   harness.responses.push(delegate('fabric-iq'), nativeReply('Data Agent evidence.'),
@@ -246,6 +274,19 @@ test('both native sources can receive the same retrieval assignment without subs
   assert.deepEqual(harness.verifiedSources, ['data-agent', 'ontology'])
   assert.deepEqual(harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
     .map(request => request.tool_choice.tools[0].server_label), ['fabriciq-data-agent', 'fabriciq-ontology'])
+})
+
+test('one native source cannot satisfy a request for both ontology and Data Agent', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq', 'ontology'), nativeReply('Ontology facilities.', 'ontology'),
+    { role: 'supervisor', text: 'Both native sources were checked.' },
+    delegate('fabric-iq'), nativeReply('Data Agent backlog.'),
+    { role: 'supervisor', text: 'Both native results are available.' })
+  await askFoundryCopilot('Use the selected ontology to list facilities. Ask the published Fabric Data Agent for open work.')
+  assert.deepEqual(harness.verifiedSources, ['ontology', 'data-agent'])
+  assert.ok(harness.requests.some(request => request.input.some(item => JSON.stringify(item).includes('Remaining specialists, in order: fabric-iq (data-agent)'))))
+  assert.ok(harness.requests.some(request => request.input.some(item => /Verified native execution source: ontology/.test(item.output ?? ''))))
+  assert.equal(harness.responses.length, 0)
 })
 
 test('oversized proposals are locally repairable without staging or weakening field limits', async () => {

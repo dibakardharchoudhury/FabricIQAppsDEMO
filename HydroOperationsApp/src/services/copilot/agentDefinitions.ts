@@ -1,5 +1,5 @@
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './answerPresentation.ts'
-import type { AgentRole } from './orchestration.ts'
+import { positiveActionClauses, type AgentRole } from './orchestration.ts'
 import { RCA_REPORT_TOOL } from './rcaEvidence.ts'
 
 export const AGENT_NAMES: Record<AgentRole, string> = {
@@ -119,6 +119,15 @@ export function parseHydroQuery(raw: string):
 }
 
 export type NativeSource = 'data-agent' | 'ontology'
+
+export function requestedNativeSources(question: string): NativeSource[] {
+  const positive = positiveActionClauses(question)
+  const action = '\\b(?:use|ask|query|consult|retrieve|read|compare|request|list|resolve)\\b[^.!?;\\n]{0,180}\\b'
+  return [
+    ...(new RegExp(`${action}data[\\s-]+agent\\b`, 'i').test(positive) ? ['data-agent' as const] : []),
+    ...(new RegExp(`${action}ontology\\b`, 'i').test(positive) ? ['ontology' as const] : []),
+  ]
+}
 
 export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {
   if (source !== 'data-agent' && source !== 'ontology') return 'fabric-iq requires native_source data-agent or ontology. Select one requested source per delegation.'

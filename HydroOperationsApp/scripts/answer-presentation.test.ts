@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
-import { agentDefinition, buildAgentInput, nativeSourceError, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -23,6 +23,9 @@ test('ordinary parts queries cannot invent a native-source request; follow-ups r
   assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /not direct Ontology/)
   assert.equal(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']), undefined)
   assert.match(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the Data Agent.', 'Now use the ontology.']) ?? '', /not the Data Agent/)
+  assert.deepEqual(requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'), ['data-agent', 'ontology'])
+  assert.deepEqual(requestedNativeSources('Ask the Data Agent for open work. Do not use the ontology.'), ['data-agent'])
+  assert.deepEqual(requestedNativeSources('What is the Data Agent?'), [])
 })
 
 test('Responses stream surfaces native tool errors and incomplete reasons instead of a generic failure', async () => {

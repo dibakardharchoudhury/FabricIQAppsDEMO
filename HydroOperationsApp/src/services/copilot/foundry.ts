@@ -6,9 +6,9 @@ import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
 import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
-import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
+import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, requestedNativeSources, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, rcaAssignmentError, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
@@ -68,7 +68,9 @@ export async function askFoundryCopilot(
     proposalPriority,
   })
   const delegated = new Set<string>()
-  const specialistResults: Array<{ role: AgentRole; answer: string }> = []
+  const specialistResults: Array<{ role: AgentRole; answer: string; nativeSource?: NativeSource }> = []
+  const requiredNativeSources = requestedNativeSources(question)
+  const completedNativeSources = new Set<NativeSource>()
   const receipts: EvidenceReceipt[] = []
   const assessments: string[] = []
   const workDecisions: Array<'no_draft' | 'needs_clarification'> = []
@@ -85,7 +87,7 @@ export async function askFoundryCopilot(
           ? renderCoordinatorPrompt(settings)
           : `${renderSystemPrompt(settings, catalogPrompt(settings))}\n\nPermitted direct tool schemas:\n${JSON.stringify(definitions)}\nUse hydro_query to execute these schemas. Never call a write operation. Work-order approval is exclusively handled by the human review card.`
       const scope = role === 'supervisor'
-        ? 'You retain the conversation history; specialists do not. Make each delegation self-contained: resolve references from previous turns and include relevant IDs, user constraints and evidence. Do not copy unrelated previous answers. For RCA, check evidence timestamps, units, quality, competing explanations and contradictory evidence before synthesis; request independent factual verification when the user asks for it. Verification of facts does not establish a physical cause. Keep the final answer concise without omitting requested records; do not repeat editable card fields in prose.'
+        ? 'You retain the conversation history; specialists do not. Make each delegation self-contained: resolve references from previous turns and include relevant IDs, user constraints and evidence. Do not copy unrelated previous answers. For RCA, check evidence timestamps, units, quality, competing explanations and contradictory evidence before synthesis; request independent factual verification when the user asks for it. Verification of facts does not establish a physical cause. Keep the final answer concise without omitting requested records; do not repeat editable card fields in prose. Combine factual inventory and explicitly requested tables/charts in the first Gauge assignment. Sleuth can retrieve missing investigation evidence directly; reserve remaining slots for required specialist work instead of sending Gauge back for raw rows.'
         : role === 'rca'
           ? 'Investigate the observed symptom and time window using source observations that preserve identity, units, quality, freshness and missingness. A longer-window aggregate is not automatically a matched baseline; small mean differences do not establish normal variation without dispersion and comparable operating regimes. Separate sensor/data faults from physical equipment hypotheses. Complete the structured assessment with competing hypotheses, supporting and contradictory references and missing evidence. Do not supply free-text diagnoses, thresholds, confidence scores, maintenance procedures or baseline-validity claims. Prefer source-side counts, trends and bounded summaries over raw dumps; retain requested inventory evidence. References are checked, not causal relevance. Physical cause remains undetermined pending qualified engineering review.'
           : 'Execute only the assigned task using the current evidence. For mean power-output readings per station use query_station_power when enabled: it returns authoritative unit-normalized rows and a structured chart in one call. It is not total station generation or energy. Do not run a generic Signal contains power query or guess units. For other requested charts use visualize_dataset with the retrieved dataset rather than unfenced CSV prose.'
@@ -167,7 +169,10 @@ export async function askFoundryCopilot(
             }
             if (role === 'supervisor') {
               const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
-              const missing = missingRequestedSpecialists(question, completed)
+              const missing = [
+                ...requiredNativeSources.filter(source => !completedNativeSources.has(source)).map(source => `fabric-iq (${source})`),
+                ...missingRequestedSpecialists(question, completed),
+              ]
               if (missing.length) {
                 captureApplicationEvent(event, `Completion check: remaining requested specialist work (${missing.join(' -> ')}).`)
                 publish()
@@ -189,7 +194,10 @@ export async function askFoundryCopilot(
             if (role === 'supervisor' && call.name === 'delegate_to_agent') {
               const { specialist, question: delegatedQuestion, reason, nativeSource: delegatedSource } = parseDelegation(call.arguments)
               const completed = events.filter(entry => entry.status === 'completed' || entry.status === 'approval').map(entry => entry.role)
-              const orderError = delegationOrderError(question, specialist, completed)
+              const reservedNativeSlots = requiredNativeSources.filter(source => !completedNativeSources.has(source)
+                && !(specialist === 'fabric-iq' && source === delegatedSource)).length
+              const orderError = delegationOrderError(question, specialist, completed, 4 - delegated.size - reservedNativeSlots)
+                ?? (specialist === 'rca' ? rcaAssignmentError(delegatedQuestion) : undefined)
                 ?? (specialist === 'fabric-iq' ? nativeSourceError(question, delegatedSource, history.filter(message => message.role === 'user').map(message => message.content)) : undefined)
               if (orderError) {
                 input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ error: orderError, executed: false }) })
@@ -208,8 +216,10 @@ export async function askFoundryCopilot(
                   ? `Your complete assigned native-source task:\n${delegatedQuestion}\n\nExecute only this retrieval. Do not expand it into downstream direct verification, diagnosis, work planning or mutation. If the named source fails, propagate that failure; do not substitute another connection.`
                   : `Original operator request (context only; do not execute other specialists' work):\n${question}\n\nYour assigned Supervisor task:\n${delegatedQuestion}${priorFindings}`
                 const answer = await invoke(specialist, assignment, event.id, call.id, specialist === 'fabric-iq' ? delegatedSource : undefined)
-                specialistResults.push({ role: specialist, answer })
-                input.push({ type: 'function_call_output', call_id: call.id, output: answer })
+                specialistResults.push({ role: specialist, answer, ...(specialist === 'fabric-iq' ? { nativeSource: delegatedSource } : {}) })
+                if (specialist === 'fabric-iq' && delegatedSource) completedNativeSources.add(delegatedSource)
+                input.push({ type: 'function_call_output', call_id: call.id, output: specialist === 'fabric-iq'
+                  ? `Verified native execution source: ${delegatedSource}. Do not relabel this as another source.\n\n${answer}` : answer })
                 captureApplicationEvent(event, `${AGENT_NAMES[specialist]} returned its result to the Supervisor`, call.id, false, 'delegation-return')
                 publish()
               } catch (error) {
@@ -338,7 +348,10 @@ export async function askFoundryCopilot(
           }
           if (role === 'supervisor') {
             const completed = events.filter(event => event.status === 'completed' || event.status === 'approval').map(event => event.role)
-            const missing = missingRequestedSpecialists(question, completed)
+            const missing = [
+              ...requiredNativeSources.filter(source => !completedNativeSources.has(source)).map(source => `fabric-iq (${source})`),
+              ...missingRequestedSpecialists(question, completed),
+            ]
             input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
               text: `${missing.length ? `Before answering, complete remaining requested specialist work: ${missing.join(' -> ')}.` : 'The completed specialists are available for synthesis.'} Actual editable cards staged in this turn: ${proposals.length}. Never invent an editable template or review card when none was staged. A no_draft decision must not be followed by an offer to stage the same unsupported draft; explain the evidence needed to change that decision. Preserve the assigned scope of each remaining delegation. The final answer replaces all provisional streamed text: consolidate the complete requested findings, all requested inventory tables and chart CSV, work-review outcome and limitations. Do not return only a last-step acknowledgement or ask permission to perform work already requested.`,
             }] })
