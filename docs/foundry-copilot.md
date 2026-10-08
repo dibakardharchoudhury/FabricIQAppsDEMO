@@ -77,7 +77,8 @@ window, without averages or quality exclusions. A direct missing-node-column fil
 the enriched function is rejected locally with repair guidance; actual source failures
 still propagate. This does not turn the KQL allow-list into a complete semantic compiler.
 The pointer/inventory/latest-telemetry and follow-up-routing changes after that rerun are
-not hosted-certified; the latest deployment attempt needed interactive sign-in.
+deployed in 1.0.740, but not yet hosted-certified. Canonical deployment and browser build
+identity passed; tenant-wide consent remains an enterprise rollout prerequisite.
 Native-source selection now restricts each Sparky invocation to its explicit MCP server
 label and requires a completed matching execution receipt. Both connections remain
 provisioned; no alternate source is used on failure. A live preview-service probe accepted

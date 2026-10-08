@@ -5,10 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.737 (`946c743`).** On October 8 the owner-restored
-capacity was verified Active at F8, and canonical deployment completed successfully.
-The RCA presentation and priority-scope corrections in that release are deployed.
-The October 8 rerun completed **ten scenarios / twenty turns**, and is **not accepted**.
+**Current deployed release: 1.0.740 (`b99a4f7`).** Canonical deployment completed on
+October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v12, Fixer v11,
+and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
+Browser build identity was verified. Consent is valid for the current operator only;
+tenant-wide enterprise consent requires an administrator. Hosted reruns are in progress.
+The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
 Telemetry was 90/90 fresh at 05:46 UTC, but subsequently stopped advancing around
 06:05 UTC; the app correctly changed its header to stale. Do not treat the earlier
 freshness observation as current health.
@@ -235,7 +237,18 @@ nor SQL/combined-source answer correctness merely because a native call complete
 
 ### Fixes following this rerun
 
-Latest source fixes (deployment and hosted reruns still pending):
+The first compound rerun on 1.0.740 failed after 129.7 seconds: Sleuth repeatedly
+submitted `rows/1` rather than `/rows/1`. The generic rejection did not explain the
+missing leading slash, so all eight rounds were consumed. It also tried to finish
+without reading the explicitly requested inspection source. This is a failed acceptance
+result, not a passed test because the error was surfaced.
+The follow-up correction constrains JSON-pointer syntax and array sizes in the actual
+tool schema, gives precise leading-slash feedback, and requires a successful inspection
+read before completion when that evidence was explicitly requested. Empty inspection
+results remain valid evidence; they do not establish a physical fault. Local regression,
+typecheck, lint, environment validation and build passed; a fresh deployment/rerun is needed.
+
+Latest source fixes (deployed in 1.0.740; hosted reruns still pending):
 
 - Chief supplies an explicit native-source selection. Sparky's Responses request restricts
   tools to that connection; the application checks a completed MCP receipt with the exact
@@ -263,7 +276,7 @@ Latest source fixes (deployment and hosted reruns still pending):
   write. The desktop compact panel measured 105px; mobile 123px. No horizontal overflow
   or page errors were observed; the existing Rayfin `useProxy` deprecation warning remains.
 
-These checks do not supersede the failed hosted scenarios below/above. Maintenance
+These checks do not supersede the failed 1.0.737 hosted scenarios. Maintenance
 Planning remains a recommendation, not a sixth deployed agent or certified integration.
 
 - Committed `bdf8301`: safe latest-per-node telemetry template, local rejection of the
@@ -277,8 +290,8 @@ Planning remains a recommendation, not a sixth deployed agent or certified integ
   environment validation and production build passed; the final notification-scope change
   also passed the 29 directly relevant tests.
 - These new corrections are **not hosted-certified**. The deployment attempt required
-  interactive Azure sign-in and was stopped while awaiting it; no `SUCCESS` was observed.
-  The acceptance browser remained on 1.0.737.
+  interactive Azure sign-in and was initially stopped while awaiting it. The subsequent
+  deployment completed as 1.0.740; hosted answer-quality acceptance remains separate.
 - Still requiring hosted verification: native-source selection, bounded oversized-proposal
   repair and requested unsent notification completion. Further completeness work remains:
   preserve requested reconciliation/chart conclusions,

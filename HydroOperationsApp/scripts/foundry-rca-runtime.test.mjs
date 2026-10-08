@@ -96,6 +96,20 @@ test('RCA rejects prose and invalid reports, finishes immediately on checked com
   assert.ok(result.orchestrationEvents.flatMap(event => event.trace ?? []).some(entry => entry.label.includes('RCA report rejected')))
 })
 
+test('RCA cannot finish before explicitly requested connected inspection evidence is read', async () => {
+  reset()
+  harness.reads.push({ result: { rows: [], total_matched: 0, truncated: false }, rowCount: 0 })
+  harness.responses.push(delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('premature', 'complete_rca_assessment', report)] },
+    { role: 'rca', calls: [call('inspection', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'inspections' } })] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'Evidence checked.' })
+  const result = await askFoundryCopilot('Investigate using telemetry and inspections.')
+  assert.match(result.text, /Cause undetermined/)
+  assert.ok(harness.requests.some(request => request.input.some(item => /Requested inspection evidence has not been read/.test(item.output ?? ''))))
+  assert.equal(result.steps.filter(step => step.tool === 'query_operations' && step.status === 'done').length, 1)
+})
+
 test('a source failure after a report still fails, clears busy, and records only one failed turn', async () => {
   reset()
   harness.reads.push(new Error('Source unavailable'))

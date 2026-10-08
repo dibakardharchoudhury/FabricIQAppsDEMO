@@ -46,7 +46,11 @@ export type WorkOrderProposal = {
 
 const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work[\s-]*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work[\s-]*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work[\s-]*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work[\s-]*orders?|wos?)\b/i
 const positiveActionClauses = (question: string) => question.replace(
-  /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
+  /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue|read|query|retrieve|inspect)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
+
+export function requiresInspectionEvidence(question: string): boolean {
+  return /\b(?:investigate|inspect|review|verify|check|compare|read|query|retrieve|using)\b[^.!?;\n]{0,160}\b(?:inspections|inspection (?:evidence|history|records|results))\b/i.test(positiveActionClauses(question))
+}
 
 export function isWorkOrderRequest(question: string): boolean {
   const positiveClauses = positiveActionClauses(question).replace(

@@ -34,7 +34,7 @@ export type RcaAssessment = { observations: EvidenceReference[]; hypotheses: Hyp
 const referenceSchema = {
   type: 'object', properties: {
     evidence_id: { type: 'string', description: 'The exact evidence_id returned by the source tool.' },
-    path: { type: 'string', description: 'JSON pointer inside data, never prefixed with /data. Cite one source row such as /rows/0, or a smaller existing field. Maximum path length 200; the referenced JSON value must be at most 2400 characters. Do not cite a whole large rows array.' },
+    path: { type: 'string', pattern: '^/', minLength: 1, maxLength: 200, description: 'Absolute JSON pointer inside data: MUST start with /. Correct: /rows/0. Incorrect: rows/0 or /data/rows/0. Cite one existing source row or smaller field. Referenced JSON must be at most 2400 characters; never a whole large rows array.' },
   },
   required: ['evidence_id', 'path'], additionalProperties: false,
 }
@@ -43,13 +43,13 @@ export const RCA_REPORT_TOOL = {
   description: 'Complete a source-referenced investigation. References use a returned evidence_id and a JSON pointer relative to its data, e.g. /rows/0. The app checks every reference and renders the observations itself. Hypotheses remain untested; no configured causal model or approved diagnostic limits exist. Do not supply free-text diagnoses, thresholds, confidence scores or baseline claims.',
   parameters: {
     type: 'object', properties: {
-      observations: { type: 'array', items: referenceSchema },
-      hypotheses: { type: 'array', items: {
+      observations: { type: 'array', minItems: 1, maxItems: 12, items: referenceSchema },
+      hypotheses: { type: 'array', minItems: 2, maxItems: 4, items: {
         type: 'object', properties: {
           category: { type: 'string', enum: Object.keys(HYPOTHESES) },
-          supporting: { type: 'array', items: referenceSchema },
-          contradicting: { type: 'array', items: referenceSchema },
-          missing: { type: 'array', items: { type: 'string', enum: Object.keys(GAPS) } },
+          supporting: { type: 'array', maxItems: 12, items: referenceSchema },
+          contradicting: { type: 'array', maxItems: 12, items: referenceSchema },
+          missing: { type: 'array', minItems: 1, items: { type: 'string', enum: Object.keys(GAPS) } },
         }, required: ['category', 'supporting', 'contradicting', 'missing'], additionalProperties: false,
       } },
     }, required: ['observations', 'hypotheses'], additionalProperties: false,
@@ -81,6 +81,9 @@ function references(value: unknown, receipts: readonly EvidenceReceipt[]): Evide
 function evidenceValue(reference: EvidenceReference, receipts: readonly EvidenceReceipt[]): unknown {
   const receipt = receipts.find(item => item.id === reference.evidence_id)
   if (!receipt) throw new RcaEvidenceError(`Unknown evidence ID: ${reference.evidence_id}. Retrieve actual source evidence first.`)
+  if (reference.path && !reference.path.startsWith('/')) {
+    throw new RcaEvidenceError(`Invalid JSON pointer "${reference.path.slice(0, 200)}": the leading "/" is missing. Use "/rows/0", not "rows/0". Every observation, supporting and contradicting path must begin with "/"; paths are relative to data, without a /data prefix.`)
+  }
   if (!reference.path.startsWith('/') || reference.path.length > 200 || /~(?![01])/.test(reference.path)) {
     throw new RcaEvidenceError('Use an explicit JSON pointer to an observation, not the entire evidence response.')
   }

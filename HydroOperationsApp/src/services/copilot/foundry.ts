@@ -8,7 +8,7 @@ import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
@@ -93,7 +93,7 @@ export async function askFoundryCopilot(
       const readDiscipline = 'Resolve short asset tags such as T005 against equipment.tag, not equipment_id. Use the returned canonical equipment_id in operational equipmentId filters; never infer no work from an unresolved tag. Reuse verified current-turn identities and results. A successful zero-row result with total_matched=0 and truncated=false is a complete empty result for those exact filters; do not repeat it merely to confirm emptiness. Batch independent reads. When available sources are exhausted, return an evidence-limited conclusion rather than searching the same sources again. If a requested native source fails, report failure and do not silently replace it with direct queries.'
       const input: unknown[] = buildAgentInput(`${context}\n\n${scope}\n\n${chartScope}\n\n${readDiscipline}`, history, prompt, role)
       if (role === 'rca') input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
-        text: `Complete this investigation using complete_rca_assessment. Cite actual evidence IDs and JSON pointers relative to each receipt's data; prefer observations retaining asset/signal identity and source timestamps. Only the structured, source-checked assessment can be presented as RCA. Available current-turn evidence:\n${JSON.stringify(receipts.map(receipt => ({ evidence_id: receipt.id, tool: receipt.tool, data: receipt.result })))}`,
+        text: `Complete this investigation using complete_rca_assessment. Every JSON pointer MUST begin with "/", for example "/rows/0", never "rows/0" or "/data/rows/0". Cite actual evidence IDs; prefer observations retaining asset/signal identity and source timestamps. ${requiresInspectionEvidence(question) ? 'The operator requested inspection evidence: read query_operations with entity inspections for the verified equipment before completing, unless that evidence already appears below. Do not declare it missing without checking the connected source.' : ''} Only the structured, source-checked assessment can be presented as RCA. Available current-turn evidence:\n${JSON.stringify(receipts.map(receipt => ({ evidence_id: receipt.id, tool: receipt.tool, entity: receipt.entity, data: receipt.result })))}`,
       }] })
       let requestDeadline: AbortSignal | undefined
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
@@ -219,6 +219,9 @@ export async function askFoundryCopilot(
             } else if (role === 'rca' && call.name === 'complete_rca_assessment') {
               try {
                 if (rcaReport) throw new RcaEvidenceError('An RCA assessment has already been completed in this invocation.')
+                if (requiresInspectionEvidence(question) && !receipts.some(receipt => receipt.tool === 'query_operations' && receipt.entity === 'inspections')) {
+                  throw new RcaEvidenceError('Requested inspection evidence has not been read. Call hydro_query with tool_name query_operations and arguments.entity inspections, filtered to the verified equipment, before completing RCA. A verified empty result is valid evidence; do not invent inspection records or claim the source is unavailable without reading it.')
+                }
                 rcaReport = renderRcaAssessment(parseRcaAssessment(call.arguments, receipts), receipts)
                 input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ accepted: true, conclusion: 'cause_undetermined' }) })
                 captureApplicationEvent(event, 'Validated RCA source references. Hypotheses remain untested; no diagnostic threshold or causal claim was accepted.', call.id)

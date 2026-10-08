@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseRcaAssessment, renderRcaAssessment, renderInventoryEvidence, renderOpenWorkEvidence, renderUnsentNotification, type EvidenceReceipt } from '../src/services/copilot/rcaEvidence.ts'
 import { agentDefinition } from '../src/services/copilot/agentDefinitions.ts'
-import { isNotificationDraftRequest, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { isNotificationDraftRequest, requiresInspectionEvidence, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { readAnswerDatasets } from '../src/services/copilot/answerPresentation.ts'
 
 const receipts: EvidenceReceipt[] = [{
@@ -54,6 +54,19 @@ test('evidence pointers retain null and escaped JSON keys without fabricating me
   const parsed = parseRcaAssessment(JSON.stringify({ ...assessment, observations: [pointer],
     hypotheses: assessment.hypotheses.map(hypothesis => ({ ...hypothesis, supporting: [pointer], contradicting: [] })) }), sources)
   assert.match(renderRcaAssessment(parsed, sources), /\| null \|/)
+})
+
+test('reproduced slashless pointers receive exact repair guidance and are constrained by the tool schema', () => {
+  for (const path of ['rows/1', 'rows/1/event_time', 'read_completed_at_utc']) {
+    assert.throws(() => parseRcaAssessment(JSON.stringify({ ...assessment, observations: [{ ...ref, path }] }), receipts), /leading "\/" is missing/)
+  }
+  const schema = JSON.stringify(agentDefinition('rca', 'test').tools)
+  assert.match(schema, /"pattern":"\^\/"/)
+  assert.match(schema, /"maxLength":200/)
+  assert.equal(requiresInspectionEvidence('Investigate it using available telemetry, inspections and existing work.'), true)
+  assert.equal(requiresInspectionEvidence('Investigate whether recent telemetry and inspections justify additional work.'), true)
+  assert.equal(requiresInspectionEvidence('Investigate telemetry and prepare an inspection draft.'), false)
+  assert.equal(requiresInspectionEvidence('Investigate telemetry. Do not query inspections.'), false)
 })
 
 test('only Sleuth can submit the structured RCA completion tool', () => {
