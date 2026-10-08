@@ -29,6 +29,10 @@ flat `rows` records. Declared row counts must match; inconsistent/nested/malform
 datasets are explicitly unverified. Literal native identity/value/time fields are
 compared with direct receipts without inventing units or removing timestamp precision
 differences. Schema-free empty JSON sets are not evidence of an empty population.
+An instrument `Signal ID` is not an OPC UA node. The decoder accepts only explicit,
+unambiguous literal node cells, including when a separate `Signal node` column exists.
+Explicit inline units can be read from numeric cells; conflicting unit columns remain
+unverified rather than silently converted.
 
 Administration configures the current project endpoint, not a direct model-inference
 endpoint. Model selection belongs to the canonical agent provisioner. Operator additional

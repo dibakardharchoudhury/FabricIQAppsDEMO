@@ -6,7 +6,7 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Current deployed release: **1.0.754 (`8a9220b`)**. The owner-restored capacity was
+Current deployed release: **1.0.755 (`ab9c4b6`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
 the deployments and compound reruns, which are **not yet accepted**. The earlier explicit
@@ -17,8 +17,9 @@ Input-validation and native-instance corrections are deployed. The complete host
 matrix still exposed an ontology HTTP 500 and a self-referential Data Agent request;
 neither is an accepted pass. The follow-up business-query routing correction is deployed
 with backend checks passed. Ontology recovered on rerun; native fleet retrieval now
-returns data. Structured JSON support is deployed; literal business-header adapters
-discovered in the exact fleet rerun are locally verified and await deployment.
+returns data. Structured JSON and business-header support are deployed; the next
+verified correction distinguishes instrument IDs from literal OPC UA nodes and
+preserves inline units. It awaits deployment and hosted acceptance.
 Facility reconciliation and the original simple station chart passed their bounded
 hosted checks on 1.0.754. See the report above.
 The latest deployment refreshed Azure sign-in, preserved all 39 redirects and verified all

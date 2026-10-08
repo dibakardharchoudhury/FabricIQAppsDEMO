@@ -121,6 +121,31 @@ test('native business column labels preserve raw values, latest timestamps and l
   assert.match(output, /Not in returned native table/)
 })
 
+test('instrument IDs cannot override literal node columns and inline units remain explicit', () => {
+  const observed = `### BAD
+| Equipment ID | Signal ID | Signal node | Last value | Quality | Reading time (UTC) |
+|---|---|---|---|---|---|
+| EQUIP_RTI_T001 | INST_T001_TURBINE_TEMP | ns=2;s=T001.turbine_temp | 85 | BAD | 2026-10-08 06:05:01 |
+### Hottest temperatures
+| Rank | Equipment ID | Signal ID | Signal node | Latest temperature | Reading time (UTC) |
+|---|---|---|---|---|---|
+| 1 | EQUIP_RTI_T001 | INST_T001_TURBINE_TEMP | ns=2;s=T001.turbine_temp | 85 C | 2026-10-08 06:05:01 |`
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: observed }])
+  assert.doesNotMatch(output, /Expected one native (BAD-quality|ranked temperature)|Native population not comparable|value not comparable|unit differs/)
+  assert.match(output, /timestamp\/precision differs/)
+  const ambiguous = observed.replaceAll('INST_T001_TURBINE_TEMP', 'ns=2;s=Different.turbine_temp')
+  assert.match(renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: ambiguous }]), /Comparison incomplete/)
+  const instrumentOnly = observed.replaceAll('ns=2;s=T001.turbine_temp', 'INST_T001_TURBINE_TEMP')
+  assert.match(renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: instrumentOnly }]), /Comparison incomplete/)
+})
+
+test('contradictory inline and column units are not silently reconciled', () => {
+  const conflicting = text.replace('| 90 | C |', '| 90 F | C |')
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: conflicting }])
+  assert.match(output, /inline value unit conflicts/)
+  assert.match(output, /Native population not comparable/)
+})
+
 test('native JSON malformed, nested, inconsistent, empty and count-mismatched sets stay unverified', () => {
   for (const content of [
     '{"rows":',

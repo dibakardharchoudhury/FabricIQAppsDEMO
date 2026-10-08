@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.754 (`8a9220b`).** Canonical deployment completed on
+**Current deployed release: 1.0.755 (`ab9c4b6`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 166 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 167 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -103,6 +103,16 @@ fields now pass replay of both real native formats against direct receipts: eigh
 signals, five temperature ranks and six work orders, retaining timestamp precision
 differences. This follow-up passes 167 related tests, build/typecheck, lint and both
 bundle checks and awaits hosted verification. No mutation was captured in either rerun.
+
+**1.0.755 exact fleet rerun:** completed in 4m8s and compared all six work records,
+but telemetry remained unverified. The native answer put instrument IDs in `Signal ID`,
+literal OPC UA identifiers in `Signal node`, and temperature units inside numeric cells.
+The follow-up decoder requires a literal, unambiguous OPC UA node rather than choosing
+the first ID-labelled column. It preserves explicit inline units and rejects conflicts
+with a separate unit column. All three captured response formats now pass offline
+population/value/rank/unit/work comparison against their real direct receipts; timestamp
+precision differences remain. The change passes 169 regressions, build/typecheck, lint
+and two bundle checks, but still requires hosted acceptance.
 
 ### Earlier hosted failures and their corrections
 

@@ -95,13 +95,17 @@ export function readNativeDatasets(text: string) {
 }
 
 const aliases = {
-  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
+  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'Signal node', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
   equipment: ['equipment_id', 'Turbine ID', 'Equipment', 'Linked equipment_id'],
-  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value', 'Raw value', 'Latest temperature'],
-  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc', 'Latest timestamp (UTC)'],
+  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value', 'Raw value', 'Latest temperature', 'Last value'],
+  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc', 'Latest timestamp (UTC)', 'Reading time (UTC)'],
   quality: ['quality'], unit: ['unit'], rank: ['rank'],
 }
 const normalized = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+const literalNode = (value: string, column: string) =>
+  normalized(column) === normalized('instrument_id / opcua_node_id')
+    ? value.match(/^INST_[A-Za-z0-9_]+\s+\/\s+(ns=\d+;s=[^\s/]+)$/)?.[1]
+    : /^ns=\d+;s=\S+$/.test(value) ? value : undefined
 
 function claims(text: string, temperature: boolean): { rows: Claim[]; issues: string[] } {
   const parsed = readNativeDatasets(text)
@@ -112,22 +116,35 @@ function claims(text: string, temperature: boolean): { rows: Claim[]; issues: st
     const indices = Object.fromEntries(Object.entries(aliases).map(([key, names]) => [
       key, dataset.columns.findIndex(column => names.some(name => normalized(name) === normalized(column))),
     ]))
-    if (['node', 'equipment', 'value', 'time'].some(key => indices[key] < 0)) continue
+    const nodeColumns = dataset.columns.flatMap((column, index) =>
+      aliases.node.some(name => normalized(name) === normalized(column))
+        && dataset.rows.every(row => literalNode(row[index], column)) ? [index] : [])
+    const nodeSignatures = new Set(nodeColumns.map(index =>
+      JSON.stringify(dataset.rows.map(row => literalNode(row[index], dataset.columns[index])))))
+    indices.node = nodeSignatures.size === 1 ? nodeColumns[0] : -1
+    if (['equipment', 'value', 'time'].some(key => indices[key] < 0)) continue
     if (temperature ? indices.rank < 0 && !/temperature|hottest/i.test(dataset.title) : indices.quality < 0) continue
     if (!temperature && indices.rank >= 0) continue
     recognized++
+    if (indices.node < 0) {
+      issues.push(`Native ${dataset.title}: identity is not comparable.`)
+      continue
+    }
     for (const row of dataset.rows) {
-      const rawNode = row[indices.node]
-      const combined = normalized(dataset.columns[indices.node]) === normalized('instrument_id / opcua_node_id')
-      const node = combined ? rawNode.match(/^INST_[A-Za-z0-9_]+\s+\/\s+(ns=\d+;s=[^\s/]+)$/)?.[1] : rawNode
+      const node = literalNode(row[indices.node], dataset.columns[indices.node])
       const equipment = row[indices.equipment].match(/\bEQUIP_[A-Za-z0-9_]+\b/)?.[0]
       if (!node || !equipment || (temperature && !node.endsWith('.turbine_temp'))) {
         issues.push(`Native ${dataset.title}: identity is not comparable.`)
         continue
       }
       if (!temperature && row[indices.quality].toUpperCase() !== 'BAD') continue
-      rows.push({ node, equipment, value: row[indices.value], time: row[indices.time],
-        quality: row[indices.quality], unit: row[indices.unit], rank: row[indices.rank] })
+      const inline = row[indices.value].match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s+([A-Za-z_°/%]+)$/i)
+      const unit = row[indices.unit] || undefined
+      if (inline && unit !== undefined && unit !== inline[2]) {
+        issues.push(`Native ${dataset.title}: inline value unit conflicts with its unit column.`)
+      }
+      rows.push({ node, equipment, value: inline?.[1] ?? row[indices.value], time: row[indices.time],
+        quality: row[indices.quality], unit: unit ?? inline?.[2], rank: row[indices.rank] })
     }
   }
   if (recognized !== 1) issues.push(`Expected one native ${temperature ? 'ranked temperature' : 'BAD-quality'} table; found ${recognized}. Missing/unrecognized tables are not evidence of an empty population.`)
