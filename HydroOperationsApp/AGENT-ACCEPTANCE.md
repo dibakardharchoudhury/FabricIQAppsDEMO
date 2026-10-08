@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.751 (`3db6439`).** Canonical deployment completed on
+**Current deployed release: 1.0.752 (`89309b7`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 159 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 163 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +21,54 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+**The complete 1.0.752 matrix finished: ten compound first prompts plus two follow-ups.**
+Actual Responses agent identities, delegations, native MCP results, direct tool
+outputs and approval states were captured, not inferred from animation. There was
+one terminal source failure and one completed-but-unacceptable native answer.
+Therefore this is **not a ten-of-ten acceptance pass**.
+
+Chief coordinates every row below. Repeated native calls in row 5 use the same Sparky
+identity with separately verified Data Agent and Ontology connections.
+
+| Flow | Compound request | Specialists actually invoked | Displayed duration | Observed outcome |
+|---|---|---|---|---|
+| 1 | Latest BAD fleet, work coverage, investigate most-BAD turbine, conditional draft, final verification | Gauge, Sleuth, Fixer, Gauge | 2m58s | Selected T004 (two BAD signals); inspected records; no evidence-backed new draft. Stale readings disclosed. |
+| 2 | Ontology T005 instances, direct telemetry/work, RCA, conditional draft | Sparky | Failed before downstream steps | Actual `ask_ontology` returned upstream HTTP 500. No silent source replacement. |
+| 3 | Native SQL work inventory, direct verification, equipment backlog chart, RCA, conditional draft | Sparky, Gauge, Sleuth, Fixer | 2m40s | Eleven open orders; T002/T008 have two each; ID tie-break selects T002. Existing scope covered the proposed purpose; no duplicate draft. |
+| 4 | Native latest BAD/top-five raw temperature/work, independent full-population verification, investigate disagreements | Sparky, Gauge, Sleuth | 2m55s | Native agent refused a self-referential request for its own "published results"; comparison correctly remained incomplete. Not accepted. |
+| 5 | Ontology facilities, native SQL backlog, direct inventory reconciliation, facility chart | Sparky twice, Gauge | 3m52s | Actual ontology instances, complete direct inventories, 11 open orders, counts 4/4/3. All eleven returned native work records matched direct fields. |
+| 6 | Low stock, related work, parts-risk investigation, conditional equipment draft | Gauge, Sleuth, Fixer | 1m27s | Four low-stock parts retained. No authoritative BOM/reservations, so no invented equipment mapping or draft. |
+| 7 | Equipment health/work, downtime investigation, notification recommendation | Gauge, Sleuth | 59.1s | Evidence-limited RCA; no certified outage duration or notification delivery. |
+| 8 | T005 notifications/work, investigate inconsistencies, conditional draft | Gauge, Sleuth, Fixer | 58.3s | Actual empty operational reads; no invented issue, notification or draft. |
+| 9 | Station-average power chart plus investigation; verify displayed values in follow-up | Gauge, Sleuth; then Gauge | 46.7s + 23.2s | Three chart/table values, units and sample counts match the source. Follow-up received incomplete aggregation metadata and qualified its verification; not a full semantic-verification pass. |
+| 10 | Exact-title Low-priority acceptance draft, independent coverage check; investigate fault claims in follow-up | Fixer, Gauge; then Sleuth | 57.0s + 51.8s | Exact title/Low card, no claimed fault, rejected and disabled. Follow-up retained that card without proposing another or claiming SQL creation. |
+
+All completed scenarios had no measured horizontal document overflow. No captured
+GraphQL mutation occurred; this is browser request evidence, not a server-side audit.
+Source observations remain stale around 06:05 UTC; completed workflows do not establish
+current equipment health. Native returned-field comparison does not attest underlying
+SQL execution provenance or atomic reads.
+
+**Battle on 1.0.752:** both exact-title Low-priority review cards were produced through
+the explicitly labelled shared Foundry approval workflow, not independent engine
+implementations. Displayed times were 67.3s and 46.8s. Both cards were rejected and
+disabled; no mutation was captured. Proposed acceptance-check wording is editable
+suggestion, not an approved OEM procedure.
+
+**Navigation on 1.0.752:** authenticated document reload 2090.4ms; route-shell headings
+ready in 1374ms (Overview), 914ms (Telemetry), 31ms (Maintenance), 358ms (Intelligence).
+These are warm-session, shell-readiness measurements, not cold login, complete data
+readiness or a latency SLA. Compound native retrieval still takes minutes.
+
+**Follow-up source fix awaiting deployment:** reject self-referential Data Agent
+"published results"/publication-endpoint assignments before native execution, return
+bounded correction guidance, and separate application routing rules from the business
+question. The agent's connected tables are allowed; missing clock metadata is disclosed
+instead of requiring a fictional publication API. Source failures still propagate.
+This passes 164 related tests, production build/typecheck, lint and both bundle checks.
+
+### Earlier hosted failures and their corrections
 
 **1.0.751 targeted reruns are not accepted.** The fleet run stopped on an invalid
 model-generated filter array containing an empty string (3m2s). The facility run

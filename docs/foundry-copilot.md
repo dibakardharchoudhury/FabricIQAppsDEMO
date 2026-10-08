@@ -13,6 +13,18 @@
 > Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
 > Shared presentation and safety tests do not certify live response parity or agent latency.
 
+The complete 1.0.752 hosted matrix captured ten compound first prompts and two
+follow-ups. It is not a ten-of-ten pass: ontology retrieval surfaced HTTP 500, and
+a fleet request incorrectly asked the Data Agent for its own "published results".
+Native connection selection belongs in `native_source`, not inside the business
+question as a request for a publication endpoint. The runtime now rejects that
+self-referential assignment before native I/O and returns bounded correction guidance.
+Sparky must not forward application routing/no-endpoint-substitution rules to the
+remote query engine as prohibitions on its connected Lakehouse/Eventhouse/SQL tables.
+Missing read-clock metadata is disclosed; unavailable native results never become a
+successful comparison through direct-source substitution. See the linked acceptance
+report for the deployed version and rerun status.
+
 Administration configures the current project endpoint, not a direct model-inference
 endpoint. Model selection belongs to the canonical agent provisioner. Operator additional
 instructions reach the Supervisor and all Foundry specialists; the editable direct-source

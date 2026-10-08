@@ -11,10 +11,14 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
 }
 
 export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
-export function nativeAssignmentError(question: string): string | undefined {
+export function nativeAssignmentError(question: string, source?: NativeSource): string | undefined {
   const local = [...DIRECT_TOOLS, 'hydro_query', 'propose_work_order', 'complete_rca_assessment']
     .filter(name => new RegExp(`\\b${name}\\b`, 'i').test(positiveActionClauses(question)))
-  return local.length ? `Native-source assignments cannot prescribe local Hydro application tools (${local.join(', ')}). Ask for the business data, identities, time window and output fields using the native source's own capabilities. Assign direct Hydro tool execution to Gauge/Sleuth/Fixer separately. No native agent was invoked and no delegation slot was consumed.` : undefined
+  if (local.length) return `Native-source assignments cannot prescribe local Hydro application tools (${local.join(', ')}). Ask for the business data, identities, time window and output fields using the native source's own capabilities. Assign direct Hydro tool execution to Gauge/Sleuth/Fixer separately. No native agent was invoked and no delegation slot was consumed.`
+  if (source === 'data-agent' && /\bdata[\s-]+agent(?:'s)?\s+(?:published\s+)?(?:results|outputs)\b|\bpublication\s+endpoint\b/i.test(positiveActionClauses(question))) {
+    return 'Ask a business-data question, not for the Data Agent to retrieve its own published results or a publication endpoint. native_source already selects the connection. Preserve the requested turbine identities, quality, temperature, work, time window and output fields; its connected Lakehouse/Eventhouse/SQL tables are permitted execution sources. Request source/read timestamps only when available, disclosing missing metadata. No native agent was invoked and no delegation slot was consumed.'
+  }
+  return undefined
 }
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.

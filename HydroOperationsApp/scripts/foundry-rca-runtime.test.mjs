@@ -402,6 +402,32 @@ test('compound RCA retains native claims separately from validated source refere
   assert.doesNotMatch(result.text, /unsupported diagnostic conclusion/)
 })
 
+test('self-referential published-results requests are repaired before native execution', async () => {
+  reset()
+  const businessQuestion = 'Which turbines have latest signal quality BAD today UTC, which five have the highest latest raw temperature, and what non-Completed/non-Cancelled work is open for their union?'
+  harness.responses.push(
+    { role: 'supervisor', calls: [call('recursive', 'delegate_to_agent', {
+      specialist: 'fabric-iq', native_source: 'data-agent',
+      question: 'Provide the Fabric Data Agent published results for today showing latest BAD signals, five hottest turbines and all open work. Return the agent read-completion timestamp.',
+    })] },
+    { role: 'supervisor', calls: [call('business', 'delegate_to_agent', {
+      specialist: 'fabric-iq', native_source: 'data-agent', question: businessQuestion,
+    })] },
+    nativeReply('Native business rows returned. Read-completion metadata unavailable.'),
+    { role: 'supervisor', text: 'Native business rows returned. Read-completion metadata unavailable.' },
+  )
+  await askFoundryCopilot('Ask the published Data Agent for turbine readings and open work.')
+  const native = harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
+  assert.equal(native.length, 1)
+  assert.ok(harness.requests[1].input.some(item => /native_source already selects/.test(item.output ?? '')))
+  const user = native[0].input.find(item => item.role === 'user')
+  assert.match(JSON.stringify(user), /Which turbines have latest signal quality BAD today UTC/)
+  assert.doesNotMatch(JSON.stringify(user), /Provide the Fabric Data Agent published results/)
+  assert.match(JSON.stringify(native[0].input), /do not forward these to the native tool/)
+  assert.equal(harness.reads.length, 1, 'No direct-source substitute was run')
+  assert.deepEqual(harness.verifiedSources, ['data-agent'])
+})
+
 test('native requests restrict tools and reject a different source or prose-only completion', async () => {
   reset()
   harness.responses.push(delegate('fabric-iq'), nativeReply('Wrong source.', 'ontology'))
