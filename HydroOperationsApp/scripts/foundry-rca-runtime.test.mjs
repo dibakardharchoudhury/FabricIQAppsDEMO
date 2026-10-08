@@ -226,6 +226,17 @@ test('incorrect native delegation is rejected before a source is invoked', async
   assert.ok(harness.requests[1].input.some(item => /operator requested the Data Agent/.test(item.output ?? '')))
 })
 
+test('unrequested native inventory delegation returns to Chief before invoking or verifying a source', async () => {
+  reset()
+  harness.responses.push(delegate('fabric-iq'), delegate('qa'),
+    { role: 'qa', calls: [read] }, { role: 'qa', text: 'Direct inventory evidence.' },
+    { role: 'supervisor', text: 'Direct inventory evidence.' })
+  await askFoundryCopilot('List spare parts at or below reorder level.')
+  assert.deepEqual(harness.verifiedSources, [])
+  assert.equal(harness.requests.some(request => request.agent_reference.name === 'hydro-fabric-iq-agent'), false)
+  assert.ok(harness.requests[1].input.some(item => /not requested a native/.test(item.output ?? '')))
+})
+
 test('both native sources can receive the same retrieval assignment without substitution', async () => {
   reset()
   harness.responses.push(delegate('fabric-iq'), nativeReply('Data Agent evidence.'),

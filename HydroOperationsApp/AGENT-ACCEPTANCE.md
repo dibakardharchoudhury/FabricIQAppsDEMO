@@ -5,8 +5,8 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.740 (`b99a4f7`).** Canonical deployment completed on
-October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v12, Fixer v11,
+**Current deployed release: 1.0.742 (`33e76ea`).** Canonical deployment completed on
+October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Hosted reruns are in progress.
@@ -16,6 +16,35 @@ Telemetry was 90/90 fresh at 05:46 UTC, but subsequently stopped advancing aroun
 freshness observation as current health.
 Creation/configuration readback is verified for the five Foundry agents, but complete
 multi-agent runtime correctness is not yet certified.
+
+### Latest hosted verification
+
+- The explicit Low-priority T005 acceptance card now appeared in 54.7 seconds, with
+  its exact requested title, no claimed fault, and Chief -> Gauge -> Fixer -> Gauge
+  request/return execution. The card was rejected, not saved. This repairs the
+  earlier nested-arguments failure; it does not certify the whole conversation.
+- Its RCA follow-up failed after 38.6 seconds: the last HTTP 200 Responses stream
+  ended without a completion event. The application surfaced failure and did not
+  present a successful assessment. Captured earlier requests in that turn completed;
+  the underlying cause of the final incomplete stream is not yet established.
+- The station-chart/RCA flow on 1.0.741 took 49.2 seconds, invoked Chief, Gauge and
+  Sleuth, and rendered three source-derived station means in MW with stale timestamps
+  and BAD sample counts. It also exposed an RCA validation gap: the model cited
+  `/chart/inlineCsvData`. The source correction rejects chart metadata in both
+  observations and hypothesis references, while preserving actual `/rows/...`
+  evidence. A realistic station-tool regression passes; hosted revalidation is pending.
+- RCA source identifiers now use the existing collapsible Sources section rather
+  than occupying the main answer. Full evidence remains available.
+- An ordinary parts request incorrectly invoked Sparky before Gauge, consuming an
+  unrequested native call. The correction rejects native delegation unless the current
+  user request or retained user source context names Data Agent, Ontology or Fabric IQ.
+  Assistant prose cannot supply this permission. Runtime regression verifies that no
+  native source is verified or invoked for the rejected delegation.
+- Native ontology retrieval failed with `tool_user_error`: `list_ontology_entities`
+  rejected an `entityName` that did not match its identifier pattern. The initial UI
+  displayed only a generic failure. The stream reader now preserves messages from
+  all supported error envelopes and incomplete-response reasons. This is a diagnostics
+  correction, not a claim that ontology-native instance retrieval works.
 
 ## Current implementation and limitations
 

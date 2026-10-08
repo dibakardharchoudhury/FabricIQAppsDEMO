@@ -56,6 +56,22 @@ test('evidence pointers retain null and escaped JSON keys without fabricating me
   assert.match(renderRcaAssessment(parsed, sources), /\| null \|/)
 })
 
+test('station-power chart CSV is presentation metadata, not an RCA source observation', () => {
+  const sources = [{ ...receipts[0], result: {
+    rows: [{ Station: 'Sloy', average_power_MW: 1315.0626405438807 }],
+    chart: { inlineCsvData: 'Station,average_power_MW\nSloy,1315.0626405438807' },
+  } }]
+  for (const path of ['/chart', '/chart/inlineCsvData']) {
+    const pointer = { ...ref, path }
+    assert.throws(() => parseRcaAssessment(JSON.stringify({ ...assessment, observations: [pointer] }), sources), /visualization metadata/)
+    assert.throws(() => parseRcaAssessment(JSON.stringify({ ...assessment, hypotheses: [
+      { ...assessment.hypotheses[0], supporting: [pointer] }, assessment.hypotheses[1],
+    ] }), sources), /visualization metadata/)
+  }
+  const parsed = parseRcaAssessment(JSON.stringify(assessment), sources)
+  assert.match(renderRcaAssessment(parsed, sources), /### Sources\n\ncall_measured\/rows\/0/)
+})
+
 test('reproduced slashless pointers receive exact repair guidance and are constrained by the tool schema', () => {
   for (const path of ['rows/1', 'rows/1/event_time', 'read_completed_at_utc']) {
     assert.throws(() => parseRcaAssessment(JSON.stringify({ ...assessment, observations: [{ ...ref, path }] }), receipts), /leading "\/" is missing/)

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
-import { agentDefinition, buildAgentInput, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, buildAgentInput, nativeSourceError, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -15,6 +15,27 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('ordinary parts queries cannot invent a native-source request; follow-ups retain explicit user source scope', () => {
+  assert.match(nativeSourceError('List spare parts at or below reorder level and related open maintenance work.', 'data-agent') ?? '', /not requested/)
+  assert.equal(nativeSourceError('Use Fabric IQ to retrieve inventory.', 'data-agent'), undefined)
+  assert.equal(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the published Data Agent for open work.']), undefined)
+  assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /not direct Ontology/)
+  assert.equal(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']), undefined)
+  assert.match(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the Data Agent.', 'Now use the ontology.']) ?? '', /not the Data Agent/)
+})
+
+test('Responses stream surfaces native tool errors and incomplete reasons instead of a generic failure', async () => {
+  const message = "An error occurred invoking 'list_ontology_entities': Parameter 'entityName' does not match the required pattern."
+  for (const event of [
+    { type: 'error', message },
+    { type: 'error', error: { message } },
+    { type: 'response.failed', response: { error: { message } } },
+  ]) await assert.rejects(readResponsesStream(responseStream([event])), /list_ontology_entities.*entityName/)
+  await assert.rejects(readResponsesStream(responseStream([
+    { type: 'response.incomplete', response: { incomplete_details: { reason: 'max_output_tokens' } } },
+  ])), /incomplete: max_output_tokens/)
+})
 
 test('supporting sections collapse without removing evidence or hiding limitation sections', () => {
   const text = 'Cause undetermined.\n\n### Source observations\n\n| ID | Value |\n| --- | --- |\n| T005 | 12 |\n\n### Limitations\n\nTelemetry is stale.\n\n### Sources\n\nEventhouse receipt 12.'

@@ -16,6 +16,8 @@ type ChatChunk = {
 
 type ResponsesEvent = {
   type?: string
+  message?: string
+  error?: { message?: string }
   delta?: string
   output_index?: number
   item?: { type?: string; call_id?: string; name?: string; arguments?: string; status?: string; error?: unknown; content?: Array<{ type?: string; text?: string }> }
@@ -24,6 +26,7 @@ type ResponsesEvent = {
     output?: unknown[]
     usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
     error?: { message?: string }
+    incomplete_details?: { reason?: string }
   }
 }
 
@@ -154,7 +157,10 @@ export async function readResponsesStream(body: ReadableStream<Uint8Array>, onTe
     try { event = JSON.parse(payload) as ResponsesEvent } catch { return }
     onEvent?.(event)
     if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') {
-      throw new Error(event.response?.error?.message ?? 'Azure AI Foundry response failed.')
+      throw new Error(event.response?.error?.message ?? event.error?.message ?? event.message
+        ?? (event.response?.incomplete_details?.reason
+          ? `Azure AI Foundry response incomplete: ${event.response.incomplete_details.reason}.`
+          : 'Azure AI Foundry response failed.'))
     }
     if (event.type === 'response.output_item.done' && event.item?.type === 'mcp_call'
       && (event.item.error || event.item.status === 'failed')) {

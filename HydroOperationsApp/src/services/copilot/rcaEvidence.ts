@@ -87,7 +87,7 @@ function evidenceValue(reference: EvidenceReference, receipts: readonly Evidence
   if (!reference.path.startsWith('/') || reference.path.length > 200 || /~(?![01])/.test(reference.path)) {
     throw new RcaEvidenceError('Use an explicit JSON pointer to an observation, not the entire evidence response.')
   }
-  if (/^\/(?:grounded_summary|visualization)(?:\/|$)/.test(reference.path)) {
+  if (/^\/(?:grounded_summary|visualization|chart)(?:\/|$)/.test(reference.path)) {
     throw new RcaEvidenceError('Reference source rows or fields, not formatted summaries or visualization metadata.')
   }
   let value: unknown = receipt.result
@@ -168,7 +168,8 @@ export function renderRcaAssessment(report: RcaAssessment, receipts: readonly Ev
     'The references are inspectable observations, not validated causal links. Missing contradictory observations do not confirm a hypothesis.',
     '### Next checks',
     'Obtain the missing records above, establish measurement quality/freshness and a matched operating baseline, and have qualified engineering personnel review the evidence before selecting physical inspections or changing operations. No equipment controls, notifications or SQL writes were performed by this assessment.',
-    `Sources: ${unique.map(ref => `${ref.evidence_id}${ref.path}`).join('; ')}.`,
+    '### Sources',
+    unique.map(ref => `${ref.evidence_id}${ref.path}`).join('; ') + '.',
   ].join('\n\n')
 }
 

@@ -190,7 +190,7 @@ export async function askFoundryCopilot(
               const { specialist, question: delegatedQuestion, reason, nativeSource: delegatedSource } = parseDelegation(call.arguments)
               const completed = events.filter(entry => entry.status === 'completed' || entry.status === 'approval').map(entry => entry.role)
               const orderError = delegationOrderError(question, specialist, completed)
-                ?? (specialist === 'fabric-iq' ? nativeSourceError(question, delegatedSource) : undefined)
+                ?? (specialist === 'fabric-iq' ? nativeSourceError(question, delegatedSource, history.filter(message => message.role === 'user').map(message => message.content)) : undefined)
               if (orderError) {
                 input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ error: orderError, executed: false }) })
                 captureApplicationEvent(event, orderError, call.id, true)

@@ -120,10 +120,13 @@ export function parseHydroQuery(raw: string):
 
 export type NativeSource = 'data-agent' | 'ontology'
 
-export function nativeSourceError(question: string, source: unknown): string | undefined {
+export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {
   if (source !== 'data-agent' && source !== 'ontology') return 'fabric-iq requires native_source data-agent or ontology. Select one requested source per delegation.'
-  const dataAgent = /\bdata[\s-]+agent\b/i.test(question)
-  const ontology = /\bontology\b/i.test(question)
+  const requestedContext = [question, ...[...priorUserQuestions].reverse()]
+    .find(text => /\b(?:data[\s-]+agent|ontology|fabric[\s-]+iq)\b/i.test(text))
+  if (!requestedContext) return 'The operator has not requested a native Data Agent, Ontology or Fabric IQ source in this conversation. Use Gauge for ordinary inventory, telemetry, SQL work and charts; do not add an unnecessary native delegation.'
+  const dataAgent = /\bdata[\s-]+agent\b/i.test(requestedContext)
+  const ontology = /\bontology\b/i.test(requestedContext)
   if (dataAgent && !ontology && source !== 'data-agent') return 'The operator requested the Data Agent, not direct Ontology. Set native_source to data-agent; no substitution is permitted.'
   if (ontology && !dataAgent && source !== 'ontology') return 'The operator requested Ontology, not the Data Agent. Set native_source to ontology; no substitution is permitted.'
   return undefined

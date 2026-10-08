@@ -77,12 +77,18 @@ window, without averages or quality exclusions. A direct missing-node-column fil
 the enriched function is rejected locally with repair guidance; actual source failures
 still propagate. This does not turn the KQL allow-list into a complete semantic compiler.
 The pointer/inventory/latest-telemetry and follow-up-routing changes after that rerun are
-deployed in 1.0.740, but not yet hosted-certified. Canonical deployment and browser build
+deployed beginning with 1.0.740, with pointer-schema and proposal-envelope corrections
+in 1.0.741 and 1.0.742. The full suite is not yet hosted-certified. Canonical deployment and browser build
 identity passed; tenant-wide consent remains an enterprise rollout prerequisite.
 Native-source selection now restricts each Sparky invocation to its explicit MCP server
 label and requires a completed matching execution receipt. Both connections remain
 provisioned; no alternate source is used on failure. A live preview-service probe accepted
 the restriction and returned the requested Data Agent receipt, not proof of SQL answer correctness.
+Ordinary inventory requests cannot invent a native-source requirement. Explicit user
+source context can carry into follow-ups; assistant-generated source names cannot authorize it.
+Native tool error envelopes and incomplete-response reasons are surfaced rather than
+replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
+failure was observed live; improved diagnostics do not repair or certify that native service.
 Proposal input validation is locally repairable within the existing round budget;
 real source/target errors still propagate. Unsent notifications use checked source
 presentation without treating prose authorization requests as successful completion.
