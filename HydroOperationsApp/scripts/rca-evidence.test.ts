@@ -64,6 +64,12 @@ test('only Sleuth can submit the structured RCA completion tool', () => {
 test('work-order priority comes from an explicit operator directive or defaults to Medium', () => {
   assert.equal(workOrderPriorityForRequest('Investigate BAD readings and prepare an inspection draft.'), 'Medium')
   assert.equal(workOrderPriorityForRequest('List high-priority open orders, then prepare an inspection draft.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('List open orders where priority is High; then prepare an inspection draft.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('Prepare an inspection draft after checking high-priority existing work.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('Create a work order for T005 with priority High.'), 'High')
+  assert.equal(workOrderPriorityForRequest('Create a work order and set its priority to Low.'), 'Low')
+  assert.equal(workOrderPriorityForRequest('List Draft work orders of priority High; then prepare an inspection draft.'), 'Medium')
+  assert.equal(workOrderPriorityForRequest('Prepare a report of orders where priority is High, then create a work order.'), 'Medium')
   assert.equal(workOrderPriorityForRequest('Prepare one editable Low-priority inspection work-order draft.'), 'Low')
   assert.equal(workOrderPriorityForRequest('Create a work order. Priority: Critical.'), 'Critical')
   assert.equal(workOrderPriorityForRequest('Do not create a high-priority work order.'), 'Medium')

@@ -60,10 +60,19 @@ export function workOrderPriorityForRequest(question: string): WorkOrderProposal
   const values = new Set<string>()
   const positive = positiveActionClauses(question)
   const patterns = [
-    /\b(?:create|raise|submit|log|make|generate|prepare|propose|draft)\b[^.!?;\n]{0,100}?\b(low|medium|high|critical)[ -]priority\b/gi,
+    /\b(low|medium|high|critical)[ -]priority\b/gi,
     /\bpriority\s*(?::|=|of|is|to)?\s*["']?(low|medium|high|critical)\b/gi,
   ]
-  for (const pattern of patterns) for (const match of positive.matchAll(pattern)) values.add(match[1].toLowerCase())
+  for (const clause of positive.split(/[.!?;\n]|\b(?:and|then)\b/i)) {
+    const field = clause.match(/^\s*(?:priority\s*[:=]|(?:set|assign)\s+(?:(?:its|the)\s+)?priority\s*(?::|=|to|as)?)\s*["']?(low|medium|high|critical)\b/i)
+    if (field) values.add(field[1].toLowerCase())
+    const action = clause.match(/\b(?:create|raise|submit|log|make|generate|prepare|propose|draft)\b/i)
+    if (!action) continue
+    if (/\b(?:list|show|find|read|query|count|compare|check|review)\b/i.test(clause.slice(0, action.index))) continue
+    const assignment = clause.slice(action.index).split(/\b(?:after|before|checking|reviewing|where|unless|if)\b/i)[0]
+    if (!isWorkOrderRequest(assignment)) continue
+    for (const pattern of patterns) for (const match of assignment.matchAll(pattern)) values.add(match[1].toLowerCase())
+  }
   if (values.size > 1) throw new Error('The work-order request specifies conflicting priorities. Specify one priority for this draft.')
   const value = [...values][0]
   return value === 'low' ? 'Low' : value === 'high' ? 'High' : value === 'critical' ? 'Critical' : 'Medium'

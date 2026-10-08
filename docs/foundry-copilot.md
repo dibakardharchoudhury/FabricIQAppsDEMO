@@ -45,6 +45,9 @@ Native retrieval text is retained separately as claims for comparison, not promo
 a verified diagnosis. Local runtime tests also cover deterministic proposal priority:
 the actual proposal tool ignores model escalation, uses an explicit operator priority
 or Medium, and still requires human approval.
+Priority extraction is scoped to the new-work assignment or an explicit priority field/setter.
+A High-priority filter on existing orders, or a request to check such orders before drafting,
+does not itself assign High priority to the new draft.
 This validates source references, **not causal relevance or baseline comparability**.
 Hypotheses remain untested and cause undetermined; no approved diagnostic-limit source
 or validated causal model is configured. See the acceptance report for deployment/live status.

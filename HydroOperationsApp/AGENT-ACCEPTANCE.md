@@ -148,6 +148,12 @@ presentation, fixed in source and regression-tested but not yet hosted-verified.
 Proposal priority is now resolved from the explicit operator request before orchestration,
 otherwise Medium; model-generated priority cannot escalate it. Conflicting explicit values
 produce a visible error without leaving chat busy. The operator can still edit the card.
+An additional regression reproduced a priority-scope bug: "List open orders where priority
+is High; then prepare an inspection draft" incorrectly selected High for the new draft.
+The source fix scopes priority extraction to the new-work assignment or an explicit priority
+field/setter, excluding read-only filters and later coverage-check clauses. Those cases now
+remain Medium while explicit new-draft High/Low directives are retained. This correction
+passed the full focused frontend suite and build; hosted verification remains blocked.
 
 ## Separate WO analysis from creation?
 
