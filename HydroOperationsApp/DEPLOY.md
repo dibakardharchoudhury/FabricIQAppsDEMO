@@ -8,16 +8,18 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.772 (`cd1c5f4`)**. The October 8 deployment completed
+Current deployed release: **1.0.773 (`da4423c`)**. The October 8 deployment completed
 through the canonical deployer after its supported tenant-switch flow. It printed
 `SUCCESS` and `DEPLOYED_APP_URL`, preserved all 39 redirects, verified the five
 agent definitions and passed AppBackend preflight/POST checks. Hosting verification
 returned `protected-sign-in-gate`; authenticated agent acceptance is still pending.
-The integrated browser initially blocked the Fabric broker popup. Sharing the
-broker subsequently resolved sign-in, and the authenticated app is now accessible.
-No protected-hosting or authorization check was bypassed.
-The authenticated browser confirms 1.0.772. Universal tables and automatic charts
-are deployed; the same-build live compound-flow matrix remains a separate gate.
+The browser previously confirmed 1.0.772 and ran several compound tests. On
+refresh after the 1.0.773 deployment, the hosting session had expired and the
+integrated browser blocked its Fabric sign-in popup. The operator must complete
+normal hosting sign-in before current browser identity and live acceptance can
+resume. This is not a new application-consent requirement. No protected-hosting
+or authorization check was bypassed. Universal tables and automatic charts are
+deployed; the same-build live compound-flow matrix remains a separate gate.
 
 Earlier release **1.0.758 (`4c0e1a1`)**: the owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The

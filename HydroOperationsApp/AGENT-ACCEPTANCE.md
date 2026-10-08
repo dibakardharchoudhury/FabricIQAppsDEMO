@@ -8,14 +8,18 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.772 (`cd1c5f4`).** Canonical deployment returned
+**Current deployed release: 1.0.773 (`da4423c`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
-as required by the readiness contract. The initial integrated-browser Fabric
-broker popup was blocked; sharing the broker subsequently resolved sign-in, and
-the authenticated app is now available. New hosted ten-flow and repeated-sign-in
-acceptance remain pending. No access control was bypassed.
+as required by the readiness contract. The built bundle contains version 1.0.773.
+After this deployment, the previously authenticated browser returned to Fabric's
+private hosting sign-in gate and the integrated browser blocked the popup.
+The existing broker had no opener; normal pointer/keyboard sign-in attempts did
+not restore access. The operator was unavailable to complete sign-in. Therefore
+browser build identity, the exact low-stock recovery, the final-candidate matrix,
+follow-ups and Battle/Data Agent parity remain unverified. No access control was
+bypassed and no additional Entra permission was introduced.
 
 **Earlier 1.0.758 (`4c0e1a1`) evidence:** canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
@@ -136,13 +140,24 @@ The local filter correction adds explicit, catalog-validated `value_column`
 operands, rejects numeric/text ordering, and preserves null/zero/equality
 semantics. Low-stock instructions now use `quantityOnHand lte value_column
 reorderLevel`. All 177 affected tests, typecheck and targeted lint passed.
-Deployment and the exact four-part low-stock readback remain required.
+The correction deployed successfully in 1.0.773. A subsequent 40-test tool suite
+also passed, including a regression using the twelve observed stock records that
+returns exactly four parts: SP-BRG-1002, SP-ELE-5002, SP-SEAL-2002 and SP-VAL-4001.
+This is a recorded-source fixture, not fresh live readback. That hosted rerun is
+blocked on the hosting sign-in described above.
+
+Capturing the native response on a further 1.0.772 reproduction confirmed actual
+bullet records instead of the requested tables, with temperature OPC node IDs
+omitted. The application did not infer missing identities or declare parity.
+Reliable native structured-output enforcement remains a separate limitation.
 
 **Teams communication recovered:** the verified existing self-chat message
 endpoint accepted updates at 18:22 and 18:38 UTC; the first message was read back
 successfully. A session-attached 15-minute reminder supports further updates
 while work continues. This is progress communication, not certification of the
-app's operational notification delivery or a permanent scheduler.
+app's operational notification delivery or a permanent scheduler. Further updates
+were accepted at 18:51, 19:08 and 19:24 UTC. The session-bound reminder is stopped
+while hosted testing awaits operator sign-in; no unattended schedule is claimed.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

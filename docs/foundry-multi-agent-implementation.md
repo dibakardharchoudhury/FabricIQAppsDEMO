@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.772 / `cd1c5f4`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness and browser identity passed; checked RCA tables and requested backlog chart recovered. Complete matrix not yet accepted |
+| Hosted Fabric app | Release **1.0.773 / `da4423c`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed. Latest browser acceptance is blocked by an expired private-hosting session and blocked sign-in popup; full matrix not accepted |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -162,16 +162,30 @@ returned twelve parts instead of the four at/below their row-specific limits.
 The correction adds explicit catalog-validated `value_column`, disallows mixed
 numeric/text ordering, and tests below/equal/above, missing quantities/limits,
 zero, invalid columns and ambiguous operands. The six-file affected suite passed
-177 tests plus typecheck/lint; this filter correction is not yet deployed.
+177 tests plus typecheck/lint; this filter correction deployed in 1.0.773.
+The subsequent 40-test tool suite includes an exact twelve-record stock fixture
+that returns the four observed at/below-limit parts, including equality.
 Native fleet comparison also remained explicitly incomplete because its returned
 tables were not recognized. These runs are recorded as failures/limitations,
 not converted to passes by finished agent badges.
+The captured native payload used bullet records and omitted temperature OPC node
+IDs despite the table request; these missing identities were not fabricated.
+
+On refresh after deployment, the Fabric private-hosting session expired and its
+sign-in popup was blocked. The operator was unavailable to complete normal
+sign-in. No permission was added and no hosting protection was bypassed.
+Consequently the latest hosted stock readback, final-candidate compound/follow-up
+matrix and Battle/Data Agent parity remain unverified. Earlier successful runs
+are not relabelled as acceptance of this build.
 
 Teams progress delivery was subsequently recovered through the verified existing
 self-chat messages endpoint. Updates at 18:22 and 18:38 UTC were accepted, with
 the first read back successfully. The attached reminder is session-bound; it is
 not a permanent notification service or evidence that app-generated operational
 notifications are delivered.
+Further progress updates were accepted at 18:51, 19:08 and 19:24 UTC. The attached
+reminder is stopped while testing awaits operator sign-in; there is no continuing
+unattended notification scheduler.
 
 The earlier chart/authentication corrections below were locally verified and
 deployed in **1.0.766**; complete hosted-agent acceptance remains pending:

@@ -31,6 +31,19 @@ test('column operands are explicit and catalog checked even for empty inventorie
   assert.throws(() => applyFilter([{ amount: NaN }], [{ column: 'amount', op: 'lte', value: Infinity }]), /finite operands/)
 })
 
+test('observed twelve-part inventory produces exactly four at-or-below-reorder records', () => {
+  const stock = [
+    ['SP-BRG-1001', 6, 4], ['SP-BRG-1002', 2, 3],
+    ['SP-ELE-5001', 4, 3], ['SP-ELE-5002', 1, 2], ['SP-ELE-5003', 14, 6],
+    ['SP-SEAL-2001', 9, 5], ['SP-SEAL-2002', 3, 4],
+    ['SP-SEN-3001', 12, 6], ['SP-SEN-3002', 20, 8], ['SP-SEN-3003', 7, 6],
+    ['SP-VAL-4001', 2, 2], ['SP-VAL-4002', 5, 3],
+  ].map(([partNumber, quantityOnHand, reorderLevel]) => ({ partNumber, quantityOnHand, reorderLevel }))
+  assert.deepEqual(applyFilter(stock, [{ column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }])
+    .map(row => row.partNumber), ['SP-BRG-1002', 'SP-ELE-5002', 'SP-SEAL-2002', 'SP-VAL-4001'])
+  assert.equal(stock.length, 12)
+})
+
 test('inspection date filters compare complete timestamps, not their shared year prefix', () => {
   const rows = [
     { id: 'old', inspectedAt: '2026-07-21T09:00:00.000Z' },
