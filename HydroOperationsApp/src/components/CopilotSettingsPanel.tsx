@@ -51,11 +51,14 @@ export function CopilotSettingsPanel() {
     <summary>
       <span><Bot size={17} /></span>
       <div>
-        <h2>Hydro Intelligence</h2>
-        <p>Foundry prompt, tools, data sources, and optional agent comparison. Saved in this browser.</p>
+        <h2>Advanced agent settings</h2>
+        <p>Optional browser overrides and agent comparison. Deployed defaults work without editing these settings.</p>
       </div>
     </summary>
     <div className="copilot-settings-body">
+    <p>These controls restrict the agent's available tools and sources; they do not grant Entra permissions,
+      change Fabric access, or authorize work-order creation. Human approval is still required.
+      Use them for troubleshooting or deliberate customization, not routine sign-in.</p>
 
     {!draft.projectEndpoint ? <p className="copilot-settings-warning">
       Set the Foundry project endpoint below to enable the provisioned agents. The signed-in user also needs the

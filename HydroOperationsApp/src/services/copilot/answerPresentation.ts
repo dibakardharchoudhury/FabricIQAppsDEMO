@@ -81,7 +81,7 @@ export function appendOmittedSnapshotWork(text: string, steps: readonly Pick<Age
 }
 
 const numeric = (value: string) => value.trim() !== '' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())
-const timeColumn = (name: string) => /^(timestamp|eventtime|time|datetime|date)(iso)?(utc)?$/.test(name.toLowerCase().replace(/[^a-z]/g, ''))
+export const timeColumn = (name: string) => /^(timestamp|eventtime|time|datetime|date)(iso)?(utc)?$/.test(name.toLowerCase().replace(/[^a-z]/g, ''))
 const identifierColumn = (name: string) => /(?:^|[_\s])(id|rank|index|number)(?:$|[_\s])/i.test(name)
 
 function normalizeLabeledCsv(text: string): string {

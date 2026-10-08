@@ -17,6 +17,7 @@ import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation,
 import { missingFacilityEvidence, renderFacilityReconciliation } from './facilityReconciliation.ts'
 import { checkRequestedKql, renderQueryChecks } from './queryEvidence.ts'
 import { stationSnapshot, stationPowerComparison, StationComparisonError, type StationSnapshot } from './stationComparison.ts'
+import { presentSourceRows } from './sourcePresentation.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -104,6 +105,7 @@ export async function askFoundryCopilot(
   const assessments: string[] = []
   const workDecisions: Array<'no_draft' | 'needs_clarification'> = []
   const stationSummaries = new Map<string, string>()
+  let sourceChartSummary: string | undefined
   try {
     const token = await foundryAgentToken(true)
     if (!token) throw new Error('Foundry Agent Service sign-in is required.')
@@ -245,6 +247,15 @@ export async function askFoundryCopilot(
               captureApplicationEvent(event, `Rejected incomplete ${fleetScope ? 'fleet' : 'direct-source'} verification; required receipts are missing.`)
               publish()
               continue
+            }
+            if (role === 'qa' && requiresChartOutput(question) && !visualizations.length) {
+              const presentation = presentSourceRows(steps, question)
+              if (presentation.visualizations.length) {
+                visualizations.push(...presentation.visualizations)
+                sourceChartSummary = presentation.summary
+                captureApplicationEvent(event, 'Rendered the requested chart directly from returned source rows; agent-authored CSV was not used.')
+                publish()
+              }
             }
             if (role === 'qa' && !chartReminderSent && chartPending()) {
               chartReminderSent = true
@@ -535,9 +546,10 @@ export async function askFoundryCopilot(
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
-    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
+    const checkedInvestigation = assessments.length || sourceChartSummary || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
       ...(facilityComparison ? [facilityComparison.text] : []),
       ...(queryEvidence ? [queryEvidence] : []),
+      ...(sourceChartSummary ? [sourceChartSummary] : []),
       ...(fleetComparison ? [fleetComparison] : []),
       ...assessments,
       ...specialistResults.filter(result => result.role === 'fabric-iq' && !fleetComparison && !facilityComparison).map(result =>

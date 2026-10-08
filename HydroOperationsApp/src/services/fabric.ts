@@ -11,6 +11,7 @@ import type { OntologyGraph } from './ontologyGraph'
 import { parseGraphBinding, queryBoundOntologyGraph } from './ontologyGraphQuery'
 import { requireV2Generation } from './ontologyArtifactDiscovery'
 import { createSingleFlight } from './singleFlight'
+import { createEntraTokens } from './entraTokens'
 import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
@@ -53,71 +54,59 @@ const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execu
 const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/user_impersonation`
 // Item.Read.All authorizes the per-item detail GET (e.g. Get Eventhouse → queryServiceUri);
 // Workspace.Read.All only covers List Items, and Item.Execute.All only covers running jobs.
-const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All', 'https://api.fabric.microsoft.com/Item.Execute.All']
+const FABRIC_SCOPES = ['https://api.fabric.microsoft.com/Workspace.Read.All', 'https://api.fabric.microsoft.com/Item.Read.All']
+const FABRIC_JOB_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/Item.Execute.All']
 const DATA_AGENT_SCOPES = [...FABRIC_SCOPES, 'https://api.fabric.microsoft.com/DataAgent.Execute.All']
 // Fabric Embed needs its own delegated scope. Named, not `.default`, for the same reason as kustoScope.
 const EMBED_SCOPES = ['https://api.fabric.microsoft.com/Fabric.Embed', 'https://api.fabric.microsoft.com/Item.Read.All']
 // Azure AI Foundry data plane. Named scope again, not `.default` — the caller needs the
-// `Cognitive Services OpenAI User` role on the Foundry resource for the token to be authorized.
+// `Foundry User` role on the project for agent execution.
 const FOUNDRY_AGENT_SCOPES = ['https://ai.azure.com/user_impersonation']
 
 export type ConnectTarget = 'stid' | 'telemetry' | 'stream'
 
-let initialized = false
+let initialization: Promise<void> | undefined
+const entraTokens = msal && tenantId ? createEntraTokens(msal, ensureInit, tenantId) : undefined
 
 /** Initialize MSAL and process any redirect returning from Entra. */
 export async function initAuth(): Promise<void> {
   if (!msal) return
-  await msal.initialize()
-  try {
-    await msal.handleRedirectPromise()
-  } catch (error) {
-    console.warn('Entra redirect handling failed.', error)
-  }
-  initialized = true
+  await ensureInit()
 }
 
 async function ensureInit() {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
-  if (initialized) return
-  await msal.initialize()
-  try { await msal.handleRedirectPromise() } catch (error) { console.warn('Entra redirect handling failed.', error) }
-  initialized = true
+  if (!initialization) {
+    const current = (async () => {
+      await msal.initialize()
+      const response = await msal.handleRedirectPromise()
+      if (response?.account) msal.setActiveAccount(response.account)
+    })()
+    initialization = current
+    void current.catch(() => { if (initialization === current) initialization = undefined })
+  }
+  await initialization
 }
 
 /** Acquire a token silently. Returns null when interactive sign-in/consent is required. */
 async function silentToken(scopes: string[], forceRefresh = false): Promise<string | null> {
-  await ensureInit()
-  const account = msal!.getAllAccounts()[0]
-  if (!account) return null
-  try {
-    return (await msal!.acquireTokenSilent({ account, scopes, forceRefresh })).accessToken
-  } catch (error) {
-    console.warn('Silent token acquisition failed; interactive consent required.', error)
-    return null
-  }
+  if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
+  return entraTokens.silent(scopes, forceRefresh)
 }
 
 /** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
  *  Must be invoked from a user gesture. */
 async function popupToken(scopes: string[]): Promise<string> {
-  await ensureInit()
-  const account = msal!.getAllAccounts()[0]
-  const result = await msal!.acquireTokenPopup({ scopes, account: account ?? undefined })
-  return result.accessToken
+  if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
+  return entraTokens.popup(scopes)
 }
 
-/** A Fabric REST token (read + execute). Silent first, popup only when interactive is allowed. */
+/** Fabric discovery/read token. Job execution explicitly requests its additional scope. */
 async function fabricToken(interactive: boolean, scopes = FABRIC_SCOPES): Promise<string | null> {
   const silent = await silentToken(scopes)
   if (silent) return silent
   if (!interactive) return null
-  try {
-    return await popupToken(scopes)
-  } catch (error) {
-    console.warn('Fabric permission consent did not complete.', error)
-    throw new Error('Fabric permission consent is required before this action can run. Complete the consent popup and try again.', { cause: error })
-  }
+  return popupToken(scopes)
 }
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
@@ -359,7 +348,7 @@ async function runJob(
     }>
   },
 ): Promise<JobStatus> {
-  const token = await fabricToken(true)
+  const token = await fabricToken(true, FABRIC_JOB_SCOPES)
   if (!token) throw new Error('Fabric sign-in is required.')
   let startedAt = new Date(Date.now() - 5000).toISOString()
   let location: string | null = null

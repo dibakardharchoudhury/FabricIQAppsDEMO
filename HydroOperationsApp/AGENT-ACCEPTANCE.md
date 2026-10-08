@@ -25,6 +25,17 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+**Latest local chart/consent correction (not deployed):** 106 targeted Node tests
+and the full 42-test backend suite passed. The app build, typecheck and lint passed.
+Structured source receipts now render charts/tables despite malformed model CSV;
+mixed units, truncation, missing timestamps, failed-refresh invalidation and
+compound native handoffs have regression coverage. Eight auth tests cover cached
+reuse, error classification, concurrent interactions, cancellation and tenant
+selection. The real local dashboard rendered a 250-row synthetic dataset and
+switched views through DOM click dispatch, with no narrow-viewport overflow.
+Native pointer automation stalled; no new hosted consent/ten-flow acceptance
+is claimed. See the implementation record for precise boundaries.
+
 **Latest local follow-up correction (not deployed):** source-derived station
 comparison now preserves previous/new means, sample/BAD counts and exact clocks
 without another model invocation. New regressions reproduced and fixed two cases:

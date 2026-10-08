@@ -16,7 +16,7 @@ from agent_framework import (
 
 from .contracts import (
     AgentReceipt, Approval, Assessment, Evidence, EvidenceReference, Observation, Outcome,
-    Proposal, RcaHypothesis, RcaReport, ReviewRequest, SourceIdentity, utc_now,
+    Proposal, RcaHypothesis, RcaReport, ReviewRequest, SourceIdentity, WorkReview, utc_now,
 )
 
 
@@ -27,11 +27,13 @@ class ReviewAdapters(Protocol):
 
     async def investigate(self, evidence: Evidence) -> Assessment: ...
 
-    async def propose(self, assessment: Assessment) -> Proposal: ...
+    async def propose(self, assessment: Assessment) -> Proposal | WorkReview: ...
 
 
 class ValidationWriter(Protocol):
     def record_decision(self, proposal: Proposal, approval: Approval) -> Outcome: ...
+
+    def record_review(self, review: WorkReview) -> Outcome: ...
 
 
 class RequiredCheckpointStorage(FileCheckpointStorage):
@@ -39,7 +41,7 @@ class RequiredCheckpointStorage(FileCheckpointStorage):
 
     def __init__(self, path: Path):
         contracts = (ReviewRequest, SourceIdentity, Observation, Evidence, Assessment, Proposal, Approval, Outcome,
-                     EvidenceReference, RcaHypothesis, RcaReport, AgentReceipt)
+                     EvidenceReference, RcaHypothesis, RcaReport, AgentReceipt, WorkReview)
         super().__init__(
             path, allowed_checkpoint_types=[f"{item.__module__}:{item.__qualname__}" for item in contracts],
         )
@@ -96,18 +98,25 @@ class Investigate(Executor):
 
 
 class PrepareProposal(Executor):
-    def __init__(self, adapters: ReviewAdapters, timeout: float, storage: RequiredCheckpointStorage):
+    def __init__(
+        self, adapters: ReviewAdapters, timeout: float,
+        storage: RequiredCheckpointStorage, writer: ValidationWriter,
+    ):
         super().__init__(id="prepare_proposal")
         self.adapters, self.timeout = adapters, timeout
-        self.storage = storage
+        self.storage, self.writer = storage, writer
 
     @handler
-    async def handle(self, assessment: Assessment, ctx: WorkflowContext[Proposal]) -> None:
+    async def handle(self, assessment: Assessment, ctx: WorkflowContext[Proposal, Outcome]) -> None:
         self.storage.require_healthy()
         async with asyncio.timeout(self.timeout):
             proposal = await self.adapters.propose(assessment)
         if proposal.assessment != assessment:
             raise ValueError("Proposal changed the verified assessment.")
+        if isinstance(proposal, WorkReview):
+            review = WorkReview.model_validate(proposal.model_dump())
+            await ctx.yield_output(self.writer.record_review(review))
+            return
         if proposal.expires_at <= utc_now():
             raise ValueError("Proposal has already expired.")
         await ctx.send_message(Proposal.model_validate(proposal.model_dump()))
@@ -145,7 +154,7 @@ def build_workflow(
         raise ValueError("Step timeout must be positive.")
     read = ReadEvidence(adapters, step_timeout, storage)
     investigate = Investigate(adapters, step_timeout, storage)
-    propose = PrepareProposal(adapters, step_timeout, storage)
+    propose = PrepareProposal(adapters, step_timeout, storage, writer)
     approval = HumanApproval(writer, storage)
     return (
         WorkflowBuilder(

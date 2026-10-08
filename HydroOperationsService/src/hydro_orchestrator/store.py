@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from .contracts import Approval, Contract, Outcome, Proposal, ReviewRequest, utc_now
+from .contracts import Approval, Contract, Outcome, Proposal, ReviewRequest, WorkReview, utc_now
 
 
 class Conflict(ValueError):
@@ -164,6 +164,29 @@ class Store:
                 "SELECT sequence,kind,executor,recorded_at FROM events "
                 "WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT 200", (str(run_id), after)
             )]
+
+    def record_review(self, review: WorkReview) -> Outcome:
+        request = review.assessment.evidence.request
+        outcome = Outcome(run_id=request.run_id, status=review.decision, review=review)
+        with self.transaction() as db:
+            row = db.execute(
+                "SELECT request,status,proposal,approval,outcome FROM runs WHERE id=?",
+                (str(request.run_id),),
+            ).fetchone()
+            if row is None or row["request"] != request.model_dump_json():
+                raise Conflict("Work review must match the persisted operator request.")
+            if row["outcome"]:
+                existing = Outcome.model_validate_json(row["outcome"])
+                if existing != outcome:
+                    raise Conflict("The committed work-review outcome cannot be changed.")
+                return existing
+            if row["status"] != "running" or row["proposal"] is not None or row["approval"] is not None:
+                raise Conflict("Only an active review without a proposal or approval can complete without a draft.")
+            db.execute(
+                "UPDATE runs SET outcome=? WHERE id=?",
+                (outcome.model_dump_json(), str(request.run_id)),
+            )
+        return outcome
 
     def record_decision(self, proposal: Proposal, approval: Approval) -> Outcome:
         run_id, digest = str(proposal.request.run_id), proposal.digest()

@@ -71,6 +71,47 @@ merge into or push `main`.
 The [acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md) retains
 individual release results, failure examples and later targeted recoveries.
 
+### Latest chart, authentication and Administration correction
+
+These changes are locally verified, not yet hosted:
+
+- Chart/table presentation consumes actual successful `query_telemetry`/`run_kql`
+  receipts, not flattened model CSV. Raw evidence stays collapsed. Non-numeric
+  data remains a real table; missing cells are never zero-filled. Signals/units
+  remain separate, chart panels are bounded at 12, and all returned rows remain
+  available in the table. Truncation, stale/unknown timestamps and failed reads
+  are explicit. Pre-failure data cannot reappear through model prose or old charts.
+- A chart complaint can be completed without another formatting-only model round.
+  Native handoff claims and work/RCA outcomes remain in the checked compound
+  response instead of being overwritten by a chart-only summary.
+- MSAL reuses active/unique target-tenant accounts and cached tokens, including
+  explicit Connect actions. Same-resource interactions coalesce; different
+  resources serialize and retry silently first. Ordinary network/configuration
+  failures propagate instead of prompting for consent. Discovery asks for read
+  scopes; job execution and direct Data Agent execution request their own scopes.
+- Administration labels the existing collapsed controls **Advanced agent
+  settings**. Deployed defaults need no manual edits. Tool/catalog/prompt controls
+  are optional restrictions, not Entra grants or work-order approval.
+- The local Agent Framework contract now supports durable `no_draft` and
+  `needs_clarification` outcomes, including replay and post-commit recovery.
+  This does not implement the missing live Fixer adapter or production SQL path.
+
+Validation: 106 targeted Node tests; all 42 backend Python tests; app build,
+typecheck and lint. A local browser mounted the real dashboard with 250 synthetic
+source rows: one SVG chart, 250 table rows, raw CSV initially collapsed, no
+invented model value, and no horizontal overflow at a 390-pixel viewport.
+Tab state was checked using DOM click dispatch; native browser pointer automation
+stalled, so this is not a physical interaction or hosted-agent acceptance claim.
+
+The existing browser Rayfin SQL session still creates approved work orders; it
+does not need an additional SQL consent for these changes. Backend delegated
+exchange is a separate migration prerequisite and remains unchanged.
+The earlier inference audience and the current persistent Agent Service audience
+are different. Initial permission for the latter is not permission for every
+specialist separately. Cached grants should be reused; MFA, revocation, genuinely
+new resources and tenant policy can still require interaction. No new registration
+or broader permission was introduced by this correction.
+
 ## 3. Which agents exist, when do they run, and how?
 
 The five definitions below were read back during the latest recorded deployment.

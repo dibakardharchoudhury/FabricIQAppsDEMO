@@ -26,7 +26,7 @@ Authenticated local request + idempotency key
   -> evidence adapter
   -> investigation adapter
   -> proposal adapter
-  -> persisted human approval request
+  -> durable no-draft/clarification outcome OR persisted human approval request
   -> reject OR atomic local validation record
 ```
 
@@ -59,6 +59,11 @@ Authenticated local request + idempotency key
   Recovery uses that authoritative receipt if a process stops after the framework's
   final checkpoint but before the run journal is marked complete; it does not
   re-execute the operation or infer success from agent prose.
+- Typed `no_draft` and `needs_clarification` outcomes bind the immutable assessment
+  and any specialist receipt, bypass approval, and cannot create a validation work
+  record. A no-draft decision requires completed work-source coverage. Identical
+  replay returns the persisted decision; changed outcomes fail. This is a tested
+  local adapter contract, not an implemented live Fixer adapter.
 
 ### Checkpoint failures are fatal
 

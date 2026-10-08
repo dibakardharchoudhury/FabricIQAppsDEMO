@@ -135,6 +135,26 @@ class Assessment(Contract):
         return self
 
 
+class WorkReview(Contract):
+    assessment: Assessment
+    decision: Literal["no_draft", "needs_clarification"]
+    reason: str = Field(min_length=1, max_length=1000)
+    agent_receipt: AgentReceipt | None = None
+
+    @model_validator(mode="after")
+    def bound_review(self) -> "WorkReview":
+        if not self.reason.strip():
+            raise ValueError("Work review requires an explicit reason.")
+        if self.decision == "no_draft" and self.assessment.evidence.work_orders_read_at is None:
+            raise ValueError("A no-draft coverage decision requires a completed work-order read.")
+        if self.agent_receipt:
+            digest = sha256(self.assessment.model_dump_json().encode()).hexdigest()
+            if (self.agent_receipt.agent_name != "hydro-work-order-agent"
+                    or self.agent_receipt.input_digest != digest):
+                raise ValueError("Work-review receipt does not match the specialist and immutable assessment.")
+        return self
+
+
 class Proposal(Contract):
     request: ReviewRequest
     description: str = Field(min_length=1, max_length=4000)
@@ -163,9 +183,21 @@ class Approval(Contract):
 
 class Outcome(Contract):
     run_id: UUID
-    status: Literal["rejected", "validation_work_recorded"]
+    status: Literal["rejected", "validation_work_recorded", "no_draft", "needs_clarification"]
     validation_work_id: str | None = None
     production_write_executed: Literal[False] = False
+    review: WorkReview | None = None
+
+    @model_validator(mode="after")
+    def review_outcome(self) -> "Outcome":
+        if self.status in ("no_draft", "needs_clarification"):
+            if (self.review is None or self.review.decision != self.status
+                    or self.review.assessment.evidence.request.run_id != self.run_id
+                    or self.validation_work_id is not None):
+                raise ValueError("A non-proposal outcome must retain its matching review and cannot record work.")
+        elif self.review is not None:
+            raise ValueError("Approval outcomes cannot contain a non-proposal review.")
+        return self
 
 
 def utc_now() -> datetime:

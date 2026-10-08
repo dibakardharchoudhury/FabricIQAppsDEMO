@@ -49,7 +49,9 @@ export const positiveActionClauses = (question: string) => question.replace(
   /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue|read|query|retrieve|inspect|use|ask|show|display|chart|plot|visualize)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
 
 export function requiresChartOutput(question: string): boolean {
-  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|visualize)\b|\b(?:include|show|produce|return|provide|draw|create|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|histogram|dashboard)\b/i.test(positiveActionClauses(question))
+  const positive = positiveActionClauses(question)
+  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|visualize)\b|\b(?:include|show|produce|return|provide|draw|create|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|histogram|dashboard)\b/i.test(positive)
+    || /\b(?:this|that|it|the (?:answer|output|result)) (?:is|was) not (?:a |the )?chart\b(?!\s+(?:request|question))|\b(?:no charts?|no dashboards?)\b[^.!?;\n]{0,100}\b(?:csv|dump)\b/i.test(positive)
 }
 
 export function requiresInspectionEvidence(question: string): boolean {

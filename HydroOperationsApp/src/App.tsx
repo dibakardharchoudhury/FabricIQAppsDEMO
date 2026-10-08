@@ -285,7 +285,8 @@ export default function App() {
           if (current) await loadOperationalData()
         } catch (error) { setNotice(`Operations data: ${errorMessage(error)}`) }
       }
-      await initAuth()
+      try { await initAuth() }
+      catch (error) { setNotice(`Fabric authentication: ${errorMessage(error)}`) }
       if (isStidConfigured()) {
         try {
           const data = await queryStid()

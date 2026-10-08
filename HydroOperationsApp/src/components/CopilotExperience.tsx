@@ -184,7 +184,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} />}
+    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} />}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>

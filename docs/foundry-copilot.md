@@ -316,7 +316,8 @@ requested as **named scopes rather than `.default`**.
 | Supervisor and specialists | `https://ai.azure.com/user_impersonation` | Microsoft Foundry Agent Service (`18a66f5f-…`) |
 | Telemetry (Kusto) | `<cluster>/user_impersonation` | Azure Data Explorer (`2746ea77-…`) |
 | Asset metadata | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
-| Workspace discovery | `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All` | Power BI Service |
+| Workspace discovery | `Workspace.Read.All`, `Item.Read.All` | Power BI Service |
+| Start provisioning/streaming jobs | Read scopes plus `Item.Execute.All` | Power BI Service |
 | Direct Data Agent execution (Battle) | `DataAgent.Execute.All` with the Fabric scopes | Power BI Service / Microsoft Fabric |
 | Operational records | *(none — Rayfin session cookie)* | Rayfin backend |
 
@@ -343,6 +344,12 @@ flowchart TD
 
 `foundryAgentToken()` tries silent acquisition first and only falls back to a popup when the call was
 started by a user gesture — redirects are blocked inside the Fabric iframe.
+Explicit Connect actions also try the cache first. Matching concurrent requests share one
+interaction; different resources are serialized and rechecked silently before opening a popup.
+Only an MSAL interaction-required error triggers that fallback. Network/configuration errors
+are surfaced instead of being mislabeled as a request for consent. Active/unique target-tenant
+accounts are used; ambiguous accounts require selection rather than picking the first cached user.
+MFA, revoked sessions and tenant policy can still require interaction.
 
 ### Consent and RBAC
 
@@ -478,8 +485,13 @@ transcript.
 
 ## 3. Operator settings
 
-**Administration → Foundry Copilot** narrows what the model may reach, persisted per browser in
+**Administration → Advanced agent settings** narrows what the model may reach, persisted per browser in
 `localStorage` and applied to the next question:
+
+This section is collapsed by default and optional for normal operation. Deployment supplies
+the project and agent defaults. Keep connection health/setup actions for operators; the tool,
+catalog and prompt overrides are for troubleshooting or deliberate restrictions, not another
+permission setup step. They do not grant Entra scopes or remove human approval.
 
 | Setting | Effect |
 | --- | --- |

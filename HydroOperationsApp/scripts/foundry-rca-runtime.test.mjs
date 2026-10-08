@@ -880,6 +880,7 @@ test('actual proposal tool cannot escalate priority from model arguments', async
     const run = createToolRuntime(defaultCopilotSettings(), {
       proposalPriority: explicit, onWorkOrderProposal: proposal => staged.push(proposal),
     })
+
     const result = await run('propose_work_order', {
       equipment_id: 'EQUIP_RTI_T005', title: 'Inspect reported measurement',
       description: 'Operator-requested evidence review; no established physical fault.', priority: 'High',
@@ -890,3 +891,30 @@ test('actual proposal tool cannot escalate priority from model arguments', async
     assert.equal(result.result.confirmation_required, true)
   }
 })
+
+for (const native of [false, true]) {
+  test(`raw-CSV chart complaint renders actual rows and preserves compound native handoffs: ${native}`, async () => {
+    reset()
+    harness.reads[0] = { result: { rows: [
+      { timestamp_utc: '2026-10-07T14:54:22Z', power_output_MW: 1823.09 },
+      { timestamp_utc: '2026-10-07T14:54:37Z', power_output_MW: 1137.402 },
+    ], truncated: true, read_completed_at_utc: '2026-10-08T16:19:39Z' }, rowCount: 2 }
+    if (native) harness.responses.push(delegate('fabric-iq'), nativeReply('Native source inventory was returned.'))
+    harness.responses.push(delegate('qa'), { role: 'qa', calls: [
+      call('telemetry', 'hydro_query', { tool_name: 'query_telemetry', arguments: {} }),
+    ] }, { role: 'qa', text: 'Chart-ready CSV timestamp_utc,power_output_MW 2026-10-07T14:54:22Z,99999' },
+    { role: 'supervisor', text: 'Copy this CSV into your charting tool.' })
+    const result = await askFoundryCopilot(`This is not a chart, just raw csv dump.${native ? ' Also ask the Data Agent for its inventory.' : ''}`)
+    assert.equal(result.visualizations.length, 1)
+    assert.equal(result.visualizations[0].chartType, 'line')
+    assert.match(result.visualizations[0].inlineCsvData, /1823\.09/)
+    assert.doesNotMatch(result.visualizations[0].inlineCsvData, /99999/)
+    assert.match(result.text, /truncated result/)
+    assert.doesNotMatch(result.text, /Copy this CSV|Chart-ready CSV|chart incomplete/)
+    assert.equal(harness.requests.length, native ? 6 : 4)
+    if (native) {
+      assert.match(result.text, /Native source inventory was returned/)
+      assert.match(result.text, /not a validated diagnosis/)
+    }
+  })
+}
