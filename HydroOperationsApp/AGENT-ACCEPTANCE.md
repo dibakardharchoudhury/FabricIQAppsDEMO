@@ -25,6 +25,13 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+**Latest deployment attempt:** source commit `c601e34` was pushed only to
+`feat/dibakar`. The canonical deployer stopped at step 1 because Azure CLI was
+signed into a different tenant than `ad340c84-1886-4202-a483-2da2cb9168eb`.
+No deployment success or new hosted build is claimed. Use the local deployment
+app's **Switch** action for the target tenant, then retry the same orchestrator.
+This is deployment-operator sign-in, not an additional SPA/SQL consent requirement.
+
 **Latest local chart/consent correction (not deployed):** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.
 Structured source receipts now render charts/tables despite malformed model CSV;

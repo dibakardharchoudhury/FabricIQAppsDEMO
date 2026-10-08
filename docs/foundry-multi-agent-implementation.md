@@ -102,6 +102,11 @@ source rows: one SVG chart, 250 table rows, raw CSV initially collapsed, no
 invented model value, and no horizontal overflow at a 390-pixel viewport.
 Tab state was checked using DOM click dispatch; native browser pointer automation
 stalled, so this is not a physical interaction or hosted-agent acceptance claim.
+Source commit `c601e34` was pushed to `feat/dibakar`. Its canonical deployment
+attempt stopped at the initial tenant check: the current Azure CLI session
+belonged to another tenant. The deployer requested the local app's **Switch**
+action before retry. No tenant switch, permission change or deployment bypass
+was performed, and hosted release 1.0.758 remains the last verified deployment.
 
 The existing browser Rayfin SQL session still creates approved work orders; it
 does not need an additional SQL consent for these changes. Backend delegated
