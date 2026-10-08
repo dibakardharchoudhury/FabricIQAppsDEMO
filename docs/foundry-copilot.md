@@ -97,6 +97,10 @@ or fabricated series; missing structured chart output is explicitly marked incom
 The reproduced latest-raw KQL projection using invented `arg_max_*` output names is
 rejected locally with the real field names and typed-tool alternative. This is a
 bounded guard, not a complete KQL semantic compiler; actual source failures propagate.
+The 1.0.747 reconciliation rerun completed its real handoffs but did not establish
+full-fleet coverage or return the requested comparison table. A separate typed-query
+answer falsely claimed validation of unexecuted KQL. These remain acceptance failures,
+not successful independent verification; see the current acceptance report.
 Native tool error envelopes and incomplete-response reasons are surfaced rather than
 replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
 failure was observed live; improved diagnostics do not repair or certify that native service.

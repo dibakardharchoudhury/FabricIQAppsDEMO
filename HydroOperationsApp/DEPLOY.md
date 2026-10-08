@@ -6,13 +6,14 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Current deployed release: **1.0.746 (`d619241`)**. The owner-restored capacity was
+Current deployed release: **1.0.747 (`77f3cd5`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
 the fresh deployment and the completed, **not accepted**, twenty-turn hosted rerun. The earlier explicit
 capacity suspension remains documented as historical evidence.
 Deployment success is not proof of complete multi-agent runtime acceptance.
-Post-rerun source corrections are deployed; hosted verification is in progress.
+Post-rerun source corrections are deployed. The latest reconciliation flow completes
+its real handoffs, but fails answer-quality/coverage acceptance; see the report above.
 The latest deployment refreshed Azure sign-in, preserved all 39 redirects and verified all
 five updated Foundry definitions. Consent covers the current operator; an enterprise
 rollout still requires tenant-wide administrator consent.
