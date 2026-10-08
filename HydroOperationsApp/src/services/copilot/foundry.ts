@@ -249,7 +249,7 @@ export async function askFoundryCopilot(
               continue
             }
             if (role === 'qa' && requiresChartOutput(question) && !visualizations.length) {
-              const presentation = presentSourceRows(steps, question)
+              const presentation = presentSourceRows(steps.filter(step => ['query_telemetry', 'run_kql'].includes(step.tool)), question)
               if (presentation.visualizations.length) {
                 visualizations.push(...presentation.visualizations)
                 sourceChartSummary = presentation.summary

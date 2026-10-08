@@ -11,6 +11,14 @@ Stale/empty telemetry, missing BOM data, or an upstream error must be disclosed,
 never replaced with an invented diagnosis, record or successful result.
 Native compound requests have taken 3-5 minutes; this is not a latency guarantee.
 
+For **every test**, structured records must be real HTML tables, not pipe-delimited
+paragraphs, JSON or CSV dumps. Suitable numeric/time-series or categorical records
+must also produce charts automatically, even without the word "chart". Tables stay
+visible alongside charts. Check source-receipt links, exact row counts, units,
+timestamps, truncation and missing-value warnings. Raw payloads are collapsed
+diagnostics. An agent-response-only table is labelled as not independently
+verified; displaying a table does not establish source provenance.
+
 ## 1. BAD signals -> investigation -> gap review -> verification
 
 Expected specialists: Gauge -> Sleuth -> Fixer -> Gauge.

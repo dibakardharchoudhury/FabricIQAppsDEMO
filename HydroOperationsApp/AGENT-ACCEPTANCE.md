@@ -12,10 +12,10 @@ Consolidated change history and architecture:
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
-as required by the readiness contract. Protected hosting was verified, but the
-authenticated application was not loaded in the integrated browser: its Fabric
-broker popup was blocked. New hosted ten-flow and repeated-sign-in acceptance
-remain pending. No access control was bypassed.
+as required by the readiness contract. The initial integrated-browser Fabric
+broker popup was blocked; sharing the broker subsequently resolved sign-in, and
+the authenticated app is now available. New hosted ten-flow and repeated-sign-in
+acceptance remain pending. No access control was bypassed.
 
 **Earlier 1.0.758 (`4c0e1a1`) evidence:** canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
@@ -40,7 +40,19 @@ signed into a different tenant than `ad340c84-1886-4202-a483-2da2cb9168eb`.
 The supported local deployment app's **Switch** flow subsequently completed.
 The same canonical command then deployed 1.0.766 successfully. This resolved
 deployment-operator sign-in, not an additional SPA/SQL consent requirement.
-Hosted browser acceptance stopped separately at popup-blocked protected sign-in.
+Hosted browser sign-in initially stopped at the protected popup, then recovered
+through the shared broker. That historical blocker no longer prevents testing.
+
+**Universal-presentation candidate, not yet deployed:** 115 targeted Node tests,
+typecheck, targeted lint, environment validation and production build passed.
+The shared renderer covers Foundry, Data Agent, Battle and the legacy panel:
+structured records remain tables and suitable charts are automatic. A real local
+component with synthetic BAD/UNCERTAIN receipts displayed all nine rows in two
+tables, four charts and two resolving source links, without malformed model prose.
+Table-only mode retained nine rows; narrow/wide viewports had no page overflow.
+These fixture checks are not live-agent acceptance. Production build still reports
+existing large-chunk warnings. Teams progress delivery is not configured or verified;
+self-chat creation was rejected and an existing chat link was requested.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

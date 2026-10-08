@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { BarChart3, Bot, Box, Check, Copy, Download, ExternalLink, LineChart, Maximize2, Minimize2, PieChart, Send, SquarePen, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,7 +9,7 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { hideRenderedCsv, answerSections } from '../services/copilot/answerPresentation'
+import { hideRenderedData, answerSections } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
@@ -165,6 +165,7 @@ export const CopilotResponse = memo(function CopilotResponse({ message, streamin
 })
 
 function AgentMessage({ message, streaming, question, showCrew }: { message: CopilotMessage; streaming: boolean; question?: string; showCrew: boolean }) {
+  const receiptPrefix = useId()
   const hasBody = Boolean(message.text || message.artifacts?.length || message.visualizations?.length || message.models?.length || message.orchestrationEvents?.length)
   const steps = message.steps ?? []
   if (!hasBody && !steps.length) return <CopilotThinking />
@@ -172,11 +173,11 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   // is working and nothing is being echoed yet.
   const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
   const draftReady = !streaming && Boolean(message.proposals?.length)
-  const answer = message.text && <AnswerText text={stripOptionsMarker(streaming ? message.text : hideRenderedCsv(message.text))} streaming={streaming} />
+  const answer = message.text && <AnswerText text={stripOptionsMarker(hideRenderedData(message.text, streaming))} streaming={streaming} />
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
-    <CopilotSteps steps={message.steps} />
+    <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
@@ -184,7 +185,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} />}
+    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} />}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
@@ -266,9 +267,9 @@ function MessageFooter({ message, question }: { message: CopilotMessage; questio
   </div>
 }
 
-function CopilotSteps({ steps }: { steps?: AgentStep[] }) {
+function CopilotSteps({ steps, receiptPrefix }: { steps?: AgentStep[]; receiptPrefix?: string }) {
   if (!steps?.length) return null
-  return <div className="v2-agent-steps">{steps.map((step, index) => <details className={`v2-agent-step ${step.status}`} key={index}>
+  return <div className="v2-agent-steps">{steps.map((step, index) => <details id={receiptPrefix ? `${receiptPrefix}-source-${index}` : undefined} className={`v2-agent-step ${step.status}`} key={index}>
     <summary>
       <Wrench size={12} />
       <code>{step.tool}</code>

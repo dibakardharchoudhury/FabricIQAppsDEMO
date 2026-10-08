@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.766 / `059f6ee`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; authenticated browser acceptance blocked at protected-hosting popup. Earlier compound results are not a same-build pass |
+| Hosted Fabric app | Release **1.0.766 / `059f6ee`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; protected-hosting sign-in recovered through the shared broker. Hosted matrix pending; earlier compound results are not a same-build pass |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -72,6 +72,27 @@ The [acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md) retains
 individual release results, failure examples and later targeted recoveries.
 
 ### Latest chart, authentication and Administration correction
+
+**Subsequent universal-presentation candidate (not yet deployed):** every response
+surface, including the legacy Data Agent panel, now uses the shared table/chart
+renderer. Snapshot, asset, operational, station and row-returning native/future
+tools are supported. Actual receipts override malformed model data; tables remain
+visible with automatic charts, and links target exact tool receipts. Unambiguous
+flattened Markdown and native CSV/JSON can render; ambiguous data is explicitly
+diagnosed, not guessed. Invalid or partially streamed structured payloads are
+not dumped into the narrative. Unknown units stay separated, missing cells are
+not zero-filled, failed sources invalidate earlier evidence, and native/source
+charts share the 12-panel bound.
+
+Verification: 115 targeted Node tests, typecheck, targeted lint, environment
+validation and production build passed. A synthetic nine-row BAD/UNCERTAIN
+fixture rendered two real tables, four charts and two working source links.
+Table-only mode retained all rows; narrow/wide layouts had no page overflow.
+This is not a live-source or full orchestration pass. Existing production
+large-chunk warnings remain. The initial hosted popup blocker has since
+resolved; authenticated testing can proceed. No Teams progress message has been
+sent: supported self-chat creation was rejected, and an existing chat link was
+requested. No notification-delivery claim is made.
 
 These changes are locally verified and deployed in **1.0.766**; authenticated
 hosted-agent acceptance remains pending:

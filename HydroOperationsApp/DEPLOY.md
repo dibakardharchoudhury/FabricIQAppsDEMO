@@ -12,9 +12,10 @@ Current deployed release: **1.0.766 (`059f6ee`)**. The October 8 retry completed
 through the canonical deployer after its supported tenant-switch flow. It printed
 `SUCCESS` and `DEPLOYED_APP_URL`, preserved all 39 redirects, verified the five
 agent definitions and passed AppBackend preflight/POST checks. Hosting verification
-returned `protected-sign-in-gate`; authenticated browser acceptance is still pending.
-The integrated browser blocked the Fabric broker popup ("Please allow pop-ups and
-try again"). No protected-hosting or authorization check was bypassed.
+returned `protected-sign-in-gate`; authenticated agent acceptance is still pending.
+The integrated browser initially blocked the Fabric broker popup. Sharing the
+broker subsequently resolved sign-in, and the authenticated app is now accessible.
+No protected-hosting or authorization check was bypassed.
 
 Earlier release **1.0.758 (`4c0e1a1`)**: the owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The

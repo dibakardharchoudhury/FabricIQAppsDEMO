@@ -378,6 +378,28 @@ private endpoint or a "selected networks" firewall cuts the browser off.
 
 ## 2. Answer flow
 
+### Shared presentation contract
+
+Foundry, the direct Data Agent, Battle, and the legacy panel use the shared
+response renderer. Structured records are always displayed as tables, with
+automatic charts for suitable measures/time series and bounded categorical
+record counts. No additional chart request is needed, and enabling charts never
+hides the table. Compatible known units share charts; unknown/incompatible units
+remain separate. Identifiers are not treated as measures, and missing values are
+not zero-filled.
+
+Actual tool rows take precedence over model-authored data. Snapshot tools include
+BAD/UNCERTAIN results and separate related-work tables. Receipt citations link
+tables to the original tool exchange. Native-only Markdown/CSV/JSON records can
+also render, but are labelled as agent-returned rather than independently verified.
+Only unambiguous flattened Markdown is repaired. Ambiguous records are disclosed
+with collapsed raw diagnostics rather than guessed.
+
+The dashboard uses scrollable tables with sticky headers and a responsive chart
+grid. Staleness/truncation warnings remain visible; timing detail and raw payloads
+are collapsed. The 12-panel source-chart bound remains explicit; every returned
+table row is retained.
+
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,
 and final acknowledgement. RCA requests require tool calls rather than accepting

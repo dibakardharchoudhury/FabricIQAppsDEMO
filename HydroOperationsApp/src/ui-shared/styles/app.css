@@ -2745,4 +2745,12 @@ button.v2-signal-row:hover,
 .voice-input-error { color: var(--cp-danger); }
 .v2-answer-table { overflow-x: auto; margin-top: .8rem; }
 .v2-answer-table table { border-collapse: collapse; width: 100%; }
+.v2-answer-table { max-height: 26rem; border: 1px solid var(--cp-border, #ccd5df); border-radius: 8px; }
+.v2-answer-table > strong, .v2-answer-table > small { display: inline-block; padding: .6rem; }
+.v2-answer-table th { position: sticky; top: 0; background: var(--cp-panel, #f3f6fa); z-index: 1; }
+.v2-answer-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--cp-border, #ccd5df) 14%, transparent); }
+.v2-answer-table td { max-width: 26rem; overflow-wrap: anywhere; vertical-align: top; }
+.v2-answer-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 1rem; margin-top: 1rem; }
+.v2-answer-chart-grid > figure { min-width: 0; margin: 0; }
+.v2-answer-citation { display: block; padding: .2rem .6rem .6rem; font-size: .75rem; }
 .v2-answer-table th, .v2-answer-table td { padding: .4rem .6rem; border-bottom: 1px solid var(--cp-border, #ccd5df); text-align: left; }

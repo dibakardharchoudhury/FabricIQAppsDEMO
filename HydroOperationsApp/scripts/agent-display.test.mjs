@@ -38,6 +38,37 @@ const sourceSteps = rows => [{ tool: 'query_telemetry', status: 'done', detail: 
   summary: 'Returned rows', elapsedMs: 1,
   result: JSON.stringify({ rows, truncated: true, read_completed_at_utc: '2026-10-08T16:19:39.834Z' }) }]
 
+test('native source charts share the panel bound without losing tables', () => {
+  const steps = Array.from({ length: 13 }, (_, index) => ({
+    tool: 'native_reader', status: 'done',
+    result: `### Result ${index}\n\`\`\`csv\nasset,count\nT001,1\nT002,2\n\`\`\``,
+  }))
+  const result = sourcePresentation.presentSourceRows(steps, '')
+  assert.equal(result.datasets.length, 13)
+  assert.equal(result.visualizations.length, 12)
+  assert.match(result.issues.join(' '), /limited to 12 panels/)
+})
+
+test('empty unit cells do not combine unrelated raw signals', () => {
+  const result = sourcePresentation.presentSourceRows(sourceSteps([
+    { signal: 'temperature', value: 70, unit: '' },
+    { signal: 'power', value: 10, unit: '' },
+  ]), '')
+  assert.equal(result.visualizations.length, 2)
+  assert.ok(result.visualizations.every(chart => !(chart.inlineCsvData.includes('temperature') && chart.inlineCsvData.includes('power'))))
+})
+
+test('invalid or streaming structured output is not dumped into narrative', () => {
+  for (const text of ['```csv\na,b\n"broken', '```json\n{"broken"', '| turbine | quality |']) {
+    assert.equal(answerPresentation.hideRenderedData(text, true).trim(), '')
+  }
+  const text = '```csv\na,b\n"broken\n```'
+  assert.equal(answerPresentation.hideRenderedData(text).trim(), '')
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  assert.match(html, /invalid CSV/)
+  assert.match(html, /Unparsed agent output/)
+})
+
 test('raw CSV prose cannot prevent an actual source-backed time-series chart', () => {
   const html = renderToStaticMarkup(createElement(AnswerDashboard, {
     text: 'Power output chart CSV (timestamp_utc,power_output_MW) timestamp_utc,power_output_MW 2026-10-07T14:54:22Z,999999',
@@ -59,7 +90,7 @@ test('source-backed evidence renders a real table instead of flattened model CSV
     text: 'Malformed CSV prose', question: 'Show the returned readings as a table.', steps: sourceSteps(returnedRows),
   }))
   assert.match(html, /<table>/)
-  assert.match(html, /<th>timestamp_utc<\/th>/)
+  assert.match(html, /<th scope="col">timestamp_utc<\/th>/)
   assert.match(html, /<td[^>]*>1,823\.09<\/td>/)
   assert.match(html, /Raw evidence CSV/)
 })
@@ -70,7 +101,7 @@ test('non-numeric results remain a visible table when a chart cannot be made', (
   }))
   assert.match(html, /<table>/)
   assert.match(html, /<td[^>]*>BAD<\/td>/)
-  assert.match(html, /disabled=""[^>]*>Charts/)
+  assert.match(html, /disabled=""[^>]*>Table \+ charts/)
   assert.doesNotMatch(html, /<svg/)
 })
 
@@ -109,7 +140,7 @@ test('dashboard uses unit-separated source charts, not a recombined numeric tabl
   const source = sourcePresentation.presentSourceRows(sourceSteps(rows), 'Chart')
   assert.equal(source.visualizations.length, 2)
   const html = renderToStaticMarkup(createElement(AnswerDashboard, { text: '', question: 'Chart', steps: sourceSteps(rows) }))
-  assert.equal((html.match(/<svg/g) ?? []).length, 2)
+  assert.ok((html.match(/<svg/g) ?? []).length >= 2)
   assert.equal((html.match(/truncated result/g) ?? []).length, 1)
 })
 
@@ -126,12 +157,94 @@ test('failed source refresh cannot fall back to stale model tables or earlier ch
 })
 
 test('chart panels are bounded without dropping table rows and timestamp uncertainty is explicit', () => {
-  const rows = Array.from({ length: 20 }, (_, index) => ({ signal: `s${index}`, value: index, unit: 'C', event_time: 'invalid' }))
+  const rows = Array.from({ length: 20 }, (_, index) => ({ signal: `s${index}`, value: index, event_time: 'invalid' }))
   const source = sourcePresentation.presentSourceRows(sourceSteps(rows), 'Chart')
   assert.equal(source.visualizations.length, 12)
   assert.equal(source.datasets[0].rows.length, 20)
   assert.match(source.summary, /20 missing or invalid timestamps/)
   assert.match(source.summary, /limited to 12 panels/)
+})
+
+test('BAD and UNCERTAIN snapshot rows always render real tables and automatic charts without a chart request', () => {
+  const steps = ['BAD', 'UNCERTAIN'].map((quality, index) => ({
+    tool: 'query_signal_quality_snapshot', status: 'done',
+    result: JSON.stringify({ quality_filter: quality, rows: [{
+      turbine: `T00${index + 1}`, equipment_id: `E${index}`, opcua_node_id: `node${index}`,
+      value: 75 + index, unit: 'C', quality, event_time: '2026-10-08T12:00:00Z',
+      open_work_orders: index ? [] : [{ workOrderNumber: 'WO-1', title: 'Inspect', status: 'Planned', relation: 'same-signal' }],
+    }], read_completed_at_utc: '2026-10-08T12:01:30Z' }),
+  }))
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, {
+    text: 'Detailed rows: | asset | quality | | --- | --- | | invented | BAD |',
+    question: 'Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?', steps,
+  }))
+  assert.equal((html.match(/<table>/g) ?? []).length, 3)
+  assert.ok((html.match(/<svg/g) ?? []).length >= 2)
+  assert.match(html, /WO-1/)
+  assert.match(html, /same-signal/)
+  assert.doesNotMatch(html, /invented/)
+  assert.ok(html.indexOf('<table>') < html.indexOf('<svg'))
+})
+
+test('all row-returning tools get automatic tables and charts, including newly registered tools', () => {
+  for (const tool of ['query_assets', 'query_operations', 'query_station_power', 'query_turbine_temperature_snapshot', 'new_inventory_tool']) {
+    const html = renderToStaticMarkup(createElement(AnswerDashboard, {
+      text: '', question: 'List the records.', steps: [{ tool, status: 'done',
+        result: JSON.stringify({ rows: [{ asset: 'T005', available: 3 }, { asset: 'T008', available: 7 }] }) }],
+    }))
+    assert.match(html, /<table>/, tool)
+    assert.match(html, /<svg/, tool)
+    assert.match(html, /<td[^>]*>T005<\/td>/, tool)
+  }
+})
+
+test('Data Agent Markdown and JSON records render tables and automatic charts with no source steps', () => {
+  for (const text of [
+    'Findings: | Asset | Count | | --- | --- | | T005 | 3 | | T008 | 7 |',
+    'Findings: | Asset | Count |\n| --- | --- |\n| T005 | 3 |\n| T008 | 7 |',
+    '```json\n[{"Asset":"T005","Count":3},{"Asset":"T008","Count":7}]\n```',
+  ]) {
+    const html = renderToStaticMarkup(createElement(AnswerDashboard, { text, question: 'List open work.' }))
+    assert.match(html, /<table>/)
+    assert.match(html, /<svg/)
+    assert.match(html, /T005/)
+    const prose = answerPresentation.hideRenderedData(text)
+    assert.doesNotMatch(prose, /\||T005|```json/)
+  }
+})
+
+test('categorical data charts actual returned-record counts without inventing zero categories', () => {
+  const text = '| Asset | quality |\n| --- | --- |\n| T001 | BAD |\n| T002 | UNCERTAIN |\n| T003 | BAD |'
+  const dataset = answerPresentation.readAnswerDatasets(text).datasets[0]
+  const charts = answerPresentation.datasetVisualizations(dataset, '')
+  assert.equal(charts.length, 1)
+  assert.match(charts[0].inlineCsvData, /BAD,2/)
+  assert.match(charts[0].inlineCsvData, /UNCERTAIN,1/)
+  assert.doesNotMatch(charts[0].inlineCsvData, /GOOD/)
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  assert.match(html, /<table>/)
+  assert.match(html, /<svg/)
+})
+
+test('tables cite their exact receipt and unfamiliar tools invalidate earlier data on failure', () => {
+  const steps = [{ tool: 'new_inventory_tool', status: 'done', result: '{"rows":[{"asset":"T005","count":2}]}' }]
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text: '', steps, receiptPrefix: 'turn-1' }))
+  assert.match(html, /href="#turn-1-source-0"/)
+  assert.match(html, /Source 1: new_inventory_tool/)
+  const failed = sourcePresentation.presentSourceRows([...steps, { tool: 'new_inventory_tool', status: 'error' }], '')
+  assert.equal(failed.datasets.length, 0)
+  assert.equal(failed.invalidated, true)
+})
+
+test('ambiguous flattened tables are disclosed rather than guessing missing cells', () => {
+  const text = 'Rows: | Asset | Count | | --- | --- | | T005 | | T008 | 7 |'
+  const parsed = answerPresentation.readAnswerDatasets(text)
+  assert.equal(parsed.datasets.length, 0)
+  assert.match(parsed.issues.join(' '), /ambiguous/)
+  assert.doesNotMatch(answerPresentation.hideRenderedData(text), /\|/)
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  assert.match(html, /Unparsed agent output/)
+  assert.doesNotMatch(html, /<table>/)
 })
 
 test('elapsed timer distinguishes idle, running and completed states', () => {

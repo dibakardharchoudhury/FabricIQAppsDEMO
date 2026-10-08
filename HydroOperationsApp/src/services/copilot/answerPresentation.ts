@@ -26,6 +26,38 @@ export type AnswerDataset = {
   columns: string[]
   rows: string[][]
   csv: string
+  sourceStep?: number
+}
+
+const tableCells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|').replace(/\*\*|`/g, ''))
+const tableSeparator = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
+
+export function normalizeMarkdownTables(text: string): string {
+  let fenced = false
+  const lines = text.split(/\r?\n/)
+  return lines.map((line, index) => {
+    if (/^\s*```/.test(line)) fenced = !fenced
+    if (fenced) return line
+    const start = line.indexOf('|')
+    if (start < 0) return line
+    const separator = /(?:\|\s*:?-{3,}:?\s*){2,}\|/.exec(line)
+    if (separator) {
+      const header = line.slice(start, separator.index).trim()
+      const columns = tableCells(header)
+      const body = line.slice(separator.index + separator[0].length).trim()
+      const rows = body.split(/(?<!\\)\|\s*\|/).map(row => `|${row.replace(/^\|/, '').replace(/\|$/, '')}|`)
+      if (header.endsWith('|') && columns.length > 1 && columns.length === tableCells(separator[0]).length
+        && columns.every(Boolean) && body.startsWith('|') && body.endsWith('|')
+        && rows.every(row => tableCells(row).length === columns.length)) {
+        return [line.slice(0, start).trim(), '', header, separator[0], ...rows].join('\n')
+      }
+    }
+    if (start > 0 && tableSeparator.test(lines[index + 1] ?? '')) {
+      return `${line.slice(0, start).trim()}\n\n${line.slice(start)}`
+    }
+    return line
+  }).join('\n')
 }
 
 export function answerSections(text: string): Array<{ title?: string; markdown: string; collapsed: boolean }> {
@@ -115,7 +147,7 @@ function normalizeLabeledCsv(text: string): string {
 export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; issues: string[] } {
   const datasets: AnswerDataset[] = []
   const issues: string[] = []
-  const lines = normalizeLabeledCsv(text).split(/\r?\n/)
+  const lines = normalizeMarkdownTables(normalizeLabeledCsv(text)).split(/\r?\n/)
   let title = 'Findings'
   const add = (columns: string[], rows: string[][], format: AnswerDataset['format']) => {
     if (!columns.length || !rows.length || new Set(columns).size !== columns.length || rows.some(row => row.length !== columns.length)) {
@@ -129,21 +161,39 @@ export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; i
   }
   for (let index = 0; index < lines.length; index++) {
     if (/^#{1,6}\s/.test(lines[index])) title = lines[index].replace(/^#{1,6}\s+/, '').trim()
-    if (/^```csv\s*$/i.test(lines[index].trim())) {
+    if (/^```json\s*$/i.test(lines[index].trim())) {
+      const json: string[] = []
+      while (++index < lines.length && !/^```\s*$/.test(lines[index].trim())) json.push(lines[index])
+      try {
+        const parsed: unknown = JSON.parse(json.join('\n'))
+        const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object'
+          ? 'rows' in parsed ? parsed.rows : [parsed] : undefined
+        if (Array.isArray(records) && records.length && records.every(row => typeof row === 'string' || typeof row === 'number')) {
+          add(['Value'], records.map(value => [String(value)]), 'table')
+        } else if (Array.isArray(records) && records.length && records.every(row => row && typeof row === 'object' && !Array.isArray(row))) {
+          const columns = [...new Set(records.flatMap(row => Object.keys(row)))]
+          add(columns, records.map(row => columns.map(column => row[column] == null ? ''
+            : typeof row[column] === 'object' ? JSON.stringify(row[column]) : String(row[column]))), 'table')
+        } else issues.push(`${title}: JSON did not contain a records array; raw output is available below.`)
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        issues.push(`${title}: invalid JSON; no records were guessed.`)
+      }
+    } else if (/^```csv\s*$/i.test(lines[index].trim())) {
       const csv: string[] = []
       while (++index < lines.length && !/^```\s*$/.test(lines[index].trim())) csv.push(lines[index])
       const parsed = Papa.parse<string[]>(csv.join('\n'), { skipEmptyLines: 'greedy' })
       if (parsed.errors.length) issues.push(`${title}: invalid CSV; no chart was generated.`)
       else add(parsed.data[0] ?? [], parsed.data.slice(1), 'csv')
-    } else if (/^\s*\|/.test(lines[index]) && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[index + 1] ?? '')) {
-      const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '')
-        .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|').replace(/\*\*|`/g, ''))
-      const columns = cells(lines[index])
+    } else if (/^\s*\|/.test(lines[index]) && tableSeparator.test(lines[index + 1] ?? '')) {
+      const columns = tableCells(lines[index])
       index += 2
       const rows: string[][] = []
-      while (index < lines.length && /^\s*\|/.test(lines[index])) rows.push(cells(lines[index++]))
+      while (index < lines.length && /^\s*\|/.test(lines[index])) rows.push(tableCells(lines[index++]))
       index--
       add(columns, rows, 'table')
+    } else if (/(?:\|\s*:?-{3,}:?\s*){2,}\|/.test(lines[index])) {
+      issues.push('A returned table has ambiguous row boundaries. Its raw output is available below; no records were guessed.')
     }
   }
   return { datasets, issues }
@@ -159,6 +209,17 @@ export function hideRenderedCsv(text: string): string {
     const parsed = readAnswerDatasets(block)
     return parsed.datasets.length && !parsed.issues.length ? '' : block
   })
+}
+
+export function hideRenderedData(text: string, streaming = false): string {
+  const normalized = normalizeMarkdownTables(normalizeLabeledCsv(text))
+    .replace(/```(?:json|csv)[^\S\r\n]*(?:\r?\n|$)[\s\S]*?(?:```|$)/gi, '')
+  return (streaming ? normalized.replace(/^\s*\|.*$/gm, '') : normalized)
+    .replace(/^[^\S\r\n]*\|[^\n]+\n[^\S\r\n]*\|?[ :|\t-]+\n(?:[^\S\r\n]*\|[^\n]*(?:\n|$))+/gm, block => {
+      const parsed = readAnswerDatasets(block)
+      return parsed.datasets.length || parsed.issues.length ? '' : block
+    })
+    .split('\n').map(line => /(?:\|\s*:?-{3,}:?\s*){2,}\|/.test(line) ? line.slice(0, line.indexOf('|')).trim() : line).join('\n')
 }
 
 export function formatEvidenceCell(value: string, column: string): string {
@@ -180,7 +241,7 @@ export function datasetVisualizations(dataset: AnswerDataset, question: string):
     !identifierColumn(name) && dataset.rows.some(row => !numeric(row[index])))
   if (labelIndex < 0) return []
   const groupBy = labelIndex === timeIndex && seriesIndex >= 0 ? dataset.columns[seriesIndex] : undefined
-  return dataset.columns.flatMap((column, index) => {
+  const charts: AgentVisualization[] = dataset.columns.flatMap((column, index) => {
     if (index === labelIndex || column === groupBy || identifierColumn(column)
       || !dataset.rows.every(row => numeric(row[index]))) return []
     return [{
@@ -191,5 +252,18 @@ export function datasetVisualizations(dataset: AnswerDataset, question: string):
       groupBy,
       inlineCsvData: dataset.csv,
     }]
+  })
+  if (charts.length || dataset.rows.length < 2) return charts
+  return dataset.columns.flatMap((column, index): AgentVisualization[] => {
+    if (!/^(quality|status|priority|criticality|category|type|country)$/i.test(column)) return []
+    const counts = new Map<string, number>()
+    for (const row of dataset.rows) {
+      const label = row[index].trim() || 'Not supplied'
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+    if (counts.size < 2 || counts.size > 12) return []
+    return [{ title: `${dataset.title} - returned records by ${column}`, chartType: 'bar',
+      xColumn: column, yColumns: ['record_count'],
+      inlineCsvData: Papa.unparse({ fields: [column, 'record_count'], data: [...counts] }) }]
   })
 }
