@@ -5,11 +5,14 @@ orchestrator. This isolated Python service exercises Microsoft Agent Framework
 1.19.0 workflows, typed handoffs, checkpoint recovery and human approval.
 No Azure resources, cloud authentication changes or production SQL writes are made.
 
-The default service has **no live source/agent adapters**, returns HTTP 503 for
+The default HTTP service has **no configured source/agent adapters**, returns HTTP 503 for
 readiness/run submission, and reports `live_fabric_connected: false`. It does not
 substitute bundled data for Fabric. Synthetic adapters exist only in tests.
 The four framework executors are application steps, not evidence that four Foundry
 agents have executed. No production UI is pointed at this service.
+A separate read-only source adapter and diagnostic command now verify live Fabric
+identities and exercise source access. They are not a complete Foundry provider or
+a switch to production orchestration.
 
 ## Implemented boundary
 
@@ -66,6 +69,63 @@ enterprise service. The CLI binds only to `127.0.0.1`; there is no public CORS s
 Local checkpoints contain synthetic validation evidence, not production analytical
 data. Production evidence retention/access controls require a separate design.
 
+## Live source adapter: verified access and blocking prerequisites
+
+The Python reader uses delegated `AzureCliCredential` for local diagnostics.
+A bounded Node subprocess reuses the installed Rayfin SDK, its supported
+`signInWithEntraToken` helper, and the app's telemetry query builder. Tokens travel
+only through process stdin; they are not command-line arguments, files, checkpoints
+or log output. Rayfin sessions remain in memory and are destroyed after each read.
+This is not a production OBO or managed-identity implementation.
+
+Before reading, the adapter verifies live numeric ontology generation 2, exact
+workspace/ontology/KQL identities, the KQL database's Eventhouse parent, and the
+AppBackend endpoint against the workspace's current capacity and saved deployment.
+It does not reconstruct or change deployment state. A configuration fingerprint
+binds a request to its sources; a changed configuration fails before source reads.
+The configured graph binding supplies the selected ontology ID only: this reader
+does not query, fabricate or certify native graph topology.
+
+STID resolves one exact equipment ID and its instrument IDs/units. The KQL query
+returns the latest raw sample for each mapped signal within 24 hours, retains BAD
+quality samples, and labels missing samples and readings older than 30 minutes.
+It is not the fleet's 30-minute "running hot" query and does not invent a physical
+fault or approved temperature limit. KQL completion-status errors/warnings and
+truncated/ambiguous envelopes are rejected, not converted to partial success.
+Work-order reads paginate up to 500 records and reject incomplete coverage,
+duplicate identities or invalid cursors. Only Completed/Cancelled are excluded.
+No SQL mutation method exists in this bridge.
+
+From this service directory, using the operator's existing tenant-scoped Azure CLI
+session and installed app dependencies (Node 24+):
+
+```powershell
+.\.venv\Scripts\python.exe -m hydro_orchestrator --probe-live-sources EQUIP_RTI_T005
+```
+
+If the canonical deployer used an isolated Azure CLI cache, select that existing
+cache through `AZURE_CONFIG_DIR`; do not copy tokens or create another login cache.
+`HYDRO_LOCAL_NODE` may select the installed Node executable.
+This command does not start an HTTP server, save source data or invoke agents.
+It exits nonzero when any source check fails. A passed read is not evidence of
+fresh ingestion; inspect `missing_sources`.
+
+**Observed live result, October 8:** verified ontology generation 2 and six
+STID-mapped T005 measurements, explicitly labelled `fresh_telemetry` missing.
+Work-order access failed with **`EXCHANGE_NOT_ENABLED`**. The installed Rayfin
+guidance identifies `services.auth.fabric.externalEntraExchange: true` as the
+setting for delegated exchange, but it was not changed or deployed.
+The SDK also requires delegated `Item.Execute.All`, owning-tenant identity and
+item Execute permission. The inspected Fabric token from the existing CLI session
+lacked that named scope; enabling the setting alone is not a verified solution.
+Approve and implement the supported delegated authentication path through the
+canonical deployer before claiming end-to-end SQL access.
+
+The workflow regression verifies that this failure produces a failed run with
+no investigation, proposal or approvable card. It cannot become "no open work."
+The read adapter is ready for composition only after its live prerequisites pass;
+Foundry investigation/proposal adapters and SPA integration remain unimplemented.
+
 ## Run the checks
 
 From this directory, with Python 3.12+:
@@ -75,11 +135,15 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -c requirements.lock -e ".[test]"
 .\.venv\Scripts\python.exe -m pyright --project .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+node --test ..\HydroOperationsApp\scripts\local-fabric-sources.test.mjs
 ```
 
-Tests use the actual Agent Framework engine, file checkpoints, SQLite transactions
+The 24 Python tests use the actual Agent Framework engine, file checkpoints, SQLite transactions
 and an ephemeral loopback HTTP listener. Providers are synthetic: these tests do not
 certify Foundry, native Fabric endpoint availability or live WO creation.
+Ten Node tests additionally cover live-reader contracts with mocked transports:
+generation/capacity checks, KQL completion/partial failures, exact equipment mapping,
+units, quality, freshness, source errors and work-order pagination.
 
 The fault suite covers real process exit/recovery, HTTP disconnect, interrupted
 investigation, a failure after a committed local write, checkpoint-write failure,
@@ -104,7 +168,8 @@ Do not put this token in the SPA, source control, a URL or a production configur
 2. Implement and test server-side Entra authorization and the supported delegated
    access path for each Fabric/Foundry endpoint. Do not assume every native endpoint
    supports managed identity or app-only access.
-3. Implement live adapters against verified v2 identities, retaining source failures,
+3. Finish the live Foundry adapters and unblock/test the read adapter's SQL access
+   against verified v2 identities, retaining source failures,
    direct-source evidence and native-source limitations. Never migrate by treating
    arbitrary model narrative as an authoritative dataset.
 4. Implement production SQL idempotency and server-side approval authorization.

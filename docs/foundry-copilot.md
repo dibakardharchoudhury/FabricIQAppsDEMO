@@ -17,6 +17,11 @@ An isolated [Microsoft Agent Framework service](../HydroOperationsService/README
 now validates durable execution boundaries locally, with synthetic providers and no
 production writes. It is not wired into this browser flow. Its restart/approval tests
 must not be presented as live Foundry orchestration or a completed enterprise migration.
+Its separate read-only source diagnostic now verifies v2 identities and retrieves
+live STID-mapped telemetry. SQL access remains blocked by disabled delegated exchange;
+the existing CLI token also lacks the documented `Item.Execute.All` scope.
+Source failures block investigation/approval, not just answer formatting.
+No production authentication settings or hosted agent paths were changed.
 Operator-ready [ten test prompts](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) are
 separate from the historical acceptance logs.
 

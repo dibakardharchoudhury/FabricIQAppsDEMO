@@ -15,6 +15,7 @@ class SourceIdentity(Contract):
     workspace_id: UUID
     ontology_id: UUID
     generation: Literal[2]
+    configuration_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @field_validator("generation", mode="before")
     @classmethod

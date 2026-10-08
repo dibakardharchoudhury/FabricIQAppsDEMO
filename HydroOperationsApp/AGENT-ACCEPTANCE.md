@@ -37,7 +37,7 @@ The full ten-flow matrix has not been rerun on 1.0.758.
 
 **Architecture correction, local only:** the isolated
 [Agent Framework service milestone](../HydroOperationsService/README.md) now has
-17 passing local tests and a clean Python typecheck. Tests cover real process exit,
+24 passing local tests and a clean Python typecheck. Tests cover real process exit,
 HTTP disconnect, source/step failure, checkpoint-write failure/corruption, concurrent
 approval, rejection/expiry, and recovery after both a committed local operation and
 the final workflow checkpoint. Provider adapters are synthetic and writes go only to
@@ -45,6 +45,18 @@ a local validation ledger. The service is not connected to the production UI or 
 Foundry/Fabric providers; cloud hosting/authentication changes are not approved.
 This is a durability-boundary proof, not a completed enterprise migration, production
 WO write test or performance certification.
+
+**Read-only local integration, October 8:** a separate live source reader verified
+numeric ontology generation 2, current capacity and source identities, then read
+six STID-mapped T005 telemetry samples. They are explicitly stale. The work-order
+read failed with `EXCHANGE_NOT_ENABLED`; it did not return an empty work list.
+The installed SDK also requires delegated `Item.Execute.All`, absent from the
+inspected CLI Fabric token. Production authentication was not changed. Ten new
+Node contract tests and seven of the 24 Python tests cover the source boundary,
+including KQL completion errors, pagination, configuration drift, cancellation and
+the guarantee that a failed source cannot reach investigation or approval.
+These are not new hosted prompt passes or real backend Foundry invocations.
+See the [reader command and authentication prerequisites](../HydroOperationsService/README.md#live-source-adapter-verified-access-and-blocking-prerequisites).
 
 **1.0.756 exact fleet rerun: bounded comparison passed in 3m54s.** Actual Chief,
 Sparky, Gauge and Sleuth Responses invocations produced six recorded handoffs through

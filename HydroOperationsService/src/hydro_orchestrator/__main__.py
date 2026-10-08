@@ -1,4 +1,6 @@
 import os
+import argparse
+import asyncio
 from pathlib import Path
 
 import uvicorn
@@ -7,6 +9,13 @@ from .service import create_app
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Local Hydro durability validation and read-only source diagnostics.")
+    parser.add_argument("--probe-live-sources", metavar="EQUIPMENT_ID")
+    args = parser.parse_args()
+    if args.probe_live_sources:
+        from .live_sources import probe_live_sources
+
+        raise SystemExit(0 if asyncio.run(probe_live_sources(args.probe_live_sources)) else 1)
     token = os.environ.get("HYDRO_LOCAL_API_TOKEN", "")
     root = Path(os.environ.get("HYDRO_LOCAL_STATE_DIR", ".runtime"))
     app = create_app(root, token)
