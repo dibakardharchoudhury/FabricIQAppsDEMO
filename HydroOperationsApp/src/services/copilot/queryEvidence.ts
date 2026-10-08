@@ -25,7 +25,7 @@ export function renderQueryChecks(checks: readonly RequestedQueryCheck[], steps:
   for (const check of checks) {
     const executed = check.executable && steps.some(step =>
       step.status === 'done' && step.tool === 'run_kql' && step.query === check.executable)
-    sections.push(`${check.status}\n\nSupplied query executed exactly: **${executed ? 'yes' : 'no'}**. A corrected or typed equivalent is a separate query; it does not validate the original.`)
+    sections.push(`${check.status}\n\nSupplied query executed through the bounded guard: **${executed ? 'yes' : 'no'}**. The guard may append its result limit. A corrected or typed equivalent is a separate query; it does not validate the original.`)
   }
   for (const step of steps.filter(step => step.status === 'done' && step.query && step.result)) {
     const data: unknown = JSON.parse(step.result!)

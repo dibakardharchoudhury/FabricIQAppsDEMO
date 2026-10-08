@@ -315,14 +315,14 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
 
 /** Restrict to the columns declared in the catalog, then to the model's subset.
  *  Columns absent from the catalog (e.g. Entra object ids) are never returned. */
-function shape(entity: CatalogEntity, rows: Record<string, unknown>[], args: ToolArguments): ToolOutcome {
+function shape(entity: CatalogEntity, rows: Record<string, unknown>[], args: ToolArguments, sourceTruncated = false): ToolOutcome {
   const allowed = entity.columns.map(column => column.name)
   const requested = args.columns?.filter(column => allowed.includes(column))
   const filtered = applyFilter(rows, args.where)
   const limited = filtered.slice(0, Math.min(args.limit ?? MAX_ROWS, MAX_ROWS))
   const projected = projectColumns(projectColumns(limited, allowed), requested)
   const { rows: capped, truncated } = truncateForModel(projected)
-  return { result: { rows: capped, row_count: capped.length, total_matched: filtered.length, truncated }, rowCount: capped.length }
+  return { result: { rows: capped, row_count: capped.length, total_matched: sourceTruncated ? null : filtered.length, truncated: truncated || sourceTruncated }, rowCount: capped.length }
 }
 
 const SIGN_IN_HINT = 'Not signed in to the operational database. Open Administration and complete step 1, “Sign in to Fabric”, then ask again. This is a sign-in step, not a permissions problem.'
@@ -389,7 +389,7 @@ export function createToolRuntime(
         const data = await stid
         if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
         const rows = (entity.key === 'facilities' ? data.facilities : entity.key === 'equipment' ? data.equipment : data.instruments) as unknown as Record<string, unknown>[]
-        return shape(entity, rows, args)
+        return shape(entity, rows, args, !data.inventoryComplete)
       }
       case 'query_operations': {
         const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity, settings)

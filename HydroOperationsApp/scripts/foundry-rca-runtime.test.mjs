@@ -100,6 +100,14 @@ test('full-fleet snapshots enumerate all quality states and disclose inventory s
   assert.equal(result.result.latest_quality_node_count, 1)
   harness.stid.inventoryComplete = false
   await assert.rejects(run('query_signal_quality_snapshot', { quality: 'BAD', equipment_type: 'turbine' }), /pagination/)
+  const partial = await run('query_assets', { entity: 'equipment', where: [{ column: 'tag', op: 'eq', value: 'T999' }] })
+  assert.equal(partial.result.truncated, true)
+  assert.equal(partial.result.total_matched, null)
+  assert.deepEqual(partial.result.rows, [])
+  harness.stid.inventoryComplete = true
+  harness.kusto = async () => ({ columns: ['opcua_node_id', 'value', 'event_time', 'quality'],
+    rows: Array.from({ length: 500 }, () => ['unknown', 80, '2026-10-08T06:00:00Z', 'BAD']) })
+  await assert.rejects(run('query_signal_quality_snapshot', { quality: 'BAD', equipment_type: 'turbine' }), /source row limit/)
 })
 
 test('coordinator rejects selected-node verification and preserves a deterministic comparison instead of Chief claims', async () => {
@@ -114,7 +122,7 @@ test('coordinator rejects selected-node verification and preserves a determinist
     ...(temperature ? { requested_limit: 5 } : {}),
   }, rowCount: 1 })
   harness.reads.push(snapshot(false), snapshot(true))
-  harness.responses.push(delegate('fabric-iq'), nativeReply('No comparable table returned.'),
+  harness.responses.push(delegate('fabric-iq'), nativeReply('No comparable table returned.'), delegate('rca'),
     delegate('qa'), { role: 'qa', calls: [read] },
     { role: 'qa', text: 'All fleet members verified using this unrelated station query.' },
     { role: 'qa', calls: [
@@ -131,6 +139,8 @@ test('coordinator rejects selected-node verification and preserves a determinist
     .every(request => request.tool_choice === 'required'))
   assert.ok(result.orchestrationEvents.flatMap(event => event.trace ?? [])
     .some(trace => /Rejected incomplete fleet/.test(trace.label)))
+  assert.ok(harness.requests.some(request => request.input.some(item => /independent direct population evidence first/.test(item.output ?? ''))))
+  assert.equal(result.orchestrationEvents.filter(event => event.role === 'rca').length, 0)
 })
 
 test('typed-query execution cannot be presented as validation of the supplied invalid KQL', async () => {
@@ -145,11 +155,47 @@ test('typed-query execution cannot be presented as validation of the supplied in
   })] }, { role: 'qa', text: 'The original KQL is valid.' }, { role: 'supervisor', text: 'The original KQL is valid and executed successfully.' })
   const result = await askFoundryCopilot(`Check this read-only query. Correct invalid columns or use the equivalent typed tool. Query: ${query}`)
   assert.match(result.text, /Rejected by local validation/)
-  assert.match(result.text, /Supplied query executed exactly: \*\*no\*\*/)
+  assert.match(result.text, /Supplied query executed through the bounded guard: \*\*no\*\*/)
   assert.match(result.text, /Executed query\\_telemetry/)
   assert.match(result.text, /75\.335/)
   assert.match(result.text, /Stale/)
   assert.doesNotMatch(result.text, /The original KQL is valid/)
+})
+
+test('native handoffs reject local tool prescriptions before invoking or consuming a delegation', async () => {
+  reset()
+  harness.responses.push({ role: 'supervisor', calls: [call('bad_boundary', 'delegate_to_agent', {
+    specialist: 'fabric-iq', native_source: 'data-agent',
+    question: 'Run query_signal_quality_snapshot and query_turbine_temperature_snapshot today.',
+  })] }, delegate('fabric-iq'), nativeReply('Native inventory returned.'), { role: 'supervisor', text: 'Native inventory returned.' })
+  const result = await askFoundryCopilot('Ask the published Data Agent for the turbine inventory.')
+  assert.equal(result.orchestrationEvents.filter(event => event.role === 'fabric-iq').length, 1)
+  assert.deepEqual(harness.verifiedSources, ['data-agent'])
+  assert.ok(harness.requests.some(request => request.input.some(item => /cannot prescribe local Hydro/.test(item.output ?? ''))))
+  assert.equal(harness.responses.length, 0)
+})
+
+test('two native retrievals cannot replace requested direct asset and work-order reconciliation', async () => {
+  reset()
+  harness.reads.length = 0
+  harness.reads.push({ result: { rows: [{ equipment_id: 'EQUIP_RTI_T001', facility_id: 'FACILITY_1' }], truncated: false }, rowCount: 1 },
+    { result: { rows: [{ workOrderNumber: 'WO-1', equipmentId: 'EQUIP_RTI_T001', status: 'Draft' }], truncated: false }, rowCount: 1 })
+  harness.responses.push(delegate('fabric-iq', 'ontology'), nativeReply('Facility inventory.', 'ontology'),
+    delegate('fabric-iq'), nativeReply('Work inventory.'),
+    { role: 'supervisor', text: 'Direct reconciliation passed without any direct reads.' },
+    delegate('qa'), { role: 'qa', text: 'The native records already verify everything.' },
+    { role: 'qa', calls: [
+      call('assets', 'hydro_query', { tool_name: 'query_assets', arguments: { entity: 'equipment' } }),
+      call('orders', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'work_orders' } }),
+    ] }, { role: 'qa', text: 'Direct equipment and SQL work rows retrieved.' },
+    { role: 'supervisor', text: 'Completed with the direct reads.' })
+  const progress = []
+  const result = await askFoundryCopilot('Use the selected ontology directly to list facilities and ask the published Data Agent for open work orders. Reconcile those results with direct asset and work-order records.', text => progress.push(text))
+  assert.equal(result.orchestrationEvents.filter(event => event.role === 'qa').length, 1)
+  assert.equal(result.steps.filter(step => step.status === 'done').length, 2)
+  assert.ok(harness.requests.some(request => request.input.some(item => /Direct verification remains incomplete/.test(item.content?.[0]?.text ?? ''))))
+  assert.deepEqual(progress, [])
+  assert.equal(harness.responses.length, 0)
 })
 
 test('RCA rejects prose and invalid reports, finishes immediately on checked completion, and excludes Chief claims', async () => {

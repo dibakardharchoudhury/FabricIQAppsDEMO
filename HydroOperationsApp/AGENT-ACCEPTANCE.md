@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.747 (`77f3cd5`).** Canonical deployment completed on
+**Current deployed release: 1.0.749 (`1a1d88b`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The corrected release passed 143 targeted regressions, typecheck, lint, the canonical
+The corrected release passed 151 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -22,7 +22,7 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
-**Next implementation (not yet deployed or hosted-accepted):** fleet reconciliation
+**1.0.749 implementation (deployed; hosted acceptance in progress):** fleet reconciliation
 now requires independent full-population snapshot receipts, preserving recognized
 explicit windows and rank limits. Snapshot metadata must attest complete equipment
 and instrument inventory via GraphQL pagination metadata; missing or partial inventory
@@ -34,7 +34,35 @@ timestamp precision, stale readings and exact direct-work relations. Unrecognize
 tables remain explicitly unverified; native work-order linkage is not certified by the
 signal comparison. Supplied KQL checks and actual source execution are rendered from
 local validation and execution receipts; using a typed alternative cannot validate the
-original query. These corrections still require the hosted checks below to be rerun.
+original query. The hosted KQL probe now reports the original query's local rejection,
+the actual corrected execution and its exact stale value, rather than claiming the
+original was valid.
+
+The hosted full-population read returned eight BAD signals from 90 active signals
+and five hottest readings from 15 temperature signals, with no missing or unresolved
+signals. Its native/direct comparison remained incomplete: Chief incorrectly
+prescribed the application's local snapshot tool names to the published Data Agent.
+That agent could not execute those tools. The renderer did not turn the unavailable
+native claims into a comparison pass. The follow-up correction rejects such a
+delegation before invocation or slot consumption, separates native business questions
+from local tool instructions, and requires the independent direct population evidence
+before investigating fleet disagreements.
+
+The 1.0.749 matrix completed ten first prompts, the two follow-ups and the KQL
+probe without a terminal runtime failure, but is **not a ten-flow acceptance pass**.
+Flow 5 retrieved both native sources but omitted the requested Gauge/direct SQL and
+asset verification, despite returning a plausible 4/4/3 facility backlog. The follow-up
+correction makes explicitly requested direct reconciliation require Gauge and the
+corresponding untruncated source receipts (work orders, equipment and facilities for
+facility-level backlog). Native-only prose cannot satisfy that gate or stream a
+premature verification claim. Partial GraphQL inventory also marks asset-query results
+truncated with an unknown total, rather than certifying a complete empty match.
+
+The ontology T005 compound flow succeeded on 1.0.749: the actual `ask_ontology`
+receipt returned T005, its facility/system and six related instrument/signal rows.
+Gauge, Sleuth and Fixer then completed their respective steps; no draft was justified.
+Displayed duration: 3m17s. This is a successful rerun of the earlier transport failure,
+not proof that the preview endpoint cannot fail again.
 
 **1.0.747: runtime recovery is verified; answer-quality acceptance is still failed.**
 The complete native/direct reconciliation prompt now returned through

@@ -624,7 +624,7 @@ export async function queryOntologyGraph(force = false): Promise<OntologyGraph |
 // pinned via GraphQL aliases so the client stays stable regardless of table naming.
 type StidPayload = {
   data?: {
-    facilities?: { items?: Facility[] }
+    facilities?: { items?: Facility[]; hasNextPage?: boolean }
     systems?: { items?: System[] }
     equipment?: { items?: Equipment[]; hasNextPage?: boolean }
     instruments?: { items?: Instrument[]; hasNextPage?: boolean }
@@ -718,7 +718,7 @@ export async function queryStid(): Promise<StidData | null> {
   if (!token) return null
   // Aliases map to the real Lakehouse tables exposed by the
   // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
-  const coreQuery = `facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
+  const coreQuery = `facilities: silver_facilities(first: 20) { hasNextPage items { facility_id facility_name type country lat lon commissioned_date } }
     equipment: silver_equipments(first: 100) { hasNextPage items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
     instruments: silver_instruments(first: 500) { hasNextPage items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
   const execute = async (query: string) => {
@@ -749,7 +749,9 @@ export async function queryStid(): Promise<StidData | null> {
     systems,
     equipment,
     instruments: payload.data?.instruments?.items ?? [],
-    inventoryComplete: Array.isArray(payload.data?.equipment?.items)
+    inventoryComplete: Array.isArray(payload.data?.facilities?.items)
+      && payload.data.facilities.hasNextPage === false
+      && Array.isArray(payload.data?.equipment?.items)
       && Array.isArray(payload.data?.instruments?.items)
       && payload.data.equipment.hasNextPage === false && payload.data.instruments.hasNextPage === false,
   }

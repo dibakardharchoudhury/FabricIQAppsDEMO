@@ -112,6 +112,15 @@ unverified; exact matching does not prove equivalent query scope or freshness.
 Supplied KQL validation requests render the actual local-check outcome and execution
 receipts instead of model validity claims. The local check is not a full KQL compiler.
 See the acceptance report for whether these changes have passed hosted validation.
+Native handoffs reject prescriptions of local Hydro tool names before invocation.
+Sparky forwards business-data questions to native tools, whose connected tables remain
+their own normal execution sources. For fleet disagreements, independent full-population
+evidence must precede Sleuth's investigation; unrelated metadata cannot substitute for
+that prerequisite.
+Explicit direct-source reconciliation also requires Gauge and the relevant source
+receipts, not merely two native retrievals. Facility-level backlog requires direct
+work-order, equipment and facility rows; partial asset inventories expose unknown totals
+and truncation. Requested direct verification precedes disagreement investigation.
 Native tool error envelopes and incomplete-response reasons are surfaced rather than
 replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
 failure was observed live; improved diagnostics do not repair or certify that native service.

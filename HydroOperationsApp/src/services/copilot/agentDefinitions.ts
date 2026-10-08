@@ -11,6 +11,11 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
 }
 
 export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export function nativeAssignmentError(question: string): string | undefined {
+  const local = [...DIRECT_TOOLS, 'hydro_query', 'propose_work_order', 'complete_rca_assessment']
+    .filter(name => new RegExp(`\\b${name}\\b`, 'i').test(positiveActionClauses(question)))
+  return local.length ? `Native-source assignments cannot prescribe local Hydro application tools (${local.join(', ')}). Ask for the business data, identities, time window and output fields using the native source's own capabilities. Assign direct Hydro tool execution to Gauge/Sleuth/Fixer separately. No native agent was invoked and no delegation slot was consumed.` : undefined
+}
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
 Delegate operational requests using delegate_to_agent. Choose qa for factual questions, rca for root cause investigations, work-order for drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.

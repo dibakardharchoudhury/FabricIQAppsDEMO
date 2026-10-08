@@ -56,6 +56,22 @@ export function requiresInspectionEvidence(question: string): boolean {
   return /\b(?:investigate|inspect|review|verify|check|compare|read|query|retrieve|using)\b[^.!?;\n]{0,160}\b(?:inspections|inspection (?:evidence|history|records|results))\b/i.test(positiveActionClauses(question))
 }
 
+export function requiresDirectSourceVerification(question: string): boolean {
+  return /\b(?:verify|check|compare|reconcile|reconciliation|verification)\b[^.!?;\n]{0,240}\bdirect\b/i.test(positiveActionClauses(question))
+}
+
+export function directVerificationSources(question: string): Array<{ tool: string; entity?: string }> {
+  const text = positiveActionClauses(question)
+  return [
+    ...(/\b(?:work[\s-]*orders?|open work|work records|backlog)\b/i.test(text)
+      ? [{ tool: 'query_operations', entity: 'work_orders' }] : []),
+    ...(/\bdirect\s+(?:asset|equipment|facility)|\bfacility[- ]level\b/i.test(text)
+      ? [{ tool: 'query_assets', entity: 'equipment' }] : []),
+    ...(/\bfacility[- ]level\b/i.test(text)
+      ? [{ tool: 'query_assets', entity: 'facilities' }] : []),
+  ]
+}
+
 export function rcaAssignmentError(task: string): string | undefined {
   if (/\breturn only (?:the )?(?:verification )?(?:plan|queries)\b|\b(?:do not|don't|never) (?:run|execute) (?:them|(?:any|the|these) queries)\b/i.test(task)) {
     return 'Sleuth completes an actual source-referenced investigation, not a prose-only query plan. Assign factual verification to Gauge or allow Sleuth to read the required evidence and complete_rca_assessment. Do not prohibit the evidence reads needed by this specialist. No agent was invoked.'
@@ -108,6 +124,7 @@ export function missingRequestedSpecialists(question: string, completed: readonl
   const reviews: AgentRole[] = [...(investigation ? ['rca' as const] : []), ...(drafting ? ['work-order' as const] : [])]
   if (verification && (!completed.includes('qa') || reviews.some(role =>
     !completed.includes(role) || completed.lastIndexOf('qa') < completed.lastIndexOf(role)))) missing.push('qa')
+  if (requiresDirectSourceVerification(question) && !completed.includes('qa') && !missing.includes('qa')) missing.push('qa')
   return missing
 }
 
