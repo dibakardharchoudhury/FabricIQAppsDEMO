@@ -79,6 +79,31 @@ function reset() {
   harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 123.45 }] }, rowCount: 1, groundedSummary: 'Measured mean: 123.45 MW.' })
 }
 
+test('simple snapshot answers reject invented Chief counts and follow-up offers', async () => {
+  reset()
+  harness.reads.length = 0
+  for (const [quality, count] of [['BAD', 3], ['UNCERTAIN', 6]]) {
+    harness.reads.push({ result: {
+      quality_filter: quality, read_completed_at_utc: '2026-10-08T17:37:17Z',
+      rows: Array.from({ length: count }, (_, index) => ({
+        equipment_id: `EQ${index}`, opcua_node_id: `${quality}${index}`, quality,
+        event_time: '2026-10-08T16:48:44Z', value: index, unit: 'C', open_work_orders: [],
+      })),
+    }, rowCount: count })
+  }
+  const unverified = 'Seven turbines are currently faulty. If you want, I can rerun to get fresh results.'
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: ['BAD', 'UNCERTAIN'].map(quality =>
+    call(quality, 'hydro_query', { tool_name: 'query_signal_quality_snapshot', arguments: { quality, lookback: '6h', equipment_type: 'turbine' } })) },
+  { role: 'qa', text: unverified }, { role: 'supervisor', text: unverified })
+  const answer = await askFoundryCopilot('Which turbines had BAD or UNCERTAIN telemetry quality in the last six hours?')
+  assert.doesNotMatch(answer.text, /Seven|currently faulty|If you want|get fresh/)
+  assert.match(answer.text, /BAD: 3 returned rows/)
+  assert.match(answer.text, /UNCERTAIN: 6 returned rows/)
+  assert.match(answer.text, /not a complete history/)
+  assert.match(answer.text, /older than 60 seconds/)
+  assert.ok(answer.orchestrationEvents.some(event => event.trace?.some(trace => /unchecked model counts/.test(trace.label))))
+})
+
 test('full-fleet snapshots enumerate all quality states and disclose inventory signals without readings', async () => {
   reset()
   harness.stid = {

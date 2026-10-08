@@ -8,7 +8,7 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.766 (`059f6ee`).** Canonical deployment returned
+**Current deployed release: 1.0.768 (`64e4d8f`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
@@ -38,12 +38,15 @@ multi-agent runtime correctness is not yet certified.
 `feat/dibakar`. The canonical deployer stopped at step 1 because Azure CLI was
 signed into a different tenant than `ad340c84-1886-4202-a483-2da2cb9168eb`.
 The supported local deployment app's **Switch** flow subsequently completed.
-The same canonical command then deployed 1.0.766 successfully. This resolved
+The same canonical command then deployed 1.0.766 successfully. The subsequent
+universal-presentation release 1.0.768 also passed the canonical deployment and
+backend contract checks; its authenticated browser build identity was verified.
+This resolved
 deployment-operator sign-in, not an additional SPA/SQL consent requirement.
 Hosted browser sign-in initially stopped at the protected popup, then recovered
 through the shared broker. That historical blocker no longer prevents testing.
 
-**Universal-presentation candidate, not yet deployed:** 115 targeted Node tests,
+**Universal presentation, deployed in 1.0.768:** 115 targeted Node tests,
 typecheck, targeted lint, environment validation and production build passed.
 The shared renderer covers Foundry, Data Agent, Battle and the legacy panel:
 structured records remain tables and suitable charts are automatic. A real local
@@ -53,6 +56,15 @@ Table-only mode retained nine rows; narrow/wide viewports had no page overflow.
 These fixture checks are not live-agent acceptance. Production build still reports
 existing large-chunk warnings. Teams progress delivery is not configured or verified;
 self-chat creation was rejected and an existing chat link was requested.
+
+**1.0.768 live reproduction, not accepted:** the exact BAD/UNCERTAIN question
+completed in 47.6 seconds. Four tables retained 3 BAD and 6 UNCERTAIN signal
+rows plus 2 and 7 related-work rows; four source links resolved. However, Chief's
+prose said seven turbines while the source rows contained eight distinct
+equipment IDs. It also repeated an unsolicited follow-up menu. A follow-up
+correction now derives simple snapshot answers from source receipts and removes
+repeated work-count charts from each measurement-unit group. Its 117 targeted
+tests, typecheck and targeted lint passed; a new deployment/rerun is required.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

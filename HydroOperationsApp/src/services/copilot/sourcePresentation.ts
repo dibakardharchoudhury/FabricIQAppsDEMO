@@ -124,7 +124,11 @@ export function presentSourceRows(
         csv: Papa.unparse({ fields: columns, data: selected }) }
     }) : [dataset]
     for (const chartDataset of chartDatasets) {
-      addCharts(datasetVisualizations(chartDataset, question))
+      const countIndex = rawValue ? chartDataset.columns.indexOf('open_work_count') : -1
+      const chartColumns = chartDataset.columns.filter((_, index) => index !== countIndex)
+      const chartRows = chartDataset.rows.map(row => row.filter((_, index) => index !== countIndex))
+      addCharts(datasetVisualizations({ ...chartDataset, columns: chartColumns, rows: chartRows,
+        csv: Papa.unparse({ fields: chartColumns, data: chartRows }) }, question))
     }
     if (rawValue && !columns.some(column => /^units?$/i.test(column))) {
       issues.push(`${title}: measurement units were not supplied in these source rows; raw values are shown without conversion.`)

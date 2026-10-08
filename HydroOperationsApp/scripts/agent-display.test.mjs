@@ -58,6 +58,16 @@ test('empty unit cells do not combine unrelated raw signals', () => {
   assert.ok(result.visualizations.every(chart => !(chart.inlineCsvData.includes('temperature') && chart.inlineCsvData.includes('power'))))
 })
 
+test('snapshot work counts stay in tables without repeating count charts for every unit', () => {
+  const result = sourcePresentation.presentSourceRows(sourceSteps([
+    { turbine: 'T1', signal: 'temperature', value: 70, unit: 'C', open_work_orders: [] },
+    { turbine: 'T2', signal: 'temperature', value: 75, unit: 'C', open_work_orders: [] },
+  ]), '')
+  assert.ok(result.datasets[0].columns.includes('open_work_count'))
+  assert.equal(result.visualizations.length, 1)
+  assert.doesNotMatch(result.visualizations[0].inlineCsvData, /open_work_count/)
+})
+
 test('invalid or streaming structured output is not dumped into narrative', () => {
   for (const text of ['```csv\na,b\n"broken', '```json\n{"broken"', '| turbine | quality |']) {
     assert.equal(answerPresentation.hideRenderedData(text, true).trim(), '')

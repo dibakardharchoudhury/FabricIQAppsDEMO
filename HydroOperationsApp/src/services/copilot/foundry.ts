@@ -546,6 +546,13 @@ export async function askFoundryCopilot(
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
+    const directSnapshot = steps.some(step => step.status === 'done')
+      && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
+      && steps.every(step => step.status === 'done' && ['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'].includes(step.tool))
+    const snapshotPresentation = directSnapshot ? presentSourceRows(steps, question) : undefined
+    const snapshotAnswer = snapshotPresentation
+      ? `Latest returned readings per signal within the requested lookback, not a complete history of quality transitions. Temperature ranks are not approved fault thresholds.\n\n${snapshotPresentation.summary.split('\n\n').filter(line => !snapshotPresentation.issues.includes(line)).join('\n\n')}\n\nReturned signals and their open work are shown in the source-linked tables. Stale readings do not establish current equipment condition.`
+      : undefined
     const checkedInvestigation = assessments.length || sourceChartSummary || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
       ...(facilityComparison ? [facilityComparison.text] : []),
       ...(queryEvidence ? [queryEvidence] : []),
@@ -569,12 +576,15 @@ export async function askFoundryCopilot(
       : [stationSummaryValues[0], stationComparison?.text].filter(Boolean).join('\n\n')
     const answer = checkedInvestigation
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
-      : directChart ? stationAnswer : appendOmittedSnapshotWork(narrative, steps)
+      : snapshotAnswer ?? (directChart ? stationAnswer : appendOmittedSnapshotWork(narrative, steps))
     const text = requiresChartOutput(question) && !visualizations.length
       ? `${answer}\n\nRequested chart incomplete: no structured chart was produced. Missing data must not be plotted as zero.`
       : answer
     if (checkedInvestigation) {
       captureApplicationEvent(events[0], 'Rendered the source-checked workflow and any requested unsent notification. Unvalidated agent narrative was not used as the final assessment or notification.')
+      publish()
+    } else if (directSnapshot) {
+      captureApplicationEvent(events[0], 'Rendered snapshot findings directly from source receipts; unchecked model counts and follow-up offers were not used.')
       publish()
     } else if (directChart) {
       captureApplicationEvent(events[0], 'Rendered the station summary directly from the validated chart dataset, preserving its MW values and source timestamps.')
