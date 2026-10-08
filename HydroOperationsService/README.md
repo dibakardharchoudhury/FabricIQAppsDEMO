@@ -1,5 +1,9 @@
 # Hydro durable orchestration: local validation milestone
 
+For the full October 7-8 implementation history, agent roles, hosted/local
+distinction and production gates, see the
+[Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
+
 **Not the production agent backend.** The Fabric app still uses its browser
 orchestrator. This isolated Python service exercises Microsoft Agent Framework
 1.19.0 workflows, typed handoffs, checkpoint recovery and human approval.
@@ -100,7 +104,7 @@ duplicate identities or invalid cursors. Only Completed/Cancelled are excluded.
 No SQL mutation method exists in this bridge.
 
 From this service directory, using the operator's existing tenant-scoped Azure CLI
-session and installed app dependencies (Node 24+):
+session and installed app dependencies (Node 24):
 
 ```powershell
 .\.venv\Scripts\python.exe -m hydro_orchestrator --probe-live-sources EQUIP_RTI_T005

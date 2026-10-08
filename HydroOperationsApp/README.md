@@ -9,6 +9,8 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > complete routing policy, actual tools/runtime, scientific RCA criteria, proposed enterprise
 > specialists, and ten multi-turn test scenarios with verified versus pending outcomes.
 > **Try it yourself:** [ten copy-and-paste prompts](AGENT-TEST-PROMPTS.md).
+> **End-to-end work record:** [Foundry and multi-agent implementation, October 7-8](../docs/foundry-multi-agent-implementation.md)
+> separates deployed behavior, local Agent Framework work, test evidence and pending migration.
 > **Durable orchestration work:** [local Agent Framework validation](../HydroOperationsService/README.md)
 > is isolated and is not yet the production backend.
 > Moving to a different tenant, workspace, or capacity region? See

@@ -5,6 +5,8 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPTS.md).
+Consolidated change history and architecture:
+[October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
 **Current deployed release: 1.0.758 (`4c0e1a1`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
@@ -944,22 +946,31 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 
 ## Remaining acceptance gates
 
-- Deploy the final presentation correction and repeat the structured RCA flow. Local runtime tests reject
-  prose/invalid reports, exclude Chief's unsupported threshold, propagate a source failure
-  even after report submission, and preserve a single failed-turn history entry.
-  The 1.0.731 hosted reference/claim boundary passed, but causal relevance is unvalidated
-  and the complete ten-flow suite remains unaccepted. Historical 1.0.729 RCA remains failed.
-- Resume the assigned Fabric capacity through its authorized owner before deployment or
-  additional hosted acceptance. Do not silently choose another capacity or endpoint.
-- Resolve native Data Agent output-moderation and Ontology/native timeout cases with
-  their service traces, then repeat scenarios 2-5. Do not substitute a direct query and
-  label the native-source workflow successful.
-- Verify ingestion before calling conditions current: the final hosted checks showed
-  0/90 signals fresh, with latest source events around 20:20 UTC. Successful reads do
-  not make those readings live.
-- Verify the new deterministic proposal-priority policy in hosted compound flows. Approval
-  phase/race logic has unit coverage and rejection is hosted-tested; a new hosted
+These gates reflect the latest recorded 1.0.758 deployment and local backend work;
+the earlier inactive-capacity and 1.0.729-1.0.731 failures above are historical.
+
+- Deploy and verify the latest local old/new station comparison. Its 58 targeted
+  Node tests and app build passed; that does not certify the hosted follow-up.
+- Repeat all ten compound flows and their follow-ups on one final hosted build.
+  Targeted recoveries on 1.0.753-1.0.758 do not replace a full matrix. Native
+  failures must remain visible, without direct-source substitution.
+- Complete the Agent Framework migration: supported backend delegated/OBO access,
+  live provider/proposal composition, production hosting/storage, SPA run/reconnect
+  integration and deployment integration. The default local service is not ready
+  for production; SQL exchange and named-scope acquisition remain blocked.
+- Verify assigned-capacity health at each deployment. The owner restored it for
+  the latest deployment; no capacity change is authorized by these instructions.
+- Verify ingestion before calling conditions current: source events stopped
+  advancing around 06:05 UTC during the latest hosted series, and the subsequent
+  local T005 diagnostic still returned stale measurements. Successful reads do
+  not make them current.
+- Add approved baselines, limits and engineering review for causal relevance.
+  Structured references and an undetermined conclusion are not a causal model.
+- Verify authorized SQL creation, idempotency and uncertain-write reconciliation.
+  Latest hosted cards preserved explicit Low priority and rejection; a new
   approved SQL write was deliberately not performed in this acceptance suite.
+- Add durable notification delivery receipts and the authoritative BOM/calendar/
+  constraint integrations before claiming maintenance-planning readiness.
 - Complete physical microphone recognition and tenant-wide consent for enterprise
   rollout. Browser feature detection and permission notice are not audio recognition.
 - Benchmark repeated cold/warm loads and agent latency under representative capacity;

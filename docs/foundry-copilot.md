@@ -1,5 +1,9 @@
 # Foundry Copilot — authentication, flows and tool calls
 
+**End-to-end change record:** [October 7-8 implementation, Agent Framework migration,
+agent roles, tests and remaining gates](foundry-multi-agent-implementation.md).
+Agent Framework is implemented locally, **not yet in the hosted app**.
+
 > Current implementation: the app invokes persistent Foundry Prompt Agents through a project
 > endpoint. A real Supervisor emits delegation function calls; the client invokes separate
 > specialist agent identities and runs direct tools under the user's existing delegated identity.

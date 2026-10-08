@@ -5,6 +5,8 @@
 Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engine**.
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
+End-to-end changes and migration status:
+[Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
 Current deployed release: **1.0.758 (`4c0e1a1`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
