@@ -61,10 +61,14 @@ export function nativeComparisonText(output: unknown): string | undefined {
 
 type Claim = { node: string; equipment: string; value: string; time: string; quality?: string; unit?: string; rank?: string }
 export function readNativeDatasets(text: string) {
-  const parsed = readAnswerDatasets(text)
+  const parsed = readAnswerDatasets(text.replace(/```json\b[\s\S]*?(?:```|$)/gi, ''))
   const datasets: Array<Pick<AnswerDataset, 'title' | 'columns' | 'rows'>> = [...parsed.datasets]
   const issues = [...parsed.issues]
-  for (const match of text.matchAll(/```json\s*\r?\n([\s\S]*?)\r?\n```/gi)) {
+  for (const match of text.matchAll(/```json\s*\r?\n([\s\S]*?)(\r?\n```|$)/gi)) {
+    if (!match[2]) {
+      issues.push('Native JSON dataset is incomplete; no rows were accepted.')
+      continue
+    }
     let value: unknown
     try { value = JSON.parse(match[1]) } catch (error) {
       if (!(error instanceof SyntaxError)) throw error
@@ -95,13 +99,17 @@ export function readNativeDatasets(text: string) {
 }
 
 const aliases = {
-  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'Signal node', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
-  equipment: ['equipment_id', 'Turbine ID', 'Equipment', 'Linked equipment_id'],
-  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value', 'Raw value', 'Latest temperature', 'Last value'],
-  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc', 'Latest timestamp (UTC)', 'Reading time (UTC)'],
+  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'OPC node', 'Node ID', 'Signal node', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
+  equipment: ['equipment_id', 'Turbine ID', 'Equipment', 'Linked equipment_id', 'Record'],
+  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value', 'Raw value', 'Raw reading', 'Latest temperature', 'Last value'],
+  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc', 'Latest timestamp (UTC)', 'Reading time (UTC)', 'Signal timestamp', 'Reading timestamp'],
   quality: ['quality'], unit: ['unit'], rank: ['rank'],
 }
 const normalized = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+const literalEquipment = (value: string) => {
+  const ids = [...new Set(value.match(/\bEQUIP_[A-Za-z0-9_]+\b/g) ?? [])]
+  return ids.length === 1 ? ids[0] : undefined
+}
 const literalNode = (value: string, column: string) =>
   normalized(column) === normalized('instrument_id / opcua_node_id')
     ? value.match(/^INST_[A-Za-z0-9_]+\s+\/\s+(ns=\d+;s=[^\s/]+)$/)?.[1]
@@ -124,7 +132,7 @@ function claims(text: string, temperature: boolean): { rows: Claim[]; issues: st
     indices.node = nodeSignatures.size === 1 ? nodeColumns[0] : -1
     if (['equipment', 'value', 'time'].some(key => indices[key] < 0)) continue
     if (temperature ? indices.rank < 0 && !/temperature|hottest/i.test(dataset.title) : indices.quality < 0) continue
-    if (!temperature && indices.rank >= 0) continue
+    if (!temperature && (indices.rank >= 0 || (/\b(?:temperature|temperatures|hottest)\b/i.test(dataset.title) && !/\bBAD\b/i.test(dataset.title)))) continue
     recognized++
     if (indices.node < 0) {
       issues.push(`Native ${dataset.title}: identity is not comparable.`)
@@ -132,7 +140,7 @@ function claims(text: string, temperature: boolean): { rows: Claim[]; issues: st
     }
     for (const row of dataset.rows) {
       const node = literalNode(row[indices.node], dataset.columns[indices.node])
-      const equipment = row[indices.equipment].match(/\bEQUIP_[A-Za-z0-9_]+\b/)?.[0]
+      const equipment = literalEquipment(row[indices.equipment])
       if (!node || !equipment || (temperature && !node.endsWith('.turbine_temp'))) {
         issues.push(`Native ${dataset.title}: identity is not comparable.`)
         continue
@@ -197,7 +205,10 @@ export function compareWork(text: string | undefined, directRows: Record<string,
     if (Object.values(indices).some(index => index < 0)) continue
     recognized++
     for (const row of table.rows) {
-      const equipment = row[indices.equipment].match(/\bEQUIP_[A-Za-z0-9_]+\b/)?.[0]
+      const equipment = literalEquipment(row[indices.equipment])
+      if (equipment && table.columns[indices.equipment] === 'Record'
+        && /:\s*None$/i.test(row[indices.equipment])
+        && ['number', 'title', 'status', 'priority'].every(field => !row[indices[field]])) continue
       if (!equipment || !row[indices.number]) { issues.push('Native work-order identity is not comparable.'); continue }
       const key = `${equipment}:${row[indices.number]}`
       if (native.has(key)) issues.push(`Duplicate native work-order claim: ${key}.`)

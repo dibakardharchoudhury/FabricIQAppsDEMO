@@ -418,6 +418,15 @@ Structured asset/operational filters distinguish literal `value` from
 `{"column":"quantityOnHand","op":"lte","value_column":"reorderLevel"}`.
 Equality is included, unknown quantities/limits do not match, and numeric/text
 ordering fails explicitly rather than silently returning an unfiltered inventory.
+Explicit labeled bullet records from native responses are normalized into tables;
+supported work-order bullets preserve one row per order and explicit "None"
+records. Only rows with an actual work-order number contribute to work-count
+charts. Literal inline numeric/unit values can produce unit-separated charts;
+missing values, identities and list fields are never synthesized. Ambiguous
+record lists surface a parsing warning with the original output available for
+inspection. Native JSON comparison uses its strict validator once, independently
+of the more permissive display parser. Presentation normalization does not attest
+native query execution or establish a physical cause.
 
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,

@@ -38,6 +38,18 @@ const sourceSteps = rows => [{ tool: 'query_telemetry', status: 'done', detail: 
   summary: 'Returned rows', elapsedMs: 1,
   result: JSON.stringify({ rows, truncated: true, read_completed_at_utc: '2026-10-08T16:19:39.834Z' }) }]
 
+test('native bullet records render real tables and charts without acquiring verified-source status', () => {
+  const text = '## Latest readings\n- **T005** (`EQUIP_RTI_T005`)\n  - Raw reading: **91.156 C**\n  - Quality: **GOOD**\n- **T013** (`EQUIP_RTI_T013`)\n  - Raw reading: **94.101 C**\n  - Quality: **GOOD**'
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  assert.equal((html.match(/<table>/g) ?? []).length, 1)
+  assert.equal((html.match(/<tr>/g) ?? []).length, 3)
+  assert.match(html, /role="img"/)
+  assert.match(html, /EQUIP_RTI_T005/)
+  assert.match(html, /91\.156/)
+  assert.match(html, /not independently verified/)
+  assert.doesNotMatch(html, /application-checked findings/)
+})
+
 test('native source charts share the panel bound without losing tables', () => {
   const steps = Array.from({ length: 13 }, (_, index) => ({
     tool: 'native_reader', status: 'done',

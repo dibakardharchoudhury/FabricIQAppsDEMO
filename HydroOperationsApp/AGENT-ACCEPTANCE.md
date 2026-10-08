@@ -151,6 +151,30 @@ bullet records instead of the requested tables, with temperature OPC node IDs
 omitted. The application did not infer missing identities or declare parity.
 Reliable native structured-output enforcement remains a separate limitation.
 
+**Native presentation/reconciliation follow-up:** deterministic parsing now turns
+the observed labeled bullet records into tables, preserves ordered-list positions,
+and gives each explicitly formatted work order its own row. Explicit "None"
+records remain visible but do not count as work orders. Inline numeric/unit cells
+produce unit-separated charts without changing their table values. Ambiguous
+nesting, continuations and duplicate fields produce an explicit parsing warning
+and keep the original output available for inspection, not guessed records.
+
+An isolated browser fixture using the captured native response rendered three
+tables (3 BAD records, 5 temperature records, 5 work orders plus 2 explicit None
+records) and six charts. Work status counts total five; priority counts are
+Medium=2, High=1, Low=1, Critical=1. Table-only mode retains all 15 rows. Wide
+(1280px) and narrow (390px) layouts had no page overflow. Native provenance labels
+remain "not independently verified". This is recorded-response presentation
+verification, not hosted agent execution.
+
+The expanded native/direct reconciliation tests exposed duplicate JSON ingestion
+by the generic and strict native parsers. Native JSON now enters the strict
+validator once; incomplete, nested, inconsistent and count-mismatched sets remain
+unverified. Literal bullet-record BAD/work identities can be compared; missing
+temperature OPC nodes are not inferred from names or instrument IDs. All 200
+affected tests, typecheck and targeted lint passed. These latest changes still
+require deployment and hosted acceptance.
+
 **Teams communication recovered:** the verified existing self-chat message
 endpoint accepted updates at 18:22 and 18:38 UTC; the first message was read back
 successfully. A session-attached 15-minute reminder supports further updates

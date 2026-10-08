@@ -31,6 +31,36 @@ const text = `### Latest BAD
 | 2 | EQUIP_RTI_T004 | ns=2;s=T004.turbine_temp | 79 | C | 2026-10-08 06:05:01 |`
 const native = [{ id: 'native', source: 'data-agent', completedAt: '2026-10-08T09:59:00Z', output: JSON.stringify({ response: text }) }]
 
+test('native bullets compare literal BAD/work identities but do not fabricate missing temperature nodes', () => {
+  const bullets = `## Latest BAD
+- **T001** (\`EQUIP_RTI_T001\`)
+  - OPC node: \`ns=2;s=T001.turbine_temp\`
+  - Latest value: **85 C**
+  - Quality: **BAD**
+  - Signal timestamp: **2026-10-08 06:05:01 UTC**
+
+## Highest temperatures
+1. **T001** (\`EQUIP_RTI_T001\`)
+  - Temperature signal: \`INST_T001_TURBINE_TEMP\`
+  - Raw reading: **85 C**
+  - Quality: **BAD**
+  - Reading timestamp: **2026-10-08 06:05:01 UTC**
+
+## Open work
+- **T003** (\`EQUIP_RTI_T003\`): **None**
+- **T001** (\`EQUIP_RTI_T001\`)
+  - \`WO-123\` \u2014 **Inspect signal**; Status: **Draft**; Priority: **Low**`
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: bullets }])
+  assert.match(output, /Native table rows: 1; direct selected rows: 2/)
+  assert.match(output, /timestamp\/precision differs/)
+  assert.match(output, /Highest temperatures: identity is not comparable/)
+  assert.doesNotMatch(output, /Expected one native BAD-quality table|Work comparison incomplete/)
+  assert.match(output, /EQUIP\\_RTI\\_T001:WO-123/)
+  assert.match(renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{
+    ...native[0], output: bullets.replace('**T001** (`EQUIP_RTI_T001`)', '**T001** (`EQUIP_RTI_T001` / `EQUIP_RTI_T002`)'),
+  }]), /identity is not comparable/)
+})
+
 test('comparison requires real unscoped population receipts, not selected-node telemetry', () => {
   assert.deepEqual(fleetComparisonScope('Ask the Data Agent which turbines have BAD signals and hottest temperatures today. Independently verify both sets.'), { ...scope, lookback: 'today' })
   assert.equal(fleetComparisonScope('Show turbine temperatures.'), undefined)
@@ -159,7 +189,11 @@ test('native JSON malformed, nested, inconsistent, empty and count-mismatched se
     assert.equal(parsed.issues.length, 1)
   }
   const parsed = readNativeDatasets('```json\n{"rows":[{"id":"T001","value":null}]}\n```')
+  assert.equal(parsed.datasets.length, 1)
   assert.deepEqual(parsed.datasets[0].rows, [['T001', '']])
+  const incomplete = readNativeDatasets('```json\n{"rows":[{"id":"T001","value":12}]}')
+  assert.deepEqual(incomplete.datasets, [])
+  assert.match(incomplete.issues.join(' '), /incomplete/)
 })
 
 test('work comparison preserves all direct orders and detects missing native work without claiming it does not exist', () => {

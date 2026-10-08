@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
@@ -15,6 +15,89 @@ function responseStream(events: unknown[]) {
     },
   })
 }
+
+test('native labeled bullet records become exact tables and unit-separated charts, not inferred identities', () => {
+  const text = `## Latest BAD signals
+
+- **T010** (\`EQUIP_RTI_T010\`)
+  - OPC node: \`ns=2;s=T010.power_output\`
+  - Latest value: **1133.19 MW**
+  - Quality: **BAD**
+
+- **T009** (\`EQUIP_RTI_T009\`)
+  - OPC node: \`ns=2;s=T009.vibration_a\`
+  - Latest value: **11.034 mm_s**
+  - Quality: **BAD**
+
+## Hottest
+
+1. **T013** (\`EQUIP_RTI_T013\`)
+   - Temperature signal: \`INST_T013_TURBINE_TEMP\`
+   - Raw reading: **94.101 C**
+   - Quality: **GOOD**
+
+### Caveats
+The measurements are stale.`
+  const parsed = readAnswerDatasets(text)
+  assert.deepEqual(parsed.issues, [])
+  assert.equal(parsed.datasets.length, 2)
+  assert.deepEqual(parsed.datasets[0].columns, ['Record', 'OPC node', 'Latest value', 'Quality'])
+  assert.deepEqual(parsed.datasets[0].rows[0], ['T010 (EQUIP_RTI_T010)', 'ns=2;s=T010.power_output', '1133.19 MW', 'BAD'])
+  assert.equal(parsed.datasets[1].rows[0][0], '1. T013 (EQUIP_RTI_T013)')
+  assert.ok(!parsed.datasets[1].columns.includes('OPC node'))
+  const charts = answerVisualizations(parsed.datasets, '')
+  assert.deepEqual(charts.map(chart => chart.yAxisTitle), ['MW', 'mm_s', 'C'])
+  assert.match(charts[0].inlineCsvData, /1133\.19/)
+  assert.doesNotMatch(charts[0].inlineCsvData, /11\.034/)
+  const narrative = hideRenderedData(text)
+  assert.match(narrative, /measurements are stale/)
+  assert.doesNotMatch(narrative, /1133\.19|EQUIP_RTI_T010/)
+})
+
+test('native work bullets preserve every order, explicit None and exact punctuation in tables', () => {
+  const text = `### Open work
+- **T005** (\`EQUIP_RTI_T005\`): **None**
+- **T008** (\`EQUIP_RTI_T008\`)
+  - \`WO-2851\` — **Inspect A|B**; Status: **Planned**; Priority: **Medium**
+  - \`WO-471038\` — **Inspect EQUIP_RTI_T008**; Status: **Draft**; Priority: **High**`
+  const dataset = readAnswerDatasets(text).datasets[0]
+  assert.deepEqual(dataset.columns, ['Record', 'workOrderNumber', 'Title', 'Status', 'Priority'])
+  assert.equal(dataset.rows.length, 3)
+  assert.equal(dataset.rows[0][0], 'T005 (EQUIP_RTI_T005): None')
+  assert.deepEqual(dataset.rows[1], ['T008 (EQUIP_RTI_T008)', 'WO-2851', 'Inspect A|B', 'Planned', 'Medium'])
+  assert.deepEqual(dataset.rows[2], ['T008 (EQUIP_RTI_T008)', 'WO-471038', 'Inspect EQUIP_RTI_T008', 'Draft', 'High'])
+  const charts = datasetVisualizations(dataset, '')
+  assert.equal(charts.length, 2)
+  assert.match(charts[0].inlineCsvData, /Planned,1/)
+  assert.match(charts[0].inlineCsvData, /Draft,1/)
+  assert.ok(charts.every(chart => !chart.inlineCsvData.includes('None')))
+})
+
+test('ordinary and fenced lists stay prose; ambiguous records surface an explicit parsing failure', () => {
+  for (const text of [
+    '- Investigate quality\n- Review current work',
+    '```text\n- T005\n  - Value: 2\n  - Unit: C\n```',
+  ]) {
+    assert.deepEqual(readAnswerDatasets(text).datasets, [])
+    assert.equal(hideRenderedData(text), text)
+  }
+  for (const text of [
+    '- T005\n  - Value: 2\n  - Value: 3\n  - Unit: C',
+    '- T005\n  - Value: 2\n    - Unit: C',
+    '- T005\n  - Value: 2\n  - Unit: C\n    continuation text',
+  ]) {
+    assert.deepEqual(readAnswerDatasets(text).datasets, [])
+    assert.match(readAnswerDatasets(text).issues.join(' '), /No records were guessed/)
+    assert.equal(hideRenderedData(text), '')
+  }
+})
+
+test('inline-unit charts do not zero-fill missing values or interpret prose as measurements', () => {
+  for (const values of [['1 C', ''], ['1 C', 'about 2 C'], ['1 C', 'Infinity C']]) {
+    const dataset = readAnswerDatasets(`| Asset | Reading |\n| --- | --- |\n| A | ${values[0]} |\n| B | ${values[1]} |`).datasets[0]
+    assert.deepEqual(datasetVisualizations(dataset, ''), [])
+  }
+})
 
 test('ordinary parts queries cannot invent a native-source request; follow-ups retain explicit user source scope', () => {
   assert.match(nativeSourceError('List spare parts at or below reorder level and related open maintenance work.', 'data-agent') ?? '', /not requested/)

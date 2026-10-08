@@ -171,6 +171,21 @@ not converted to passes by finished agent badges.
 The captured native payload used bullet records and omitted temperature OPC node
 IDs despite the table request; these missing identities were not fabricated.
 
+The subsequent presentation correction parses explicit labeled bullet records,
+preserves every work order/None record, and creates unit-separated charts from
+literal inline measurements. Ambiguous records fail visibly instead of being
+guessed. A browser fixture of that actual captured response showed all 15 rows in
+three tables and six charts, correct five-order status/priority counts, table-only
+parity, and no wide/narrow page overflow. Native results remain labeled as not
+independently verified.
+
+The expanded reconciliation suite also exposed and fixed duplicate JSON ingestion
+by generic and strict native parsers. Native JSON is now validated exactly once.
+Literal BAD/work identities from supported bullet records can be compared, while
+missing temperature node IDs remain explicitly unverified. All 200 affected
+tests, typecheck and targeted lint passed. Deployment and hosted acceptance of
+this follow-up remain separate gates.
+
 On refresh after deployment, the Fabric private-hosting session expired and its
 sign-in popup was blocked. The operator was unavailable to complete normal
 sign-in. No permission was added and no hosting protection was bypassed.

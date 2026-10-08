@@ -31,9 +31,74 @@ export type AnswerDataset = {
   sourceStep?: number
 }
 
+const plainMarkdown = (text: string) => text.trim().replace(/(?<!\\)(?:\*\*|`)/g, '').replace(/\\([\\`*_[\]<>|])/g, '$1')
 const tableCells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '')
-  .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/(?<!\\)(?:\*\*|`)/g, '').replace(/\\([\\`*_[\]<>|])/g, '$1'))
+  .split(/(?<!\\)\|/).map(plainMarkdown)
 const tableSeparator = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
+
+function normalizeRecordLists(text: string, issues: string[] = []): string {
+  const lines = text.split(/\r?\n/)
+  const output: string[] = []
+  const parent = /^([-*+]|\d+[.)])\s+(.+)$/
+  const child = /^([ \t]+)[-*+]\s+(.+)$/
+  const workFields = (detail: string) => detail.match(/^(WO-[\w-]+)\s+[\u2014\u2013-]\s+(.+);\s*Status:\s*([^;]+);\s*Priority:\s*([^;]+)$/)?.slice(1)
+  let fence: string | undefined
+  for (let index = 0; index < lines.length; index++) {
+    const marker = lines[index].match(/^ {0,3}(`{3,}|~{3,})/)
+    if (marker) {
+      if (!fence) fence = marker[1]
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = undefined
+    }
+    if (fence || !parent.test(lines[index])) {
+      output.push(lines[index])
+      continue
+    }
+    const records: Array<{ label: string; fields: Map<string, string>; details: string[] }> = []
+    let end = index
+    let valid = true
+    let indent: string | undefined
+    while (end < lines.length) {
+      const header = lines[end].match(parent)
+      const field = lines[end].match(child)
+      if (header) records.push({ label: `${/^\d/.test(header[1]) ? `${header[1]} ` : ''}${plainMarkdown(header[2])}`, fields: new Map(), details: [] })
+      else if (field && records.length) {
+        indent ??= field[1]
+        if (field[1] !== indent) valid = false
+        const value = plainMarkdown(field[2])
+        const pair = value.match(/^([A-Za-z][A-Za-z0-9 ()/._-]{0,79}):\s*(.+)$/)
+        const current = records[records.length - 1]
+        if (pair) {
+          if (current.fields.has(pair[1]) || ['Record', 'Details'].includes(pair[1])) valid = false
+          current.fields.set(pair[1], pair[2])
+        } else current.details.push(value)
+      } else if (lines[end].trim()) break
+      end++
+    }
+    // Convert records, not ordinary prose lists or ambiguous nested hierarchies.
+    const structured = records.some(record => record.fields.size >= 2)
+      || records.some(record => record.details.some(detail => workFields(detail)))
+    if (structured && (!valid || (end < lines.length && /^[ \t]+\S/.test(lines[end])))) {
+      issues.push('A structured record list contains duplicate fields or ambiguous nesting/continuation. No records were guessed; inspect the unparsed agent output.')
+      while (end < lines.length && (!lines[end].trim() || /^[ \t]+\S/.test(lines[end]))) end++
+    } else if (!structured) {
+      output.push(...lines.slice(index, end))
+    } else {
+      const work = records.every(record => !record.fields.size && record.details.every(detail => workFields(detail)))
+      const columns = work ? ['Record', 'workOrderNumber', 'Title', 'Status', 'Priority']
+        : ['Record', ...new Set(records.flatMap(record => [...record.fields.keys()])),
+          ...(records.some(record => record.details.length) ? ['Details'] : [])]
+      const rows = records.flatMap(record => work
+        ? record.details.length ? record.details.map(detail => [record.label, ...workFields(detail) ?? []]) : [[record.label, '', '', '', '']]
+        : [columns.map(column => column === 'Record' ? record.label
+          : column === 'Details' ? record.details.join('; ') : record.fields.get(column) ?? '')])
+      const cell = (value: string) => value.replace(/[\\|`*_[\]<>]/g, '\\$&')
+      output.push(`| ${columns.map(cell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`,
+        ...rows.map(row => `| ${row.map(cell).join(' | ')} |`), '')
+    }
+    index = end - 1
+  }
+  return output.join('\n')
+}
 
 export function normalizeMarkdownTables(text: string): string {
   let fenced = false
@@ -80,7 +145,7 @@ export function answerSections(text: string): Array<{ title?: string; markdown: 
     else sections[sections.length - 1].lines.push(line)
   }
   return sections.filter(section => section.lines.length).map(section => ({
-    title: section.title,
+    title: section.title === undefined ? undefined : plainMarkdown(section.title),
     markdown: section.lines.join('\n'),
     collapsed: /^(?:Sources?|Source observations|Returned source inventory:.*|Additional verified open work|Native-source retrieval claims|Competing hypotheses - untested|Work-order query coverage)$/i.test(section.title ?? ''),
   }))
@@ -149,7 +214,7 @@ function normalizeLabeledCsv(text: string): string {
 export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; issues: string[] } {
   const datasets: AnswerDataset[] = []
   const issues: string[] = []
-  const lines = normalizeMarkdownTables(normalizeLabeledCsv(text)).split(/\r?\n/)
+  const lines = normalizeMarkdownTables(normalizeRecordLists(normalizeLabeledCsv(text), issues)).split(/\r?\n/)
   let title = 'Findings'
   const add = (columns: string[], rows: string[][], format: AnswerDataset['format']) => {
     if (!columns.length || !rows.length || new Set(columns).size !== columns.length || rows.some(row => row.length !== columns.length)) {
@@ -162,7 +227,7 @@ export function readAnswerDatasets(text: string): { datasets: AnswerDataset[]; i
     else if (!existing) datasets.push({ title, columns, rows, csv, format })
   }
   for (let index = 0; index < lines.length; index++) {
-    if (/^#{1,6}\s/.test(lines[index])) title = lines[index].replace(/^#{1,6}\s+/, '').trim()
+    if (/^#{1,6}\s/.test(lines[index])) title = plainMarkdown(lines[index].replace(/^#{1,6}\s+/, ''))
     if (/^```json\s*$/i.test(lines[index].trim())) {
       const json: string[] = []
       while (++index < lines.length && !/^```\s*$/.test(lines[index].trim())) json.push(lines[index])
@@ -215,7 +280,7 @@ export function hideRenderedCsv(text: string): string {
 
 export function hideRenderedData(text: string, streaming = false): string {
   if (streaming) return ''
-  const normalized = normalizeMarkdownTables(normalizeLabeledCsv(text))
+  const normalized = normalizeMarkdownTables(normalizeRecordLists(normalizeLabeledCsv(text)))
     .replace(/```(?:json|csv)[^\S\r\n]*(?:\r?\n|$)[\s\S]*?(?:```|$)/gi, '')
   return normalized
     .replace(/^[^\S\r\n]*\|[^\n]+\n[^\S\r\n]*\|?[ :|\t-]+\n(?:[^\S\r\n]*\|[^\n]*(?:\n|$))+/gm, block => {
@@ -244,9 +309,22 @@ export function datasetVisualizations(dataset: AnswerDataset, question: string):
     !identifierColumn(name) && dataset.rows.some(row => !numeric(row[index])))
   if (labelIndex < 0) return []
   const groupBy = labelIndex === timeIndex && seriesIndex >= 0 ? dataset.columns[seriesIndex] : undefined
-  const charts: AgentVisualization[] = dataset.columns.flatMap((column, index) => {
-    if (index === labelIndex || column === groupBy || identifierColumn(column)
-      || !dataset.rows.every(row => numeric(row[index]))) return []
+  const charts: AgentVisualization[] = dataset.columns.flatMap((column, index): AgentVisualization[] => {
+    if (index === labelIndex || column === groupBy || identifierColumn(column)) return []
+    if (!dataset.rows.every(row => numeric(row[index]))) {
+      const measures = dataset.rows.flatMap(row => {
+        const match = row[index].match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s+([A-Za-z_\u00B0/%]+)$/i)
+        return match && Number.isFinite(Number(match[1])) ? [{ value: match[1], unit: match[2] }] : []
+      })
+      if (groupBy || measures.length !== dataset.rows.length) return []
+      return [...new Set(measures.map(value => value.unit))].map(unit => {
+        const measure = `${column} (${unit})`
+        return { title: `${dataset.title} - ${measure}`, chartType: 'bar' as const,
+          xColumn: dataset.columns[labelIndex], yColumns: [measure], yAxisTitle: unit,
+          inlineCsvData: Papa.unparse({ fields: [dataset.columns[labelIndex], measure],
+            data: measures.flatMap((value, rowIndex) => value.unit === unit ? [[dataset.rows[rowIndex][labelIndex], value.value]] : []) }) }
+      })
+    }
     return [{
       title: `${dataset.title} - ${column}`,
       chartType: labelIndex === timeIndex && multipleTimes ? 'line' : /\bpie\b/i.test(question) ? 'pie' : 'bar',
@@ -257,12 +335,14 @@ export function datasetVisualizations(dataset: AnswerDataset, question: string):
     }]
   })
   if (charts.length || dataset.rows.length < 2) return charts
-  const workInventory = dataset.columns.some(column => /^work_?order_?number$/i.test(column))
+  const orderColumn = dataset.columns.findIndex(column => /^work_?order_?number$/i.test(column))
+  const workInventory = orderColumn >= 0
+  const countedRows = workInventory ? dataset.rows.filter(row => row[orderColumn].trim()) : dataset.rows
   return dataset.columns.flatMap((column, index): AgentVisualization[] => {
     if (!/^(quality|status|priority|criticality|category|type|country)$/i.test(column)
       && !(workInventory && /^equipment_?id$/i.test(column))) return []
     const counts = new Map<string, number>()
-    for (const row of dataset.rows) {
+    for (const row of countedRows) {
       const label = row[index].trim() || 'Not supplied'
       counts.set(label, (counts.get(label) ?? 0) + 1)
     }
