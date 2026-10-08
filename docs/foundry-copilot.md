@@ -13,6 +13,13 @@
 > Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
 > Shared presentation and safety tests do not certify live response parity or agent latency.
 
+An isolated [Microsoft Agent Framework service](../HydroOperationsService/README.md)
+now validates durable execution boundaries locally, with synthetic providers and no
+production writes. It is not wired into this browser flow. Its restart/approval tests
+must not be presented as live Foundry orchestration or a completed enterprise migration.
+Operator-ready [ten test prompts](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) are
+separate from the historical acceptance logs.
+
 The complete 1.0.752 hosted matrix captured ten compound first prompts and two
 follow-ups. It is not a ten-of-ten pass: ontology retrieval surfaced HTTP 500, and
 a fleet request incorrectly asked the Data Agent for its own "published results".

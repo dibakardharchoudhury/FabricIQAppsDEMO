@@ -8,6 +8,9 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 > **Agent behavior and acceptance:** see [AGENT-ACCEPTANCE.md](AGENT-ACCEPTANCE.md) for the
 > complete routing policy, actual tools/runtime, scientific RCA criteria, proposed enterprise
 > specialists, and ten multi-turn test scenarios with verified versus pending outcomes.
+> **Try it yourself:** [ten copy-and-paste prompts](AGENT-TEST-PROMPTS.md).
+> **Durable orchestration work:** [local Agent Framework validation](../HydroOperationsService/README.md)
+> is isolated and is not yet the production backend.
 > Moving to a different tenant, workspace, or capacity region? See
 > [DEPLOY.md → Redeploying to a different tenant, workspace, or region](DEPLOY.md#redeploying-to-a-different-tenant-workspace-or-region)
 > (the repository orchestrator backs up target-specific state, resolves the tenant SPA, provisions

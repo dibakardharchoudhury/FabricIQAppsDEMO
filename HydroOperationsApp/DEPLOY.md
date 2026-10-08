@@ -6,7 +6,7 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Current deployed release: **1.0.756 (`3bab58c`)**. The owner-restored capacity was
+Current deployed release: **1.0.758 (`4c0e1a1`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
 the deployments and compound reruns; the **full latest-build matrix is not yet accepted**. The earlier explicit
@@ -27,9 +27,18 @@ A retry of the same canonical command returned `SUCCESS` with backend checks pas
 no readiness check was bypassed.
 Facility reconciliation and the original simple station chart passed their bounded
 hosted checks on 1.0.754. See the report above.
+The 1.0.758 follow-up-context correction also passed canonical deployment checks.
+Its chart/RCA and verification follow-up ran on the hosted build; this does not
+replace a full same-build matrix or establish an interactive latency SLA.
 The latest deployment refreshed Azure sign-in, preserved all 39 redirects and verified all
 five updated Foundry definitions. Consent covers the current operator; an enterprise
 rollout still requires tenant-wide administrator consent.
+
+The separate [Agent Framework local service](../HydroOperationsService/README.md)
+is **not deployed by this command or wired into the SPA**. It has no live provider
+adapters and cannot create production work orders. New cloud hosting/authentication
+requires approval and integration into this same deployment engine before rollout;
+do not publish the local validation service as an enterprise backend.
 
 ## Start here: choose your interface, not a different deployment process
 

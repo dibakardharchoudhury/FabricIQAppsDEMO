@@ -4,13 +4,14 @@ This report distinguishes implemented behavior, observed runtime results and pro
 **The ten-flow suite is not yet accepted.** Deployment success and unit tests are not
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
+Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPTS.md).
 
-**Current deployed release: 1.0.756 (`3bab58c`).** Canonical deployment completed on
+**Current deployed release: 1.0.758 (`4c0e1a1`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 169 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 170 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +22,29 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+**1.0.758 follow-up context correction:** direct specialists receive the actual
+preceding displayed turn, labelled historical and not current source evidence.
+The hosted station-chart/RCA request completed in 1m40s; its follow-up completed in
+24.7s. The captured Gauge request includes the original aggregation semantics,
+values and clocks, and the returned interpretation confirms sample-weighted means
+including BAD samples, not total station power or energy. The rolling-window values
+changed between reads. The final UI shows the new source-derived chart, not a full
+old-versus-new delta reconciliation; that broader comparison remains unaccepted.
+One first-turn malformed filter was visibly rejected and repaired before source I/O.
+This is not evidence that every model-generated tool request is correct first time.
+The full ten-flow matrix has not been rerun on 1.0.758.
+
+**Architecture correction, local only:** the isolated
+[Agent Framework service milestone](../HydroOperationsService/README.md) now has
+17 passing local tests and a clean Python typecheck. Tests cover real process exit,
+HTTP disconnect, source/step failure, checkpoint-write failure/corruption, concurrent
+approval, rejection/expiry, and recovery after both a committed local operation and
+the final workflow checkpoint. Provider adapters are synthetic and writes go only to
+a local validation ledger. The service is not connected to the production UI or live
+Foundry/Fabric providers; cloud hosting/authentication changes are not approved.
+This is a durability-boundary proof, not a completed enterprise migration, production
+WO write test or performance certification.
 
 **1.0.756 exact fleet rerun: bounded comparison passed in 3m54s.** Actual Chief,
 Sparky, Gauge and Sleuth Responses invocations produced six recorded handoffs through
