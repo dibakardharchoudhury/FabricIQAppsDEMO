@@ -78,6 +78,24 @@ test('today keeps midnight UTC semantics in telemetry and station charts', () =>
   assert.throws(() => buildTelemetryQuery({ lookback: '0h' }), /Invalid lookback/)
 })
 
+test('latest telemetry returns raw values per node without binning or quality exclusions', () => {
+  const query = buildTelemetryQuery({ opcua_node_ids: ['ns=2;s=T005.power_output', 'ns=2;s=T005.vibration_a'],
+    lookback: '6h', aggregation: 'latest', bin: 'unused', limit: 100 })
+  assert.match(query, /event_time > ago\(6h\) and event_time <= now\(\)/)
+  assert.match(query, /opcua_node_id in \('ns=2;s=T005.power_output', 'ns=2;s=T005.vibration_a'\)/)
+  assert.match(query, /summarize arg_max\(event_time, value, quality\) by opcua_node_id/)
+  assert.match(query, /\| top 100 by event_time desc/)
+  assert.doesNotMatch(query, /avg\(|bin\(|where.*quality/)
+  assert.doesNotThrow(() => validateKql(query))
+})
+
+test('the reproduced missing enriched node-column filter is rejected before source execution', () => {
+  assert.throws(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null))\n| where opcua_node_id in ("ns=2;s=T005.power_output")'),
+    /does not return opcua_node_id.*aggregation latest/)
+  assert.doesNotThrow(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)) | where Turbine == "T005"'))
+  assert.doesNotThrow(() => validateKql('TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)) | where Signal == "opcua_node_id"'))
+})
+
 test('rejects tables outside the catalog', () => {
   assert.throws(() => validateKql('SecretTable | take 10'), /must start with/)
   assert.doesNotThrow(() => validateKql('AssetMaster() | take 10'))

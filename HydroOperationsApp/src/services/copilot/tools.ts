@@ -28,7 +28,7 @@ export function describeToolCall(name: string, args: ToolArguments): string {
       return [
         args.opcua_node_ids?.length ? plural(args.opcua_node_ids.length, 'signal') : 'all signals',
         args.lookback ?? '24h',
-        args.aggregation === 'none' ? `latest ${args.limit ?? MAX_ROWS} readings` : `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
+        args.aggregation === 'latest' ? 'latest raw row per signal' : args.aggregation === 'none' ? `latest ${args.limit ?? MAX_ROWS} readings` : `${args.aggregation ?? 'avg'}/${args.bin ?? '5m'}`,
       ].join(' · ')
     case 'query_signal_quality_snapshot':
       return [args.quality ?? 'BAD', args.lookback ?? '30m', args.equipment_type ?? 'all equipment'].join(' · ')
@@ -110,14 +110,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'query_telemetry',
-      description: 'Read OPC UA telemetry over a time window, newest rows first. Prefer this over run_kql for both trends and "the last N readings". Returns the individual readings when aggregation is "none".',
+      description: 'Read OPC UA telemetry over a time window. Prefer this over run_kql for trends, latest-per-signal snapshots and "the last N readings". Use aggregation "latest" for one latest raw row per verified node; "none" returns individual readings.',
       parameters: {
         type: 'object',
         properties: {
           opcua_node_ids: { type: 'array', items: { type: 'string' }, description: 'Signals to include. Omit for all signals.' },
           lookback: { type: 'string', description: 'Window ending now: today (since midnight UTC) or a positive duration such as 30m, 6h, 7d. Default 24h.' },
-          bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none".' },
-          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings rather than bucketed values.' },
+          bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none" or "latest".' },
+          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings or "latest" for the latest raw value, event_time and quality per opcua_node_id in the window, without averaging or quality filtering.' },
           limit: { type: 'integer', description: `How many of the most recent rows to return (default ${MAX_ROWS}, max ${MAX_ROWS}).` },
         },
       },

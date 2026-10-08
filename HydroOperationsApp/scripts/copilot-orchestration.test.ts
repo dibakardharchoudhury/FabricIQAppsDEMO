@@ -43,6 +43,21 @@ test('today uses midnight UTC and local KQL rejection is distinct from runtime f
   assert.equal(new Error('Eventhouse HTTP 400') instanceof KqlValidationError, false)
 })
 
+test('investigation follow-ups cannot bypass RCA completion or final factual verification', () => {
+  for (const prompt of [
+    'Verify the IDs against direct metadata, then reassess the investigation.',
+    'Review the diagnosis.',
+    'Continue the RCA.',
+  ]) {
+    assert.deepEqual(missingRequestedSpecialists(prompt, ['qa']), ['rca'], prompt)
+    assert.deepEqual(missingRequestedSpecialists(prompt, ['qa', 'rca']), [], prompt)
+  }
+  assert.deepEqual(missingRequestedSpecialists('Reassess the investigation and independently verify it.', ['qa']), ['rca', 'qa'])
+  for (const prompt of ['Do not reassess the investigation.', 'Never review the diagnosis.', 'List prior investigation work orders.']) {
+    assert.deepEqual(missingRequestedSpecialists(prompt, ['qa']), [], prompt)
+  }
+})
+
 test('work-order proposal validates required operational fields', () => {
   const proposal = createWorkOrderProposal({
     equipmentId: 'EQUIP_RTI_T004',

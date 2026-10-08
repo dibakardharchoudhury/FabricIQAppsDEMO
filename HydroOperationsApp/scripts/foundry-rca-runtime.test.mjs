@@ -103,6 +103,20 @@ test('a source failure after a report still fails, clears busy, and records only
   assert.equal(followup.filter(item => item.role === 'user' && JSON.stringify(item).includes('Investigate station power.')).length, 1)
 })
 
+test('reassessing an investigation requires Sleuth even when Chief tries to finish with prose', async () => {
+  reset()
+  harness.responses.push({ role: 'supervisor', text: 'Confirmed fault based on my own threshold.' },
+    delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'Confirmed fault.' })
+  const progress = []
+  const result = await askFoundryCopilot('Reassess the investigation.', text => progress.push(text))
+  assert.match(result.text, /Cause undetermined/)
+  assert.doesNotMatch(result.text, /Confirmed fault/)
+  assert.deepEqual(progress, [])
+  assert.equal(result.orchestrationEvents.find(event => event.role === 'rca').status, 'completed')
+})
+
 test('conflicting priority does not leave chat busy and explicit priority reaches the tool runtime', async () => {
   reset()
   await assert.rejects(askFoundryCopilot('Create a Low-priority work order. Priority: High.'), /conflicting priorities/)

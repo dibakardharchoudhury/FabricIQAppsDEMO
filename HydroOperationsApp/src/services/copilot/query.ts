@@ -136,7 +136,7 @@ export function stationPowerSummary(rows: StationPowerRow[], lookback: string, r
 const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }
-export const TELEMETRY_AGGREGATIONS = ['none', ...Object.keys(AGGREGATIONS)]
+export const TELEMETRY_AGGREGATIONS = ['none', 'latest', ...Object.keys(AGGREGATIONS)]
 
 export type TelemetryQueryArgs = {
   opcua_node_ids?: string[]
@@ -197,13 +197,15 @@ export function buildTelemetryQuery(args: TelemetryQueryArgs): string {
     ? `\n| where opcua_node_id in (${nodes.map(node => `'${escapeKqlString(node)}'`).join(', ')})`
     : ''
   let shape = '| project event_time, opcua_node_id, value, quality'
-  if (aggregation !== 'none') {
+  if (aggregation === 'latest') {
+    shape = '| summarize arg_max(event_time, value, quality) by opcua_node_id'
+  } else if (aggregation !== 'none') {
     const bin = args.bin ?? '5m'
     if (!KQL_BIN.test(bin)) throw new Error(`Invalid bin '${bin}'. Use a value like 30s, 5m or 1h.`)
     shape = `| summarize value = ${AGGREGATIONS[aggregation]}, bad = countif(tolower(quality) == 'bad') by opcua_node_id, event_time = bin(event_time, ${bin})`
   }
   return `OPCUAEvents
-| where event_time ${lookbackStart(lookback)}${nodeFilter}
+| where event_time ${lookbackStart(lookback)}${aggregation === 'latest' ? ' and event_time <= now()' : ''}${nodeFilter}
 ${shape}
 | top ${limit} by event_time desc
 | order by event_time asc`
@@ -251,6 +253,9 @@ export function validateKql(query: string, allowedSources: string[] = KUSTO_SOUR
   const scanned = withoutStringLiterals(trimmed)
   if (/^TelemetryEnriched\s*\(\s*(?:start|startTime|end|endTime|stations|turbines)\s*:/i.test(scanned)) {
     throw new KqlValidationError('Rejected: TelemetryEnriched arguments are positional. Call TelemetryEnriched(startTime, endTime, stations, turbines) without parameter names or colons; for example TelemetryEnriched(ago(6h), now(), dynamic(null), dynamic(null)).')
+  }
+  if (/^TelemetryEnriched\b[^|]*\|\s*where\b[^|]*\bopcua_node_id\b/i.test(scanned)) {
+    throw new KqlValidationError('Rejected: TelemetryEnriched does not return opcua_node_id. Use query_telemetry with verified opcua_node_ids and aggregation latest for the latest raw row per signal, or query OPCUAEvents directly. Do not invent a node column on the enriched function.')
   }
   for (const rule of FORBIDDEN_KQL) {
     if (rule.pattern.test(scanned)) throw new KqlValidationError(`Rejected: ${rule.reason}.`)

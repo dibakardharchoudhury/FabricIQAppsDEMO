@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Last successful deployment: 1.0.732 (`d044499`).** At 23:38 UTC on October 7,
-the hosted app stopped loading with `CapacityNotActive`. The Fabric API confirms that
-its assigned capacity is Inactive. Live acceptance is blocked, not passed.
-The source-reference RCA gate was exercised in 1.0.731; final chart deduplication and
-formatted-summary exclusion are committed source changes awaiting deployment.
-This is not an enterprise-readiness certification.
+**Current deployed release: 1.0.737 (`946c743`).** On October 8 the owner-restored
+capacity was verified Active at F8, and canonical deployment completed successfully.
+The RCA presentation and priority-scope corrections are now deployed. The authenticated
+app reports 90/90 fresh signals; the ten-flow hosted rerun is in progress, not accepted.
+Creation/configuration readback is verified for the five Foundry agents, but complete
+multi-agent runtime correctness is not yet certified.
 
 ## Current implementation and limitations
 
@@ -63,8 +63,13 @@ verification rather than inferring speed from reduced input construction.
    to MW and returns a structured chart. It is a sample-weighted mean across readings,
    **not** total station generation, a time-weighted mean or energy. BAD sample counts
    are disclosed; unsupported units/mapping failures prevent a partial chart.
+   For latest raw readings of other verified nodes within an explicit window,
+   `query_telemetry` supports `aggregation: "latest"`: one latest value, quality and
+   measurement timestamp per node, without binning. `TelemetryEnriched` has no node-ID
+   column; a direct node filter on it is locally rejected before the source request.
 7. **Investigate/diagnose/RCA:** Sleuth, normally after Gauge supplies the factual scope.
    Chief must not treat a factual retrieval as completed RCA.
+   Explicit reassessment/review/continuation of an investigation uses the same gate.
 8. **Create/prepare/propose a work order, including hyphenated "work-order":** Fixer.
    It resolves identity, checks open work and stages an editable card or an explicit
    no-draft/clarification result. It does not ask an optional-field questionnaire first.
@@ -153,7 +158,7 @@ is High; then prepare an inspection draft" incorrectly selected High for the new
 The source fix scopes priority extraction to the new-work assignment or an explicit priority
 field/setter, excluding read-only filters and later coverage-check clauses. Those cases now
 remain Medium while explicit new-draft High/Low directives are retained. This correction
-passed the full focused frontend suite and build; hosted verification remains blocked.
+passed the full focused frontend suite and build; hosted verification remains pending.
 
 ## Separate WO analysis from creation?
 
@@ -214,6 +219,42 @@ Source failure is correctly surfaced behavior but is not a passed answer-quality
 Record no-draft outcomes as valid only with specific coverage/identity evidence.
 
 ## Basic regression evidence
+
+### Latest gate: restored capacity
+
+- At 05:36 UTC on October 8, Fabric reported the assigned capacity Active at **F8**.
+  No agent-initiated resume, resize or reassignment occurred.
+- Canonical deployment published **1.0.737 / `946c743`**, returned `SUCCESS`, preserved
+  39 redirects and passed `/graphql` and `/api/auth/v1/token` browser preflight/POST
+  contracts. Chief 8, Gauge 10, Sleuth 11, Fixer 10 and Sparky 7 definitions were read
+  back and compared with their configured definitions.
+- The authenticated hosted page showed that release and **90/90 fresh signals**.
+  The initial page opening included the expired protected-hosting sign-in flow, so its
+  elapsed time is not a cold-load performance benchmark.
+- The ten multi-turn flows are being rerun using actual request identities, returned
+  tool evidence, final answers, timings and safely rejected test proposals. Do not
+  interpret this deployment record as their completed acceptance.
+
+### October 8 runtime findings on 1.0.737
+
+- **Ontology flow 2 failed its first turn (175.7 s).** Sparky's actual `ask_ontology`
+  call returned T005 instance context, but Gauge then filtered `TelemetryEnriched` on
+  `opcua_node_id`, which that function does not return. Eventhouse rejected the query
+  with HTTP 400. The error propagated; Sleuth/Fixer did not complete.
+- **Flow 2 follow-up completed but failed answer acceptance (213.3 s).** "Reassess the
+  investigation" bypassed the explicit RCA gate. Chief/Gauge presented diagnostic
+  threshold claims without a structured Sleuth assessment. The requested direct
+  metadata comparison was also not demonstrated. Native request durations were
+  **141.2 s and 147.7 s**, separate from browser rendering and direct-source time.
+- Corrective source changes add a safe latest-per-node telemetry template, actionable
+  local rejection for the reproduced invalid enriched filter, and RCA gating for
+  reassessment/review/continuation. **97 focused tests plus two bundle tests**, typecheck,
+  lint, environment validation and production build pass. These are not substitutes
+  for a hosted rerun of the failed workflow.
+- A separate chart/investigation first turn completed in **42.8 s**, with real
+  Chief/Gauge/Sleuth execution, one chart, exact source-derived MW values and the
+  required undetermined-cause boundary. It does not certify the native or work-order
+  branches.
 
 ### Latest gate: capacity inactive
 
