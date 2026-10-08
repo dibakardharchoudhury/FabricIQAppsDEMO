@@ -5,11 +5,14 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.742 (`33e76ea`).** Canonical deployment completed on
+**Current deployed release: 1.0.744 (`75aa712`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Hosted reruns are in progress.
+The corrected release passed 133 targeted regressions, typecheck, lint, the canonical
+production build and two built-bundle checks. Its browser build identity was verified.
+These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
 Telemetry was 90/90 fresh at 05:46 UTC, but subsequently stopped advancing around
 06:05 UTC; the app correctly changed its header to stale. Do not treat the earlier
@@ -18,6 +21,22 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+The 1.0.744 targeted rerun completed ten turns: both turns of flows 3, 4, 5 and 10,
+and first turns of flows 6 and 9. No terminal runtime failure was observed in those
+records, but this is **not acceptance**: flow 3 still omitted its requested backlog
+chart. Its inspection query also exposed an application filter defect: numeric-prefix
+parsing treated July and September ISO timestamps as the same number, 2026.
+Previously returned date-filtered inspection evidence must not be relied on without
+rerunning the corrected query. Full records are retained as `compound-reruns-1.0.744.json`.
+
+The next source correction compares ISO timestamps chronologically, excludes missing
+values from ordered comparisons and rejects malformed filter predicates. Gauge gets
+one bounded in-assignment correction when it omits an explicitly requested chart
+despite having source rows, including the original request and an instruction not to
+fabricate missing data. A missing structured chart remains explicitly marked incomplete;
+unrelated rows do not force a fabricated chart or repeated delegations. These corrections
+require a new deployment and exact hosted revalidation; local checks alone are insufficient.
 
 The 1.0.742 run completed **all ten compound scenarios and twenty conversation turns**.
 Six turns ended in explicit runtime failures. Other turns have content/routing defects;
@@ -271,7 +290,7 @@ Reject test proposals; never recreate/delete the user's confirmed T002 order.
 For scenarios 1-5, the full first-turn prompts remain in
 [DEPLOY.md](DEPLOY.md#first-five-complex-orchestration-acceptance-scenarios).
 
-### Latest hosted results: October 8, release 1.0.737
+### Historical hosted results: October 8, release 1.0.737
 
 All twenty turns have actual response IDs, native-call identities, returned tool evidence,
 answers and timings captured in the acceptance evidence. This is execution evidence,

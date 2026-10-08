@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  createWorkOrderProposal, isWorkOrderRequest, missingRequestedSpecialists,
+  createWorkOrderProposal, isWorkOrderRequest, missingRequestedSpecialists, requiresChartOutput,
 } from '../src/services/copilot/orchestration.ts'
 import { buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, validateKql, KqlValidationError } from '../src/services/copilot/query.ts'
+
+test('chart completion applies to requested output, not discussion or prohibited charts', () => {
+  for (const prompt of ['Chart average power per station.', 'Show a backlog table and chart.',
+    'Read work orders, then include a chart.', 'Do not create work orders, but show a chart.']) {
+    assert.equal(requiresChartOutput(prompt), true, prompt)
+  }
+  for (const prompt of ['Explain the previous chart.', 'Check the chart values against the source.',
+    'Do not show a chart.', "Don't chart the data. Return the table."]) {
+    assert.equal(requiresChartOutput(prompt), false, prompt)
+  }
+})
 
 test('only explicit work-order requests leave the read-only Data Agent path', () => {
   assert.equal(isWorkOrderRequest('Which turbines are running hot right now?'), false)

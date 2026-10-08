@@ -16,8 +16,17 @@ const text = (value: unknown) => value instanceof Date ? value.toISOString() : S
 const lower = (value: unknown) => text(value).toLowerCase()
 
 function compare(left: unknown, right: unknown): number {
-  const leftNumber = typeof left === 'number' ? left : Number.parseFloat(text(left))
-  const rightNumber = typeof right === 'number' ? right : Number.parseFloat(text(right))
+  const leftText = text(left).trim()
+  const rightText = text(right).trim()
+  if (!leftText || !rightText) return Number.NaN
+  if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(leftText) && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(rightText)) {
+    const leftTime = Date.parse(leftText)
+    const rightTime = Date.parse(rightText)
+    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) throw new Error('Date filters require valid ISO dates or timestamps.')
+    return leftTime - rightTime
+  }
+  const leftNumber = Number(leftText)
+  const rightNumber = Number(rightText)
   if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber
   return text(left).localeCompare(text(right))
 }
@@ -35,13 +44,20 @@ function matches(row: Record<string, unknown>, condition: FilterCondition): bool
     case 'in': return Array.isArray(condition.value) && condition.value.some(candidate => lower(candidate) === lower(actual))
     case 'is_null': return actual === null || actual === undefined || actual === ''
     case 'not_null': return !(actual === null || actual === undefined || actual === '')
-    default: return true
+    default: throw new Error(`Unsupported filter operator: ${condition.op}.`)
   }
 }
 
 /** Apply the model-supplied predicate. Unknown columns yield no rows rather than silently matching all. */
 export function applyFilter<T extends Record<string, unknown>>(rows: T[], where?: FilterCondition[]): T[] {
-  if (!where?.length) return rows
+  if (where === undefined) return rows
+  if (!Array.isArray(where)) throw new Error('where must be an array of filter conditions.')
+  for (const condition of where) {
+    if (!condition || typeof condition.column !== 'string' || !condition.column.trim()
+      || !FILTER_OPERATORS.includes(condition.op)) throw new Error('Each filter requires a column and a supported operator.')
+    if (!['is_null', 'not_null'].includes(condition.op) && !Object.hasOwn(condition, 'value')) throw new Error('This filter operator requires a value.')
+    if (condition.op === 'in' && !Array.isArray(condition.value)) throw new Error('The in filter requires an array value.')
+  }
   return rows.filter(row => where.every(condition => matches(row, condition)))
 }
 

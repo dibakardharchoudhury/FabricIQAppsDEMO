@@ -86,6 +86,14 @@ provisioned; no alternate source is used on failure. A live preview-service prob
 the restriction and returned the requested Data Agent receipt, not proof of SQL answer correctness.
 Ordinary inventory requests cannot invent a native-source requirement. Explicit user
 source context can carry into follow-ups; assistant-generated source names cannot authorize it.
+Release 1.0.744 also requires every explicitly requested native source before completion,
+reserves delegation slots for required investigation/work/verification steps, and rejects
+plan-only RCA assignments that prohibit the evidence reads needed by Sleuth.
+Structured operational date filters compare full ISO timestamps, not numeric year
+prefixes; missing values do not satisfy ordered comparisons. Malformed predicates fail
+explicitly. Requested charts omitted by Gauge receive at most one same-invocation
+correction with the original request. Missing or unrelated data must not become zeroes
+or fabricated series; missing structured chart output is explicitly marked incomplete.
 Native tool error envelopes and incomplete-response reasons are surfaced rather than
 replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
 failure was observed live; improved diagnostics do not repair or certify that native service.

@@ -1,6 +1,28 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+
+test('inspection date filters compare complete timestamps, not their shared year prefix', () => {
+  const rows = [
+    { id: 'old', inspectedAt: '2026-07-21T09:00:00.000Z' },
+    { id: 'boundary', inspectedAt: '2026-09-08T08:26:40.953Z' },
+    { id: 'equivalent-offset', inspectedAt: '2026-09-08T10:26:40.953+02:00' },
+    { id: 'missing', inspectedAt: null },
+  ]
+  assert.deepEqual(applyFilter(rows, [{ column: 'inspectedAt', op: 'gte', value: '2026-09-08T08:26:40.953Z' }]).map(row => row.id), ['boundary', 'equivalent-offset'])
+  assert.deepEqual(applyFilter(rows, [{ column: 'inspectedAt', op: 'lt', value: '2026-09-08' }]).map(row => row.id), ['old'])
+  assert.deepEqual(applyFilter([{ value: '12.5' }, { value: 2 }], [{ column: 'value', op: 'gte', value: 10 }]), [{ value: '12.5' }])
+  assert.throws(() => applyFilter(rows, [{ column: 'inspectedAt', op: 'gte', value: '2026-99-99' }]), /valid ISO/)
+})
+
+test('invalid filter envelopes and operators cannot silently return the unfiltered inventory', () => {
+  for (const where of [
+    { column: 'status', op: 'eq', value: 'Draft' },
+    [{ column: 'status', op: 'unsupported', value: 'Draft' }],
+    [{ column: 'status', op: 'eq' }],
+    [{ column: 'status', op: 'in', value: 'Draft' }],
+  ]) assert.throws(() => applyFilter([], where))
+})
 import { applyChunk, applyResponsesEvent, createStreamState, readResponsesStream, splitSseEvents } from '../src/services/copilot/chatStream.ts'
 import { catalogPrompt } from '../src/services/copilot/catalog.ts'
 import { appendCompletedTurn, buildResponsesInput, buildResponsesRequest } from '../src/services/copilot/responsesProtocol.ts'

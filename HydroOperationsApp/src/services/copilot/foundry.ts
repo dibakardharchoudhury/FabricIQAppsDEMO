@@ -8,7 +8,7 @@ import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, requestedNativeSources, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
-import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, rcaAssignmentError, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
+import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, rcaAssignmentError, requiresChartOutput, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
@@ -71,6 +71,9 @@ export async function askFoundryCopilot(
   const specialistResults: Array<{ role: AgentRole; answer: string; nativeSource?: NativeSource }> = []
   const requiredNativeSources = requestedNativeSources(question)
   const completedNativeSources = new Set<NativeSource>()
+  const chartPending = () => requiresChartOutput(question) && !visualizations.length && receipts.some(receipt =>
+    receipt.result !== null && typeof receipt.result === 'object' && 'rows' in receipt.result
+    && Array.isArray(receipt.result.rows) && receipt.result.rows.length > 0)
   const receipts: EvidenceReceipt[] = []
   const assessments: string[] = []
   const workDecisions: Array<'no_draft' | 'needs_clarification'> = []
@@ -101,6 +104,7 @@ export async function askFoundryCopilot(
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       let rcaReport: string | undefined
       let nativeExecuted = false
+      let chartReminderSent = false
       let pendingToolInputError: string | undefined
       try {
         if (role === 'fabric-iq') {
@@ -151,6 +155,15 @@ export async function askFoundryCopilot(
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
             if (nativeSource && !nativeExecuted) throw new Error('Fabric IQ returned prose without a matching native-source execution receipt.')
+            if (role === 'qa' && !chartReminderSent && chartPending()) {
+              chartReminderSent = true
+              input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: `The operator explicitly requested a chart and source rows are available, but no chart has been rendered. Original request: ${JSON.stringify(question)}. Complete that request now with visualize_dataset using the retrieved values and requested grouping. Do not offer to produce it later, invent values, or use raw identifiers as numeric measures. If the available rows cannot support the requested chart, explain exactly which data is missing instead of fabricating it. query_station_power already renders its own chart when it returns data.`,
+              }] })
+              captureApplicationEvent(event, 'Requested chart is still missing; returning to Gauge before completing its assignment.')
+              publish()
+              continue
+            }
             if (role === 'rca') {
               input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
                 text: 'The investigation is incomplete. Call complete_rca_assessment with real evidence references, at least two competing hypotheses and missing-evidence categories. Prose diagnoses, thresholds and baseline claims cannot replace the source-checked report.',
@@ -391,9 +404,12 @@ export async function askFoundryCopilot(
       renderOpenWorkEvidence(receipts),
       ...(isNotificationDraftRequest(question) ? [renderUnsentNotification(receipts)] : []),
     ].join('\n\n') : undefined
-    const text = checkedInvestigation
+    const answer = checkedInvestigation
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
       : directChart ? stationSummaryValues[0] : appendOmittedSnapshotWork(narrative, steps)
+    const text = requiresChartOutput(question) && !visualizations.length
+      ? `${answer}\n\nRequested chart incomplete: no structured chart was produced. Missing data must not be plotted as zero.`
+      : answer
     if (checkedInvestigation) {
       captureApplicationEvent(events[0], 'Rendered the source-checked workflow and any requested unsent notification. Unvalidated agent narrative was not used as the final assessment or notification.')
       publish()

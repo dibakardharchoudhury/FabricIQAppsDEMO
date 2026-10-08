@@ -265,6 +265,45 @@ test('Chief cannot trap Sleuth in a plan-only assignment that prohibits the requ
   assert.match(result.text, /Cause undetermined/)
 })
 
+test('Gauge must render an explicitly requested chart rather than offer it after returning the data', async () => {
+  reset()
+  harness.reads.push((options, name, args) => createToolRuntime(defaultCopilotSettings(), options)(name, args))
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'I can produce the chart if you want.' },
+    { role: 'qa', calls: [call('chart', 'hydro_query', { tool_name: 'visualize_dataset', arguments: {
+      chart_type: 'bar', title: 'Measured station power', x_column: 'Station', y_columns: ['MW'], inline_csv_data: 'Station,MW\nSloy,123.45',
+    } })] }, { role: 'qa', text: 'Chart rendered.' }, { role: 'supervisor', text: 'Chart rendered.' })
+  const result = await askFoundryCopilot('Show a chart of the returned station measurements.')
+  assert.equal(result.visualizations.length, 1)
+  assert.equal(result.visualizations[0].inlineCsvData, 'Station,MW\nSloy,123.45')
+  assert.ok(harness.requests.some(request => request.input.some(item => JSON.stringify(item).includes('no chart has been rendered'))))
+})
+
+test('A chart correction is bounded and cannot force a chart from unrelated source rows', async () => {
+  reset()
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'No requested downtime data is available.' },
+    { role: 'qa', text: 'The station power rows do not establish downtime.' },
+    { role: 'supervisor', text: 'Downtime data is unavailable.' })
+  const result = await askFoundryCopilot('Show a chart of downtime.')
+  assert.equal(result.visualizations.length, 0)
+  assert.match(result.text, /Requested chart incomplete/)
+  assert.equal(harness.responses.length, 0)
+  assert.equal(harness.requests.filter(request => request.agent_reference.name === 'hydro-qa-agent').length, 3)
+})
+
+test('Empty chart source results do not trigger extra model rounds or fabricated zero values', async () => {
+  reset()
+  harness.reads.splice(0, 1, { result: { rows: [] }, rowCount: 0 })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'No measurements were returned.' },
+    { role: 'supervisor', text: 'No measurements were returned.' })
+  const result = await askFoundryCopilot('Show a chart of station power.')
+  assert.equal(result.visualizations.length, 0)
+  assert.match(result.text, /Requested chart incomplete/)
+  assert.equal(harness.responses.length, 0)
+})
+
 test('both native sources can receive the same retrieval assignment without substitution', async () => {
   reset()
   harness.responses.push(delegate('fabric-iq'), nativeReply('Data Agent evidence.'),
