@@ -8,7 +8,16 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.758 (`4c0e1a1`).** Canonical deployment completed on
+**Current deployed release: 1.0.766 (`059f6ee`).** Canonical deployment returned
+`SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
+and effective current-operator consent. Both backend preflights returned HTTP 200;
+GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
+as required by the readiness contract. Protected hosting was verified, but the
+authenticated application was not loaded in the integrated browser: its Fabric
+broker popup was blocked. New hosted ten-flow and repeated-sign-in acceptance
+remain pending. No access control was bypassed.
+
+**Earlier 1.0.758 (`4c0e1a1`) evidence:** canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
@@ -25,14 +34,15 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
-**Latest deployment attempt:** source commit `c601e34` was pushed only to
+**Latest deployment attempts:** source commit `c601e34` was pushed only to
 `feat/dibakar`. The canonical deployer stopped at step 1 because Azure CLI was
 signed into a different tenant than `ad340c84-1886-4202-a483-2da2cb9168eb`.
-No deployment success or new hosted build is claimed. Use the local deployment
-app's **Switch** action for the target tenant, then retry the same orchestrator.
-This is deployment-operator sign-in, not an additional SPA/SQL consent requirement.
+The supported local deployment app's **Switch** flow subsequently completed.
+The same canonical command then deployed 1.0.766 successfully. This resolved
+deployment-operator sign-in, not an additional SPA/SQL consent requirement.
+Hosted browser acceptance stopped separately at popup-blocked protected sign-in.
 
-**Latest local chart/consent correction (not deployed):** 106 targeted Node tests
+**Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.
 Structured source receipts now render charts/tables despite malformed model CSV;
 mixed units, truncation, missing timestamps, failed-refresh invalidation and
@@ -43,7 +53,7 @@ switched views through DOM click dispatch, with no narrow-viewport overflow.
 Native pointer automation stalled; no new hosted consent/ten-flow acceptance
 is claimed. See the implementation record for precise boundaries.
 
-**Latest local follow-up correction (not deployed):** source-derived station
+**Station comparison included in 1.0.766; historical local checks:** source-derived station
 comparison now preserves previous/new means, sample/BAD counts and exact clocks
 without another model invocation. New regressions reproduced and fixed two cases:
 additional verification reads discarded the comparison, and multiple distinct
@@ -56,7 +66,7 @@ browser query results. All **63 targeted Node tests** passed. The **34-test back
 Python suite** passed before an additional expiry regression; the subsequent
 affected RCA suite passed **11 tests**, with a clean Python typecheck and syntax
 check. The app environment check, TypeScript/Vite build and lint passed.
-These are local checks, not a newer hosted release or ten-flow pass.
+These are local checks, not an authenticated hosted ten-flow pass.
 
 **Local work-coverage clock correction:** the parallel source bridge had assigned
 SQL the final combined read clock. It now retains SQL pagination's own completion

@@ -12,12 +12,12 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.758 / `4c0e1a1`**, browser-coordinated persistent Foundry Prompt Agents | Deployment, selected hosted compound flows and UI checks; not complete acceptance |
+| Hosted Fabric app | Release **1.0.766 / `059f6ee`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; authenticated browser acceptance blocked at protected-hosting popup. Earlier compound results are not a same-build pass |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
 | Backend proposal/SQL/SPA integration | Not complete | Default HTTP service deliberately returns 503 for readiness/run submission without adapters |
-| Latest chart comparison correction | Locally implemented and regression-tested, **not deployed** | Historical/current numerical comparison and shared KQL response validation; no hosted acceptance yet |
+| Latest chart comparison correction | Deployed in **1.0.766**, locally regression-tested | Historical/current numerical comparison and shared KQL response validation; no hosted acceptance yet |
 
 The four local workflow executors are application steps, not four newly created
 Foundry agents. Installing Agent Framework did not automatically migrate the SPA,
@@ -73,7 +73,8 @@ individual release results, failure examples and later targeted recoveries.
 
 ### Latest chart, authentication and Administration correction
 
-These changes are locally verified, not yet hosted:
+These changes are locally verified and deployed in **1.0.766**; authenticated
+hosted-agent acceptance remains pending:
 
 - Chart/table presentation consumes actual successful `query_telemetry`/`run_kql`
   receipts, not flattened model CSV. Raw evidence stays collapsed. Non-numeric
@@ -102,11 +103,18 @@ source rows: one SVG chart, 250 table rows, raw CSV initially collapsed, no
 invented model value, and no horizontal overflow at a 390-pixel viewport.
 Tab state was checked using DOM click dispatch; native browser pointer automation
 stalled, so this is not a physical interaction or hosted-agent acceptance claim.
-Source commit `c601e34` was pushed to `feat/dibakar`. Its canonical deployment
-attempt stopped at the initial tenant check: the current Azure CLI session
-belonged to another tenant. The deployer requested the local app's **Switch**
-action before retry. No tenant switch, permission change or deployment bypass
-was performed, and hosted release 1.0.758 remains the last verified deployment.
+Source commit `c601e34` was pushed to `feat/dibakar`. The first canonical attempt
+stopped at the initial tenant check. The supported local app's **Switch** sign-in
+then completed, and the same canonical command deployed build **1.0.766 /
+`059f6ee`**. All 39 redirects were preserved; agent versions remained Chief v9,
+Gauge v11, Sleuth v13, Fixer v11 and Sparky v8. Both browser-equivalent preflights
+returned HTTP 200, GraphQL POST returned 200, and the deliberately incomplete
+token POST returned 400. Hosting verification was `protected-sign-in-gate`;
+the deployer explicitly reported `INTERACTIVE_APP_ACCEPTANCE=not-performed`.
+The integrated browser then reported "Please allow pop-ups and try again" when
+opening the official Fabric sign-in broker. No hosting/authentication bypass was
+introduced. Current-operator consent was verified; tenant-wide consent still
+requires an authorized administrator.
 
 The existing browser Rayfin SQL session still creates approved work orders; it
 does not need an additional SQL consent for these changes. Backend delegated
@@ -399,7 +407,7 @@ Follow [DEPLOY.md](../HydroOperationsApp/DEPLOY.md) for the full runbook and the
    Preserve concise cards and actual agent invocation receipts.
 6. Restore/verify ingestion freshness and required operational integrations.
    Do not present stale source readings as current health.
-7. Deploy/test the latest chart comparison, then repeat all ten compound flows,
+7. Complete authenticated hosted chart/comparison checks, then repeat all ten compound flows,
    follow-ups, controlled write tests and relevant failure/recovery tests on one
    candidate. Benchmark repeated cold/warm loads and end-to-end latency.
 8. Add notification outbox/delivery verification and complete enterprise consent

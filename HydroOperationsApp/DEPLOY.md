@@ -8,7 +8,15 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.758 (`4c0e1a1`)**. The owner-restored capacity was
+Current deployed release: **1.0.766 (`059f6ee`)**. The October 8 retry completed
+through the canonical deployer after its supported tenant-switch flow. It printed
+`SUCCESS` and `DEPLOYED_APP_URL`, preserved all 39 redirects, verified the five
+agent definitions and passed AppBackend preflight/POST checks. Hosting verification
+returned `protected-sign-in-gate`; authenticated browser acceptance is still pending.
+The integrated browser blocked the Fabric broker popup ("Please allow pop-ups and
+try again"). No protected-hosting or authorization check was bypassed.
+
+Earlier release **1.0.758 (`4c0e1a1`)**: the owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
 the deployments and compound reruns; the **full latest-build matrix is not yet accepted**. The earlier explicit
