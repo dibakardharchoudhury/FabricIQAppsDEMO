@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.769 / `33167af`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed; authenticated browser build identity and snapshot recovery verified. Hosted matrix pending; earlier compound results are not a same-build pass |
+| Hosted Fabric app | Release **1.0.771 / `a3571c7`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness and browser identity passed; checked RCA tables recovered. Scenario 3 exposed a requested-chart scope failure; complete matrix not accepted |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -137,6 +137,26 @@ Competing explanations, contradictory observations and missing engineering
 evidence remain explicit. Source availability, freshness, appropriate baselines,
 approved limits and qualified engineering review cannot be manufactured by
 prompting or by adopting Agent Framework.
+
+The correction deployed successfully in 1.0.771 after a transient hosting
+connection reset and a clean-tree retry. Hosted scenarios 1/2 retained actual
+RCA observation and hypothesis tables. Scenario 3 exposed a separate defect:
+telemetry charts falsely satisfied an orders-per-equipment chart request after
+a rejected model chart. The next correction scopes that completion to actual
+work-inventory counts and preserves other automatic source charts. Rejection
+feedback identifies exact supported columns, including `record_count`.
+
+Further local presentation hardening withholds provisional model prose while
+keeping real tool/agent progress visible, unescapes literal Markdown identifiers
+correctly, and expands structured RCA observations into field/value rows instead
+of JSON blobs. The affected 138-test suite, typecheck and targeted lint passed.
+The new changes are not yet a hosted matrix pass.
+
+Teams progress delivery was subsequently recovered through the verified existing
+self-chat messages endpoint. Updates at 18:22 and 18:38 UTC were accepted, with
+the first read back successfully. The attached reminder is session-bound; it is
+not a permanent notification service or evidence that app-generated operational
+notifications are delivered.
 
 The earlier chart/authentication corrections below were locally verified and
 deployed in **1.0.766**; complete hosted-agent acceptance remains pending:

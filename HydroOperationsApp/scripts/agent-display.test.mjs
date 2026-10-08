@@ -121,7 +121,22 @@ test('deterministic category counts are permitted chart sources', () => {
     inlineCsvData: 'equipmentId,record_count\nT1,2\nT2,1' }, workSteps).title, /Source-backed/)
 })
 
+test('a requested explicit chart does not suppress automatic charts from other returned tools', () => {
+  const steps = [...sourceSteps([{ signal: 'temperature', value: 70, unit: 'C' }]), {
+    tool: 'query_operations', status: 'done', result: JSON.stringify({ rows: [
+      { workOrderNumber: 'WO-1', equipmentId: 'T1', status: 'Draft' },
+      { workOrderNumber: 'WO-2', equipmentId: 'T2', status: 'Approved' },
+    ] }),
+  }]
+  const explicit = sourcePresentation.presentSourceRows(steps.slice(0, 1), '').visualizations
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text: '', steps, visualizations: explicit }))
+  assert.match(html, /returned records by equipmentId/)
+  assert.match(html, /returned records by status/)
+  assert.equal((html.match(/<svg/g) ?? []).length, 3)
+})
+
 test('invalid or streaming structured output is not dumped into narrative', () => {
+  assert.equal(answerPresentation.hideRenderedData('Unverified provisional claim: all turbines are faulty.', true), '')
   for (const text of ['```csv\na,b\n"broken', '```json\n{"broken"', '| turbine | quality |']) {
     assert.equal(answerPresentation.hideRenderedData(text, true).trim(), '')
   }
@@ -130,6 +145,11 @@ test('invalid or streaming structured output is not dumped into narrative', () =
   const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
   assert.match(html, /invalid CSV/)
   assert.match(html, /Unparsed agent output/)
+})
+
+test('checked Markdown evidence keeps literal identifiers and punctuation in real table cells', () => {
+  const parsed = answerPresentation.readAnswerDatasets('| Ref | Returned value |\n| --- | --- |\n| E1 | EQUIP\\_RTI\\_T005 |\n| E2 | \\*\\*literal\\*\\* \\`field\\` a\\|b |')
+  assert.deepEqual(parsed.datasets[0].rows, [['E1', 'EQUIP_RTI_T005'], ['E2', '**literal** `field` a|b']])
 })
 
 test('raw CSV prose cannot prevent an actual source-backed time-series chart', () => {

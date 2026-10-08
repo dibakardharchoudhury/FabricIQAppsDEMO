@@ -407,6 +407,12 @@ Application-checked RCA and reconciliation tables remain visible alongside raw
 source tables. Quoted native claims are not promoted to verified findings.
 Factual Q&A without source evidence fails explicitly. These checks establish
 traceable data provenance, not a physical diagnosis or a zero-defect guarantee.
+Provisional model prose is withheld until the response is finalized; actual
+agent/tool progress remains visible. RCA source objects are expanded into
+field/value rows with exact JSON pointers rather than embedded JSON blobs.
+An orders-per-equipment chart must use operational record counts, never an
+unrelated telemetry chart. Explicit charts do not suppress automatic charts
+from other returned sources; the combined panel bound remains visible.
 
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,

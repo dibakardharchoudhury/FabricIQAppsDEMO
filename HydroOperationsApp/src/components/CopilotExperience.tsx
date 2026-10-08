@@ -171,7 +171,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   if (!hasBody && !steps.length) return <CopilotThinking />
   // A running tool already shows its own progress, so only flag the gap where the model itself
   // is working and nothing is being echoed yet.
-  const waitingOnModel = streaming && !message.text && !steps.some(step => step.status === 'running')
+  const waitingOnModel = streaming && !steps.some(step => step.status === 'running')
   const draftReady = !streaming && Boolean(message.proposals?.length)
   const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
     entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false

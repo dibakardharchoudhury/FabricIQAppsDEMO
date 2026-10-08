@@ -566,6 +566,26 @@ test('a factual answer with no executed source evidence fails closed', async () 
   await assert.rejects(askFoundryCopilot('Which equipment is healthy?'), /No source evidence was returned/)
 })
 
+test('an orders-per-equipment chart cannot be completed by unrelated telemetry charts', async () => {
+  reset()
+  harness.reads.length = 0
+  harness.reads.push({ result: { rows: [
+    { workOrderNumber: 'WO-1', equipmentId: 'T1', status: 'Draft' },
+    { workOrderNumber: 'WO-2', equipmentId: 'T1', status: 'Draft' },
+    { workOrderNumber: 'WO-3', equipmentId: 'T2', status: 'Draft' },
+  ] }, rowCount: 3 }, { result: { rows: [{ signal: 'temperature', value: 70, unit: 'C' }] }, rowCount: 1 })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [
+    call('work', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'work_orders' } }),
+    call('telemetry', 'hydro_query', { tool_name: 'query_telemetry', arguments: { opcua_node_ids: ['temperature'], lookback: '6h' } }),
+  ] }, { role: 'qa', text: 'Charts ready.' }, { role: 'supervisor', text: 'Charts ready.' })
+  const result = await askFoundryCopilot('Read recent telemetry and open work. Include an orders-per-equipment chart.')
+  assert.equal(result.visualizations.length, 1)
+  assert.equal(result.visualizations[0].xColumn, 'equipmentId')
+  assert.match(result.visualizations[0].inlineCsvData, /T1,2/)
+  assert.match(result.visualizations[0].inlineCsvData, /T2,1/)
+  assert.doesNotMatch(result.visualizations[0].inlineCsvData, /temperature/)
+})
+
 test('RCA requires actual tool use and gives one completion-only repair for a final-round invalid pointer', async () => {
   reset()
   harness.responses.push(delegate('rca'))

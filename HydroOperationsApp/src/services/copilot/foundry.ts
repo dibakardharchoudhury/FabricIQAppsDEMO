@@ -249,9 +249,13 @@ export async function askFoundryCopilot(
               continue
             }
             if (role === 'qa' && requiresChartOutput(question) && !visualizations.length) {
-              const presentation = presentSourceRows(steps.filter(step => ['query_telemetry', 'run_kql'].includes(step.tool)), question)
-              if (presentation.visualizations.length) {
-                visualizations.push(...presentation.visualizations)
+              const equipmentBacklog = /\borders?\W+per\W+equipment\b/i.test(question)
+              const tools = equipmentBacklog ? ['query_operations'] : ['query_telemetry', 'run_kql']
+              const presentation = presentSourceRows(steps.filter(step => tools.includes(step.tool)), question)
+              const charts = equipmentBacklog ? presentation.visualizations.filter(chart =>
+                /^equipment_?id$/i.test(chart.xColumn) && chart.yColumns.includes('record_count')) : presentation.visualizations
+              if (charts.length) {
+                visualizations.push(...charts)
                 sourceChartSummary = presentation.summary
                 captureApplicationEvent(event, 'Rendered the requested chart directly from returned source rows; agent-authored CSV was not used.')
                 publish()

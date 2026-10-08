@@ -48,6 +48,19 @@ test('RCA rejects fabricated references, paths and unsupported diagnostic fields
   assert.throws(() => parseRcaAssessment(JSON.stringify(assessment), [{ ...receipts[0], result: { rows: [{ large: 'x'.repeat(3000) }] } }]), /smaller source/)
 })
 
+test('RCA expands structured source observations into exact field rows, not JSON dumps', () => {
+  const sources = [{ ...receipts[0], result: { rows: [{
+    equipment_id: 'EQUIP_RTI_T005', value: 12.34567, context: { 'a/b': null }, open_work_orders: [],
+  }] } }]
+  const parsed = parseRcaAssessment(JSON.stringify(assessment), sources)
+  const table = readAnswerDatasets(renderRcaAssessment(parsed, sources)).datasets[0]
+  assert.deepEqual(table.rows.map(row => [row[2], row[3]]), [
+    ['/rows/0/equipment_id', 'EQUIP_RTI_T005'], ['/rows/0/value', '12.34567'],
+    ['/rows/0/context/a~1b', 'null'], ['/rows/0/open_work_orders', '[]'],
+  ])
+  assert.ok(table.rows.every(row => row[0] === 'E1'))
+})
+
 test('evidence pointers retain null and escaped JSON keys without fabricating measurements', () => {
   const sources = [{ ...receipts[0], result: { 'a/b': { '~key': null } } }]
   const pointer = { evidence_id: ref.evidence_id, path: '/a~1b/~0key' }

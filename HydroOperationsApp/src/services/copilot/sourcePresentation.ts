@@ -47,7 +47,8 @@ export function groundVisualization(spec: AgentVisualization, steps: readonly Pi
     return { ...spec, title: `Source-backed ${spec.yColumns.join(', ')} by ${spec.xColumn}${unit}`,
       xAxisTitle: spec.xColumn, yAxisTitle: `${spec.yColumns.join(', ')}${unit}` }
   }
-  throw new ChartGroundingError('Chart values do not match returned source rows or application-derived record counts. No chart was rendered.')
+  const columns = [...new Set(candidates.map(dataset => dataset.columns.join(', ')))].slice(0, 12)
+  throw new ChartGroundingError(`Chart values do not match returned source rows or application-derived record counts. No chart was rendered. Available dataset columns (use exact names, including record_count for derived counts): ${JSON.stringify(columns)}.`)
 }
 
 export function presentSourceRows(

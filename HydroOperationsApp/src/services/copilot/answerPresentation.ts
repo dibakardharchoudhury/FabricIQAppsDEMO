@@ -17,7 +17,7 @@ Default to at most two summary sentences and three short action/limitation bulle
 When actual editable work-order cards were staged, those cards are the only draft presentation. Do not repeat titles, descriptions, field lists, acceptance criteria or copy/paste templates in prose. At most say the cards are ready for review; retain only separately requested findings and material limitations. No card means no claim that an editable draft exists.
 For multiple comparable records, return a compact Markdown table with a header separator and one record per row. Use human-readable labels, explicit units, UTC timestamps, and canonical identifiers where needed. Do not replace a complete result with selected examples.
 For charts or dashboards, provide the exact supporting rows as fenced csv with a header. Use a descriptive heading immediately before each dataset. Numeric measures must be plain numbers; put units in column names. Use timestamp for the time axis and series for multiple signals. Never mix incompatible units in one measure column. Tables and charts must use the same rows, filters and labels, not independent recounts.
-When calling visualize_dataset, preserve exact source column names and returned cell values: no aliases, rounding, invented calculations or duplicated rows. Only returned source projections and application-derived record counts are accepted. The application supplies factual chart titles and axis labels; a chart never proves a fault. Retrieve a source-computed aggregation when another calculation is needed.
+When calling visualize_dataset, preserve exact source column names and returned cell values: no aliases, rounding, invented calculations or duplicated rows. Only returned source projections and application-derived record counts are accepted. Derived counts use the exact column name record_count and the original grouping field, for example equipmentId,record_count for work inventory. The application supplies factual chart titles and axis labels; a chart never proves a fault. Retrieve a source-computed aggregation when another calculation is needed.
 If a specific chart is requested, emit CSV only for that chart's requested labels and measures, not unrelated numeric columns or the full inventory behind a top-N table. A top-five temperature chart must contain exactly the same five turbines as its table.
 Do not invent chart images, links, KPI totals or zeroes. Distinguish no matching records from unavailable, failed, stale or truncated sources. State material time/population scope and source limitations. End with concise Sources. Separate observations from hypotheses and recommendations.`
 
@@ -31,7 +31,7 @@ export type AnswerDataset = {
 }
 
 const tableCells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '')
-  .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|').replace(/\*\*|`/g, ''))
+  .split(/(?<!\\)\|/).map(cell => cell.trim().replace(/(?<!\\)(?:\*\*|`)/g, '').replace(/\\([\\`*_[\]<>|])/g, '$1'))
 const tableSeparator = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
 
 export function normalizeMarkdownTables(text: string): string {
@@ -213,9 +213,10 @@ export function hideRenderedCsv(text: string): string {
 }
 
 export function hideRenderedData(text: string, streaming = false): string {
+  if (streaming) return ''
   const normalized = normalizeMarkdownTables(normalizeLabeledCsv(text))
     .replace(/```(?:json|csv)[^\S\r\n]*(?:\r?\n|$)[\s\S]*?(?:```|$)/gi, '')
-  return (streaming ? normalized.replace(/^\s*\|.*$/gm, '') : normalized)
+  return normalized
     .replace(/^[^\S\r\n]*\|[^\n]+\n[^\S\r\n]*\|?[ :|\t-]+\n(?:[^\S\r\n]*\|[^\n]*(?:\n|$))+/gm, block => {
       const parsed = readAnswerDatasets(block)
       return parsed.datasets.length || parsed.issues.length ? '' : block
@@ -264,7 +265,7 @@ export function datasetVisualizations(dataset: AnswerDataset, question: string):
       const label = row[index].trim() || 'Not supplied'
       counts.set(label, (counts.get(label) ?? 0) + 1)
     }
-    if (counts.size < 2 || counts.size > 12) return []
+    if (counts.size < 1 || counts.size > 12) return []
     return [{ title: `${dataset.title} - returned records by ${column}`, chartType: 'bar',
       xColumn: column, yColumns: ['record_count'],
       inlineCsvData: Papa.unparse({ fields: [column, 'record_count'], data: [...counts] }) }]

@@ -39,7 +39,10 @@ export function AnswerDashboard({ text, question = '', visualizations = [], step
   ] : answerVisualizations(datasets, question)
   if (!requested && !visualizations.length && !issues.length && !datasets.length) return null
   // Explicit chart datasets take precedence over unrelated numeric table columns.
-  const availableSpecs = visualizations.length && !source.invalidated ? visualizations : charts
+  const explicit = source.invalidated ? [] : visualizations
+  const availableSpecs = [...explicit, ...charts.filter(chart => !explicit.some(spec =>
+    spec.xColumn === chart.xColumn && spec.groupBy === chart.groupBy
+    && JSON.stringify(spec.yColumns) === JSON.stringify(chart.yColumns) && spec.inlineCsvData === chart.inlineCsvData))]
   const specs = availableSpecs.slice(0, 12)
   const showCharts = view === 'chart' && specs.length > 0
   return <section className="v2-answer-dashboard" aria-label="Answer evidence dashboard">

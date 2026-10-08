@@ -147,14 +147,23 @@ export function cell(value: unknown): string {
   return text.replace(/[\\`*_[\]<>]/g, '\\$&').replace(/\|/g, '\\|').replace(/[\r\n]/g, ' ')
 }
 
+function evidenceFields(value: unknown, path: string): Array<{ path: string; value: unknown }> {
+  if ((record(value) || Array.isArray(value)) && Object.keys(value).length) {
+    return Object.entries(value).flatMap(([key, child]) =>
+      evidenceFields(child, `${path}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`))
+  }
+  return [{ path, value }]
+}
+
 export function renderRcaAssessment(report: RcaAssessment, receipts: readonly EvidenceReceipt[]): string {
   const all = [...report.observations, ...report.hypotheses.flatMap(item => [...item.supporting, ...item.contradicting])]
   const unique = [...new Map(all.map(ref => [`${ref.evidence_id}:${ref.path}`, ref])).values()]
   const label = (ref: EvidenceReference) => `E${unique.findIndex(item => item.evidence_id === ref.evidence_id && item.path === ref.path) + 1}`
-  const sourceRows = unique.map(ref => {
+  const sourceRows = unique.flatMap(ref => {
     const receipt = receipts.find(item => item.id === ref.evidence_id)
     if (!receipt) throw new RcaEvidenceError(`Missing evidence receipt: ${ref.evidence_id}.`)
-    return `| ${label(ref)} | ${cell(receipt.tool)} | ${cell(ref.path)} | ${cell(evidenceValue(ref, receipts))} | ${cell(receipt.completedAt)} |`
+    return evidenceFields(evidenceValue(ref, receipts), ref.path).map(field =>
+      `| ${label(ref)} | ${cell(receipt.tool)} | ${cell(field.path)} | ${cell(field.value)} | ${cell(receipt.completedAt)} |`)
   })
   const hypothesisRows = report.hypotheses.map(item =>
     `| ${HYPOTHESES[item.category]} | ${item.supporting.map(label).join(', ') || 'None selected'} | ${item.contradicting.map(label).join(', ') || 'None selected; not proof of absence'} | ${item.missing.map(gap => GAPS[gap]).join('; ')} |`)

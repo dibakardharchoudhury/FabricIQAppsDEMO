@@ -8,7 +8,7 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.769 (`33167af`).** Canonical deployment returned
+**Current deployed release: 1.0.771 (`a3571c7`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
@@ -100,6 +100,27 @@ The first canonical deployment attempt stopped at hosting verification with a
 connection reset. No readiness check was bypassed. The subsequent retry stopped
 before deployment because the newly requested RCA roadmap was an uncommitted
 tracked document; that documentation must be committed before retrying.
+The clean-tree retry completed with `SUCCESS`; backend preflight/POST checks and
+authenticated browser build identity passed.
+
+**1.0.771 compound reruns:** scenario 1 completed in 1m38s (four agents, ten
+tables including observations/hypotheses, ten charts); scenario 2 completed in
+3m22s (all five agents, three tables, six charts). Receipt links resolved.
+Scenario 3 completed its five-agent flow in 3m11s but **failed chart acceptance**:
+after rejecting a model `order_count` column, the completion check used telemetry
+charts instead of the requested orders-per-equipment chart. This is not a pass.
+The local correction now derives that requested chart from operational records,
+provides exact derived-column feedback, and keeps other automatic source charts
+alongside explicit charts. Further presentation fixes withhold provisional
+model prose and render nested RCA observations as field/value rows with literal
+identifiers and exact pointers. All 138 affected tests, typecheck and targeted
+lint passed; these latest corrections still require deployment and hosted rerun.
+
+**Teams communication recovered:** the verified existing self-chat message
+endpoint accepted updates at 18:22 and 18:38 UTC; the first message was read back
+successfully. A session-attached 15-minute reminder supports further updates
+while work continues. This is progress communication, not certification of the
+app's operational notification delivery or a permanent scheduler.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.
