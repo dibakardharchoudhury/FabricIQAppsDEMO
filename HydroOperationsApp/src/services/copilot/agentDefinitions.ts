@@ -146,8 +146,8 @@ export function nativeSourceError(question: string, source: unknown, priorUserQu
   return undefined
 }
 
-export function nativeToolChoice(source: NativeSource) {
-  return { type: 'allowed_tools', mode: 'required', tools: [{ type: 'mcp', server_label: `fabriciq-${source}` }] }
+export function nativeToolChoice(source: NativeSource, name?: 'ask_ontology') {
+  return { type: 'allowed_tools', mode: 'required', tools: [{ type: 'mcp', server_label: `fabriciq-${source}`, ...(name ? { name } : {}) }] }
 }
 
 export function verifyNativeReceipt(item: unknown, source: NativeSource): boolean {

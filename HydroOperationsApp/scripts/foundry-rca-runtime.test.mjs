@@ -37,6 +37,7 @@ const { askFoundryCopilot, resetFoundryConversation } = await import('../src/ser
 const { createToolRuntime } = await import('../src/services/copilot/tools.ts')
 const { defaultCopilotSettings } = await import('../src/services/copilot/settings.ts')
 const { WorkOrderProposalValidationError } = await import('../src/services/copilot/orchestration.ts')
+const { QueryInputValidationError } = await import('../src/services/copilot/query.ts')
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (_url, init) => {
   const request = JSON.parse(init.body)
@@ -173,6 +174,47 @@ test('native handoffs reject local tool prescriptions before invoking or consumi
   assert.deepEqual(harness.verifiedSources, ['data-agent'])
   assert.ok(harness.requests.some(request => request.input.some(item => /cannot prescribe local Hydro/.test(item.output ?? ''))))
   assert.equal(harness.responses.length, 0)
+})
+
+test('ontology instance requests cannot finish with schema discovery alone', async () => {
+  reset()
+  const metadata = nativeReply('No matching entity types.', 'ontology')
+  metadata.calls[0].name = 'list_ontology_entities'
+  harness.responses.push(delegate('fabric-iq', 'ontology'), metadata,
+    nativeReply('Actual facility instances returned.', 'ontology'),
+    { role: 'supervisor', text: 'Facility instances returned.' })
+  await askFoundryCopilot('Use the selected ontology directly to list facility instances.')
+  assert.equal(harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent').length, 2)
+  assert.ok(harness.requests.filter(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
+    .every(request => request.tool_choice.tools[0].name === 'ask_ontology'))
+  assert.ok(harness.requests.some(request => request.input.some(item => /Instance retrieval is incomplete/.test(item.content?.[0]?.text ?? ''))))
+  assert.equal(harness.responses.length, 0)
+})
+
+test('local filter errors are corrected without pretending the rejected read executed', async () => {
+  reset()
+  harness.reads.length = 0
+  harness.reads.push(new QueryInputValidationError('Each filter requires a column and a supported operator.'),
+    { result: { rows: [], total_matched: 0, truncated: false }, rowCount: 0 })
+  harness.responses.push(delegate('qa'),
+    { role: 'qa', calls: [call('invalid_filter', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'work_orders', where: [{ column: 'status', op: 'not_in', value: ['Completed'] }] } })] },
+    { role: 'qa', text: 'The rejected query found no orders.' },
+    { role: 'qa', calls: [call('corrected_filter', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'work_orders', where: [{ column: 'status', op: 'neq', value: 'Completed' }] } })] },
+    { role: 'qa', text: 'The corrected query returned no orders.' },
+    { role: 'supervisor', text: 'No orders in the corrected source read.' })
+  const result = await askFoundryCopilot('Show open work orders.')
+  assert.equal(result.steps[0].status, 'error')
+  assert.equal(result.steps[1].status, 'done')
+  assert.ok(harness.requests.some(request => request.input.some(item => item.output?.includes('\"executed\":false'))))
+  assert.equal(harness.responses.length, 0)
+})
+
+test('asset and work filters reject unsupported operators and columns before source I/O', async () => {
+  reset()
+  const runtime = createToolRuntime(defaultCopilotSettings())
+  await assert.rejects(runtime('query_assets', { entity: 'equipment', where: [{ column: 'tag', op: 'not_in', value: ['T005'] }] }), QueryInputValidationError)
+  await assert.rejects(runtime('query_operations', { entity: 'work_orders', where: [{ column: 'equipment_id', op: 'eq', value: 'EQUIP_1' }] }), QueryInputValidationError)
+  await assert.rejects(runtime('query_operations', { entity: 'work_orders', where: [{ column: 'equipmentId', op: 'in', value: ['EQUIP_1'] }, ''] }), QueryInputValidationError)
 })
 
 test('two native retrievals cannot replace requested direct asset and work-order reconciliation', async () => {

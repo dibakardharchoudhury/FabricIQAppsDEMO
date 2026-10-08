@@ -10,7 +10,7 @@ import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeAssignmentError, nati
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
 import { createOrchestrationEvent, delegationOrderError, directVerificationSources, isNotificationDraftRequest, isWorkOrderRequest, missingRequestedSpecialists, rcaAssignmentError, requiresChartOutput, requiresDirectSourceVerification, requiresInspectionEvidence, workOrderPriorityForRequest, WorkOrderProposalValidationError, type AgentRole, type OrchestrationEvent, type WorkOrderProposal } from './orchestration.ts'
 import { workOrderApprovals } from './workOrderApproval.ts'
-import { KqlValidationError } from './query.ts'
+import { KqlValidationError, QueryInputValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
 import { parseRcaAssessment, RcaEvidenceError, renderInventoryEvidence, renderOpenWorkEvidence, renderRcaAssessment, renderUnsentNotification, type EvidenceReceipt } from './rcaEvidence.ts'
 import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation, type NativeComparisonReceipt } from './fleetReconciliation.ts'
@@ -143,6 +143,11 @@ export async function askFoundryCopilot(
       let workReview: ReturnType<typeof parseWorkOrderReview> | undefined
       let rcaReport: string | undefined
       let nativeExecuted = false
+      const ontologyInstances = nativeSource === 'ontology' && (Boolean(fleetScope) || facilityBacklog || /\binstances?\b/i.test(question))
+      let ontologyInstancesExecuted = false
+      if (ontologyInstances) input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+        text: 'This request requires actual ontology instances. list_ontology_entities is schema discovery, not an instance query; its empty result cannot establish zero business instances. Use ask_ontology for the requested instance values and preserve its returned source limitations.',
+      }] })
       let chartReminderSent = false
       let completionRepair = false
       let pendingToolInputError: string | undefined
@@ -160,10 +165,10 @@ export async function askFoundryCopilot(
             body: JSON.stringify({
               agent_reference: { type: 'agent_reference', name: AGENT_NAMES[role] },
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
-              ...(nativeSource ? { tool_choice: nativeToolChoice(nativeSource) } : {}),
+              ...(nativeSource ? { tool_choice: nativeToolChoice(nativeSource, ontologyInstances ? 'ask_ontology' : undefined) } : {}),
               ...(role === 'rca' ? { tool_choice: round >= maxRounds
                 ? { type: 'function', name: 'complete_rca_assessment' } : 'required' } : {}),
-              ...(role === 'qa' && missingDirect().length ? { tool_choice: 'required' } : {}),
+              ...(role === 'qa' && (missingDirect().length || pendingToolInputError) ? { tool_choice: 'required' } : {}),
             }),
             signal: requestDeadline,
           }).catch((error: unknown) => {
@@ -187,7 +192,9 @@ export async function askFoundryCopilot(
           if (nativeSource) for (const item of state.output ?? []) {
             if (verifyNativeReceipt(item, nativeSource)) {
               nativeExecuted = true
-              if (fleetScope || facilityBacklog) {
+              const instanceCall = item && typeof item === 'object' && 'name' in item && item.name === 'ask_ontology'
+              if (instanceCall) ontologyInstancesExecuted = true
+              if ((fleetScope || facilityBacklog) && (!ontologyInstances || instanceCall)) {
                 if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !('output' in item)) {
                   throw new Error('Native comparison receipt omitted its output or identity.')
                 }
@@ -208,6 +215,20 @@ export async function askFoundryCopilot(
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
             if (nativeSource && !nativeExecuted) throw new Error('Fabric IQ returned prose without a matching native-source execution receipt.')
+            if (pendingToolInputError) {
+              input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: `The last tool payload was rejected locally: ${pendingToolInputError}. Correct that payload before completing; prose cannot turn a rejected call into executed evidence.`,
+              }] })
+              continue
+            }
+            if (ontologyInstances && !ontologyInstancesExecuted) {
+              captureApplicationEvent(event, 'Ontology schema discovery did not satisfy the requested instance retrieval.')
+              publish()
+              input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: 'Instance retrieval is incomplete. Call ask_ontology for the requested business instances. Do not interpret empty list_ontology_entities schema metadata as an empty instance population.',
+              }] })
+              continue
+            }
             if (role === 'qa' && missingDirect().length) {
               input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
                 text: `Direct verification remains incomplete. Execute ${missingDirect().join(' and ')} for the operator's scope. ${fleetScope ? 'Selected-node telemetry is not independent fleet coverage.' : 'Native claims cannot stand in for direct-source execution.'} No completion is accepted without the required receipts.`,
@@ -399,6 +420,14 @@ export async function askFoundryCopilot(
               } catch (error) {
                 Object.assign(step, { status: 'error', elapsedMs: Date.now() - started, error: error instanceof Error ? error.message : 'Tool execution failed.' })
                 captureApplicationEvent(event, `${parsed.toolName} failed`, call.id, true, 'tool-end')
+                if (error instanceof QueryInputValidationError) {
+                  pendingToolInputError = error.message
+                  input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
+                    error: error.message, executed: false,
+                    instruction: 'The filter payload was rejected locally before reading the source. Correct column/op/value using the supplied schema within the remaining round budget. Do not change the requested scope, repeat completed unrelated reads, or treat this as an empty dataset.',
+                  }) })
+                  continue
+                }
                 if (error instanceof KqlValidationError) {
                   input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
                     error: error.message, executed: false,

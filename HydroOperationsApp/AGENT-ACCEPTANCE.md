@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.750 (`d846702`).** Canonical deployment completed on
+**Current deployed release: 1.0.751 (`3db6439`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed routing correction passed 153 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 159 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +21,19 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+**1.0.751 targeted reruns are not accepted.** The fleet run stopped on an invalid
+model-generated filter array containing an empty string (3m2s). The facility run
+stopped on `list_ontology_entities` with an empty `entityName` (28.0s), not on a
+business-instance query. The follow-up correction validates filters before source I/O,
+returns typed local validation errors for bounded repair without treating them as empty
+data, and requires `ask_ontology` for instance requests. Genuine source failures still
+propagate. Schema discovery alone cannot satisfy instance retrieval.
+
+Replaying actual native output also exposed a combined `instrument_id / opcua_node_id`
+column. The adapter now accepts its explicit, unambiguous literal node; ambiguous
+compound identifiers remain unverified. These follow-up changes pass 163 related
+tests, build/typecheck, lint and both bundle checks; hosted verification is pending.
 
 **1.0.750 targeted reruns remain failed.** Flow 4 now used a valid native business
 query and complete direct snapshots, but incorrectly required another final QA pass

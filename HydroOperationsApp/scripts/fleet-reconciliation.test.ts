@@ -75,6 +75,18 @@ test('comparison uses native tool rows and exposes omitted fleet members, differ
   assert.doesNotMatch(output, /Returned fields match/)
 })
 
+test('explicit combined instrument/node cells preserve the literal node without inferring its identity', () => {
+  const combined = text.replaceAll('Signal ID', 'instrument_id / opcua_node_id')
+    .replace(/\| (ns=\d+;s=[^ |]+)/g, '| INST_EXPLICIT / $1')
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: combined }])
+  assert.match(output, /Native table rows: 1; direct selected rows: 2/)
+  assert.match(output, /Native table rows: 2; direct selected rows: 2/)
+  assert.match(output, /timestamp\/precision differs/)
+  assert.doesNotMatch(output, /Expected one native BAD-quality table/)
+  const ambiguous = combined.replaceAll('INST_EXPLICIT /', 'INST_EXPLICIT / ns=2;s=Other /')
+  assert.match(renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: ambiguous }]), /identity is not comparable/)
+})
+
 test('work comparison preserves all direct orders and detects missing native work without claiming it does not exist', () => {
   const orders = `\n### Open work\n| Turbine ID | Work order number | Title | Status | Priority |
 |---|---|---|---|---|

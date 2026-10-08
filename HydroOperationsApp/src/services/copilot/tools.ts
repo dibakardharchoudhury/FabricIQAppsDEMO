@@ -6,7 +6,7 @@ import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
-  applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildLatestSignalSnapshotQuery, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, validateFilters, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildLatestSignalSnapshotQuery, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -385,6 +385,7 @@ export function createToolRuntime(
       }
       case 'query_assets': {
         const entity = entityOrThrow(ASSET_ENTITIES, args.entity, settings)
+        validateFilters(args.where, entity.columns.map(column => column.name))
         stid ??= queryStid()
         const data = await stid
         if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
@@ -393,6 +394,7 @@ export function createToolRuntime(
       }
       case 'query_operations': {
         const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity, settings)
+        validateFilters(args.where, entity.columns.map(column => column.name))
         return shape(entity, await loadOperations(entity.key), args)
       }
       case 'query_telemetry': {

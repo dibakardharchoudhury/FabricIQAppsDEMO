@@ -12,6 +12,8 @@ export type FilterCondition = { column: string; op: FilterOperator; value?: unkn
 
 export const FILTER_OPERATORS: FilterOperator[] = ['eq', 'neq', 'contains', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'not_null']
 
+export class QueryInputValidationError extends Error {}
+
 const text = (value: unknown) => value instanceof Date ? value.toISOString() : String(value ?? '')
 const lower = (value: unknown) => text(value).toLowerCase()
 
@@ -48,16 +50,22 @@ function matches(row: Record<string, unknown>, condition: FilterCondition): bool
   }
 }
 
-/** Apply the model-supplied predicate. Unknown columns yield no rows rather than silently matching all. */
-export function applyFilter<T extends Record<string, unknown>>(rows: T[], where?: FilterCondition[]): T[] {
-  if (where === undefined) return rows
-  if (!Array.isArray(where)) throw new Error('where must be an array of filter conditions.')
+export function validateFilters(where?: FilterCondition[], allowedColumns?: readonly string[]): void {
+  if (where === undefined) return
+  if (!Array.isArray(where)) throw new QueryInputValidationError('where must be an array of filter conditions.')
   for (const condition of where) {
     if (!condition || typeof condition.column !== 'string' || !condition.column.trim()
-      || !FILTER_OPERATORS.includes(condition.op)) throw new Error('Each filter requires a column and a supported operator.')
-    if (!['is_null', 'not_null'].includes(condition.op) && !Object.hasOwn(condition, 'value')) throw new Error('This filter operator requires a value.')
-    if (condition.op === 'in' && !Array.isArray(condition.value)) throw new Error('The in filter requires an array value.')
+      || !FILTER_OPERATORS.includes(condition.op)) throw new QueryInputValidationError(`Each filter requires a column and a supported operator: ${FILTER_OPERATORS.join(', ')}.`)
+    if (allowedColumns && !allowedColumns.includes(condition.column)) throw new QueryInputValidationError(`Unknown filter column '${condition.column}'. Use ${allowedColumns.join(', ')}.`)
+    if (!['is_null', 'not_null'].includes(condition.op) && !Object.hasOwn(condition, 'value')) throw new QueryInputValidationError('This filter operator requires a value.')
+    if (condition.op === 'in' && !Array.isArray(condition.value)) throw new QueryInputValidationError('The in filter requires an array value.')
   }
+}
+
+/** Apply the model-supplied predicate. Unknown columns yield no rows rather than silently matching all. */
+export function applyFilter<T extends Record<string, unknown>>(rows: T[], where?: FilterCondition[]): T[] {
+  validateFilters(where)
+  if (where === undefined) return rows
   return rows.filter(row => where.every(condition => matches(row, condition)))
 }
 

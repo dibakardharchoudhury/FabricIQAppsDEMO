@@ -61,7 +61,7 @@ export function nativeComparisonText(output: unknown): string | undefined {
 
 type Claim = { node: string; equipment: string; value: string; time: string; quality?: string; unit?: string; rank?: string }
 const aliases = {
-  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID'],
+  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'instrument_id / opcua_node_id'],
   equipment: ['equipment_id', 'Turbine ID', 'Equipment'],
   value: ['value', 'Reading', 'latest_temp', 'Temperature'],
   time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)'],
@@ -83,7 +83,9 @@ function claims(text: string, temperature: boolean): { rows: Claim[]; issues: st
     if (!temperature && indices.rank >= 0) continue
     recognized++
     for (const row of dataset.rows) {
-      const node = row[indices.node]
+      const rawNode = row[indices.node]
+      const combined = normalized(dataset.columns[indices.node]) === normalized('instrument_id / opcua_node_id')
+      const node = combined ? rawNode.match(/^INST_[A-Za-z0-9_]+\s+\/\s+(ns=\d+;s=[^\s/]+)$/)?.[1] : rawNode
       const equipment = row[indices.equipment].match(/\bEQUIP_[A-Za-z0-9_]+\b/)?.[0]
       if (!node || !equipment || (temperature && !node.endsWith('.turbine_temp'))) {
         issues.push(`Native ${dataset.title}: identity is not comparable.`)
