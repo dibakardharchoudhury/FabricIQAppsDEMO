@@ -6,6 +6,8 @@ import { RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, kustoRowsToObjects } from '../src/services/copilot/query.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
+import { parseKustoPayload } from '../src/services/kustoResult.ts'
+export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
 const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
@@ -85,38 +87,6 @@ function pageItems(page, label) {
     throw new Error(`${label} read is missing or incomplete; partial evidence is not accepted.`)
   }
   return page.items
-}
-
-export function parseKustoPayload(result) {
-  const tables = result.Tables
-  if (result.error || result.HasErrors === true || result.Exceptions?.length || !Array.isArray(tables) || !tables.length
-    || tables.some(table => !Array.isArray(table.Columns) || !Array.isArray(table.Rows)
-      || table.Columns.some(column => typeof column.ColumnName !== 'string')
-      || new Set(table.Columns.map(column => column.ColumnName)).size !== table.Columns.length
-      || table.Rows.some(row => !Array.isArray(row) || row.length !== table.Columns.length))) {
-    throw new Error('KQL returned an error, partial result or an unexpected result envelope.')
-  }
-  if (tables.length === 1) return tables[0]
-  const contents = tables.filter(table => ['Ordinal', 'Kind', 'Name'].every(name => table.Columns.some(c => c.ColumnName === name)))
-  if (contents.length !== 1) throw new Error('KQL table-of-contents is missing or ambiguous.')
-  const entries = kustoRowsToObjects(contents[0].Columns.map(c => c.ColumnName), contents[0].Rows)
-  if (entries.length !== tables.length - 1 || new Set(entries.map(entry => entry.Ordinal)).size !== entries.length
-    || entries.some(entry => !Number.isInteger(entry.Ordinal) || entry.Ordinal < 0 || entry.Ordinal >= tables.length
-      || tables[entry.Ordinal] === contents[0] || !['QueryResult', 'QueryProperties', 'QueryStatus'].includes(entry.Kind))) {
-    throw new Error('KQL table-of-contents is invalid or contains unsupported result types.')
-  }
-  const primary = entries.filter(entry => entry.Kind === 'QueryResult' && entry.Name === 'PrimaryResult')
-  const status = entries.filter(entry => entry.Kind === 'QueryStatus')
-  if (primary.length !== 1 || status.length !== 1 || entries.filter(entry => entry.Kind === 'QueryResult').length !== 1) {
-    throw new Error('KQL must return one primary result and one completion status.')
-  }
-  const statusTable = tables[status[0].Ordinal]
-  const statuses = kustoRowsToObjects(statusTable.Columns.map(c => c.ColumnName), statusTable.Rows)
-  if (!statuses.some(row => row.Severity === 4 && row.StatusCode === 0)
-    || statuses.some(row => !Number.isInteger(row.Severity) || row.Severity < 4 || row.StatusCode !== 0)) {
-    throw new Error('KQL completion reports failure, warning or incomplete execution; partial rows rejected.')
-  }
-  return tables[primary[0].Ordinal]
 }
 
 export async function readTelemetry(config, metadata, equipmentId, tokens, fetcher = fetch) {

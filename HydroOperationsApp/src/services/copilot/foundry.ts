@@ -16,6 +16,7 @@ import { parseRcaAssessment, RcaEvidenceError, renderInventoryEvidence, renderOp
 import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation, type NativeComparisonReceipt } from './fleetReconciliation.ts'
 import { missingFacilityEvidence, renderFacilityReconciliation } from './facilityReconciliation.ts'
 import { checkRequestedKql, renderQueryChecks } from './queryEvidence.ts'
+import { stationSnapshot, stationPowerComparison, StationComparisonError, type StationSnapshot } from './stationComparison.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -26,6 +27,7 @@ export type FoundryAnswer = AgentAnswer & {
 
 let history: Array<{ role: 'user' | 'assistant'; content: string }> = []
 let busy = false
+let previousStationDisplay: { snapshot: StationSnapshot; expiresAt: number; settingsKey: string } | undefined
 
 export function isFoundryConfigured() {
   return Boolean(loadCopilotSettings().projectEndpoint)
@@ -34,6 +36,7 @@ export function isFoundryConfigured() {
 export function resetFoundryConversation() {
   if (busy) throw new Error('Wait for the current Foundry request before resetting the conversation.')
   history = []
+  previousStationDisplay = undefined
   workOrderApprovals.clear()
 }
 
@@ -53,9 +56,12 @@ export async function askFoundryCopilot(
   onEvents?: (events: OrchestrationEvent[]) => void,
 ): Promise<FoundryAnswer> {
   if (busy) throw new Error('A Foundry request is already running. Wait for it to finish.')
+  const previousStation = previousStationDisplay
+  previousStationDisplay = undefined
   const settings = loadCopilotSettings()
   if (!settings.projectEndpoint) throw new Error('Configure the Foundry project endpoint and provision the Hydro agents before asking a question.')
   const endpoint = requireProjectEndpoint(settings.projectEndpoint)
+  const settingsKey = JSON.stringify(settings)
   const proposalPriority = isWorkOrderRequest(question) ? workOrderPriorityForRequest(question) : 'Medium'
   busy = true
   const events: OrchestrationEvent[] = []
@@ -505,17 +511,40 @@ export async function askFoundryCopilot(
     if (facilityComparison) visualizations.splice(0, visualizations.length, facilityComparison.visualization)
     const queryEvidence = renderQueryChecks(queryChecks, steps)
     const stationSummaryValues = [...stationSummaries.values()]
+    const comparisonRequested = history.length > 0 && /\b(verify|compare|reconcile|check|changed|difference|different)\b/i.test(question)
+    let stationComparison: { kind: 'verified' | 'unavailable'; text: string } | undefined
+    if (stationSummaries.size === 1) {
+      try {
+        const snapshot = stationSnapshot(receipts.filter(receipt => receipt.tool === 'query_station_power').at(-1)?.result)
+        previousStationDisplay = { snapshot, expiresAt: Date.now() + 5 * 60_000, settingsKey }
+        if (comparisonRequested) {
+          if (!previousStation || previousStation.expiresAt <= Date.now() || previousStation.settingsKey !== settingsKey) {
+            throw new StationComparisonError('No unexpired source-bound snapshot of the previous chart is available. New source values are shown without a historical delta.')
+          }
+          stationComparison = { kind: 'verified', text: stationPowerComparison(previousStation.snapshot, snapshot) }
+        }
+      } catch (error) {
+        if (!(error instanceof StationComparisonError)) throw error
+        captureApplicationEvent(events[0], `Historical chart comparison unavailable: ${error.message}`)
+        if (comparisonRequested) stationComparison = { kind: 'unavailable', text: `Historical chart comparison unavailable: ${error.message}` }
+      }
+    } else if (comparisonRequested && stationSummaries.size > 1) {
+      stationComparison = { kind: 'unavailable', text: 'Historical chart comparison unavailable: multiple distinct station datasets were returned. Their source summaries remain separate; no single previous-to-current delta is certified.' }
+      captureApplicationEvent(events[0], stationComparison.text)
+    }
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
-    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence ? [
+    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence || stationComparison ? [
       ...(facilityComparison ? [facilityComparison.text] : []),
       ...(queryEvidence ? [queryEvidence] : []),
       ...(fleetComparison ? [fleetComparison] : []),
       ...assessments,
       ...specialistResults.filter(result => result.role === 'fabric-iq' && !fleetComparison && !facilityComparison).map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
-      ...stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`),
+      ...(stationComparison?.kind === 'verified' ? [stationComparison.text]
+        : stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`)),
+      ...(stationComparison?.kind === 'unavailable' ? [stationComparison.text] : []),
       renderInventoryEvidence(fleetComparison ? receipts.filter(receipt =>
         !['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'].includes(receipt.tool)) : receipts),
       ...(workDecisions.length || proposals.length ? [
@@ -524,9 +553,11 @@ export async function askFoundryCopilot(
       ...(facilityComparison ? [] : [renderOpenWorkEvidence(receipts)]),
       ...(isNotificationDraftRequest(question) ? [renderUnsentNotification(receipts)] : []),
     ].join('\n\n') : undefined
+    const stationAnswer = stationComparison?.kind === 'verified' ? stationComparison.text
+      : [stationSummaryValues[0], stationComparison?.text].filter(Boolean).join('\n\n')
     const answer = checkedInvestigation
       ? appendOmittedSnapshotWork(checkedInvestigation, steps)
-      : directChart ? stationSummaryValues[0] : appendOmittedSnapshotWork(narrative, steps)
+      : directChart ? stationAnswer : appendOmittedSnapshotWork(narrative, steps)
     const text = requiresChartOutput(question) && !visualizations.length
       ? `${answer}\n\nRequested chart incomplete: no structured chart was produced. Missing data must not be plotted as zero.`
       : answer
@@ -543,6 +574,7 @@ export async function askFoundryCopilot(
     history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const, content: text }].slice(-8)
     return { text, usage, steps, orchestrationEvents: events, proposals, visualizations, models }
   } catch (error) {
+    previousStationDisplay = undefined
     history = [...history, { role: 'user' as const, content: question }, { role: 'assistant' as const,
       content: `Incomplete workflow: ${error instanceof Error ? error.message : 'Agent execution failed'}. No successful final answer was produced. Pending proposals were withdrawn. Completed specialist findings are context for a fresh check, not proof that the workflow succeeded:\n${JSON.stringify(specialistResults)}`,
     }].slice(-8)

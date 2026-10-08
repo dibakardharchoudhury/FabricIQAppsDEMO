@@ -1246,7 +1246,7 @@ export async function queryTelemetryHistory(opcuaNodeId: string, range: Telemetr
   return (payload.Tables?.[0]?.Rows ?? []).map(([eventTime, opcuaNodeId, value, quality]) => ({ opcuaNodeId, eventTime, value, quality }))
 }
 
-export type KustoResult = { columns: string[]; rows: unknown[][] }
+export type KustoResult = { columns: string[]; rows: unknown[][]; sourceKey?: string }
 
 /** Run an already-validated KQL query against the Eventhouse as the signed-in user.
  *  Callers outside the telemetry views must validate the query text first — see copilot/query.ts. */
@@ -1268,10 +1268,11 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   })
   const text = await response.text()
   if (!response.ok) throw new Error(`Eventhouse query failed (${response.status}): ${text.slice(0, 300)}`)
-  const payload = JSON.parse(text) as { Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }> }
-  const table = payload.Tables?.[0]
+  const { parseKustoPayload } = await import('./kustoResult')
+  const table = parseKustoPayload(JSON.parse(text))
   return {
-    columns: (table?.Columns ?? []).map((column, index) => column.ColumnName ?? `column_${index}`),
-    rows: table?.Rows ?? [],
+    columns: table.Columns.map(column => column.ColumnName),
+    rows: table.Rows,
+    sourceKey: JSON.stringify([requireWorkspaceId(), cluster, config.kqlDatabase]),
   }
 }

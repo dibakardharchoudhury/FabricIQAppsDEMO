@@ -7,7 +7,7 @@ import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
   applyFilter, validateFilters, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildLatestSignalSnapshotQuery, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
-  projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
+  projectColumns, STATION_POWER_SEMANTICS, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
 export type ToolDefinition = {
@@ -377,7 +377,7 @@ export function createToolRuntime(
             grounded_summary: groundedSummary,
             chart_rendered: Boolean(evidence.visualization),
             chart: evidence.visualization,
-            semantics: 'Sample-weighted arithmetic mean of individual power_output readings across turbines, converted to MW using metadata. All qualities included; not total station output, time-weighted mean or energy.',
+            semantics: STATION_POWER_SEMANTICS, source_key: data.sourceKey,
             read_completed_at_utc: readCompletedAt },
           groundedSummary,
           rowCount: evidence.rows.length, visualization: evidence.visualization, query,

@@ -7,7 +7,7 @@ globalThis.__rcaRuntimeTest = harness
 const stubs = {
   '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("data-agent"); }; export const verifyOntologyForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("ontology"); }; export const queryStid = async () => { if (!globalThis.__rcaRuntimeTest.stid) throw new Error("Unexpected STID read"); return globalThis.__rcaRuntimeTest.stid; }; export const runKustoQuery = async (...args) => { if (!globalThis.__rcaRuntimeTest.kusto) throw new Error("Unexpected Kusto read"); return globalThis.__rcaRuntimeTest.kusto(...args); };',
   '../rayfin.ts': 'export const isRayfinConfigured = () => true; export const isRayfinSignedIn = () => true; export const listWorkOrders = async () => []; export const listAsset3DModels = listWorkOrders; export const listInspections = listWorkOrders; export const listMaintenanceNotifications = listWorkOrders; export const listSpareParts = listWorkOrders;',
-  './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test"}); export const enabledKustoNames = () => ["OPCUAEvents"]; export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
+  './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test", ...globalThis.__rcaRuntimeTest.settings}); export const enabledKustoNames = () => ["OPCUAEvents"]; export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
   './catalog.ts': 'export const catalogPrompt = () => "";',
   './workOrderApproval.ts': `import { createApprovalStore } from ${JSON.stringify(new URL('../src/services/copilot/approvalStore.ts', import.meta.url).href)}; export const workOrderApprovals = createApprovalStore(); export const validateWorkOrderTarget = async () => {};`,
   './tools.ts': `export const buildToolDefinitions = () => [];
@@ -37,7 +37,7 @@ const { askFoundryCopilot, resetFoundryConversation } = await import('../src/ser
 const { createToolRuntime } = await import('../src/services/copilot/tools.ts')
 const { defaultCopilotSettings } = await import('../src/services/copilot/settings.ts')
 const { WorkOrderProposalValidationError } = await import('../src/services/copilot/orchestration.ts')
-const { QueryInputValidationError } = await import('../src/services/copilot/query.ts')
+const { QueryInputValidationError, STATION_POWER_SEMANTICS } = await import('../src/services/copilot/query.ts')
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (_url, init) => {
   const request = JSON.parse(init.body)
@@ -75,6 +75,7 @@ function reset() {
   harness.requests.length = harness.responses.length = harness.reads.length = 0
   harness.verifiedSources.length = 0
   harness.stid = harness.kusto = undefined
+  harness.settings = undefined
   harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 123.45 }] }, rowCount: 1, groundedSummary: 'Measured mean: 123.45 MW.' })
 }
 
@@ -737,6 +738,139 @@ test('follow-up specialists receive the actual displayed semantics even when Chi
   const start = harness.requests.length
   await askFoundryCopilot('What can you query?')
   assert.doesNotMatch(JSON.stringify(harness.requests.slice(start)), /Previous displayed conversation turn|Sample-weighted/)
+})
+
+function stationRead(value, samples, clock) {
+  return { result: { source_key: 'workspace:cluster:database', lookback: '24h',
+    semantics: STATION_POWER_SEMANTICS, read_completed_at_utc: clock,
+    rows: [{ Station: 'Sloy', average_power_MW: value, samples, bad_samples: 20, latest_event_time: '2026-10-08T05:00:00Z' }],
+  }, rowCount: 1, groundedSummary: `Current source mean: ${value} MW.` }
+}
+function stationReplies() {
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'An abbreviated model answer.' }, { role: 'supervisor', text: 'No source-derived comparison here.' })
+}
+
+test('real orchestration loop renders source-derived old/new chart deltas without additional model rounds', async () => {
+  reset()
+  harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+  stationReplies()
+  await askFoundryCopilot('Average station power over the last 24 hours.')
+  harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'))
+  stationReplies()
+  const result = await askFoundryCopilot('Verify the previous values, counts, units and freshness.')
+  assert.match(result.text, /Chart verification against the previous answer/)
+  assert.match(result.text, /\| Sloy \| 123\.45 \| 124 \| 0\.55 \| 4000 \/ 4010/)
+  assert.doesNotMatch(result.text, /No source-derived comparison here/)
+  assert.equal(harness.requests.length, 8)
+  assert.equal(harness.reads.length, 0)
+})
+
+test('failed refresh invalidates chart comparison history instead of rendering previous values', async () => {
+  reset()
+  harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+  stationReplies()
+  await askFoundryCopilot('Average station power.')
+  harness.reads.push(new Error('Live source unavailable'))
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] })
+  await assert.rejects(askFoundryCopilot('Verify the previous chart.'), /Live source unavailable/)
+  harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'))
+  stationReplies()
+  const result = await askFoundryCopilot('Verify the previous chart again.')
+  assert.match(result.text, /Historical chart comparison unavailable/)
+  assert.doesNotMatch(result.text, /\| Sloy \| 123\.45/)
+})
+
+test('New chat and bounded snapshot expiry cannot reuse historical chart data', async () => {
+  for (const invalidate of ['reset', 'expiry']) {
+    reset()
+    harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+    stationReplies()
+    await askFoundryCopilot('Average station power.')
+    const originalNow = Date.now
+    try {
+      if (invalidate === 'reset') resetFoundryConversation()
+      else {
+        const clock = Date.now()
+        Date.now = () => clock + 300001
+      }
+      harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'))
+      stationReplies()
+      const result = await askFoundryCopilot('Verify the previous chart.')
+      assert.doesNotMatch(result.text, /Chart verification against the previous answer|\| Sloy \| 123\.45/)
+    } finally { Date.now = originalNow }
+  }
+})
+
+test('changed configuration or source identity cannot reuse the previous station dataset', async () => {
+  for (const change of ['settings', 'source']) {
+    reset()
+    harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+    stationReplies()
+    await askFoundryCopilot('Average station power.')
+    const next = stationRead(124, 4010, '2026-10-08T06:01:00Z')
+    if (change === 'settings') harness.settings = { projectEndpoint: 'https://test.services.ai.azure.com/api/projects/changed' }
+    else next.result.source_key = 'other-workspace:cluster:database'
+    harness.reads.push(next)
+    stationReplies()
+    const result = await askFoundryCopilot('Verify the previous chart.')
+    assert.match(result.text, /Historical chart comparison unavailable/)
+    assert.match(result.text, /Current source mean: 124 MW/)
+    assert.doesNotMatch(result.text, /\| Sloy \| 123\.45/)
+  }
+})
+
+test('additional verification reads cannot discard the source-derived historical comparison', async () => {
+  reset()
+  harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+  stationReplies()
+  await askFoundryCopilot('Average station power.')
+  harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'),
+    stationRead(124, 4010, '2026-10-08T06:01:01Z'))
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read,
+    call('verification', 'hydro_query', { tool_name: 'query_station_power', arguments: { lookback: '24h' } })] },
+  { role: 'qa', text: 'Two reads agree.' }, { role: 'supervisor', text: 'No numerical reconciliation supplied.' })
+  const result = await askFoundryCopilot('Verify the previous values and independently check them again.')
+  assert.match(result.text, /\| Sloy \| 123\.45 \| 124 \| 0\.55 \| 4000 \/ 4010/)
+  assert.doesNotMatch(result.text, /No numerical reconciliation supplied/)
+  assert.equal(harness.requests.length, 8)
+  assert.equal(harness.reads.length, 0)
+})
+
+test('multiple distinct station windows explicitly refuse an ambiguous historical comparison', async () => {
+  reset()
+  harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+  stationReplies()
+  await askFoundryCopilot('Average station power.')
+  const otherWindow = stationRead(130, 7000, '2026-10-08T06:01:00Z')
+  otherWindow.result.lookback = '7d'
+  harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'), otherWindow)
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read,
+    call('seven_days', 'hydro_query', { tool_name: 'query_station_power', arguments: { lookback: '7d' } })] },
+  { role: 'qa', text: 'Two different windows.' }, { role: 'supervisor', text: 'A comparison was verified.' })
+  const result = await askFoundryCopilot('Compare the previous chart with 24-hour and seven-day means.')
+  assert.match(result.text, /Historical chart comparison unavailable:.*multiple distinct/i)
+  assert.equal((result.text.match(/### Source-derived station summary/g) ?? []).length, 2)
+  assert.doesNotMatch(result.text, /A comparison was verified|\| Sloy \| 123\.45/)
+  harness.reads.push(stationRead(125, 4020, '2026-10-08T06:02:00Z'))
+  stationReplies()
+  const followup = await askFoundryCopilot('Verify the previous chart.')
+  assert.match(followup.text, /No unexpired source-bound snapshot/)
+})
+
+test('an intervening non-chart answer cannot leave an older chart as the previous display', async () => {
+  reset()
+  harness.reads[0] = stationRead(123.45, 4000, '2026-10-08T06:00:00Z')
+  stationReplies()
+  await askFoundryCopilot('Average station power.')
+  harness.responses.push(delegate('qa'), { role: 'qa', text: 'Supported sources.' },
+    { role: 'supervisor', text: 'Supported sources.' })
+  await askFoundryCopilot('What sources are available?')
+  harness.reads.push(stationRead(124, 4010, '2026-10-08T06:01:00Z'))
+  stationReplies()
+  const result = await askFoundryCopilot('Verify the previous chart.')
+  assert.match(result.text, /Historical chart comparison unavailable/)
+  assert.doesNotMatch(result.text, /\| Sloy \| 123\.45/)
 })
 
 test('actual proposal tool cannot escalate priority from model arguments', async () => {

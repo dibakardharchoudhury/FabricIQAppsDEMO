@@ -25,6 +25,19 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+**Latest local follow-up correction (not deployed):** source-derived station
+comparison now preserves previous/new means, sample/BAD counts and exact clocks
+without another model invocation. New regressions reproduced and fixed two cases:
+additional verification reads discarded the comparison, and multiple distinct
+windows left an unsupported model verification claim visible. Comparisons now use
+the checked renderer even with additional reads; ambiguous datasets remain
+separate with an explicit unavailable-comparison reason. New chat, failure, expiry,
+changed configuration/source and an intervening non-chart answer invalidate the
+previous-display snapshot. The shared KQL completion parser also rejects incomplete
+browser query results. All **62 targeted Node tests** and **34 backend Python tests**
+passed. The app environment check, TypeScript/Vite build and lint passed.
+These are local checks, not a newer hosted release or ten-flow pass.
+
 **1.0.758 follow-up context correction:** direct specialists receive the actual
 preceding displayed turn, labelled historical and not current source evidence.
 The hosted station-chart/RCA request completed in 1m40s; its follow-up completed in
@@ -949,7 +962,7 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 These gates reflect the latest recorded 1.0.758 deployment and local backend work;
 the earlier inactive-capacity and 1.0.729-1.0.731 failures above are historical.
 
-- Deploy and verify the latest local old/new station comparison. Its 58 targeted
+- Deploy and verify the latest local old/new station comparison. Its 62 targeted
   Node tests and app build passed; that does not certify the hosted follow-up.
 - Repeat all ten compound flows and their follow-ups on one final hosted build.
   Targeted recoveries on 1.0.753-1.0.758 do not replace a full matrix. Native

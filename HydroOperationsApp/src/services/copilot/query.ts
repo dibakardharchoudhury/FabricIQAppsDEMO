@@ -105,7 +105,8 @@ export function buildStationPowerQuery(lookback = '24h'): string {
 | order by Station asc, Unit asc`
 }
 
-type StationPowerRow = { Station: string; average_power_MW: number; samples: number; bad_samples: number; latest_event_time: string }
+export type StationPowerRow = { Station: string; average_power_MW: number; samples: number; bad_samples: number; latest_event_time: string }
+export const STATION_POWER_SEMANTICS = 'Sample-weighted arithmetic mean of individual power_output readings across turbines, converted to MW using metadata. All qualities included; not total station output, time-weighted mean or energy.'
 
 export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: string): { rows: StationPowerRow[]; visualization?: AgentVisualization } {
   if (rows.length >= MAX_ROWS) throw new Error('Station power reached the source row limit; a complete chart cannot be verified.')

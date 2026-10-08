@@ -65,7 +65,7 @@ merge into or push `main`.
 | Oct 8: `a8a5e46` | Implemented isolated Agent Framework workflow, typed handoffs, durable journal, checkpoints and approval recovery | Local validation ledger only; no production WO creation |
 | Oct 8: `c0dde3b` | Implemented live read-only Fabric identity, telemetry and paginated work-source boundary | Live SQL diagnostic stopped at disabled exchange; no empty-work fallback |
 | Oct 8: `1f466ab` | Added real Sleuth adapter, schema readback, version pinning, evidence digest and invocation receipts; tied approval expiry to work coverage | Real telemetry-only RCA succeeded; complete live workflow remains blocked |
-| Latest local correction, not hosted | Added five-minute in-memory station comparison and shared strict KQL result parsing | 58 targeted tests, app build and lint passed |
+| Latest local correction, not hosted | Added five-minute in-memory station comparison and shared strict KQL result parsing; fixed lost comparisons after additional reads and unsupported ambiguous-window verification | 62 targeted Node tests, 34 backend tests, app build and lint passed |
 
 The [acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md) retains
 individual release results, failure examples and later targeted recoveries.
@@ -225,7 +225,7 @@ diagnostic commands and source prerequisites are in the
 
 | Evidence | Result | What it does not prove |
 |---|---|---|
-| Latest targeted Node run | **58/58** across orchestrator, source bridge and station comparison | Real cloud availability or ten hosted prompt passes |
+| Latest targeted Node run | **62/62** across orchestrator, source bridge and station comparison | Real cloud availability or ten hosted prompt passes |
 | Latest local app validation/build | `validate-env`, TypeScript, Vite build and lint passed; large-chunk warnings remain | Cold-load SLA, deployed version or absence of all regressions |
 | Last recorded backend suite | **34 Python tests**, clean Pyright and dependency check | Production identity, SQL exactly-once effects or distributed durability |
 | Historical full hosted matrix, 1.0.752 | Ten compound first prompts plus two follow-ups; **not accepted** | Latest-build ten-of-ten acceptance |
@@ -246,6 +246,9 @@ Its active-SPA snapshot expires after five minutes and cannot survive chat reset
 failed refresh or changed source/configuration. It is not persisted browser data.
 The extracted strict KQL parser rejects failed/partial/ambiguous envelopes in both
 the browser generic query path and local source bridge.
+Additional verification reads cannot discard the comparison. Multiple distinct
+station datasets cannot be relabelled as a verified historical comparison through
+model prose; separate source summaries and an explicit limitation are rendered.
 
 UI corrections include deferred route bundles, an optional separate crew rail,
 collapsed receipts, card-first proposals, accurate failure states and

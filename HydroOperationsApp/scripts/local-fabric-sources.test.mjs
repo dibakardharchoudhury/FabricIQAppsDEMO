@@ -50,13 +50,13 @@ const extendedPayload = () => ({ Tables: [
 
 test('Kusto uses authoritative table-of-contents and successful completion', () => {
   const payload = extendedPayload()
-  assert.equal(parseKustoPayload(payload), payload.Tables[0])
-  assert.equal(parseKustoPayload({ Tables: [payload.Tables[0]] }), payload.Tables[0])
+  assert.deepEqual(parseKustoPayload(payload), payload.Tables[0])
+  assert.deepEqual(parseKustoPayload({ Tables: [payload.Tables[0]] }), payload.Tables[0])
   const reordered = extendedPayload()
   ;[reordered.Tables[0], reordered.Tables[1]] = [reordered.Tables[1], reordered.Tables[0]]
   reordered.Tables[3].Rows[0][0] = 1
   reordered.Tables[3].Rows[1][0] = 0
-  assert.equal(parseKustoPayload(reordered), reordered.Tables[1])
+  assert.deepEqual(parseKustoPayload(reordered), reordered.Tables[1])
 })
 
 test('Kusto rejects partial errors, warning status, duplicate/missing ordinals and malformed rows', () => {

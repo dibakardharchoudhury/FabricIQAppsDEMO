@@ -35,6 +35,16 @@ work-source read and cannot renew its 15-minute approval window on recovery.
 Operator-ready [ten test prompts](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) are
 separate from the historical acceptance logs.
 
+**Latest local correction, not hosted:** chart verification uses structured
+previous/current station snapshots and calculates numerical differences without
+an additional model call, including when Gauge makes more than one verification
+read. Multiple distinct datasets retain their own summaries and an explicit
+unavailable-comparison reason instead of a model-issued verification claim.
+The previous-display snapshot is in memory only, expires after five minutes,
+and is invalidated by reset, failure, changed source/settings or an intervening
+non-chart answer. KQL result completion validation is shared with the local
+backend bridge. See the acceptance report for test evidence and deployment status.
+
 The complete 1.0.752 hosted matrix captured ten compound first prompts and two
 follow-ups. It is not a ten-of-ten pass: ontology retrieval surfaced HTTP 500, and
 a fleet request incorrectly asked the Data Agent for its own "published results".
