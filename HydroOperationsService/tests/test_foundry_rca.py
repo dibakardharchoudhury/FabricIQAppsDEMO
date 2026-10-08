@@ -186,6 +186,18 @@ class FoundryRcaTests(unittest.IsolatedAsyncioTestCase):
             Proposal(request=self.request, assessment=assessment, description="Inspection",
                      expires_at=assessment.evidence.work_orders_read_at + timedelta(minutes=16))
 
+    async def test_slower_telemetry_cannot_extend_the_work_read_approval_window(self):
+        evidence = await TestAdapters().read(self.request)
+        work_clock = evidence.read_completed_at - timedelta(minutes=2)
+        evidence = evidence.model_copy(update={"work_orders_read_at": work_clock})
+        assessment = await TestAdapters().investigate(evidence)
+        with self.assertRaisesRegex(ValidationError, "15 minutes"):
+            Proposal(request=self.request, assessment=assessment, description="Inspection",
+                     expires_at=evidence.read_completed_at + timedelta(minutes=15))
+        proposal = Proposal(request=self.request, assessment=assessment, description="Inspection",
+                            expires_at=work_clock + timedelta(minutes=15))
+        self.assertEqual(proposal.expires_at - evidence.read_completed_at, timedelta(minutes=13))
+
     async def test_endpoint_validation_rejects_untrusted_or_ambiguous_urls(self):
         for endpoint in ("https://example.com/api/projects/test", ENDPOINT + "?redirect=1",
                          ENDPOINT.replace("/test", "/.."), ENDPOINT.replace("https:", "http:")):

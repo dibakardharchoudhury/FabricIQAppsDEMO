@@ -156,8 +156,18 @@ test('work reads every page, preserve all open statuses and exclude completed/ca
     { items: [order('1'), order('2', 'Completed')], hasNextPage: true, endCursor: 'next' },
     { items: [order('3', 'Cancelled'), order('4', 'Approved')], hasNextPage: false },
   ])
-  assert.deepEqual((await collectWorkOrders(client, 'T005')).map(item => item.id), ['1', '4'])
+  assert.deepEqual((await collectWorkOrders(client, 'T005')).rows.map(item => item.id), ['1', '4'])
   assert.deepEqual(client.requested, ['next'])
+})
+
+test('work coverage keeps its own completion clock while other sources are still running', async t => {
+  const clock = Date.parse('2026-10-08T16:00:00Z')
+  t.mock.timers.enable({ apis: ['Date'], now: clock })
+  const work = await collectWorkOrders(workClient([{ items: [], hasNextPage: false }]), 'T005')
+  t.mock.timers.tick(120_000)
+  assert.equal(work.read_completed_at, '2026-10-08T16:00:00.000Z')
+  assert.equal(Date.now() - Date.parse(work.read_completed_at), 120_000)
+  assert.deepEqual(work.rows, [])
 })
 
 test('work rejects duplicate identities, missing/repeated cursors and over-bound reads', async () => {
@@ -166,6 +176,7 @@ test('work rejects duplicate identities, missing/repeated cursors and over-bound
     [{ items: [order('1', '')], hasNextPage: false }],
     [{ items: [{ ...order('1'), equipmentId: 'other' }], hasNextPage: false }],
     [{ items: [], hasNextPage: true }],
+    [{ items: Array.from({ length: 101 }, (_, index) => order(String(index))), hasNextPage: false }],
     [{ items: [], hasNextPage: true, endCursor: 'same' }, { items: [], hasNextPage: true, endCursor: 'same' }],
     Array.from({ length: 5 }, (_, index) => ({ items: [order(String(index))], hasNextPage: true, endCursor: String(index) })),
   ]) await assert.rejects(collectWorkOrders(workClient(pages), 'T005'))

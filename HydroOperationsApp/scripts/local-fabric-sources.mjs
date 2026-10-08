@@ -158,13 +158,16 @@ export async function collectWorkOrders(client, equipmentId) {
       .where({ equipmentId: { eq: equipmentId } }).orderBy({ id: 'asc' }).first(100)
     if (cursor) query = query.after(cursor)
     const page = await query.executePaginated()
-    if (!Array.isArray(page.items) || typeof page.hasNextPage !== 'boolean') throw new Error('Invalid work-order page.')
+    if (!Array.isArray(page.items) || page.items.length > 100 || typeof page.hasNextPage !== 'boolean') throw new Error('Invalid work-order page.')
     items.push(...page.items)
     if (items.some(item => item.equipmentId !== equipmentId || typeof item.status !== 'string' || !item.status.trim()
       || typeof item.workOrderNumber !== 'string' || !item.workOrderNumber || typeof item.id !== 'string' || !item.id)
       || new Set(items.map(item => item.id)).size !== items.length
       || new Set(items.map(item => item.workOrderNumber)).size !== items.length) throw new Error('Invalid or duplicate work-order identity.')
-    if (!page.hasNextPage) return items.filter(item => !['completed', 'cancelled'].includes(item.status.trim().toLowerCase()))
+    if (!page.hasNextPage) return {
+      rows: items.filter(item => !['completed', 'cancelled'].includes(item.status.trim().toLowerCase())),
+      read_completed_at: new Date().toISOString(),
+    }
     if (typeof page.endCursor !== 'string' || !page.endCursor || cursors.has(page.endCursor)) throw new Error('Invalid work-order continuation.')
     cursors.add(page.endCursor)
     cursor = page.endCursor
@@ -229,8 +232,8 @@ async function main() {
   const [telemetry, work] = results.map(result => result.value)
   const completedAt = new Date().toISOString()
   return { ...telemetry, source: metadata.source, equipment_id: request.equipment_id,
-    read_completed_at: completedAt, work_orders_read_at: completedAt,
-    open_work_numbers: work.map(item => item.workOrderNumber) }
+    read_completed_at: completedAt, work_orders_read_at: work.read_completed_at,
+    open_work_numbers: work.rows.map(item => item.workOrderNumber) }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

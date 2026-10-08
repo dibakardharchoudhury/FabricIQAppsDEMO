@@ -52,6 +52,9 @@ Authenticated local request + idempotency key
 - A proposal requires an explicit completed work-order read, including when zero
   rows were returned. Its expiry cannot exceed 15 minutes from that read. A resumed
   workflow cannot turn old coverage into a new 15-minute approval window.
+  The reader records the clock when SQL pagination completes, not when a slower
+  parallel telemetry request eventually finishes. Source latency cannot extend
+  the work-coverage approval window.
 - The terminal outcome and any local validation write commit in one transaction.
   Recovery uses that authoritative receipt if a process stops after the framework's
   final checkpoint but before the run journal is marked complete; it does not
@@ -195,12 +198,16 @@ node --test ..\HydroOperationsApp\scripts\local-fabric-sources.test.mjs
 The 34 Python tests use the actual Agent Framework engine, file checkpoints, SQLite transactions
 and an ephemeral loopback HTTP listener. Providers are synthetic: these tests do not
 certify Foundry, native Fabric endpoint availability or live WO creation.
-Ten Node tests additionally cover live-reader contracts with mocked transports:
+Eleven Node tests additionally cover live-reader contracts with mocked transports:
 generation/capacity checks, KQL completion/partial failures, exact equipment mapping,
-units, quality, freshness, source errors and work-order pagination.
+units, quality, freshness, source errors, work-order pagination and its independent
+completion clock. Pages larger than the requested 100 records are rejected.
 The RCA tests run the real shared JavaScript parser against mocked Foundry responses,
 including schema drift, invalid references, output failures and typed-report recovery.
 The live diagnostic above is separate evidence, not a mocked test result.
+After the 34-test full Python run, an additional expiry regression was added;
+the affected RCA suite now passes 11 tests, including the case where telemetry
+finishes two minutes after SQL and only 13 approval minutes remain.
 
 The fault suite covers real process exit/recovery, HTTP disconnect, interrupted
 investigation, a failure after a committed local write, checkpoint-write failure,

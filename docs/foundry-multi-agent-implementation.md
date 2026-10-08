@@ -65,7 +65,8 @@ merge into or push `main`.
 | Oct 8: `a8a5e46` | Implemented isolated Agent Framework workflow, typed handoffs, durable journal, checkpoints and approval recovery | Local validation ledger only; no production WO creation |
 | Oct 8: `c0dde3b` | Implemented live read-only Fabric identity, telemetry and paginated work-source boundary | Live SQL diagnostic stopped at disabled exchange; no empty-work fallback |
 | Oct 8: `1f466ab` | Added real Sleuth adapter, schema readback, version pinning, evidence digest and invocation receipts; tied approval expiry to work coverage | Real telemetry-only RCA succeeded; complete live workflow remains blocked |
-| Latest local correction, not hosted | Added five-minute in-memory station comparison and shared strict KQL result parsing; fixed lost comparisons after additional reads and unsupported ambiguous-window verification | 62 targeted Node tests, 34 backend tests, app build and lint passed |
+| Oct 8: `cc34d26`, not hosted | Added five-minute in-memory station comparison and shared strict KQL result parsing; fixed lost comparisons after additional reads and unsupported ambiguous-window verification | 62 targeted Node tests, 34 backend tests, app build and lint passed |
+| Latest local source correction, not hosted | Preserved SQL's actual completion clock instead of the later combined read clock; rejected oversized pages | Final 63-test Node run and 11-test affected Python RCA suite passed; type/syntax checks clean |
 
 The [acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md) retains
 individual release results, failure examples and later targeted recoveries.
@@ -182,6 +183,8 @@ The application adds typed immutable contracts and a SQLite journal.
 - Approval is bound to a proposal digest, recorded decision and expiry.
 - A completed work read is mandatory, including a valid zero-row read. Expiry
   cannot exceed 15 minutes after that read; recovery cannot renew stale coverage.
+  SQL's completion clock is captured independently of parallel telemetry. Two
+  minutes spent waiting for telemetry leave 13 minutes, not a fresh 15 minutes.
 - Checkpoint-save failure stops further execution. Corruption is not silently
   skipped. Allowed checkpoint types are explicitly listed.
 - Atomic local outcome/validation records cover the crash window around final
@@ -225,9 +228,10 @@ diagnostic commands and source prerequisites are in the
 
 | Evidence | Result | What it does not prove |
 |---|---|---|
-| Latest targeted Node run | **62/62** across orchestrator, source bridge and station comparison | Real cloud availability or ten hosted prompt passes |
+| Latest targeted Node run | **63/63** across orchestrator, source bridge and station comparison | Real cloud availability or ten hosted prompt passes |
 | Latest local app validation/build | `validate-env`, TypeScript, Vite build and lint passed; large-chunk warnings remain | Cold-load SLA, deployed version or absence of all regressions |
 | Last recorded backend suite | **34 Python tests**, clean Pyright and dependency check | Production identity, SQL exactly-once effects or distributed durability |
+| Subsequent affected backend suite | **11 RCA tests**, including the added independent SQL-clock expiry regression; clean Pyright and syntax check | A new full-suite or live SQL acceptance run |
 | Historical full hosted matrix, 1.0.752 | Ten compound first prompts plus two follow-ups; **not accepted** | Latest-build ten-of-ten acceptance |
 | Targeted 1.0.756 fleet rerun | **3m54s**; eight BAD signals, five temperature ranks, six work records reconciled | Native execution provenance, fresh equipment condition or low latency |
 | Targeted 1.0.758 chart/RCA and follow-up | **1m40s + 24.7s**; historical aggregation context preserved | Full numerical old/new comparison in the hosted UI |

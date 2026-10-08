@@ -34,9 +34,18 @@ the checked renderer even with additional reads; ambiguous datasets remain
 separate with an explicit unavailable-comparison reason. New chat, failure, expiry,
 changed configuration/source and an intervening non-chart answer invalidate the
 previous-display snapshot. The shared KQL completion parser also rejects incomplete
-browser query results. All **62 targeted Node tests** and **34 backend Python tests**
-passed. The app environment check, TypeScript/Vite build and lint passed.
+browser query results. All **63 targeted Node tests** passed. The **34-test backend
+Python suite** passed before an additional expiry regression; the subsequent
+affected RCA suite passed **11 tests**, with a clean Python typecheck and syntax
+check. The app environment check, TypeScript/Vite build and lint passed.
 These are local checks, not a newer hosted release or ten-flow pass.
+
+**Local work-coverage clock correction:** the parallel source bridge had assigned
+SQL the final combined read clock. It now retains SQL pagination's own completion
+clock, so slower telemetry cannot extend the 15-minute approval window.
+Oversized pages also fail rather than exceeding the configured per-page bound.
+Both defects were reproduced with failing tests before correction.
+Production authentication remains unchanged because approval was unavailable.
 
 **1.0.758 follow-up context correction:** direct specialists receive the actual
 preceding displayed turn, labelled historical and not current source evidence.
@@ -962,7 +971,7 @@ These are corrections to verify live, **not retroactive passes for the baseline*
 These gates reflect the latest recorded 1.0.758 deployment and local backend work;
 the earlier inactive-capacity and 1.0.729-1.0.731 failures above are historical.
 
-- Deploy and verify the latest local old/new station comparison. Its 62 targeted
+- Deploy and verify the latest local old/new station comparison. Its 63 targeted
   Node tests and app build passed; that does not certify the hosted follow-up.
 - Repeat all ten compound flows and their follow-ups on one final hosted build.
   Targeted recoveries on 1.0.753-1.0.758 do not replace a full matrix. Native
