@@ -117,6 +117,40 @@ test('reassessing an investigation requires Sleuth even when Chief tries to fini
   assert.equal(result.orchestrationEvents.find(event => event.role === 'rca').status, 'completed')
 })
 
+test('RCA corrections identify envelope and oversized-reference mistakes without accepting them', async () => {
+  reset()
+  harness.reads[0].result.rows[0].context = 'x'.repeat(2500)
+  const withPath = path => ({
+    ...report, observations: [{ evidence_id: 'source', path }],
+    hypotheses: report.hypotheses.map(hypothesis => ({ ...hypothesis, supporting: [] })),
+  })
+
+  harness.responses.push(delegate('rca'), { role: 'rca', calls: [read] },
+    { role: 'rca', calls: [call('envelope', 'complete_rca_assessment', withPath('/data/rows'))] },
+    { role: 'rca', calls: [call('oversized', 'complete_rca_assessment', withPath('/rows'))] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', withPath('/rows/0/average_power_MW'))] },
+    { role: 'supervisor', text: 'Finished.' })
+  const result = await askFoundryCopilot('Investigate station power.')
+  assert.match(result.text, /Cause undetermined/)
+  const feedback = harness.requests.flatMap(request => request.input).filter(item => item.type === 'function_call_output')
+  assert.ok(feedback.some(item => /omit the \/data envelope/.test(item.output)))
+  assert.ok(feedback.some(item => /source at \/rows.*maximum 2400/.test(item.output)))
+  assert.equal(result.orchestrationEvents.find(event => event.role === 'rca').status, 'completed')
+})
+
+test('source-checked RCA retains inventory rows that the assessment did not cite', async () => {
+  reset()
+  harness.reads[0] = { result: { rows: [{ partNumber: 'P-1' }, { partNumber: 'P-2' }] }, rowCount: 2 }
+  harness.responses.push(delegate('rca'),
+    { role: 'rca', calls: [call('source', 'hydro_query', { tool_name: 'query_operations', arguments: { entity: 'spare_parts' } })] },
+    { role: 'rca', calls: [call('valid', 'complete_rca_assessment', report)] },
+    { role: 'supervisor', text: 'Only P-1 matters.' })
+  const result = await askFoundryCopilot('Investigate the returned spare parts.')
+  assert.match(result.text, /P-2/)
+  assert.match(result.text, /All 2 returned rows/)
+  assert.doesNotMatch(result.text, /Only P-1 matters/)
+})
+
 test('conflicting priority does not leave chat busy and explicit priority reaches the tool runtime', async () => {
   reset()
   await assert.rejects(askFoundryCopilot('Create a Low-priority work order. Priority: High.'), /conflicting priorities/)

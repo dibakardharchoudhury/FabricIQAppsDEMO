@@ -9,9 +9,11 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 Current deployed release: **1.0.737**. The owner-restored capacity was verified Active
 at F8 on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-gate-restored-capacity) records
-the fresh deployment and the in-progress ten-flow hosted rerun. The earlier explicit
+the fresh deployment and the completed, **not accepted**, twenty-turn hosted rerun. The earlier explicit
 capacity suspension remains documented as historical evidence.
 Deployment success is not proof of complete multi-agent runtime acceptance.
+Post-rerun source corrections await another successful canonical deployment and hosted
+verification; the latest attempt required interactive Azure sign-in.
 
 ## Start here: choose your interface, not a different deployment process
 

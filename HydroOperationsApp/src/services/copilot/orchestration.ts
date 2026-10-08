@@ -79,7 +79,7 @@ export function workOrderPriorityForRequest(question: string): WorkOrderProposal
 }
 
 export function isNotificationDraftRequest(question: string): boolean {
-  return /\b(?:draft|prepare|compose|write)\b.{0,100}\b(?:notification|email|message)\b|\b(?:notification|email|message)\s+draft\b/i.test(positiveActionClauses(question))
+  return /\b(?:draft|prepare|compose|write)\b[^.!?;\n]{0,100}\b(?:notification|email|message)\b|\b(?:notification|email|message)\s+draft\b/i.test(positiveActionClauses(question))
 }
 
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {

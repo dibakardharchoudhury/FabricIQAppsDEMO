@@ -62,7 +62,13 @@ review of hypothesis relevance and missing evidence.
 The latest source correction deduplicates equal station datasets within one window
 and identical chart objects without removing either read receipt; distinct windows remain
 separate. Formatted summaries and chart metadata cannot serve as RCA observations.
-This correction is deployed in 1.0.737 following capacity restoration;
+The post-rerun source renderer additionally preserves every returned BAD/HOT, spare-parts
+and notification inventory row, rather than only the observations Sleuth selected.
+It labels snapshot freshness using the source read clock, preserves nulls and discloses
+truncation and broader query scope. This preserves evidence, not the correctness of the
+agent's row selection or a causal conclusion. Pointer/size guidance identifies invalid
+`/data` prefixes and oversized references without accepting them.
+The earlier chart/dataset deduplication correction is deployed in 1.0.737 following capacity restoration;
 see the [current acceptance gate](../HydroOperationsApp/AGENT-ACCEPTANCE.md#latest-gate-restored-capacity).
 The hosted rerun also exposed an invalid node filter on `TelemetryEnriched`, whose
 projection omits `opcua_node_id`. The direct telemetry tool now offers `aggregation:
@@ -70,6 +76,10 @@ projection omits `opcua_node_id`. The direct telemetry tool now offers `aggregat
 window, without averages or quality exclusions. A direct missing-node-column filter on
 the enriched function is rejected locally with repair guidance; actual source failures
 still propagate. This does not turn the KQL allow-list into a complete semantic compiler.
+The pointer/inventory/latest-telemetry and follow-up-routing changes after that rerun are
+not hosted-certified; deployment needs interactive sign-in. The twenty-turn report also
+records unresolved native-source selection, oversized-proposal and notification-completion
+defects. Do not read the architectural capabilities above as all-green runtime acceptance.
 The crew defaults to a compact five-agent row; Expand flow reveals the larger diagram
 and full handoff history. Normal chat has a keyboard-operable flow-height slider and
 Maximize/Restore. Completed messages are memoized rather than reparsed on every streamed

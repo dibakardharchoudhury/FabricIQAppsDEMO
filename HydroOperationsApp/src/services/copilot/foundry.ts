@@ -12,7 +12,7 @@ import { createOrchestrationEvent, delegationOrderError, isNotificationDraftRequ
 import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
-import { parseRcaAssessment, RcaEvidenceError, renderOpenWorkEvidence, renderRcaAssessment, renderUnsentNotification, type EvidenceReceipt } from './rcaEvidence.ts'
+import { parseRcaAssessment, RcaEvidenceError, renderInventoryEvidence, renderOpenWorkEvidence, renderRcaAssessment, renderUnsentNotification, type EvidenceReceipt } from './rcaEvidence.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -338,6 +338,7 @@ export async function askFoundryCopilot(
       ...specialistResults.filter(result => result.role === 'fabric-iq').map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
       ...stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`),
+      renderInventoryEvidence(receipts),
       ...(workDecisions.length || proposals.length ? [
         `### Work review\n\nEditable proposals staged: ${proposals.length}. No SQL write was performed. Structured decisions: ${workDecisions.join(', ') || 'proposal available for human review'}. Review the actual cards and open-work evidence; no diagnostic priority is inferred.`,
       ] : []),

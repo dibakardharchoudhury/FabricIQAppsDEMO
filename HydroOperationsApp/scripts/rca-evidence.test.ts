@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseRcaAssessment, renderRcaAssessment, renderOpenWorkEvidence, renderUnsentNotification, type EvidenceReceipt } from '../src/services/copilot/rcaEvidence.ts'
+import { parseRcaAssessment, renderRcaAssessment, renderInventoryEvidence, renderOpenWorkEvidence, renderUnsentNotification, type EvidenceReceipt } from '../src/services/copilot/rcaEvidence.ts'
 import { agentDefinition } from '../src/services/copilot/agentDefinitions.ts'
 import { isNotificationDraftRequest, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { readAnswerDatasets } from '../src/services/copilot/answerPresentation.ts'
@@ -92,4 +92,38 @@ test('source-rendered workflow preserves open Draft coverage and an explicitly u
   assert.match(renderUnsentNotification([source]), /EQUIP\\_RTI\\_T005/)
   assert.match(renderUnsentNotification([source]), /not been sent/)
   assert.equal(isNotificationDraftRequest('Investigate T005, then draft a notification. Do not send.'), true)
+  assert.equal(isNotificationDraftRequest('Prepare an editable inspection draft only if an uncovered issue is supported. Do not save or send a notification.'), false)
+  assert.equal(isNotificationDraftRequest('Verify coverage. Draft a short notification, but do not send it.'), true)
+})
+
+test('RCA preserves every snapshot row and measures freshness against the source read clock', () => {
+  const snapshot: EvidenceReceipt = { id: 'snapshot', tool: 'query_signal_quality_snapshot', completedAt: '2026-10-08T06:10:00Z',
+    result: { read_completed_at_utc: '2026-10-08T06:06:00Z', rows: [
+      { equipment_id: 'T001', value: 0, event_time: '2026-10-08T06:04:00Z', open_work_orders: [] },
+      { equipment_id: 'T002', value: null, event_time: '2026-10-08T06:05:00Z', open_work_orders: [{ workOrderNumber: 'WO-2', status: 'Draft' }] },
+      { equipment_id: 'T003', value: 10, event_time: '2026-10-08T06:06:01Z', open_work_orders: [] },
+    ] } }
+  const text = renderInventoryEvidence([snapshot, snapshot])
+  for (const id of ['T001', 'T002', 'T003', 'WO-2']) assert.equal(text.split(id).length - 1, 1)
+  assert.match(text, /Stale/)
+  assert.match(text, /Within 60s/)
+  assert.match(text, /Uncertain/)
+  assert.match(text, /\| null \|/)
+  assert.match(text, /All 3 returned rows/)
+  assert.throws(() => renderInventoryEvidence([{ ...snapshot, result: { rows: [{ event_time: 'bad' }] } }]), /clock/)
+})
+
+test('RCA preserves inventory records not selected as observations and discloses truncation and emptiness', () => {
+  const sources: EvidenceReceipt[] = [
+    { id: 'parts', tool: 'query_operations', entity: 'spare_parts', completedAt: receipts[0].completedAt,
+      result: { rows: [{ partNumber: 'P-1', quantityOnHand: 0, reorderLevel: 2 }, { partNumber: 'P-2', quantityOnHand: 3, reorderLevel: 5 }], truncated: true } },
+    { id: 'notices', tool: 'query_operations', entity: 'notifications', completedAt: receipts[0].completedAt, result: { rows: [] } },
+  ]
+  const text = renderInventoryEvidence(sources)
+  assert.match(text, /P-1/)
+  assert.match(text, /P-2/)
+  assert.match(text, /Truncated source/)
+  assert.match(text, /No rows returned/)
+  assert.match(text, /broader reads can include records outside/)
+  assert.throws(() => renderInventoryEvidence([{ ...sources[0], result: { rows: [null] } }]), /valid source rows/)
 })

@@ -32,7 +32,10 @@ type Hypothesis = {
 export type RcaAssessment = { observations: EvidenceReference[]; hypotheses: Hypothesis[] }
 
 const referenceSchema = {
-  type: 'object', properties: { evidence_id: { type: 'string' }, path: { type: 'string' } },
+  type: 'object', properties: {
+    evidence_id: { type: 'string', description: 'The exact evidence_id returned by the source tool.' },
+    path: { type: 'string', description: 'JSON pointer inside data, never prefixed with /data. Cite one source row such as /rows/0, or a smaller existing field. Maximum path length 200; the referenced JSON value must be at most 2400 characters. Do not cite a whole large rows array.' },
+  },
   required: ['evidence_id', 'path'], additionalProperties: false,
 }
 export const RCA_REPORT_TOOL = {
@@ -88,12 +91,12 @@ function evidenceValue(reference: EvidenceReference, receipts: readonly Evidence
   for (const segment of reference.path.slice(1).split('/')) {
     const key = segment.replace(/~1/g, '/').replace(/~0/g, '~')
     if ((!record(value) && !Array.isArray(value)) || !Object.hasOwn(value, key)) {
-      throw new RcaEvidenceError(`Evidence path ${reference.path} does not exist in ${reference.evidence_id}.`)
+      throw new RcaEvidenceError(`Evidence path ${reference.path} does not exist in ${reference.evidence_id}. Paths are relative to data: omit the /data envelope and reference an actual row such as /rows/0 or an existing field. Do not invent a path.`)
     }
     value = Object.getOwnPropertyDescriptor(value, key)?.value
   }
   const encoded = JSON.stringify(value)
-  if (encoded === undefined || encoded.length > 2400) throw new RcaEvidenceError('Reference a smaller source row or field (maximum 2400 characters).')
+  if (encoded === undefined || encoded.length > 2400) throw new RcaEvidenceError(`Evidence ${reference.evidence_id} at ${reference.path} is too large or not serializable. Reference a smaller source row or field (maximum 2400 characters), such as /rows/0 rather than the whole /rows array.`)
   return value
 }
 
@@ -184,6 +187,42 @@ export function renderOpenWorkEvidence(receipts: readonly EvidenceReceipt[]): st
     ...open.map(row => `| ${['workOrderNumber', 'equipmentId', 'title', 'status', 'priority', 'instrumentId', 'opcuaNodeId']
       .map(key => cell(row[key] ?? 'Not returned')).join(' | ')} |`),
   ].join('\n')
+}
+
+export function renderInventoryEvidence(receipts: readonly EvidenceReceipt[]): string {
+  const inventories = new Map<string, { receipt: EvidenceReceipt; rows: Record<string, unknown>[]; truncated: boolean }>()
+  for (const receipt of receipts) {
+    const snapshot = ['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'].includes(receipt.tool)
+    if (!snapshot && !(receipt.tool === 'query_operations' && ['spare_parts', 'notifications'].includes(receipt.entity ?? ''))) continue
+    const result = receipt.result
+    if (!record(result) || !Array.isArray(result.rows) || !result.rows.every(record)) {
+      throw new RcaEvidenceError(`Inventory ${receipt.id} did not return valid source rows.`)
+    }
+    const rows = result.rows.map(row => {
+      if (!snapshot) return row
+      const readTime = Date.parse(String(result.read_completed_at_utc))
+      const eventTime = Date.parse(String(row.event_time))
+      if (!Number.isFinite(readTime) || !Number.isFinite(eventTime)) {
+        throw new RcaEvidenceError(`Snapshot ${receipt.id} has no valid measurement/read clock for freshness.`)
+      }
+      return { ...row, freshness: eventTime > readTime ? 'Uncertain (future timestamp)' : readTime - eventTime > 60_000 ? 'Stale (>60s)' : 'Within 60s' }
+    })
+    inventories.set(JSON.stringify([receipt.tool, receipt.entity, result.rows]), {
+      receipt, rows, truncated: result.truncated === true,
+    })
+  }
+  return [...inventories.values()].map(({ receipt, rows, truncated }) => {
+    const columns = [...new Set(rows.flatMap(row => Object.keys(row)))]
+    return [
+      `### Returned source inventory: ${cell(receipt.entity ?? receipt.tool)}`,
+      `Source ${cell(receipt.id)}; tool completed ${cell(receipt.completedAt)}. All ${rows.length} returned rows are preserved, not just observations selected for RCA. Source filters still apply; broader reads can include records outside the requested subset. ${truncated ? '**Truncated source: this is not the complete matching inventory.**' : ''}`,
+      rows.length ? [
+        `| ${columns.map(cell).join(' | ')} |`,
+        `| ${columns.map(() => '---').join(' | ')} |`,
+        ...rows.map(row => `| ${columns.map(column => cell(Object.hasOwn(row, column) ? row[column] : 'Not returned')).join(' | ')} |`),
+      ].join('\n') : 'No rows returned for this read. This does not establish equipment health or the absence of records outside its filters.',
+    ].join('\n\n')
+  }).join('\n\n')
 }
 
 export function renderUnsentNotification(receipts: readonly EvidenceReceipt[]): string {

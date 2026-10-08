@@ -7,8 +7,11 @@ Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md
 
 **Current deployed release: 1.0.737 (`946c743`).** On October 8 the owner-restored
 capacity was verified Active at F8, and canonical deployment completed successfully.
-The RCA presentation and priority-scope corrections are now deployed. The authenticated
-app reports 90/90 fresh signals; the ten-flow hosted rerun is in progress, not accepted.
+The RCA presentation and priority-scope corrections in that release are deployed.
+The October 8 rerun completed **ten scenarios / twenty turns**, and is **not accepted**.
+Telemetry was 90/90 fresh at 05:46 UTC, but subsequently stopped advancing around
+06:05 UTC; the app correctly changed its header to stale. Do not treat the earlier
+freshness observation as current health.
 Creation/configuration readback is verified for the five Foundry agents, but complete
 multi-agent runtime correctness is not yet certified.
 
@@ -200,6 +203,58 @@ Reject test proposals; never recreate/delete the user's confirmed T002 order.
 For scenarios 1-5, the full first-turn prompts remain in
 [DEPLOY.md](DEPLOY.md#first-five-complex-orchestration-acceptance-scenarios).
 
+### Latest hosted results: October 8, release 1.0.737
+
+All twenty turns have actual response IDs, native-call identities, returned tool evidence,
+answers and timings captured in the acceptance evidence. This is execution evidence,
+not twenty passing answers. No test proposal was approved or saved.
+
+| # | Scenario | First / follow-up seconds | Actual outcome and remaining defect |
+|---|---|---|---|
+| 1 | BAD today, investigation, conditional draft, verification | 113.8 / 18.8 | Four specialist handoffs completed, but the RCA presentation omitted some initial signal rows and explicit per-row freshness. Follow-up hit the invalid enriched node-column query. |
+| 2 | Ontology identity to maintenance review | 175.7 / 213.3 | Actual `ask_ontology` returned instances. First turn failed HTTP 400 downstream; follow-up bypassed Sleuth and made unsupported diagnostic claims. Direct metadata comparison was not demonstrated. |
+| 3 | Native Data Agent backlog to investigation | 159.8 / 38.0 | **All five Foundry agents executed in one turn**; native `DataAgent_RTI_Demo_Agent_V11` and direct SQL returned work inventory. The requested first-turn backlog chart and telemetry/inspection investigation were not completed. Follow-up retained both existing T002 orders and exact signal coverage. |
+| 4 | Native/direct BAD and HOT reconciliation | 244.9 / 17.3 | **Wrong native source:** the request explicitly named the Data Agent, but the recorded native tool was `ask_ontology`. Completion text is not source compliance. Follow-up also failed an enriched KQL query. |
+| 5 | Facility backlog, then investigation/draft | 189.3 / 38.0 | First turn called both native tools, reconciled eleven orders and displayed one chart. Follow-up failed staging because the model's work-order description exceeded the allowed length; no card was created. |
+| 6 | Parts/reorder risk and work coverage | 136.7 / 61.9 | Gauge/Sleuth/Fixer ran, with no draft. Source reads contained twelve parts, but full inventory presentation and relevance were not assured. BOM/compatibility/lead-time gaps remain; no procurement capability is certified. |
+| 7 | Evidence for downtime | 85.2 / 65.8 | Gauge/Sleuth returned an undetermined-cause assessment; follow-up explicitly marked stale telemetry and missing dispatch/calendar sources. This does not establish downtime or certify a scheduling integration. Follow-up table formatting was poor. |
+| 8 | Notifications, work coverage, unsent message | 59.7 / 36.5 | Empty work/notification reads and no-draft review completed. First turn incorrectly added an unrequested message; follow-up failed to produce the explicitly requested message and asked for authorization again. |
+| 9 | Station chart and scientific review | 42.8 / 136.3 | First turn rendered one source-derived MW chart with an undetermined-cause assessment. Follow-up rendered two changed snapshots from separate read times, with excessive extra reads/output; full concise reconciliation is not accepted. |
+| 10 | Exact Low-priority draft, then physical-fault review | 79.2 / 71.6 | Exact title/Low card was staged and safely rejected. Follow-up exhausted eight RCA rounds after invalid `/data/rows` and oversized-reference submissions. |
+
+Normal-chat Maximize/Restore via Escape preserved unsent text, with no horizontal page
+overflow in the inspected state. Physical microphone recognition remains untested.
+The additional Battle approval test completed both panes in 96.4 seconds (51.4 / 44.6).
+Each staged the exact `Acceptance battle T005 DO NOT DISPATCH` title with Low priority;
+both were rejected, never approved. Battle Maximize/Escape also preserved unsent text
+without page overflow. As disclosed in the UI, these are two Foundry approval flows,
+not independent Data Agent mutation execution. A fresh hosting-entry fetch still
+contained `946c743`, not the pending correction commit.
+The table does not certify source execution provenance beyond the recorded tool identities,
+nor SQL/combined-source answer correctness merely because a native call completed.
+
+### Fixes following this rerun
+
+- Committed `bdf8301`: safe latest-per-node telemetry template, local rejection of the
+  reproduced missing enriched column, and mandatory RCA gating for investigation
+  reassessment/review/continuation.
+- Additional corrections: explicit RCA pointer/size guidance with actionable rejection
+  messages; deterministic preservation of complete returned BAD/HOT, spare-parts and
+  notification inventories, including nulls, truncation and snapshot freshness; notification
+  intent no longer crosses a sentence boundary from an inspection draft into "do not send".
+- Local validation: **101 focused frontend tests + 2 bundle tests**, typecheck, lint,
+  environment validation and production build passed; the final notification-scope change
+  also passed the 29 directly relevant tests.
+- These new corrections are **not hosted-certified**. The deployment attempt required
+  interactive Azure sign-in and was stopped while awaiting it; no `SUCCESS` was observed.
+  The acceptance browser remained on 1.0.737.
+- Still requiring implementation/verification: enforce native-source selection, recover
+  oversized proposal arguments without relaxing field limits, ensure requested prose
+  notifications are actually produced, preserve requested reconciliation/chart conclusions,
+  improve long-flow latency, and rerun affected scenarios after deployment.
+
+### Historical prompts and results
+
 | # | First-turn objective / expected capabilities | Follow-up prompt | Observed status before the new fixes |
 |---|---|---|---|
 | 1 | BAD today -> Gauge -> Sleuth -> Fixer -> Gauge | "For the selected turbine, identify the strongest contradictory evidence and check whether the proposed inspection still has an uncovered purpose. Do not save." | 1.0.726 first turn completed in 3m27s, 189,460 tokens, all four returned WO IDs preserved; card rejected. Earlier attempt failed CORS. Follow-up pending. |
@@ -231,9 +286,8 @@ Record no-draft outcomes as valid only with specific coverage/identity evidence.
 - The authenticated hosted page showed that release and **90/90 fresh signals**.
   The initial page opening included the expired protected-hosting sign-in flow, so its
   elapsed time is not a cold-load performance benchmark.
-- The ten multi-turn flows are being rerun using actual request identities, returned
-  tool evidence, final answers, timings and safely rejected test proposals. Do not
-  interpret this deployment record as their completed acceptance.
+- The twenty-turn rerun is recorded above. Do not interpret this deployment record as
+  completed answer-quality acceptance.
 
 ### October 8 runtime findings on 1.0.737
 
