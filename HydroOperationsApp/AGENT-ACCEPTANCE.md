@@ -96,6 +96,10 @@ These controls do not certify causal relevance, native internal provenance or a
 zero-hallucination/zero-defect guarantee.
 The expanded 123-test targeted suite, typecheck and targeted lint passed before
 deployment. Hosted acceptance of this follow-up remains pending.
+The first canonical deployment attempt stopped at hosting verification with a
+connection reset. No readiness check was bypassed. The subsequent retry stopped
+before deployment because the newly requested RCA roadmap was an uncommitted
+tracked document; that documentation must be committed before retrying.
 
 **Chart/consent correction deployed in 1.0.766; local validation:** 106 targeted Node tests
 and the full 42-test backend suite passed. The app build, typecheck and lint passed.

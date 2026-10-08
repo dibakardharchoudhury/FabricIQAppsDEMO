@@ -421,6 +421,104 @@ The existing **two Fabric Operations Agents** retain their playbook/actions,
 Teams and email capabilities. These proposed specialists do not replace them,
 and provisioning/configuration is not execution or delivery certification.
 
+## 7.1 What is needed for a proper, evidence-based RCA?
+
+This is a proposed RCA roadmap, not a claim that the integrations or diagnostic
+validation below have been implemented. A better model or Agent Framework alone
+cannot supply missing engineering evidence.
+
+### Define the incident before diagnosing it
+
+Capture an incident ID, verified asset/instrument IDs, observed symptom,
+event start/end, time zone, operating mode and the question to be answered.
+Distinguish a signal-quality problem, a measurement excursion, a production
+change and a confirmed equipment failure. They are not interchangeable.
+
+Historical RCA does **not** require historical readings to be fresh now.
+It requires trustworthy, sufficiently complete data around the incident.
+Current-condition claims separately require fresh reads. Neither a threshold
+exceedance nor freshness alone proves a physical cause.
+
+| Evidence needed | Purpose and minimum contract | Current boundary |
+|---|---|---|
+| Incident-window historian data | Before/during/after readings, original timestamps, sampling interval, units, quality, missing periods and ingestion clocks; suitable resolution for the phenomenon | Latest/scalar telemetry reads exist; their presence alone does not establish sufficient historical coverage or resolution |
+| Instrument integrity | Calibration history, sensor identity/location, range, maintenance, gateway/ingestion health and clock synchronization | Instrument metadata exists; calibration and ingestion diagnostics need authoritative integrations |
+| Operating context | Synchronized load, dispatch, operating mode, starts/stops, relevant environmental/process conditions and alarm/event sequence | Existing telemetry/weather are not a complete control-state or sequence-of-events record |
+| Comparable healthy baseline | Reviewed known-good periods for the same asset or approved comparable assets, matched by load/mode/context, with coverage and variability | No engineering-validated matched-baseline contract is configured |
+| Approved criteria | Versioned manufacturer/engineering criteria with applicable asset/model, unit, regime, effective dates, approver and provenance | No approved diagnostic-limit source is configured; numerical limits must not be invented |
+| Asset dependencies | Authoritative equipment/instrument/process relationships with source identity and effective configuration | Use verified v2 ontology/native relationships where available; never fabricate topology from names or missing links |
+| Maintenance and inspections | Work scope, actual findings, measurements, completion evidence, component changes and chronology relative to the event | Open work and inspections exist; open/Draft/Planned status is not evidence that a repair or inspection occurred |
+| Independent corroboration | Relevant inspection/test evidence, independent measurement, or a separately validated diagnostic method | It must be supplied or integrated; a second agent repeating the first is not independent evidence |
+| Confirmed past cases | Reviewed failures and healthy counterexamples, with known causes and resolution evidence | Needed to evaluate diagnostic accuracy and abstention; synthetic fixtures are insufficient |
+
+### Investigation workflow to implement
+
+1. **Scope and source checks:** resolve authoritative identities; bind every read
+   to the incident/window; report unavailable sources and quality/coverage gaps.
+2. **Deterministic evidence extraction:** build a synchronized event timeline,
+   calculate source-backed features/changes, compare approved matched baselines
+   and preserve methods, units, parameters and exact contributing records.
+   A model must not invent intermediate calculations.
+3. **Competing explanations:** assess instrumentation/ingestion, operating
+   conditions, sampling effects and physical condition separately. Record
+   supporting, contradictory and missing evidence for each. A reference must
+   both exist and be relevant; pointer validation alone checks only the former.
+4. **Discriminating evidence plan:** state which missing observation would
+   distinguish candidates and which approved source/test could supply it.
+   Unavailable integrations remain evidence requests, not imaginary tool calls.
+5. **Independent verification:** check scope, calculations, contradictory evidence,
+   chronology and source completeness with deterministic checks and qualified
+   engineering review. Another LLM is supplementary, not the acceptance authority.
+6. **Controlled disposition:** retain "undetermined" when candidates cannot be
+   distinguished. Any physical testing, maintenance or operational change follows
+   approved engineering procedures and the existing human-approval boundary.
+7. **Closure and learning:** capture approved inspection/remediation results,
+   whether the symptom recurred, the final reviewed cause and links to all
+   evidence. Re-evaluate earlier hypotheses rather than treating a saved WO as
+   confirmation.
+
+### Separate outcome states
+
+| State | What may be claimed | Promotion requirement |
+|---|---|---|
+| Observed anomaly | An actual source-backed deviation or quality issue in a stated scope | Valid data/identity, coverage disclosure and a reproducible comparison |
+| Supported hypothesis | A candidate consistent with selected evidence, with uncertainty retained | Relevant corroboration, explicit alternatives and contradictory checks |
+| Engineering-reviewed probable cause | A qualified engineering judgement, not an LLM certainty score | Approved review criteria, sufficient corroboration and an accountable reviewer |
+| Confirmed cause | A reviewed causal conclusion within a stated boundary | Approved confirmatory evidence and documented disposition under the diagnostic policy |
+| Undetermined | Available evidence does not distinguish candidates | Remains a valid outcome; record the specific blocking evidence |
+
+These are proposed typed workflow states. The current application does not
+implement these promotion gates and must not relax its "cause undetermined"
+boundary merely because a model selects a stronger label. Numerical confidence
+requires a validated, calibrated method and evaluation evidence; it is not the
+model's self-reported confidence.
+
+### Prioritized delivery
+
+- **P0 - trustworthy inputs:** verify ingestion/source health and timestamp
+  integrity; define incident scope; inventory available historical data and
+  engineering-owned criteria. Preserve historical evidence even when live
+  freshness fails.
+- **P1 - a narrow asset/incident pilot:** integrate approved baseline/context/
+  inspection evidence for one agreed failure mode; implement reproducible
+  calculations and an evidence-completeness matrix.
+- **P2 - reviewed RCA cases:** add typed case state, hypothesis/evidence links,
+  reviewer decisions, versioned diagnostic policy and closure evidence to the
+  durable service. This is separate from the existing WO SQL schema.
+- **P3 - production acceptance:** evaluate reviewed real incidents and healthy
+  counterexamples, stale/missing/conflicting sources, calibration drift,
+  cross-asset confusion, recovery/replay and tenant isolation. Measure false
+  assertions, unsupported recommendations, missed incidents, abstention,
+  provenance coverage and end-to-end latency. Engineering/product owners must
+  approve the thresholds before a readiness claim.
+
+The next discovery decision is the pilot asset/failure mode and the authoritative
+owners/availability of historian, operating-context, baseline and inspection
+data. Implementation and validation duration depends on those inputs and access
+approvals; a credible production RCA schedule cannot be inferred from UI test
+duration. Adding more agents before these contracts exist increases complexity
+without establishing a cause.
+
 ## 8. Deployment and local operation
 
 There is one deployment engine, with two supported operator interfaces:
