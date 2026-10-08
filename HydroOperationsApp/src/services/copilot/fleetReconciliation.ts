@@ -1,4 +1,4 @@
-import { readAnswerDatasets } from './answerPresentation.ts'
+import { readAnswerDatasets, type AnswerDataset } from './answerPresentation.ts'
 import { positiveActionClauses } from './orchestration.ts'
 import { cell, type EvidenceReceipt } from './rcaEvidence.ts'
 import { readingFreshness } from './query.ts'
@@ -60,17 +60,51 @@ export function nativeComparisonText(output: unknown): string | undefined {
 }
 
 type Claim = { node: string; equipment: string; value: string; time: string; quality?: string; unit?: string; rank?: string }
+export function readNativeDatasets(text: string) {
+  const parsed = readAnswerDatasets(text)
+  const datasets: Array<Pick<AnswerDataset, 'title' | 'columns' | 'rows'>> = [...parsed.datasets]
+  const issues = [...parsed.issues]
+  for (const match of text.matchAll(/```json\s*\r?\n([\s\S]*?)\r?\n```/gi)) {
+    let value: unknown
+    try { value = JSON.parse(match[1]) } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      issues.push('Native JSON dataset is malformed; no rows were accepted.')
+      continue
+    }
+    if (!record(value) || !Object.hasOwn(value, 'rows')) continue
+    const rows = value.rows
+    if (!Array.isArray(rows) || !rows.length || !rows.every(record)) {
+      issues.push('Native JSON rows require a nonempty array of flat records; an unrecognized or schema-free empty set is not a verified empty population.')
+      continue
+    }
+    const columns = Object.keys(rows[0])
+    if (!columns.length || rows.some(row => Object.keys(row).length !== columns.length
+      || columns.some(column => !Object.hasOwn(row, column)
+        || (row[column] !== null && !['string', 'number', 'boolean'].includes(typeof row[column]))))) {
+      issues.push('Native JSON rows have nested or inconsistent columns; no rows were accepted.')
+      continue
+    }
+    if (Object.hasOwn(value, 'row_count') && value.row_count !== rows.length) {
+      issues.push('Native JSON row_count does not match the returned rows; no rows were accepted.')
+      continue
+    }
+    datasets.push({ title: typeof value.set === 'string' ? value.set : 'Native JSON rows', columns,
+      rows: rows.map(row => columns.map(column => row[column] === null ? '' : String(row[column]))) })
+  }
+  return { datasets, issues }
+}
+
 const aliases = {
-  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'instrument_id / opcua_node_id'],
+  node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
   equipment: ['equipment_id', 'Turbine ID', 'Equipment'],
-  value: ['value', 'Reading', 'latest_temp', 'Temperature'],
-  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)'],
+  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value'],
+  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc'],
   quality: ['quality'], unit: ['unit'], rank: ['rank'],
 }
 const normalized = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
 
 function claims(text: string, temperature: boolean): { rows: Claim[]; issues: string[] } {
-  const parsed = readAnswerDatasets(text)
+  const parsed = readNativeDatasets(text)
   const rows: Claim[] = []
   const issues = [...parsed.issues]
   let recognized = 0
@@ -137,7 +171,7 @@ export function compareWork(text: string | undefined, directRows: Record<string,
   const fields = { number: ['workOrderNumber', 'Work order number', 'Work order'],
     equipment: aliases.equipment, title: ['Title'], status: ['Status'], priority: ['Priority'] }
   const native = new Map<string, Record<keyof typeof fields, string>>()
-  const parsed = readAnswerDatasets(text ?? '')
+  const parsed = readNativeDatasets(text ?? '')
   const issues = [...parsed.issues]
   let recognized = 0
   for (const table of parsed.datasets) {

@@ -1,6 +1,5 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import { readAnswerDatasets } from './answerPresentation.ts'
-import { compareWork, nativeComparisonText, type NativeComparisonReceipt } from './fleetReconciliation.ts'
+import { compareWork, nativeComparisonText, readNativeDatasets, type NativeComparisonReceipt } from './fleetReconciliation.ts'
 import { cell, type EvidenceReceipt } from './rcaEvidence.ts'
 
 const sources = [
@@ -79,7 +78,7 @@ export function renderFacilityReconciliation(
       }))
       return compareWork(text, grouped, true)
     }
-    const parsed = readAnswerDatasets(text ?? '')
+    const parsed = readNativeDatasets(text ?? '')
     const tables = parsed.datasets.filter(table => table.columns.some(column => column.toLowerCase().replace(/[^a-z]/g, '') === 'facilityid'))
     if (tables.length !== 1 || parsed.issues.length) return 'Ontology facility comparison incomplete: no single recognized facility_id table. An unrecognized response is not evidence of zero facilities; consult the native receipt.'
     const table = tables[0]

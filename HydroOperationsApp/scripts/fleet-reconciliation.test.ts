@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { fleetComparisonScope, missingFleetSnapshots, nativeComparisonText, renderFleetReconciliation } from '../src/services/copilot/fleetReconciliation.ts'
+import { fleetComparisonScope, missingFleetSnapshots, nativeComparisonText, readNativeDatasets, renderFleetReconciliation } from '../src/services/copilot/fleetReconciliation.ts'
 import type { EvidenceReceipt } from '../src/services/copilot/rcaEvidence.ts'
 
 const scope = { quality: true, temperature: true }
@@ -85,6 +85,43 @@ test('explicit combined instrument/node cells preserve the literal node without 
   assert.doesNotMatch(output, /Expected one native BAD-quality table/)
   const ambiguous = combined.replaceAll('INST_EXPLICIT /', 'INST_EXPLICIT / ns=2;s=Other /')
   assert.match(renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: ambiguous }]), /identity is not comparable/)
+})
+
+test('native JSON sets preserve actual identities, raw values and timestamp precision for comparison', () => {
+  const signal = {
+    equipment_id: 'EQUIP_RTI_T001', signal_id_opc_node: 'ns=2;s=T001.turbine_temp',
+    latest_value: 85, unit: 'C', quality: 'BAD', timestamp_utc: '2026-10-08T06:05:01Z',
+  }
+  const sets = [
+    { set: 'latest_bad_signals', row_count: 1, rows: [signal] },
+    { set: 'top_5_latest_raw_temperature', row_count: 1, rows: [{ rank: 1, ...signal }] },
+    { set: 'open_work_orders_for_returned_turbines', row_count: 1, rows: [{
+      equipment_id: 'EQUIP_RTI_T001', work_order_number: 'WO-123', title: 'Inspect signal', status: 'Draft', priority: 'Low',
+    }] },
+  ].map(set => '```json\n' + JSON.stringify(set) + '\n```').join('\n')
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: { response: sets } }])
+  assert.doesNotMatch(output, /comparison incomplete|population not comparable/i)
+  assert.match(output, /timestamp\/precision differs/)
+  assert.match(output, /Not in returned native table/)
+  assert.match(output, /Text differs: title/)
+  assert.match(output, /Stale/)
+  assert.doesNotMatch(output, /Returned fields match/)
+})
+
+test('native JSON malformed, nested, inconsistent, empty and count-mismatched sets stay unverified', () => {
+  for (const content of [
+    '{"rows":',
+    JSON.stringify({ rows: [{ value: { nested: 1 } }] }),
+    JSON.stringify({ rows: [{ value: 1 }, { different: 2 }] }),
+    JSON.stringify({ rows: [] }),
+    JSON.stringify({ rows: [{ value: 1 }], row_count: 2 }),
+  ]) {
+    const parsed = readNativeDatasets('```json\n' + content + '\n```')
+    assert.equal(parsed.datasets.length, 0)
+    assert.equal(parsed.issues.length, 1)
+  }
+  const parsed = readNativeDatasets('```json\n{"rows":[{"id":"T001","value":null}]}\n```')
+  assert.deepEqual(parsed.datasets[0].rows, [['T001', '']])
 })
 
 test('work comparison preserves all direct orders and detects missing native work without claiming it does not exist', () => {

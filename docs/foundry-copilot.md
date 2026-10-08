@@ -24,6 +24,11 @@ remote query engine as prohibitions on its connected Lakehouse/Eventhouse/SQL ta
 Missing read-clock metadata is disclosed; unavailable native results never become a
 successful comparison through direct-source substitution. See the linked acceptance
 report for the deployed version and rerun status.
+Native reconciliation accepts Markdown/CSV tables and fenced JSON objects containing
+flat `rows` records. Declared row counts must match; inconsistent/nested/malformed
+datasets are explicitly unverified. Literal native identity/value/time fields are
+compared with direct receipts without inventing units or removing timestamp precision
+differences. Schema-free empty JSON sets are not evidence of an empty population.
 
 Administration configures the current project endpoint, not a direct model-inference
 endpoint. Model selection belongs to the canonical agent provisioner. Operator additional

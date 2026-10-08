@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.752 (`89309b7`).** Canonical deployment completed on
+**Current deployed release: 1.0.753 (`12b23a0`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 163 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 164 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -39,7 +39,7 @@ identity with separately verified Data Agent and Ontology connections.
 | 4 | Native latest BAD/top-five raw temperature/work, independent full-population verification, investigate disagreements | Sparky, Gauge, Sleuth | 2m55s | Native agent refused a self-referential request for its own "published results"; comparison correctly remained incomplete. Not accepted. |
 | 5 | Ontology facilities, native SQL backlog, direct inventory reconciliation, facility chart | Sparky twice, Gauge | 3m52s | Actual ontology instances, complete direct inventories, 11 open orders, counts 4/4/3. All eleven returned native work records matched direct fields. |
 | 6 | Low stock, related work, parts-risk investigation, conditional equipment draft | Gauge, Sleuth, Fixer | 1m27s | Four low-stock parts retained. No authoritative BOM/reservations, so no invented equipment mapping or draft. |
-| 7 | Equipment health/work, downtime investigation, notification recommendation | Gauge, Sleuth | 59.1s | Evidence-limited RCA; no certified outage duration or notification delivery. |
+| 7 | Equipment health/work and downtime investigation | Gauge, Sleuth | 59.1s | Evidence-limited RCA; no outage inferred from BAD quality or stale/absent measurements. |
 | 8 | T005 notifications/work, investigate inconsistencies, conditional draft | Gauge, Sleuth, Fixer | 58.3s | Actual empty operational reads; no invented issue, notification or draft. |
 | 9 | Station-average power chart plus investigation; verify displayed values in follow-up | Gauge, Sleuth; then Gauge | 46.7s + 23.2s | Three chart/table values, units and sample counts match the source. Follow-up received incomplete aggregation metadata and qualified its verification; not a full semantic-verification pass. |
 | 10 | Exact-title Low-priority acceptance draft, independent coverage check; investigate fault claims in follow-up | Fixer, Gauge; then Sleuth | 57.0s + 51.8s | Exact title/Low card, no claimed fault, rejected and disabled. Follow-up retained that card without proposing another or claiming SQL creation. |
@@ -61,12 +61,32 @@ ready in 1374ms (Overview), 914ms (Telemetry), 31ms (Maintenance), 358ms (Intell
 These are warm-session, shell-readiness measurements, not cold login, complete data
 readiness or a latency SLA. Compound native retrieval still takes minutes.
 
-**Follow-up source fix awaiting deployment:** reject self-referential Data Agent
+**Follow-up source fix deployed in 1.0.753:** reject self-referential Data Agent
 "published results"/publication-endpoint assignments before native execution, return
 bounded correction guidance, and separate application routing rules from the business
 question. The agent's connected tables are allowed; missing clock metadata is disclosed
 instead of requiring a fictional publication API. Source failures still propagate.
 This passes 164 related tests, production build/typecheck, lint and both bundle checks.
+Canonical deployment returned `SUCCESS`, preserved 39 redirects and passed backend
+preflight/POST checks. Hosted build identity is `1.0.753 / 12b23a0`.
+No infrastructure or persistent-agent version changes were needed.
+
+**1.0.753 reruns:** the exact ontology compound prompt completed all five roles in
+4m14s. Actual instance values were returned; the six-hour telemetry query was empty.
+Fixer staged an editable data-gap inspection proposal, not a diagnosed physical fault;
+it was rejected and no mutation was captured. This point-in-time recovery does not
+erase the preceding upstream HTTP 500 or certify preview endpoint reliability.
+
+A fleet variant explicitly requiring full-population reconciliation retrieved actual
+native business data in 5m3s, eliminating the earlier publication-endpoint refusal.
+It exposed a separate format gap: the agent returned fenced JSON sets instead of
+Markdown tables. The comparison correctly remained incomplete. A follow-up parser
+accepts flat, consistently shaped JSON `rows` sets, validates declared `row_count`,
+preserves nulls, and rejects malformed/nested/inconsistent data rather than guessing.
+Replaying the actual native and direct receipts now compares eight BAD signals,
+five temperature ranks and six matching work records while preserving timestamp
+precision differences. This is offline receipt replay, not yet a hosted pass.
+The correction passes 166 related tests, build/typecheck, lint and both bundle checks.
 
 ### Earlier hosted failures and their corrections
 
