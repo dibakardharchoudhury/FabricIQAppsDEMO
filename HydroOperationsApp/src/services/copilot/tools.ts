@@ -57,7 +57,8 @@ const whereSchema = {
     properties: {
       column: { type: 'string' },
       op: { type: 'string', enum: FILTER_OPERATORS },
-      value: { description: 'Comparison value. An array when op is "in". Omitted for is_null/not_null.' },
+      value: { description: 'Literal comparison value, never a column name. An array when op is "in". Omitted for is_null/not_null or value_column.' },
+      value_column: { type: 'string', description: 'Compare with this catalog column on the same row, instead of a literal value. Only eq/neq/gt/gte/lt/lte. For low stock: column quantityOnHand, op lte, value_column reorderLevel.' },
     },
     required: ['column', 'op'],
   },

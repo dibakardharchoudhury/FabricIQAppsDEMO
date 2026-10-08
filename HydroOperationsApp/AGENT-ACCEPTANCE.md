@@ -8,7 +8,7 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Current deployed release: 1.0.771 (`a3571c7`).** Canonical deployment returned
+**Current deployed release: 1.0.772 (`cd1c5f4`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
@@ -54,8 +54,9 @@ component with synthetic BAD/UNCERTAIN receipts displayed all nine rows in two
 tables, four charts and two resolving source links, without malformed model prose.
 Table-only mode retained nine rows; narrow/wide viewports had no page overflow.
 These fixture checks are not live-agent acceptance. Production build still reports
-existing large-chunk warnings. Teams progress delivery is not configured or verified;
-self-chat creation was rejected and an existing chat link was requested.
+existing large-chunk warnings. At that checkpoint Teams progress delivery was
+unverified because self-chat creation was rejected. The later message-endpoint
+recovery is recorded below; this historical blocker is no longer current.
 
 **1.0.768 live reproduction, not accepted:** the exact BAD/UNCERTAIN question
 completed in 47.6 seconds. Four tables retained 3 BAD and 6 UNCERTAIN signal
@@ -114,7 +115,28 @@ provides exact derived-column feedback, and keeps other automatic source charts
 alongside explicit charts. Further presentation fixes withhold provisional
 model prose and render nested RCA observations as field/value rows with literal
 identifiers and exact pointers. All 138 affected tests, typecheck and targeted
-lint passed; these latest corrections still require deployment and hosted rerun.
+lint passed. The corrections deployed as 1.0.772 with canonical readiness checks
+and authenticated build identity verified.
+
+**1.0.772 scenario 3 recovery:** all five agents completed in 2m30s. The requested
+equipment backlog chart now shows T002=2, T008=2, and seven other equipment IDs=1,
+matching the eleven returned work records. Priority/status charts and telemetry
+charts remain available. This bounded recovery is not a completed ten-flow matrix
+or a latency/provenance certification.
+
+**Further 1.0.772 results:** scenario 4 disclosed an incomplete native comparison
+(no recognized native BAD/temperature/work tables) rather than declaring a match;
+the initial run took 2m08s and a reproduction 3m08s. Scenario 5 reconciled eleven
+open work orders into three facility groups in 2m55s. Scenario 6 exposed an actual
+filter defect: `quantityOnHand <= "reorderLevel"` used the column name as a literal
+and returned all twelve parts, including above-threshold stock. It is a failed
+acceptance case, despite correct causal abstention and no draft/write.
+
+The local filter correction adds explicit, catalog-validated `value_column`
+operands, rejects numeric/text ordering, and preserves null/zero/equality
+semantics. Low-stock instructions now use `quantityOnHand lte value_column
+reorderLevel`. All 177 affected tests, typecheck and targeted lint passed.
+Deployment and the exact four-part low-stock readback remain required.
 
 **Teams communication recovered:** the verified existing self-chat message
 endpoint accepted updates at 18:22 and 18:38 UTC; the first message was read back

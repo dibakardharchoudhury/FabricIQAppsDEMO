@@ -462,7 +462,7 @@ export async function askFoundryCopilot(
                   pendingToolInputError = error.message
                   input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({
                     error: error.message, executed: false,
-                    instruction: 'The filter payload was rejected locally before reading the source. Correct column/op/value using the supplied schema within the remaining round budget. Do not change the requested scope, repeat completed unrelated reads, or treat this as an empty dataset.',
+                    instruction: 'The filter payload could not be applied. Correct column/op/value or value_column using the supplied schema within the remaining round budget. No filtered result was accepted. Do not change the requested scope, repeat completed unrelated reads, or treat this as an empty dataset.',
                   }) })
                   continue
                 }

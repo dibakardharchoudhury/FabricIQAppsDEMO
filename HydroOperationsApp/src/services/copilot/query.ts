@@ -8,7 +8,7 @@ export const MAX_ROWS = 500
 // so those two paths have no query-injection surface at all.
 
 export type FilterOperator = 'eq' | 'neq' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'is_null' | 'not_null'
-export type FilterCondition = { column: string; op: FilterOperator; value?: unknown }
+export type FilterCondition = { column: string; op: FilterOperator; value?: unknown; value_column?: string }
 
 export const FILTER_OPERATORS: FilterOperator[] = ['eq', 'neq', 'contains', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'not_null']
 
@@ -18,6 +18,7 @@ const text = (value: unknown) => value instanceof Date ? value.toISOString() : S
 const lower = (value: unknown) => text(value).toLowerCase()
 
 function compare(left: unknown, right: unknown): number {
+  if ([left, right].some(value => typeof value === 'number' && !Number.isFinite(value))) throw new QueryInputValidationError('Numeric comparisons require finite operands.')
   const leftText = text(left).trim()
   const rightText = text(right).trim()
   if (!leftText || !rightText) return Number.NaN
@@ -30,19 +31,24 @@ function compare(left: unknown, right: unknown): number {
   const leftNumber = Number(leftText)
   const rightNumber = Number(rightText)
   if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber
+  if (Number.isFinite(leftNumber) || Number.isFinite(rightNumber)) {
+    throw new QueryInputValidationError('Numeric comparisons require numeric operands. For another source column, use value_column instead of a column name in value.')
+  }
   return text(left).localeCompare(text(right))
 }
 
 function matches(row: Record<string, unknown>, condition: FilterCondition): boolean {
   const actual = row[condition.column]
+  const expected = condition.value_column === undefined ? condition.value : row[condition.value_column]
+  if (condition.value_column !== undefined && [actual, expected].some(value => value === null || value === undefined || value === '')) return false
   switch (condition.op) {
-    case 'eq': return lower(actual) === lower(condition.value)
-    case 'neq': return lower(actual) !== lower(condition.value)
-    case 'contains': return lower(actual).includes(lower(condition.value))
-    case 'gt': return compare(actual, condition.value) > 0
-    case 'gte': return compare(actual, condition.value) >= 0
-    case 'lt': return compare(actual, condition.value) < 0
-    case 'lte': return compare(actual, condition.value) <= 0
+    case 'eq': return lower(actual) === lower(expected)
+    case 'neq': return lower(actual) !== lower(expected)
+    case 'contains': return lower(actual).includes(lower(expected))
+    case 'gt': return compare(actual, expected) > 0
+    case 'gte': return compare(actual, expected) >= 0
+    case 'lt': return compare(actual, expected) < 0
+    case 'lte': return compare(actual, expected) <= 0
     case 'in': return Array.isArray(condition.value) && condition.value.some(candidate => lower(candidate) === lower(actual))
     case 'is_null': return actual === null || actual === undefined || actual === ''
     case 'not_null': return !(actual === null || actual === undefined || actual === '')
@@ -57,7 +63,18 @@ export function validateFilters(where?: FilterCondition[], allowedColumns?: read
     if (!condition || typeof condition.column !== 'string' || !condition.column.trim()
       || !FILTER_OPERATORS.includes(condition.op)) throw new QueryInputValidationError(`Each filter requires a column and a supported operator: ${FILTER_OPERATORS.join(', ')}.`)
     if (allowedColumns && !allowedColumns.includes(condition.column)) throw new QueryInputValidationError(`Unknown filter column '${condition.column}'. Use ${allowedColumns.join(', ')}.`)
-    if (!['is_null', 'not_null'].includes(condition.op) && !Object.hasOwn(condition, 'value')) throw new QueryInputValidationError('This filter operator requires a value.')
+    if (Object.hasOwn(condition, 'value_column')) {
+      if (typeof condition.value_column !== 'string' || !condition.value_column.trim()
+        || Object.hasOwn(condition, 'value') || !['eq', 'neq', 'gt', 'gte', 'lt', 'lte'].includes(condition.op)) {
+        throw new QueryInputValidationError('value_column requires one source column, no literal value, and an eq/neq/gt/gte/lt/lte operator.')
+      }
+      if (allowedColumns && !allowedColumns.includes(condition.value_column)) throw new QueryInputValidationError(`Unknown comparison column '${condition.value_column}'. Use ${allowedColumns.join(', ')}.`)
+    } else if (!['is_null', 'not_null'].includes(condition.op) && !Object.hasOwn(condition, 'value')) {
+      throw new QueryInputValidationError('This filter operator requires a literal value or value_column.')
+    }
+    if (['gt', 'gte', 'lt', 'lte'].includes(condition.op) && typeof condition.value === 'string' && allowedColumns?.includes(condition.value)) {
+      throw new QueryInputValidationError(`'${condition.value}' is a source column. Use value_column: "${condition.value}" instead of value for a column comparison.`)
+    }
     if (condition.op === 'in' && !Array.isArray(condition.value)) throw new QueryInputValidationError('The in filter requires an array value.')
   }
 }

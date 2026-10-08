@@ -12,7 +12,7 @@ as passes after a later code change.
 
 | Surface | Current implementation | Verified boundary |
 |---|---|---|
-| Hosted Fabric app | Release **1.0.771 / `a3571c7`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness and browser identity passed; checked RCA tables recovered. Scenario 3 exposed a requested-chart scope failure; complete matrix not accepted |
+| Hosted Fabric app | Release **1.0.772 / `cd1c5f4`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness and browser identity passed; checked RCA tables and requested backlog chart recovered. Complete matrix not yet accepted |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
 | Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
 | Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
@@ -90,9 +90,10 @@ fixture rendered two real tables, four charts and two working source links.
 Table-only mode retained all rows; narrow/wide layouts had no page overflow.
 This is not a live-source or full orchestration pass. Existing production
 large-chunk warnings remain. The initial hosted popup blocker has since
-resolved; authenticated testing can proceed. No Teams progress message has been
-sent: supported self-chat creation was rejected, and an existing chat link was
-requested. No notification-delivery claim is made.
+resolved; authenticated testing can proceed. At that checkpoint no Teams progress
+message had been sent because self-chat creation was rejected. The existing
+self-chat messages endpoint subsequently worked, as recorded below; this earlier
+blocker is no longer current. App notification delivery remains unverified.
 
 The first hosted 1.0.768 reproduction completed in 47.6 seconds and displayed
 the source tables/citations correctly, but failed grounding: Chief claimed seven
@@ -150,7 +151,21 @@ Further local presentation hardening withholds provisional model prose while
 keeping real tool/agent progress visible, unescapes literal Markdown identifiers
 correctly, and expands structured RCA observations into field/value rows instead
 of JSON blobs. The affected 138-test suite, typecheck and targeted lint passed.
-The new changes are not yet a hosted matrix pass.
+These changes deployed as 1.0.772. Scenario 3 then completed in 2m30s and its
+equipment chart matched all eleven returned work records (two each for T002/T008,
+one each for seven other equipment IDs). Other automatic source charts remained.
+This recovery is not yet a hosted matrix pass.
+
+Broader 1.0.772 acceptance found a genuine filter bug: the model supplied
+`value: "reorderLevel"` for a numeric low-stock comparison, and lexical fallback
+returned twelve parts instead of the four at/below their row-specific limits.
+The correction adds explicit catalog-validated `value_column`, disallows mixed
+numeric/text ordering, and tests below/equal/above, missing quantities/limits,
+zero, invalid columns and ambiguous operands. The six-file affected suite passed
+177 tests plus typecheck/lint; this filter correction is not yet deployed.
+Native fleet comparison also remained explicitly incomplete because its returned
+tables were not recognized. These runs are recorded as failures/limitations,
+not converted to passes by finished agent badges.
 
 Teams progress delivery was subsequently recovered through the verified existing
 self-chat messages endpoint. Updates at 18:22 and 18:38 UTC were accepted, with

@@ -413,6 +413,11 @@ field/value rows with exact JSON pointers rather than embedded JSON blobs.
 An orders-per-equipment chart must use operational record counts, never an
 unrelated telemetry chart. Explicit charts do not suppress automatic charts
 from other returned sources; the combined panel bound remains visible.
+Structured asset/operational filters distinguish literal `value` from
+`value_column`, a catalog-validated column on the same row. For low stock use
+`{"column":"quantityOnHand","op":"lte","value_column":"reorderLevel"}`.
+Equality is included, unknown quantities/limits do not match, and numeric/text
+ordering fails explicitly rather than silently returning an unfiltered inventory.
 
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,

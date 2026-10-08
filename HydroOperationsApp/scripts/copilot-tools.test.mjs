@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+
+test('low-stock column comparisons include equality and exclude above-threshold and missing quantities', () => {
+  const rows = [
+    { id: 'below', quantityOnHand: 2, reorderLevel: 3 },
+    { id: 'equal', quantityOnHand: 2, reorderLevel: 2 },
+    { id: 'above', quantityOnHand: 6, reorderLevel: 4 },
+    { id: 'missing', quantityOnHand: null, reorderLevel: 2 },
+    { id: 'no-limit', quantityOnHand: 1 },
+    { id: 'zero', quantityOnHand: 0, reorderLevel: 0 },
+  ]
+  const where = [{ column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }]
+  validateFilters(where, ['quantityOnHand', 'reorderLevel'])
+  assert.deepEqual(applyFilter(rows, where).map(row => row.id), ['below', 'equal', 'zero'])
+  assert.throws(() => applyFilter(rows, [{ column: 'quantityOnHand', op: 'lte', value: 'reorderLevel' }]), QueryInputValidationError)
+})
+
+test('column operands are explicit and catalog checked even for empty inventories', () => {
+  const base = { column: 'quantityOnHand', op: 'lte', value_column: 'reorderLevel' }
+  assert.throws(() => validateFilters([base], ['quantityOnHand']), /Unknown comparison column/)
+  for (const patch of [{ value: 2 }, { value_column: '' }, { value_column: null }, { op: 'in' }, { op: 'is_null' }]) {
+    assert.throws(() => applyFilter([], [{ ...base, ...patch }]), QueryInputValidationError)
+  }
+  assert.throws(() => validateFilters([{ column: 'quantityOnHand', op: 'lte', value: 'reorderLevel' }],
+    ['quantityOnHand', 'reorderLevel']), /Use value_column/)
+  assert.throws(() => applyFilter([{ amount: 5 }], [{ column: 'amount', op: 'gt', value: 'not numeric' }]), QueryInputValidationError)
+  assert.deepEqual(applyFilter([{ a: 2, b: 2 }, { a: 3, b: 2 }], [{ column: 'a', op: 'eq', value_column: 'b' }]), [{ a: 2, b: 2 }])
+  assert.deepEqual(applyFilter([{ a: null, b: null }, {}], [{ column: 'a', op: 'eq', value_column: 'b' }]), [])
+  assert.throws(() => applyFilter([{ amount: NaN }], [{ column: 'amount', op: 'lte', value: Infinity }]), /finite operands/)
+})
 
 test('inspection date filters compare complete timestamps, not their shared year prefix', () => {
   const rows = [
