@@ -96,9 +96,9 @@ export function readNativeDatasets(text: string) {
 
 const aliases = {
   node: ['opcua_node_id', 'Signal ID', 'OPC UA node', 'Node ID', 'instrument_id / opcua_node_id', 'signal_id_opc_node'],
-  equipment: ['equipment_id', 'Turbine ID', 'Equipment'],
-  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value'],
-  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc'],
+  equipment: ['equipment_id', 'Turbine ID', 'Equipment', 'Linked equipment_id'],
+  value: ['value', 'Reading', 'latest_temp', 'Temperature', 'latest_value', 'Raw value', 'Latest temperature'],
+  time: ['event_time', 'Event time (UTC)', 'latest_event_time', 'Timestamp (UTC)', 'timestamp_utc', 'Latest timestamp (UTC)'],
   quality: ['quality'], unit: ['unit'], rank: ['rank'],
 }
 const normalized = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -168,7 +168,7 @@ export function compareWork(text: string | undefined, directRows: Record<string,
       direct.set(key, value)
     }
   }
-  const fields = { number: ['workOrderNumber', 'Work order number', 'Work order'],
+  const fields = { number: ['workOrderNumber', 'Work order number', 'Work order', 'Order number'],
     equipment: aliases.equipment, title: ['Title'], status: ['Status'], priority: ['Priority'] }
   const native = new Map<string, Record<keyof typeof fields, string>>()
   const parsed = readNativeDatasets(text ?? '')

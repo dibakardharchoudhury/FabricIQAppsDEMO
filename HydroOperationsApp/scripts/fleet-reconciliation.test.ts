@@ -108,6 +108,19 @@ test('native JSON sets preserve actual identities, raw values and timestamp prec
   assert.doesNotMatch(output, /Returned fields match/)
 })
 
+test('native business column labels preserve raw values, latest timestamps and linked work identities', () => {
+  const observed = text.replaceAll('Value', 'Raw value').replaceAll('Reading', 'Latest temperature')
+    .replaceAll('Event time (UTC)', 'Latest timestamp (UTC)')
+    + '\n### Open work\n| Order number | Title | Status | Priority | Linked equipment_id |\n'
+    + '|---|---|---|---|---|\n| WO-123 | Inspect signal | Draft | Low | EQUIP_RTI_T001 |'
+  const output = renderFleetReconciliation(scope, [receipt(false), receipt(true)], [{ ...native[0], output: observed }])
+  assert.doesNotMatch(output, /comparison incomplete|population not comparable/i)
+  assert.match(output, /timestamp\/precision differs/)
+  assert.match(output, /value differs/)
+  assert.match(output, /Text differs: title/)
+  assert.match(output, /Not in returned native table/)
+})
+
 test('native JSON malformed, nested, inconsistent, empty and count-mismatched sets stay unverified', () => {
   for (const content of [
     '{"rows":',

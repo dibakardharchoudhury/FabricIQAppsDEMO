@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.753 (`12b23a0`).** Canonical deployment completed on
+**Current deployed release: 1.0.754 (`8a9220b`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 164 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 166 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -87,6 +87,22 @@ Replaying the actual native and direct receipts now compares eight BAD signals,
 five temperature ranks and six matching work records while preserving timestamp
 precision differences. This is offline receipt replay, not yet a hosted pass.
 The correction passes 166 related tests, build/typecheck, lint and both bundle checks.
+
+**1.0.754 hosted results:** facility reconciliation completed in 3m6s with actual
+ontology instance execution, both native sources, complete direct inventories and all
+eleven work records matching on returned fields. Facility counts remained 4/4/3.
+The original simple prompt, "Chart average power output per station over the last
+24 hours.", completed in 24.3s through Chief/Gauge. All three table/chart means,
+MW units, sample counts, BAD counts and stale labels matched the actual tool dataset;
+the answer explicitly distinguished sample-weighted readings from generation/energy.
+
+The exact fleet compound prompt completed in 4m13s, but comparison remained incomplete:
+its valid Markdown headers used "Raw value", "Latest temperature", "Latest timestamp
+(UTC)", "Order number" and "Linked equipment_id". Explicit adapters for these literal
+fields now pass replay of both real native formats against direct receipts: eight BAD
+signals, five temperature ranks and six work orders, retaining timestamp precision
+differences. This follow-up passes 167 related tests, build/typecheck, lint and both
+bundle checks and awaits hosted verification. No mutation was captured in either rerun.
 
 ### Earlier hosted failures and their corrections
 
