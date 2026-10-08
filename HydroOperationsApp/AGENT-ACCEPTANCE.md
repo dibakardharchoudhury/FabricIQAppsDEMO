@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.744 (`75aa712`).** Canonical deployment completed on
+**Current deployed release: 1.0.745 (`d024940`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Hosted reruns are in progress.
-The corrected release passed 133 targeted regressions, typecheck, lint, the canonical
+The corrected release passed 139 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -22,6 +22,47 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+The **1.0.745 compound rerun** completed all ten first prompts plus follow-ups for
+flows 9 and 10: **twelve turns, three runtime failures**. Every first prompt requested
+multiple specialist capabilities. Actual returned calls, not animation or model claims,
+establish the following handoffs (Chief coordinates each arrow):
+
+| Flow | Actual specialist execution | Result on 1.0.745 |
+|---|---|---|
+| 1: BAD, coverage, RCA, conditional work, independent check | Gauge -> Sleuth -> Fixer -> Gauge | Completed in 1m55s; no-draft decision. |
+| 2: Ontology T005 identity/relationships and downstream investigation/work | Sparky; downstream stopped | Failed: native `ask_ontology` LRO returned no MCP JSON-RPC reply. |
+| 3: Native backlog, direct reconciliation/chart, RCA and conditional work | Sparky -> Gauge -> Sleuth -> Fixer | Completed in 3m12s. One chart; all 11 orders matched exact source-derived counts across nine equipment IDs. |
+| 4: Native/direct BAD-HOT disagreement investigation | Sparky -> Sleuth | Failed after 3m20s: plan-style assignment led to eight prose-only RCA rounds. |
+| 5: Both native sources and direct facility backlog/chart | Sparky (Ontology) -> Sparky (Data Agent) -> Gauge | Completed in 2m53s. Both MCP receipts verified; chart counts exactly matched 11 direct orders across three facilities (4/4/3). |
+| 6: Parts, related work, risk and conditional draft | Gauge -> Sleuth -> Fixer | Completed in 1m18s; no-draft decision. No unrequested native delegation. |
+| 7: T005 telemetry/work and downtime evidence | Gauge -> Sleuth | Completed in 1m11s; no established downtime or authority to stop equipment. |
+| 8: Notifications/work, investigation and conditional draft | Gauge -> Sleuth -> Fixer | Completed in 55.1s; no-draft decision, no delivery. |
+| 9: Station means chart and scientific review | Gauge -> Sleuth; follow-up Gauge | Completed in 1m7s / 26.1s; one structured chart per turn. |
+| 10: Exact Low-priority draft, coverage and physical-fault follow-up | Gauge -> Fixer -> Gauge; follow-up Sleuth | Card completed in 52.8s and was rejected. Follow-up failed after 33.2s: its eighth response supplied invalid `/data/rows/...` references with no correction round left. |
+
+These are browser-displayed execution times, not a controlled concurrency/latency
+benchmark. Completed does not certify every statement or causal relevance. The full
+records are retained in `compound-flows-1.0.745.json`. No GraphQL mutations were
+observed during the captured matrix.
+
+Additional exact hosted checks on 1.0.745:
+
+- The date-filter regression passed: `EQUIP_RTI_T002` inspections on/after September 8
+  returned zero rows; before August 1 returned exactly the two July 21 records.
+  Both actual predicates and returned IDs/timestamps were captured.
+- Battle produced the exact titled Low-priority T005 card in both panes, with actual
+  Chief/Fixer/Gauge calls. Both cards were rejected; no GraphQL mutation was observed.
+  Displayed times were 60.3s and 69.8s. The UI explicitly says that WO requests route
+  through the shared Foundry approval flow, not two independent mutation engines.
+- A separate authenticated tab measured first contentful paint at 1.69s and DOM ready
+  at 4.44s, with no horizontal overflow at 1024x768. This is not a cold-load or
+  cross-tab navigation benchmark and does not establish a performance SLA.
+
+The next RCA correction requires actual tool calls and gives a final invalid structured
+report one bounded completion-only repair using existing evidence. No further reads,
+weaker reference validation, automatic source retry or native-source substitution is
+allowed in that repair. Hosted verification of this correction is still pending.
+
 The 1.0.744 targeted rerun completed ten turns: both turns of flows 3, 4, 5 and 10,
 and first turns of flows 6 and 9. No terminal runtime failure was observed in those
 records, but this is **not acceptance**: flow 3 still omitted its requested backlog
@@ -30,13 +71,17 @@ parsing treated July and September ISO timestamps as the same number, 2026.
 Previously returned date-filtered inspection evidence must not be relied on without
 rerunning the corrected query. Full records are retained as `compound-reruns-1.0.744.json`.
 
-The next source correction compares ISO timestamps chronologically, excludes missing
+The deployed source correction compares ISO timestamps chronologically, excludes missing
 values from ordered comparisons and rejects malformed filter predicates. Gauge gets
 one bounded in-assignment correction when it omits an explicitly requested chart
 despite having source rows, including the original request and an instruction not to
 fabricate missing data. A missing structured chart remains explicitly marked incomplete;
 unrelated rows do not force a fabricated chart or repeated delegations. These corrections
-require a new deployment and exact hosted revalidation; local checks alone are insufficient.
+require exact hosted revalidation; local checks alone are insufficient. The first
+deployment attempt uploaded the bundle but failed the hosting availability check with
+a remote connection reset. A canonical retry returned `SUCCESS`, verified backend
+preflights/POST readiness and preserved all 39 redirects. Browser build identity is
+1.0.745 / `d024940`; the full compound first-turn matrix is being rerun on that code.
 
 The 1.0.742 run completed **all ten compound scenarios and twenty conversation turns**.
 Six turns ended in explicit runtime failures. Other turns have content/routing defects;
@@ -180,7 +225,10 @@ verification rather than inferring speed from reduced input construction.
     physical measurements or a different model family.
 14. **Compound workflow:** use requested capabilities in order; maximum four delegations
     and six Responses rounds for Chief/Sparky, eight for direct specialists (including
-    identity/coverage reads, investigation or staging, and final acknowledgement). Bounds and actual source failures are
+    identity/coverage reads, investigation or staging, and final acknowledgement).
+    RCA may correct one locally rejected final-round assessment in one additional
+    completion-only round; no new reads or relaxed evidence checks are permitted.
+    Bounds and actual source failures are
     explicit; no hidden retry of failed writes or forced completion from invented data.
 15. **Battle:** the same prompt reaches both configured entries. Read-only comparisons
     can be capacity-safe sequential or parallel. Recognized work-order requests use

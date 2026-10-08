@@ -105,6 +105,7 @@ export async function askFoundryCopilot(
       let rcaReport: string | undefined
       let nativeExecuted = false
       let chartReminderSent = false
+      let completionRepair = false
       let pendingToolInputError: string | undefined
       try {
         if (role === 'fabric-iq') {
@@ -112,7 +113,7 @@ export async function askFoundryCopilot(
           await (nativeSource === 'data-agent' ? verifyDataAgentForFoundry() : verifyOntologyForFoundry())
         }
         const maxRounds = role === 'supervisor' || role === 'fabric-iq' ? 6 : 8
-        for (let round = 0; round < maxRounds; round++) {
+        for (let round = 0; round < maxRounds + Number(completionRepair); round++) {
           requestDeadline = AbortSignal.timeout(180_000)
           const response = await fetch(`${endpoint}/openai/v1/responses`, {
             method: 'POST',
@@ -121,6 +122,8 @@ export async function askFoundryCopilot(
               agent_reference: { type: 'agent_reference', name: AGENT_NAMES[role] },
               input, stream: true, store: false, include: ['reasoning.encrypted_content'],
               ...(nativeSource ? { tool_choice: nativeToolChoice(nativeSource) } : {}),
+              ...(role === 'rca' ? { tool_choice: round >= maxRounds
+                ? { type: 'function', name: 'complete_rca_assessment' } : 'required' } : {}),
             }),
             signal: requestDeadline,
           }).catch((error: unknown) => {
@@ -204,6 +207,9 @@ export async function askFoundryCopilot(
               : state.content
           }
           for (const call of calls) {
+            if (role === 'rca' && round >= maxRounds && call.name !== 'complete_rca_assessment') {
+              throw new Error('The final RCA correction permits only complete_rca_assessment; no additional source reads were executed.')
+            }
             if (role === 'supervisor' && call.name === 'delegate_to_agent') {
               const { specialist, question: delegatedQuestion, reason, nativeSource: delegatedSource } = parseDelegation(call.arguments)
               const completed = events.filter(entry => entry.status === 'completed' || entry.status === 'approval').map(entry => entry.role)
@@ -251,6 +257,10 @@ export async function askFoundryCopilot(
                 captureApplicationEvent(event, 'Validated RCA source references. Hypotheses remain untested; no diagnostic threshold or causal claim was accepted.', call.id)
               } catch (error) {
                 if (!(error instanceof RcaEvidenceError)) throw error
+                if (round === maxRounds - 1 && receipts.length
+                  && (!requiresInspectionEvidence(question) || receipts.some(receipt => receipt.tool === 'query_operations' && receipt.entity === 'inspections'))) {
+                  completionRepair = true
+                }
                 input.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify({ accepted: false, error: error.message }) })
                 captureApplicationEvent(event, `RCA report rejected: ${error.message}`, call.id, true)
               }
@@ -370,11 +380,11 @@ export async function askFoundryCopilot(
             }] })
           } else if (role !== 'fabric-iq') {
             input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
-              text: `${maxRounds - round - 1} response rounds remain. Reuse verified current-turn findings instead of repeating successful reads, including valid empty results. Batch independent reads when needed. ${role === 'work-order' ? 'Finish all requested proposals using propose_work_order, or explicitly complete a no-draft/clarification review. When all requested cards are staged, return the result without another optional-field or permission questionnaire.' : 'Return the assigned evidence or investigation as soon as the requested facts and limitations are established. Do not spend the final round rechecking unchanged results.'}`,
+              text: `${completionRepair ? 'One completion-only correction is available: fix the rejected complete_rca_assessment using the existing evidence and validation error. No further source reads are permitted.' : `${maxRounds - round - 1} response rounds remain.`} Reuse verified current-turn findings instead of repeating successful reads, including valid empty results. Batch independent reads when needed. ${role === 'work-order' ? 'Finish all requested proposals using propose_work_order, or explicitly complete a no-draft/clarification review. When all requested cards are staged, return the result without another optional-field or permission questionnaire.' : 'Return the assigned evidence or investigation as soon as the requested facts and limitations are established. Do not spend the final round rechecking unchanged results.'}`,
             }] })
           }
         }
-        throw new Error(`${AGENT_NAMES[role]} exceeded its ${maxRounds}-round execution budget.`)
+        throw new Error(`${AGENT_NAMES[role]} exceeded its ${maxRounds + Number(completionRepair)}-round execution budget.`)
       } catch (error) {
         const failure = requestDeadline?.aborted
           ? new Error(`${AGENT_NAMES[role]} did not finish its response within 180 seconds. Its result is unverified; no automatic retry was made. See the execution receipts for the source and response identity.`, { cause: error })

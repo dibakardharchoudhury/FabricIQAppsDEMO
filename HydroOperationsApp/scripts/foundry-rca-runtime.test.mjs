@@ -279,6 +279,49 @@ test('Gauge must render an explicitly requested chart rather than offer it after
   assert.ok(harness.requests.some(request => request.input.some(item => JSON.stringify(item).includes('no chart has been rendered'))))
 })
 
+test('RCA requires actual tool use and gives one completion-only repair for a final-round invalid pointer', async () => {
+  reset()
+  harness.responses.push(delegate('rca'))
+  for (let index = 0; index < 7; index++) {
+    if (index) harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 123.45 }] }, rowCount: 1 })
+    harness.responses.push({ role: 'rca', calls: [{ ...read, call_id: `source_${index}` }] })
+  }
+  const corrected = { observations: [{ evidence_id: 'source_0', path: '/rows/0' }],
+    hypotheses: report.hypotheses.map(hypothesis => ({ ...hypothesis, supporting: [{ evidence_id: 'source_0', path: '/rows/0' }] })) }
+  harness.responses.push(
+    { role: 'rca', calls: [call('invalid_final', 'complete_rca_assessment', { ...corrected,
+      observations: [{ evidence_id: 'source_0', path: '/data/rows/0' }] })] },
+    { role: 'rca', calls: [call('fixed_final', 'complete_rca_assessment', corrected)] },
+    { role: 'supervisor', text: 'Investigation completed.' })
+  const result = await askFoundryCopilot('Investigate the source measurements.')
+  assert.match(result.text, /Cause undetermined/)
+  const requests = harness.requests.filter(request => request.agent_reference.name === 'hydro-rca-agent')
+  assert.equal(requests.length, 9)
+  assert.ok(requests.slice(0, 8).every(request => request.tool_choice === 'required'))
+  assert.deepEqual(requests[8].tool_choice, { type: 'function', name: 'complete_rca_assessment' })
+  assert.equal(harness.reads.length, 0)
+})
+
+test('The final RCA correction cannot read more sources or grant itself another correction', async () => {
+  for (const retryRead of [true, false]) {
+    reset()
+    const invalid = { ...report, observations: [{ ...ref, path: '/data/rows/0' }] }
+    harness.responses.push(delegate('rca'), { role: 'rca', calls: [read] })
+    for (let index = 0; index < 7; index++) harness.responses.push({
+      role: 'rca', calls: [call(`invalid_${index}`, 'complete_rca_assessment', invalid)],
+    })
+    harness.responses.push({ role: 'rca', calls: [retryRead
+      ? { ...read, call_id: 'forbidden_read' }
+      : call('still_invalid', 'complete_rca_assessment', invalid)] })
+    await assert.rejects(askFoundryCopilot('Investigate the measurements.'), retryRead
+      ? /final RCA correction permits only complete_rca_assessment/
+      : /exceeded its 9-round execution budget/)
+    assert.equal(harness.requests.filter(request => request.agent_reference.name === 'hydro-rca-agent').length, 9)
+    assert.equal(harness.responses.length, 0)
+    assert.equal(harness.reads.length, 0)
+  }
+})
+
 test('A chart correction is bounded and cannot force a chart from unrelated source rows', async () => {
   reset()
   harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },

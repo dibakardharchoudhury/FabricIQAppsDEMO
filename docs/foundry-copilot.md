@@ -280,7 +280,12 @@ private endpoint or a "selected networks" firewall cuts the browser off.
 
 Chief and Sparky have at most **six Responses rounds** per invocation; the direct
 specialists have **eight**, including identity/coverage reads, investigation or staging,
-and final acknowledgement. Chief has a four-delegation
+and final acknowledgement. RCA requests require tool calls rather than accepting
+prose-only planning as progress. A locally rejected final-round assessment with existing
+evidence can use one additional **completion-only** correction: the request forces
+`complete_rca_assessment`, further reads are rejected, and a second invalid report fails.
+This is not a retry of a failed source request or permission to weaken evidence checks.
+Chief has a four-delegation
 budget per turn. Results return as `function_call_output` items matching actual call IDs.
 Native response output items are preserved for continuation.
 
