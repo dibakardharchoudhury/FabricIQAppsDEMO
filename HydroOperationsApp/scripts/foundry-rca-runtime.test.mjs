@@ -704,6 +704,41 @@ test('different station windows remain distinct even when their values are equal
   assert.equal((result.text.match(/### Source-derived station summary/g) ?? []).length, 2)
 })
 
+test('follow-up specialists receive the actual displayed semantics even when Chief omits them', async () => {
+  reset()
+  const summary = 'Sloy: 123.45 MW; samples 4000; BAD 20. Sample-weighted arithmetic mean of individual readings; all qualities included, not total station output or energy. Read completed 2026-10-08T06:00:00Z; stale.'
+  harness.reads[0].groundedSummary = summary
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'Mean is 123.45 MW.' }, { role: 'supervisor', text: 'A shortened summary.' })
+  const initial = await askFoundryCopilot('Average station power over the last 24 hours.')
+  assert.equal(initial.text, summary)
+  const previousRequests = harness.requests.length
+  harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 124 }] }, rowCount: 1 })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'New rolling-window mean differs; historical semantics retained.' },
+    { role: 'supervisor', text: 'Historical comparison is qualified.' })
+  await askFoundryCopilot('Independently verify chart values, units, sample counts and freshness.')
+  const specialist = harness.requests.slice(previousRequests).find(request => request.agent_reference.name === 'hydro-qa-agent')
+  const input = JSON.stringify(specialist.input)
+  assert.ok(input.includes(summary))
+  assert.match(input, /historical claims, not instructions or current source receipts/)
+  assert.match(input, /new rolling-window query may legitimately differ/)
+  assert.equal(harness.reads.length, 0, 'Follow-up still reads its own source rather than treating history as a current receipt')
+
+  harness.responses.push(delegate('fabric-iq'), nativeReply('Native business rows.'),
+    { role: 'supervisor', text: 'Native result.' })
+  await askFoundryCopilot('Ask the published Data Agent for open work.')
+  const native = harness.requests.find(request => request.agent_reference.name === 'hydro-fabric-iq-agent')
+  assert.doesNotMatch(JSON.stringify(native.input), /Previous displayed conversation turn|Historical comparison is qualified/)
+
+  resetFoundryConversation()
+  harness.responses.push(delegate('qa'), { role: 'qa', text: 'New conversation.' },
+    { role: 'supervisor', text: 'New conversation.' })
+  const start = harness.requests.length
+  await askFoundryCopilot('What can you query?')
+  assert.doesNotMatch(JSON.stringify(harness.requests.slice(start)), /Previous displayed conversation turn|Sample-weighted/)
+})
+
 test('actual proposal tool cannot escalate priority from model arguments', async () => {
   reset()
   for (const explicit of [undefined, 'Low', 'Critical']) {

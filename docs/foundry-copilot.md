@@ -350,6 +350,14 @@ Chief has a four-delegation
 budget per turn. Results return as `function_call_output` items matching actual call IDs.
 Native response output items are preserved for continuation.
 
+Direct specialists also receive the immediately preceding displayed question/answer
+unchanged, labelled as historical claims rather than current source receipts or
+instructions. This preserves chart values, aggregation semantics and timestamps when
+Chief abbreviates a follow-up assignment. It does not replace fresh verification:
+rolling windows can change, historical text cannot satisfy RCA evidence pointers, and
+prior proposals are not write approval. New chat clears this context. Native-source
+assignments remain isolated from this display history.
+
 ```mermaid
 sequenceDiagram
   participant U as User
@@ -363,7 +371,7 @@ sequenceDiagram
   A->>M: project Responses API, agent_reference, history and question
   loop at most four delegations
     M-->>A: delegate_to_agent with scoped task and reason
-    A->>S: agent_reference, task and current evidence (not full history)
+    A->>S: agent_reference, task, current evidence and previous displayed turn (not full history)
     alt direct read tool
       S-->>A: hydro_query
       A->>T: validated runTool(name, args)
