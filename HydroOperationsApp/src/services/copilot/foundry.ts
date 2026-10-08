@@ -14,6 +14,7 @@ import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
 import { parseRcaAssessment, RcaEvidenceError, renderInventoryEvidence, renderOpenWorkEvidence, renderRcaAssessment, renderUnsentNotification, type EvidenceReceipt } from './rcaEvidence.ts'
 import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation, type NativeComparisonReceipt } from './fleetReconciliation.ts'
+import { missingFacilityEvidence, renderFacilityReconciliation } from './facilityReconciliation.ts'
 import { checkRequestedKql, renderQueryChecks } from './queryEvidence.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
@@ -81,8 +82,10 @@ export async function askFoundryCopilot(
   const nativeReceipts: NativeComparisonReceipt[] = []
   const missingFleet = () => fleetScope ? missingFleetSnapshots(fleetScope, receipts) : []
   const directVerification = requiresDirectSourceVerification(question) || Boolean(fleetScope)
+  const facilityBacklog = directVerification && /\bfacility[- ]level\b/i.test(question) && /\bbacklog\b/i.test(question)
   const missingDirect = () => {
     if (fleetScope) return missingFleet()
+    if (facilityBacklog) return missingFacilityEvidence(receipts)
     if (!directVerification) return []
     const sources = directVerificationSources(question)
     if (!sources.length) return receipts.length ? [] : ['a direct source read']
@@ -116,6 +119,9 @@ export async function askFoundryCopilot(
       const input: unknown[] = buildAgentInput(`${context}\n\n${scope}\n\n${chartScope}\n\n${readDiscipline}`, history, prompt, role)
       if (role === 'fabric-iq') input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
         text: `Pass a business-data question to the selected native tool, not an instruction to invoke another Fabric Data Agent or a local Hydro function. The published Data Agent may use its own connected Lakehouse/Eventhouse/SQL tables; that is its normal execution, not substitution of another native endpoint. ${fleetScope ? 'For fleet reconciliation, request separate compact Markdown tables: latest BAD signals (equipment_id, opcua_node_id, value, quality, event_time); highest latest raw temperatures (rank, equipment_id, opcua_node_id, value, unit, event_time); open work (equipment_id, workOrderNumber, title, status, priority, and instrument/node linkage when actually returned). Preserve the operator time window, rank count, and native source limitations. Do not invent missing rows or fields.' : ''}`,
+      }] })
+      if (facilityBacklog) input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+        text: 'Facility backlog verification requires complete direct work_orders, equipment and facilities reads: no where filters or columns projections, limit 500. Never restrict direct evidence to native IDs. The application derives the final facility table and chart from those receipts, so do not generate a separate CSV/chart or guess mappings. For native retrieval request compact Markdown tables: ontology facility_id; Data Agent equipment_id, workOrderNumber, title, status, priority. Preserve unknown/unmatched IDs and source limitations.',
       }] })
       if (queryChecks.length) input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
         text: `Actual local checks on the operator's supplied queries: ${JSON.stringify(queryChecks)}. These are limited safety/pattern checks, not a Kusto semantic compiler. Correct any rejected query or use an equivalent typed tool without claiming the original was valid or executed. Preserve the requested nodes, time window, aggregation and output.`,
@@ -181,7 +187,7 @@ export async function askFoundryCopilot(
           if (nativeSource) for (const item of state.output ?? []) {
             if (verifyNativeReceipt(item, nativeSource)) {
               nativeExecuted = true
-              if (fleetScope) {
+              if (fleetScope || facilityBacklog) {
                 if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !('output' in item)) {
                   throw new Error('Native comparison receipt omitted its output or identity.')
                 }
@@ -380,7 +386,11 @@ export async function askFoundryCopilot(
                 captureApplicationEvent(event, `${parsed.toolName} completed${result.rowCount === undefined ? '' : `: ${result.rowCount} rows`}`, call.id, false, 'tool-end')
                 if (parsed.toolName !== 'propose_work_order' && parsed.toolName !== 'visualize_dataset') {
                   if (receipts.some(receipt => receipt.id === call.id)) throw new Error('A source evidence identifier was reused; the result cannot be referenced unambiguously.')
-                  receipts.push({ id: call.id, tool: parsed.toolName, entity: args.entity, completedAt: new Date().toISOString(), result: result.result })
+                  receipts.push({ id: call.id, tool: parsed.toolName, entity: args.entity, arguments: args, completedAt: new Date().toISOString(), result: result.result })
+                  if (facilityBacklog && !missingFacilityEvidence(receipts).length) {
+                    const derived = renderFacilityReconciliation(receipts, nativeReceipts)
+                    visualizations.splice(0, visualizations.length, derived.visualization)
+                  }
                   input.push({ type: 'function_call_output', call_id: call.id,
                     output: JSON.stringify({ evidence_id: call.id, data: result.result }) })
                 } else {
@@ -456,16 +466,19 @@ export async function askFoundryCopilot(
     }
     const narrative = await invoke('supervisor', question)
     const fleetComparison = fleetScope ? renderFleetReconciliation(fleetScope, receipts, nativeReceipts) : undefined
+    const facilityComparison = facilityBacklog ? renderFacilityReconciliation(receipts, nativeReceipts) : undefined
+    if (facilityComparison) visualizations.splice(0, visualizations.length, facilityComparison.visualization)
     const queryEvidence = renderQueryChecks(queryChecks, steps)
     const stationSummaryValues = [...stationSummaries.values()]
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
-    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || queryEvidence ? [
+    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || facilityComparison || queryEvidence ? [
+      ...(facilityComparison ? [facilityComparison.text] : []),
       ...(queryEvidence ? [queryEvidence] : []),
       ...(fleetComparison ? [fleetComparison] : []),
       ...assessments,
-      ...specialistResults.filter(result => result.role === 'fabric-iq' && !fleetComparison).map(result =>
+      ...specialistResults.filter(result => result.role === 'fabric-iq' && !fleetComparison && !facilityComparison).map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
       ...stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`),
       renderInventoryEvidence(fleetComparison ? receipts.filter(receipt =>
@@ -473,7 +486,7 @@ export async function askFoundryCopilot(
       ...(workDecisions.length || proposals.length ? [
         `### Work review\n\nEditable proposals staged: ${proposals.length}. No SQL write was performed. Structured decisions: ${workDecisions.join(', ') || 'proposal available for human review'}. Review the actual cards and open-work evidence; no diagnostic priority is inferred.`,
       ] : []),
-      renderOpenWorkEvidence(receipts),
+      ...(facilityComparison ? [] : [renderOpenWorkEvidence(receipts)]),
       ...(isNotificationDraftRequest(question) ? [renderUnsentNotification(receipts)] : []),
     ].join('\n\n') : undefined
     const answer = checkedInvestigation

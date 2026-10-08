@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.749 (`1a1d88b`).** Canonical deployment completed on
+**Current deployed release: 1.0.750 (`d846702`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The corrected release passed 151 targeted regressions, typecheck, lint, the canonical
+The deployed routing correction passed 153 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +21,27 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+**1.0.750 targeted reruns remain failed.** Flow 4 now used a valid native business
+query and complete direct snapshots, but incorrectly required another final QA pass
+after the requested verify-then-investigate sequence, exhausting Chief's six rounds
+after 4m31s. Flow 5 now invoked Gauge, but restricted direct reads to native equipment
+IDs (10 rather than 11 open orders), then invented facility mappings in final prose.
+Its chart and prose disagreed. Actual receipts, not visual chart presence, exposed this.
+
+The follow-up implementation requires unfiltered, unprojected, untruncated work-order,
+equipment and facility inventories for facility-backlog reconciliation. It generates
+the final mapping, counts and chart from the same source rows, retains unmatched IDs,
+compares actual native tool tables, and never interprets an unrecognized ontology
+response as zero facilities. Verify-before-investigation no longer imposes an
+unrequested second QA pass; requested final and post-draft verification remain enforced.
+These corrections passed 159 related regressions, build/typecheck, lint and both
+bundle checks, but require deployment and hosted acceptance.
+
+The 1.0.750 canonical deployment reapplied backend runtime/CORS and passed its endpoint
+checks. Authenticated maintenance navigation returned the two actual T002 work orders
+without an observed CORS error or horizontal document overflow. This does not establish
+ongoing backend availability, a cold-start benchmark or accepted navigation latency.
 
 **1.0.749 implementation (deployed; hosted acceptance in progress):** fleet reconciliation
 now requires independent full-population snapshot receipts, preserving recognized

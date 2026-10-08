@@ -2,6 +2,7 @@ export type EvidenceReceipt = {
   id: string
   tool: string
   entity?: string
+  arguments?: { where?: unknown[]; columns?: string[] }
   completedAt: string
   result: unknown
 }

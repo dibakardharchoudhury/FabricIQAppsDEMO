@@ -121,6 +121,13 @@ Explicit direct-source reconciliation also requires Gauge and the relevant sourc
 receipts, not merely two native retrievals. Facility-level backlog requires direct
 work-order, equipment and facility rows; partial asset inventories expose unknown totals
 and truncation. Requested direct verification precedes disagreement investigation.
+Facility-backlog verification requires complete unfiltered inventories, not just the
+equipment named by a native answer. Its final table and chart share application-derived
+counts and exact Lakehouse equipment-to-facility mappings; unmatched IDs remain visible.
+Actual native table comparisons cannot certify native scope or source execution
+provenance. Verify-before-investigation and explicitly requested final verification
+are distinct: only the latter adds a post-investigation QA pass, while post-draft
+verification remains enforced.
 Native tool error envelopes and incomplete-response reasons are surfaced rather than
 replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
 failure was observed live; improved diagnostics do not repair or certify that native service.

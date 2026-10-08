@@ -116,12 +116,15 @@ export function isNotificationDraftRequest(question: string): boolean {
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
   const missing: AgentRole[] = []
   const positive = positiveActionClauses(question)
-  const investigation = /\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b|\b(?:reassess|review|continue)\b.{0,60}\b(?:investigation|diagnosis|RCA)\b/i.test(positive)
+  const investigationMatch = /\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b|\b(?:reassess|review|continue)\b.{0,60}\b(?:investigation|diagnosis|RCA)\b/i.exec(positive)
+  const investigation = Boolean(investigationMatch)
   if (investigation && !completed.includes('rca')) missing.push('rca')
   const drafting = isWorkOrderRequest(question)
   if (drafting && !completed.includes('work-order')) missing.push('work-order')
-  const verification = /\b(?:independently (?:check|verify)|independent (?:check|verification)|verify\b.{0,80}\bagain)\b/i.test(positive)
-  const reviews: AgentRole[] = [...(investigation ? ['rca' as const] : []), ...(drafting ? ['work-order' as const] : [])]
+  const verification = /\b(?:independently (?:check|verify)|independent (?:check|verification)|verify\b.{0,80}\bagain)\b/i.exec(positive)
+  const verifyAfterInvestigation = verification && investigationMatch
+    && (verification.index > investigationMatch.index || /\bfinal (?:independent )?verification\b/i.test(positive))
+  const reviews: AgentRole[] = [...(verifyAfterInvestigation ? ['rca' as const] : []), ...(drafting ? ['work-order' as const] : [])]
   if (verification && (!completed.includes('qa') || reviews.some(role =>
     !completed.includes(role) || completed.lastIndexOf('qa') < completed.lastIndexOf(role)))) missing.push('qa')
   if (requiresDirectSourceVerification(question) && !completed.includes('qa') && !missing.includes('qa')) missing.push('qa')

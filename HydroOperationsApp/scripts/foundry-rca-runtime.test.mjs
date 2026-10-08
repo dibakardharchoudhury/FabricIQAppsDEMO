@@ -198,6 +198,39 @@ test('two native retrievals cannot replace requested direct asset and work-order
   assert.equal(harness.responses.length, 0)
 })
 
+test('facility backlog rejects native-selected reads and derives its final table and chart from complete inventories', async () => {
+  reset()
+  harness.reads.length = 0
+  const rows = [
+    [{ workOrderNumber: 'WO-1', equipmentId: 'EQUIP_1', title: 'Inspect', status: 'Draft', priority: 'Low' },
+      { workOrderNumber: 'WO-2', equipmentId: 'EQUIP_2', title: 'Review', status: 'Ready', priority: 'Medium' }],
+    [{ equipment_id: 'EQUIP_1', facility_id: 'FACILITY_1' }, { equipment_id: 'EQUIP_2', facility_id: 'FACILITY_2' }],
+    [{ facility_id: 'FACILITY_1' }, { facility_id: 'FACILITY_2' }],
+  ]
+  for (const population of [rows.map(data => data.slice(0, 1)), rows]) {
+    harness.reads.push(...population.map(data => ({ result: { rows: data, truncated: false, total_matched: data.length }, rowCount: data.length })))
+  }
+  const sourceCalls = (filtered) => ['work_orders', 'equipment', 'facilities'].map((entity, i) =>
+    call(`${filtered ? 'partial' : 'full'}_${entity}`, 'hydro_query', {
+      tool_name: i ? 'query_assets' : 'query_operations',
+      arguments: { entity, ...(filtered ? { where: [{ column: 'equipment_id', op: 'eq', value: 'EQUIP_1' }] } : {}) },
+    }))
+  harness.responses.push(delegate('fabric-iq', 'ontology'), nativeReply('Facility inventory.', 'ontology'),
+    delegate('fabric-iq'), nativeReply('Work inventory.'), delegate('qa'),
+    { role: 'qa', calls: sourceCalls(true) }, { role: 'qa', text: 'Selected native rows are the whole inventory.' },
+    { role: 'qa', calls: sourceCalls(false) }, { role: 'qa', text: 'Complete inventories retrieved.' },
+    { role: 'supervisor', text: 'Invented facility mapping and count 999.' })
+  const result = await askFoundryCopilot('Use the selected ontology and published Data Agent. Reconcile open work orders with direct asset and work-order records. Show a facility-level backlog table and chart.')
+  assert.equal(result.steps.filter(step => step.status === 'done').length, 6)
+  assert.match(result.text, /2 open work orders/)
+  assert.match(result.text.replace(/\\_/g, '_'), /\| WO-2 \| EQUIP_2 \| FACILITY_2 \|/)
+  assert.match(result.text, /Ontology facility comparison incomplete/)
+  assert.doesNotMatch(result.text, /999|Invented/)
+  assert.equal(result.visualizations.length, 1)
+  assert.match(result.visualizations[0].inlineCsvData, /"FACILITY_2","1","1"/)
+  assert.equal(harness.responses.length, 0)
+})
+
 test('RCA rejects prose and invalid reports, finishes immediately on checked completion, and excludes Chief claims', async () => {
   reset()
   harness.responses.push(delegate('rca'),

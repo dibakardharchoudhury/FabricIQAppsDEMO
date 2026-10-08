@@ -118,7 +118,7 @@ function compare(claim: Claim, row: Record<string, unknown>, rank: number, tempe
   return differences.length ? differences.join('; ') : 'Returned fields match; not a freshness or scope attestation'
 }
 
-function compareWork(text: string | undefined, directRows: Record<string, unknown>[]): string {
+export function compareWork(text: string | undefined, directRows: Record<string, unknown>[], fullInventory = false): string {
   const direct = new Map<string, { equipment: string; order: Record<string, unknown>; relations: Set<string> }>()
   for (const row of directRows) {
     if (typeof row.equipment_id !== 'string' || !Array.isArray(row.open_work_orders)) {
@@ -128,7 +128,7 @@ function compareWork(text: string | undefined, directRows: Record<string, unknow
       if (!record(order) || typeof order.workOrderNumber !== 'string') throw new Error('Snapshot omitted work-order identity.')
       const key = `${row.equipment_id}:${order.workOrderNumber}`
       const value = direct.get(key) ?? { equipment: row.equipment_id, order, relations: new Set<string>() }
-      value.relations.add(`${row.opcua_node_id}: ${order.relation}`)
+      value.relations.add(row.opcua_node_id ? `${row.opcua_node_id}: ${order.relation}` : 'Equipment-level inventory; signal relation not compared')
       direct.set(key, value)
     }
   }
@@ -160,7 +160,7 @@ function compareWork(text: string | undefined, directRows: Record<string, unknow
       ? (['title', 'status', 'priority'] as const).filter(field => claim[field] !== observation.order[field])
       : []
     const status = issues.length ? 'Native work population not comparable'
-      : !claim ? 'Not in returned native table' : !observation ? 'Not in direct selected population'
+      : !claim ? 'Not in returned native table' : !observation ? `Not in direct ${fullInventory ? 'open-work inventory' : 'selected population'}`
         : changes.length ? `Text differs: ${changes.join(', ')}` : 'Number, equipment, title, status and priority match'
     return `| ${[key, claim ? `${claim.title}; ${claim.status}; ${claim.priority}` : 'Not returned',
       observation ? `${observation.order.title}; ${observation.order.status}; ${observation.order.priority}` : 'Not selected',
@@ -170,7 +170,9 @@ function compareWork(text: string | undefined, directRows: Record<string, unknow
     ...issues.map(issue => `**Work comparison incomplete:** ${cell(issue)}`),
     ['| Equipment / work order | Native claim | Direct record | Comparison | Direct signal relations |',
       '|---|---|---|---|---|', ...rows].join('\n'),
-    'Native-only records are outside the direct selected population, not proven closed or nonexistent. Native signal linkage is not attested; direct relations use actual SQL instrument/node identifiers, never title similarity.',
+    fullInventory
+      ? 'Reads are not atomic. Native-only records were not returned by the complete direct open-work read; this does not prove their present closure or nonexistence. Signal linkage is not compared here.'
+      : 'Native-only records are outside the direct selected population, not proven closed or nonexistent. Native signal linkage is not attested; direct relations use actual SQL instrument/node identifiers, never title similarity.',
   ].join('\n\n')
 }
 
