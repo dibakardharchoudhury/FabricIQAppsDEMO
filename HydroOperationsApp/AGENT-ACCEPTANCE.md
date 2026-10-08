@@ -5,12 +5,12 @@ This report distinguishes implemented behavior, observed runtime results and pro
 proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 
-**Current deployed release: 1.0.755 (`ab9c4b6`).** Canonical deployment completed on
+**Current deployed release: 1.0.756 (`3bab58c`).** Canonical deployment completed on
 October 8 with verified agent definitions Chief v9, Gauge v11, Sleuth v13, Fixer v11,
 and Sparky v8. Runtime/CORS and POST checks passed; all 39 redirects were preserved.
 Browser build identity was verified. Consent is valid for the current operator only;
 tenant-wide enterprise consent requires an administrator. Latest targeted reruns are recorded below.
-The deployed source-derived correction passed 167 targeted regressions, typecheck, lint, the canonical
+The deployed source-derived correction passed 169 targeted regressions, typecheck, lint, the canonical
 production build and two built-bundle checks. Its browser build identity was verified.
 These checks do not turn the 1.0.742 runtime failures below into passes.
 The earlier 1.0.737 rerun completed **ten scenarios / twenty turns**, and was **not accepted**.
@@ -21,6 +21,32 @@ Creation/configuration readback is verified for the five Foundry agents, but com
 multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
+
+**1.0.756 exact fleet rerun: bounded comparison passed in 3m54s.** Actual Chief,
+Sparky, Gauge and Sleuth Responses invocations produced six recorded handoffs through
+Chief. Native and independent direct evidence agreed on eight BAD signals, five
+latest-temperature values/units/ranks and all six work records' number, equipment,
+title, status and priority. Direct snapshots covered the full 90-signal and
+15-temperature inventories. Timestamp precision differences were retained for all
+13 signal rows; stale readings were explicitly labelled. There were no unrecognized
+tables, missing population comparisons or captured mutations. This does not establish
+native query execution provenance, current equipment health or physical causation.
+
+The first deployment attempt encountered a hosting connection reset and failed.
+Repeating the same canonical orchestrator returned `SUCCESS` with backend preflight
+and POST checks passed; no check was bypassed. The hosted version remained 1.0.756.
+At a 1200x900 viewport, the expanded crew occupied a separate 320px-wide rail beside
+the 807px-wide messages pane; measured rectangles did not overlap and the document
+had no horizontal overflow. Narrow-layout verification on 1.0.754 also kept crew,
+messages and composer separate. These are geometry checks, not a cold-load SLA.
+
+**Acceptance boundary:** the full ten-prompt matrix below ran on 1.0.752; targeted
+ontology, facility/chart and fleet recoveries ran on 1.0.753, 1.0.754 and 1.0.756.
+The entire matrix has not been rerun on the latest build. Flow 9's follow-up
+aggregation-metadata qualification remains unresolved. Native compound latency is
+still roughly 3-5 minutes, telemetry ingestion remains stale, and approved SQL writes,
+actual notification delivery and durable server-side orchestration are not certified
+by these runs. The proposed maintenance specialists below have not been created.
 
 **The complete 1.0.752 matrix finished: ten compound first prompts plus two follow-ups.**
 Actual Responses agent identities, delegations, native MCP results, direct tool
@@ -101,8 +127,8 @@ its valid Markdown headers used "Raw value", "Latest temperature", "Latest times
 (UTC)", "Order number" and "Linked equipment_id". Explicit adapters for these literal
 fields now pass replay of both real native formats against direct receipts: eight BAD
 signals, five temperature ranks and six work orders, retaining timestamp precision
-differences. This follow-up passes 167 related tests, build/typecheck, lint and both
-bundle checks and awaits hosted verification. No mutation was captured in either rerun.
+differences. This follow-up passed 167 related tests, build/typecheck, lint and both
+bundle checks. Its hosted result follows below. No mutation was captured in either rerun.
 
 **1.0.755 exact fleet rerun:** completed in 4m8s and compared all six work records,
 but telemetry remained unverified. The native answer put instrument IDs in `Signal ID`,
@@ -111,8 +137,8 @@ The follow-up decoder requires a literal, unambiguous OPC UA node rather than ch
 the first ID-labelled column. It preserves explicit inline units and rejects conflicts
 with a separate unit column. All three captured response formats now pass offline
 population/value/rank/unit/work comparison against their real direct receipts; timestamp
-precision differences remain. The change passes 169 regressions, build/typecheck, lint
-and two bundle checks, but still requires hosted acceptance.
+precision differences remain. The change passed 169 regressions, build/typecheck, lint
+and two bundle checks. The bounded 1.0.756 hosted acceptance is recorded above.
 
 ### Earlier hosted failures and their corrections
 

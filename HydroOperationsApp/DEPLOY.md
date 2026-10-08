@@ -6,10 +6,10 @@ Deploy the Hydro Operations app to Microsoft Fabric using **one deployment engin
 Architecture: [README.md](README.md) · [root README](../README.md) ·
 [agent roles, scientific RCA and ten-flow acceptance](AGENT-ACCEPTANCE.md).
 
-Current deployed release: **1.0.755 (`ab9c4b6`)**. The owner-restored capacity was
+Current deployed release: **1.0.756 (`3bab58c`)**. The owner-restored capacity was
 Active on October 8, and canonical deployment/backend checks passed. The
 [current acceptance report](AGENT-ACCEPTANCE.md#latest-hosted-verification) records
-the deployments and compound reruns, which are **not yet accepted**. The earlier explicit
+the deployments and compound reruns; the **full latest-build matrix is not yet accepted**. The earlier explicit
 capacity suspension remains documented as historical evidence.
 Deployment success is not proof of complete multi-agent runtime acceptance.
 Native/direct routing, facility mapping and verification-order corrections are deployed.
@@ -17,9 +17,14 @@ Input-validation and native-instance corrections are deployed. The complete host
 matrix still exposed an ontology HTTP 500 and a self-referential Data Agent request;
 neither is an accepted pass. The follow-up business-query routing correction is deployed
 with backend checks passed. Ontology recovered on rerun; native fleet retrieval now
-returns data. Structured JSON and business-header support are deployed; the next
-verified correction distinguishes instrument IDs from literal OPC UA nodes and
-preserves inline units. It awaits deployment and hosted acceptance.
+returns data. Structured JSON, business-header, literal OPC UA identity and inline-unit
+corrections are deployed. The exact fleet rerun passed its bounded comparison in
+3m54s: eight BAD signals, five temperature ranks and six work records, retaining
+timestamp precision differences and stale-data warnings. This is not proof of current
+health, native execution provenance or an enterprise latency SLA.
+The first deployment attempt failed its hosting check with a connection reset.
+A retry of the same canonical command returned `SUCCESS` with backend checks passed;
+no readiness check was bypassed.
 Facility reconciliation and the original simple station chart passed their bounded
 hosted checks on 1.0.754. See the report above.
 The latest deployment refreshed Azure sign-in, preserved all 39 redirects and verified all
