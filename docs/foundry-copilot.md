@@ -101,6 +101,17 @@ The 1.0.747 reconciliation rerun completed its real handoffs but did not establi
 full-fleet coverage or return the requested comparison table. A separate typed-query
 answer falsely claimed validation of unexecuted KQL. These remain acceptance failures,
 not successful independent verification; see the current acceptance report.
+The subsequent implementation adds mandatory independent fleet-snapshot receipts
+for explicit native/direct BAD-temperature fleet comparisons. Recognized time windows
+and rank counts are checked, and GraphQL pagination metadata must attest complete
+equipment/instrument inventory. Source limits fail rather than silently returning
+partial populations. Missing active signals are reported separately from latest BAD
+membership. A deterministic renderer compares actual native tool tables with direct
+rows and preserves work-order signal relations. Unknown native formats remain
+unverified; exact matching does not prove equivalent query scope or freshness.
+Supplied KQL validation requests render the actual local-check outcome and execution
+receipts instead of model validity claims. The local check is not a full KQL compiler.
+See the acceptance report for whether these changes have passed hosted validation.
 Native tool error envelopes and incomplete-response reasons are surfaced rather than
 replaced with a generic failure. An ontology `list_ontology_entities` entity-name pattern
 failure was observed live; improved diagnostics do not repair or certify that native service.

@@ -140,7 +140,7 @@ export function parseRcaAssessment(raw: string, receipts: readonly EvidenceRecei
   return { observations, hypotheses }
 }
 
-function cell(value: unknown): string {
+export function cell(value: unknown): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   if (text === undefined) throw new RcaEvidenceError('An undefined evidence value cannot be rendered.')
   return text.replace(/[\\`*_[\]<>]/g, '\\$&').replace(/\|/g, '\\|').replace(/[\r\n]/g, ' ')

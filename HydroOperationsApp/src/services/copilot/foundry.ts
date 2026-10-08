@@ -4,7 +4,7 @@ import type { Asset3DModelRecord } from '../rayfin.ts'
 import { catalogPrompt } from './catalog.ts'
 import { readResponsesStream } from './chatStream.ts'
 import type { AgentStep } from '../agentSteps'
-import { loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
+import { enabledKustoNames, loadCopilotSettings, renderCoordinatorPrompt, renderSystemPrompt } from './settings.ts'
 import { buildToolDefinitions, createToolRuntime, describeToolCall, type ToolArguments } from './tools.ts'
 import { AGENT_NAMES, buildAgentInput, DIRECT_TOOLS, nativeSourceError, nativeToolChoice, requestedNativeSources, verifyNativeReceipt, parseDelegation, parseHydroQuery, parseWorkOrderReview, type NativeSource } from './agentDefinitions.ts'
 import { captureApplicationEvent, captureFoundryEvent } from './agentTrace.ts'
@@ -13,6 +13,8 @@ import { workOrderApprovals } from './workOrderApproval.ts'
 import { KqlValidationError } from './query.ts'
 import { appendOmittedSnapshotWork } from './answerPresentation.ts'
 import { parseRcaAssessment, RcaEvidenceError, renderInventoryEvidence, renderOpenWorkEvidence, renderRcaAssessment, renderUnsentNotification, type EvidenceReceipt } from './rcaEvidence.ts'
+import { fleetComparisonScope, missingFleetSnapshots, renderFleetReconciliation, type NativeComparisonReceipt } from './fleetReconciliation.ts'
+import { checkRequestedKql, renderQueryChecks } from './queryEvidence.ts'
 
 export type { AgentStep, AgentStepStatus } from '../agentSteps'
 export type FoundryAnswer = AgentAnswer & {
@@ -75,6 +77,10 @@ export async function askFoundryCopilot(
     receipt.result !== null && typeof receipt.result === 'object' && 'rows' in receipt.result
     && Array.isArray(receipt.result.rows) && receipt.result.rows.length > 0)
   const receipts: EvidenceReceipt[] = []
+  const fleetScope = fleetComparisonScope(question)
+  const nativeReceipts: NativeComparisonReceipt[] = []
+  const missingFleet = () => fleetScope ? missingFleetSnapshots(fleetScope, receipts) : []
+  const queryChecks = checkRequestedKql(question, enabledKustoNames(settings))
   const assessments: string[] = []
   const workDecisions: Array<'no_draft' | 'needs_clarification'> = []
   const stationSummaries = new Map<string, string>()
@@ -97,6 +103,14 @@ export async function askFoundryCopilot(
       const chartScope = 'A request for average power output per station over a window means one mean per station, unless the operator explicitly requests hourly bins or a time-series trend. Preserve that scope in delegation and the final answer. query_station_power already renders its chart: use its exact returned rows, units, semantics and read-completion clock. Do not add hourly queries, convert to a different display unit, or emit a second CSV for that completed request. Additional investigation explicitly requested by the operator remains separate.'
       const readDiscipline = 'Resolve short asset tags such as T005 against equipment.tag, not equipment_id. Use the returned canonical equipment_id in operational equipmentId filters; never infer no work from an unresolved tag. Reuse verified current-turn identities and results. A successful zero-row result with total_matched=0 and truncated=false is a complete empty result for those exact filters; do not repeat it merely to confirm emptiness. Batch independent reads. When available sources are exhausted, return an evidence-limited conclusion rather than searching the same sources again. If a requested native source fails, report failure and do not silently replace it with direct queries.'
       const input: unknown[] = buildAgentInput(`${context}\n\n${scope}\n\n${chartScope}\n\n${readDiscipline}`, history, prompt, role)
+      if (queryChecks.length) input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+        text: `Actual local checks on the operator's supplied queries: ${JSON.stringify(queryChecks)}. These are limited safety/pattern checks, not a Kusto semantic compiler. Correct any rejected query or use an equivalent typed tool without claiming the original was valid or executed. Preserve the requested nodes, time window, aggregation and output.`,
+      }] })
+      if (fleetScope && (role === 'supervisor' || role === 'qa')) input.push({
+        type: 'message', role: 'developer', content: [{ type: 'input_text',
+          text: `This native/direct fleet comparison requires independent population coverage, not reads restricted to the native answer's node list. Gauge must retrieve ${missingFleet().join(' and ') || 'the already available full-population snapshots'}. Preserve the operator's time window and requested temperature rank limit. These tools include SQL work identifiers and exact same-signal/equipment-level relations. The application renders the comparison directly from their rows and actual native tool output; narrative claims cannot replace these receipts. Read missing snapshots in the same response round where possible. Do not repeat completed snapshots.`,
+        }],
+      })
       if (role === 'rca') input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
         text: `Complete this investigation using complete_rca_assessment. Every JSON pointer MUST begin with "/", for example "/rows/0", never "rows/0" or "/data/rows/0". Cite actual evidence IDs; prefer observations retaining asset/signal identity and source timestamps. ${requiresInspectionEvidence(question) ? 'The operator requested inspection evidence: read query_operations with entity inspections for the verified equipment before completing, unless that evidence already appears below. Do not declare it missing without checking the connected source.' : ''} Only the structured, source-checked assessment can be presented as RCA. Available current-turn evidence:\n${JSON.stringify(receipts.map(receipt => ({ evidence_id: receipt.id, tool: receipt.tool, entity: receipt.entity, data: receipt.result })))}`,
       }] })
@@ -124,6 +138,7 @@ export async function askFoundryCopilot(
               ...(nativeSource ? { tool_choice: nativeToolChoice(nativeSource) } : {}),
               ...(role === 'rca' ? { tool_choice: round >= maxRounds
                 ? { type: 'function', name: 'complete_rca_assessment' } : 'required' } : {}),
+              ...(role === 'qa' && missingFleet().length ? { tool_choice: 'required' } : {}),
             }),
             signal: requestDeadline,
           }).catch((error: unknown) => {
@@ -138,14 +153,24 @@ export async function askFoundryCopilot(
           }
           event.requestId = response.headers.get('x-request-id') ?? response.headers.get('apim-request-id') ?? response.headers.get('x-ms-request-id') ?? undefined
           const state = await readResponsesStream(response.body, role === 'supervisor'
-            && !isWorkOrderRequest(question) && !isNotificationDraftRequest(question) && !missingRequestedSpecialists(question, []).includes('rca') && !events.some(entry => entry.role === 'rca')
+            && !fleetScope && !queryChecks.length && !isWorkOrderRequest(question) && !isNotificationDraftRequest(question) && !missingRequestedSpecialists(question, []).includes('rca') && !events.some(entry => entry.role === 'rca')
             ? onProgress : undefined, raw => {
             if (captureFoundryEvent(event, raw)) publish()
           })
           requestDeadline = undefined
           if (!state.completed) throw new Error('Foundry stream ended without a completed response. No success was inferred.')
           if (nativeSource) for (const item of state.output ?? []) {
-            if (verifyNativeReceipt(item, nativeSource)) nativeExecuted = true
+            if (verifyNativeReceipt(item, nativeSource)) {
+              nativeExecuted = true
+              if (fleetScope) {
+                if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !('output' in item)) {
+                  throw new Error('Native comparison receipt omitted its output or identity.')
+                }
+                if (!nativeReceipts.some(receipt => receipt.id === item.id && receipt.source === nativeSource)) {
+                  nativeReceipts.push({ id: item.id, source: nativeSource, completedAt: new Date().toISOString(), output: item.output })
+                }
+              }
+            }
           }
           if (state.usage) usage = {
             prompt: (usage?.prompt ?? 0) + state.usage.prompt,
@@ -158,6 +183,14 @@ export async function askFoundryCopilot(
           if (!calls.length) {
             if (!state.content.trim()) throw new Error(`${AGENT_NAMES[role]} returned no answer.`)
             if (nativeSource && !nativeExecuted) throw new Error('Fabric IQ returned prose without a matching native-source execution receipt.')
+            if (role === 'qa' && missingFleet().length) {
+              input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: `Fleet verification remains incomplete. Execute ${missingFleet().join(' and ')} for the operator's window. Selected-node telemetry is not independent fleet coverage. No completion is accepted without these full-population receipts.`,
+              }] })
+              captureApplicationEvent(event, 'Rejected incomplete fleet verification; independent population snapshots are missing.')
+              publish()
+              continue
+            }
             if (role === 'qa' && !chartReminderSent && chartPending()) {
               chartReminderSent = true
               input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
@@ -188,6 +221,7 @@ export async function askFoundryCopilot(
               const missing = [
                 ...requiredNativeSources.filter(source => !completedNativeSources.has(source)).map(source => `fabric-iq (${source})`),
                 ...missingRequestedSpecialists(question, completed),
+                ...(missingFleet().length ? ['qa (independent fleet snapshots)'] : []),
               ]
               if (missing.length) {
                 captureApplicationEvent(event, `Completion check: remaining requested specialist work (${missing.join(' -> ')}).`)
@@ -374,6 +408,7 @@ export async function askFoundryCopilot(
             const missing = [
               ...requiredNativeSources.filter(source => !completedNativeSources.has(source)).map(source => `fabric-iq (${source})`),
               ...missingRequestedSpecialists(question, completed),
+              ...(missingFleet().length ? ['qa (independent fleet snapshots)'] : []),
             ]
             input.push({ type: 'message', role: 'developer', content: [{ type: 'input_text',
               text: `${missing.length ? `Before answering, complete remaining requested specialist work: ${missing.join(' -> ')}.` : 'The completed specialists are available for synthesis.'} Actual editable cards staged in this turn: ${proposals.length}. Never invent an editable template or review card when none was staged. A no_draft decision must not be followed by an offer to stage the same unsupported draft; explain the evidence needed to change that decision. Preserve the assigned scope of each remaining delegation. The final answer replaces all provisional streamed text: consolidate the complete requested findings, all requested inventory tables and chart CSV, work-review outcome and limitations. Do not return only a last-step acknowledgement or ask permission to perform work already requested.`,
@@ -398,16 +433,21 @@ export async function askFoundryCopilot(
       }
     }
     const narrative = await invoke('supervisor', question)
+    const fleetComparison = fleetScope ? renderFleetReconciliation(fleetScope, receipts, nativeReceipts) : undefined
+    const queryEvidence = renderQueryChecks(queryChecks, steps)
     const stationSummaryValues = [...stationSummaries.values()]
     const directChart = stationSummaries.size === 1
       && events.filter(event => event.role !== 'supervisor').every(event => event.role === 'qa')
       && steps.filter(step => step.status === 'done').length === 1
-    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) ? [
+    const checkedInvestigation = assessments.length || isNotificationDraftRequest(question) || fleetComparison || queryEvidence ? [
+      ...(queryEvidence ? [queryEvidence] : []),
+      ...(fleetComparison ? [fleetComparison] : []),
       ...assessments,
-      ...specialistResults.filter(result => result.role === 'fabric-iq').map(result =>
+      ...specialistResults.filter(result => result.role === 'fabric-iq' && !fleetComparison).map(result =>
         `### Native-source retrieval claims\n\nThe following is Sparky's returned retrieval text, preserved for comparison. It is not a validated diagnosis or proof of causal relevance; consult the native execution receipts for source provenance.\n\n${result.answer.split('\n').map(line => `> ${line}`).join('\n')}`),
       ...stationSummaryValues.map(summary => `### Source-derived station summary\n\n${summary}`),
-      renderInventoryEvidence(receipts),
+      renderInventoryEvidence(fleetComparison ? receipts.filter(receipt =>
+        !['query_signal_quality_snapshot', 'query_turbine_temperature_snapshot'].includes(receipt.tool)) : receipts),
       ...(workDecisions.length || proposals.length ? [
         `### Work review\n\nEditable proposals staged: ${proposals.length}. No SQL write was performed. Structured decisions: ${workDecisions.join(', ') || 'proposal available for human review'}. Review the actual cards and open-work evidence; no diagnostic priority is inferred.`,
       ] : []),

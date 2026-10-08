@@ -133,6 +133,13 @@ export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: 
   } : undefined }
 }
 
+export function readingFreshness(eventTime: unknown, readCompletedAt: unknown): string {
+  const age = typeof eventTime === 'string' && typeof readCompletedAt === 'string'
+    ? Date.parse(readCompletedAt) - Date.parse(eventTime) : NaN
+  if (!Number.isFinite(age)) return 'Uncertain (missing/invalid timestamp)'
+  return age < 0 ? 'Uncertain (future timestamp)' : age > 60_000 ? 'Stale (>60s)' : 'Within 60s'
+}
+
 export function stationPowerSummary(rows: StationPowerRow[], lookback: string, readCompletedAt: string): string {
   const readTime = Date.parse(readCompletedAt)
   if (!Number.isFinite(readTime)) throw new Error('Station power read-completion time is invalid.')
@@ -142,8 +149,7 @@ export function stationPowerSummary(rows: StationPowerRow[], lookback: string, r
     '| Station | Mean power reading (MW) | Samples | BAD samples | Latest event (UTC) | Latest-reading freshness |',
     '|---|---:|---:|---:|---|---|',
     ...rows.map(row => {
-      const age = readTime - Date.parse(row.latest_event_time)
-      const freshness = age < 0 ? 'Uncertain (future timestamp)' : age > 60_000 ? 'Stale (>60s)' : 'Within 60s'
+      const freshness = readingFreshness(row.latest_event_time, readCompletedAt)
       return `| ${row.Station.replace(/\|/g, '\\|').replace(/[\r\n]/g, ' ')} | ${row.average_power_MW} | ${row.samples} | ${row.bad_samples} | ${row.latest_event_time} | ${freshness} |`
     }),
   ].join('\n')
@@ -167,10 +173,14 @@ export function buildQualitySnapshotQuery(quality = 'BAD', lookback = '30m'): st
   if (!['GOOD', 'UNCERTAIN', 'BAD'].includes(normalizedQuality)) {
     throw new Error("Invalid quality. Use GOOD, UNCERTAIN, or BAD.")
   }
+  return `${buildLatestSignalSnapshotQuery(lookback)}
+| where toupper(quality) == '${normalizedQuality}'`
+}
+
+export function buildLatestSignalSnapshotQuery(lookback = '30m'): string {
   return `OPCUAEvents
 | where event_time ${lookbackStart(lookback)}
 | summarize arg_max(event_time, value, quality) by opcua_node_id
-| where toupper(quality) == '${normalizedQuality}'
 | project event_time, opcua_node_id, value, quality
 | order by opcua_node_id asc`
 }

@@ -22,6 +22,20 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+**Next implementation (not yet deployed or hosted-accepted):** fleet reconciliation
+now requires independent full-population snapshot receipts, preserving recognized
+explicit windows and rank limits. Snapshot metadata must attest complete equipment
+and instrument inventory via GraphQL pagination metadata; missing or partial inventory
+and the telemetry row limit fail explicitly. Quality snapshots enumerate latest readings
+before filtering BAD, allowing missing active signals to be disclosed.
+The comparison renderer uses actual native tool tables and direct snapshot rows, not
+agent paraphrases. It exposes missing/extra members, differing values, ranks, units and
+timestamp precision, stale readings and exact direct-work relations. Unrecognized native
+tables remain explicitly unverified; native work-order linkage is not certified by the
+signal comparison. Supplied KQL checks and actual source execution are rendered from
+local validation and execution receipts; using a typed alternative cannot validate the
+original query. These corrections still require the hosted checks below to be rerun.
+
 **1.0.747: runtime recovery is verified; answer-quality acceptance is still failed.**
 The complete native/direct reconciliation prompt now returned through
 Chief -> Sparky -> Chief -> Gauge -> Chief -> Sleuth -> Chief -> Gauge -> Chief,

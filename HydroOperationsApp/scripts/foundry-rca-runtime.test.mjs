@@ -5,9 +5,9 @@ import { after, test } from 'node:test'
 const harness = { reads: [], requests: [], responses: [], verifiedSources: [], options: undefined }
 globalThis.__rcaRuntimeTest = harness
 const stubs = {
-  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("data-agent"); }; export const verifyOntologyForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("ontology"); }; export const queryStid = async () => { throw new Error("Unexpected STID read"); }; export const runKustoQuery = async () => { throw new Error("Unexpected Kusto read"); };',
+  '../fabric.ts': 'export const foundryAgentToken = async () => "test-token"; export const verifyDataAgentForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("data-agent"); }; export const verifyOntologyForFoundry = async () => { globalThis.__rcaRuntimeTest.verifiedSources.push("ontology"); }; export const queryStid = async () => { if (!globalThis.__rcaRuntimeTest.stid) throw new Error("Unexpected STID read"); return globalThis.__rcaRuntimeTest.stid; }; export const runKustoQuery = async (...args) => { if (!globalThis.__rcaRuntimeTest.kusto) throw new Error("Unexpected Kusto read"); return globalThis.__rcaRuntimeTest.kusto(...args); };',
   '../rayfin.ts': 'export const isRayfinConfigured = () => true; export const isRayfinSignedIn = () => true; export const listWorkOrders = async () => []; export const listAsset3DModels = listWorkOrders; export const listInspections = listWorkOrders; export const listMaintenanceNotifications = listWorkOrders; export const listSpareParts = listWorkOrders;',
-  './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test"}); export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
+  './settings.ts': 'export const loadCopilotSettings = () => ({projectEndpoint:"https://test.services.ai.azure.com/api/projects/test"}); export const enabledKustoNames = () => ["OPCUAEvents"]; export const renderCoordinatorPrompt = () => ""; export const renderSystemPrompt = () => "";',
   './catalog.ts': 'export const catalogPrompt = () => "";',
   './workOrderApproval.ts': `import { createApprovalStore } from ${JSON.stringify(new URL('../src/services/copilot/approvalStore.ts', import.meta.url).href)}; export const workOrderApprovals = createApprovalStore(); export const validateWorkOrderTarget = async () => {};`,
   './tools.ts': `export const buildToolDefinitions = () => [];
@@ -73,8 +73,84 @@ function reset() {
   resetFoundryConversation()
   harness.requests.length = harness.responses.length = harness.reads.length = 0
   harness.verifiedSources.length = 0
+  harness.stid = harness.kusto = undefined
   harness.reads.push({ result: { rows: [{ Station: 'Sloy', average_power_MW: 123.45 }] }, rowCount: 1, groundedSummary: 'Measured mean: 123.45 MW.' })
 }
+
+test('full-fleet snapshots enumerate all quality states and disclose inventory signals without readings', async () => {
+  reset()
+  harness.stid = {
+    inventoryComplete: true, facilities: [], systems: [],
+    equipment: ['T001', 'T002', 'T003'].map(id => ({ equipment_id: `EQUIP_RTI_${id}`, tag: id, equipment_type_code: 'turbine' })),
+    instruments: ['T001', 'T002', 'T003'].map(id => ({
+      equipment_id: `EQUIP_RTI_${id}`, instrument_id: `I_${id}`, opcua_node_id: `ns=2;s=${id}.turbine_temp`, unit: 'C',
+    })),
+  }
+  harness.kusto = async query => {
+    assert.doesNotMatch(query, /where.*quality/)
+    return { columns: ['opcua_node_id', 'value', 'event_time', 'quality'],
+      rows: [['ns=2;s=T001.turbine_temp', 80, '2026-10-08T06:00:00Z', 'BAD'],
+        ['ns=2;s=T002.turbine_temp', 70, '2026-10-08T06:00:00Z', 'GOOD']] }
+  }
+  const run = createToolRuntime(defaultCopilotSettings())
+  const result = await run('query_signal_quality_snapshot', { quality: 'BAD', equipment_type: 'turbine', lookback: 'today' })
+  assert.equal(result.result.rows.length, 1)
+  assert.equal(result.result.population.expected_signal_count, 3)
+  assert.deepEqual(result.result.population.signals_without_readings, ['ns=2;s=T003.turbine_temp'])
+  assert.equal(result.result.latest_quality_node_count, 1)
+  harness.stid.inventoryComplete = false
+  await assert.rejects(run('query_signal_quality_snapshot', { quality: 'BAD', equipment_type: 'turbine' }), /pagination/)
+})
+
+test('coordinator rejects selected-node verification and preserves a deterministic comparison instead of Chief claims', async () => {
+  reset()
+  const snapshot = temperature => ({ result: {
+    rows: [{ equipment_id: 'EQUIP_RTI_T001', opcua_node_id: 'ns=2;s=T001.turbine_temp', value: 80,
+      quality: 'BAD', unit: 'C', event_time: '2026-10-08T06:00:00Z', open_work_orders: [] }],
+    population: { equipment_type: 'turbine', equipment_ids: null, inventory_complete: true,
+      expected_signal_count: 1, signals_without_readings: [] },
+    truncated: false, quality_filter: 'BAD', lookback: 'today', unresolved_nodes: [],
+    read_completed_at_utc: '2026-10-08T10:00:00Z',
+    ...(temperature ? { requested_limit: 5 } : {}),
+  }, rowCount: 1 })
+  harness.reads.push(snapshot(false), snapshot(true))
+  harness.responses.push(delegate('fabric-iq'), nativeReply('No comparable table returned.'),
+    delegate('qa'), { role: 'qa', calls: [read] },
+    { role: 'qa', text: 'All fleet members verified using this unrelated station query.' },
+    { role: 'qa', calls: [
+      call('bad', 'hydro_query', { tool_name: 'query_signal_quality_snapshot', arguments: { quality: 'BAD', equipment_type: 'turbine', lookback: 'today' } }),
+      call('hot', 'hydro_query', { tool_name: 'query_turbine_temperature_snapshot', arguments: { lookback: 'today', limit: 5 } }),
+    ] },
+    { role: 'qa', text: 'Native and direct results match completely.' },
+    { role: 'supervisor', text: 'All turbines are healthy and every comparison passed.' })
+  const result = await askFoundryCopilot('Ask the Data Agent which turbines have BAD signals and hottest temperatures today; independently verify both populations.')
+  assert.match(result.text, /Source-checked fleet comparison/)
+  assert.match(result.text, /Comparison incomplete/)
+  assert.doesNotMatch(result.text, /All turbines are healthy|every comparison passed|match completely/)
+  assert.ok(harness.requests.filter(request => request.agent_reference.name === 'hydro-qa-agent').slice(0, 3)
+    .every(request => request.tool_choice === 'required'))
+  assert.ok(result.orchestrationEvents.flatMap(event => event.trace ?? [])
+    .some(trace => /Rejected incomplete fleet/.test(trace.label)))
+})
+
+test('typed-query execution cannot be presented as validation of the supplied invalid KQL', async () => {
+  reset()
+  const query = 'OPCUAEvents | summarize arg_max(event_time, value, quality) by opcua_node_id | project value=arg_max_value'
+  harness.reads.length = 0
+  harness.reads.push({ result: { rows: [{ value: 75.335, quality: 'GOOD', event_time: '2026-10-08T06:05:01.359187Z' }],
+    read_completed_at_utc: '2026-10-08T10:00:00Z', truncated: false },
+  rowCount: 1, query: 'OPCUAEvents | summarize arg_max(event_time, value, quality) by opcua_node_id' })
+  harness.responses.push(delegate('qa'), { role: 'qa', calls: [call('typed', 'hydro_query', {
+    tool_name: 'query_telemetry', arguments: { opcua_node_ids: ['ns=2;s=T003.turbine_temp'], lookback: 'today', aggregation: 'latest' },
+  })] }, { role: 'qa', text: 'The original KQL is valid.' }, { role: 'supervisor', text: 'The original KQL is valid and executed successfully.' })
+  const result = await askFoundryCopilot(`Check this read-only query. Correct invalid columns or use the equivalent typed tool. Query: ${query}`)
+  assert.match(result.text, /Rejected by local validation/)
+  assert.match(result.text, /Supplied query executed exactly: \*\*no\*\*/)
+  assert.match(result.text, /Executed query\\_telemetry/)
+  assert.match(result.text, /75\.335/)
+  assert.match(result.text, /Stale/)
+  assert.doesNotMatch(result.text, /The original KQL is valid/)
+})
 
 test('RCA rejects prose and invalid reports, finishes immediately on checked completion, and excludes Chief claims', async () => {
   reset()

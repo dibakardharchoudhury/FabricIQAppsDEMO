@@ -626,13 +626,16 @@ type StidPayload = {
   data?: {
     facilities?: { items?: Facility[] }
     systems?: { items?: System[] }
-    equipment?: { items?: Equipment[] }
-    instruments?: { items?: Instrument[] }
+    equipment?: { items?: Equipment[]; hasNextPage?: boolean }
+    instruments?: { items?: Instrument[]; hasNextPage?: boolean }
   }
   errors?: Array<{ message?: string }>
 }
 
-export type StidData = { facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[] }
+export type StidData = {
+  facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[]
+  inventoryComplete: boolean
+}
 
 export type WeatherLocation = {
   location_id: string
@@ -716,8 +719,8 @@ export async function queryStid(): Promise<StidData | null> {
   // Aliases map to the real Lakehouse tables exposed by the
   // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
   const coreQuery = `facilities: silver_facilities(first: 20) { items { facility_id facility_name type country lat lon commissioned_date } }
-    equipment: silver_equipments(first: 100) { items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
-    instruments: silver_instruments(first: 500) { items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
+    equipment: silver_equipments(first: 100) { hasNextPage items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
+    instruments: silver_instruments(first: 500) { hasNextPage items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
   const execute = async (query: string) => {
     const response = await fetch(graphqlUrl, {
       method: 'POST', cache: 'no-store',
@@ -746,6 +749,9 @@ export async function queryStid(): Promise<StidData | null> {
     systems,
     equipment,
     instruments: payload.data?.instruments?.items ?? [],
+    inventoryComplete: Array.isArray(payload.data?.equipment?.items)
+      && Array.isArray(payload.data?.instruments?.items)
+      && payload.data.equipment.hasNextPage === false && payload.data.instruments.hasNextPage === false,
   }
 }
 

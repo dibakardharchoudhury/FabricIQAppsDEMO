@@ -6,7 +6,7 @@ import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
 import {
-  applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
+  applyFilter, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildLatestSignalSnapshotQuery, buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatureRows, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
   projectColumns, TELEMETRY_AGGREGATIONS, truncateForModel, validateKql, type FilterCondition,
 } from './query.ts'
 
@@ -412,7 +412,8 @@ export function createToolRuntime(
         if (!isRayfinConfigured()) throw new Error('The operational database is not configured in this build.')
         if (!isRayfinSignedIn()) throw new Error(SIGN_IN_HINT)
         if (temperature && args.equipment_ids !== undefined && (!Array.isArray(args.equipment_ids) || !args.equipment_ids.length || args.equipment_ids.some(id => typeof id !== 'string' || !id.trim()))) throw new Error('Equipment scope must be a nonempty array of exact equipment IDs.')
-        const csl = temperature ? buildTemperatureSnapshotQuery(args.lookback) : buildQualitySnapshotQuery(args.quality, args.lookback)
+        if (!temperature) buildQualitySnapshotQuery(args.quality, args.lookback)
+        const csl = temperature ? buildTemperatureSnapshotQuery(args.lookback) : buildLatestSignalSnapshotQuery(args.lookback)
         stid ??= queryStid()
         const [telemetryResult, data, workOrders] = await Promise.all([
           runKustoQuery(csl, MAX_ROWS),
@@ -420,7 +421,8 @@ export function createToolRuntime(
           loadOperations('work_orders'),
         ])
         if (!data) throw new Error('Asset metadata is not connected. Connect the STID GraphQL source first.')
-        if (temperature && telemetryResult.rows.length >= MAX_ROWS) throw new Error('Temperature snapshot reached the source row limit; a complete hottest-turbine ranking cannot be verified.')
+        if (!data.inventoryComplete) throw new Error('Asset inventory pagination did not attest a complete equipment/instrument population. Fleet verification is incomplete; no partial snapshot was returned.')
+        if (telemetryResult.rows.length >= MAX_ROWS) throw new Error('Fleet snapshot reached the source row limit; complete membership and ranking cannot be verified.')
         const instruments = new Map(data.instruments
           .filter(instrument => instrument.is_active !== false)
           .map(instrument => [instrument.opcua_node_id, instrument]))
@@ -428,9 +430,17 @@ export function createToolRuntime(
           .filter(asset => asset.is_active !== false)
           .map(asset => [asset.equipment_id, asset]))
         const wantedType = temperature ? 'turbine' : args.equipment_type?.trim().toLowerCase()
+        const expectedNodes = [...instruments.values()].filter(instrument => {
+          const asset = equipment.get(instrument.equipment_id)
+          if (!asset || (wantedType && !`${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.toLowerCase().includes(wantedType))) return false
+          return !temperature || (instrument.opcua_node_id.endsWith('.turbine_temp')
+            && (!args.equipment_ids || args.equipment_ids.includes(asset.equipment_id)))
+        }).map(instrument => instrument.opcua_node_id)
+        const sourceRows = kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows)
+        const observedNodes = new Set(sourceRows.map(row => String(row.opcua_node_id ?? '')))
         const unresolvedNodes: string[] = []
         const open = (status: unknown) => !['completed', 'cancelled'].includes(String(status ?? '').trim().toLowerCase())
-        const rows = kustoRowsToObjects(telemetryResult.columns, telemetryResult.rows).flatMap(reading => {
+        const rows = sourceRows.flatMap(reading => {
           const node = String(reading.opcua_node_id ?? '')
           const instrument = instruments.get(node)
           const asset = instrument ? equipment.get(instrument.equipment_id) : undefined
@@ -438,6 +448,7 @@ export function createToolRuntime(
           const assetType = `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim()
           if (wantedType && !assetType.toLowerCase().includes(wantedType)) return []
           if (temperature && args.equipment_ids && !args.equipment_ids.includes(asset.equipment_id)) return []
+          if (!temperature && String(reading.quality).toUpperCase() !== (args.quality ?? 'BAD').trim().toUpperCase()) return []
           const relatedWork = workOrders
             .filter(order => order.equipmentId === asset.equipment_id && open(order.status))
             .map(order => ({
@@ -471,16 +482,23 @@ export function createToolRuntime(
         return {
           result: {
             read_completed_at_utc: new Date().toISOString(),
+            lookback: args.lookback ?? '30m',
+            population: {
+              equipment_type: wantedType ?? null,
+              equipment_ids: temperature ? args.equipment_ids ?? null : null,
+              inventory_complete: true,
+              expected_signal_count: expectedNodes.length,
+              signals_without_readings: expectedNodes.filter(node => !observedNodes.has(node)),
+            },
             rows: capped,
             row_count: capped.length,
             ...(temperature ? {
               latest_raw_temperature_ranked_descending: true,
-              lookback: args.lookback ?? '30m',
               threshold: args.threshold,
               threshold_operator: args.threshold_operator ?? 'gt',
               requested_limit: args.limit ?? (args.threshold === undefined ? 5 : null),
               requested_equipment_without_readings: (args.equipment_ids ?? []).filter(id => !rows.some(row => row.equipment_id === id)),
-            } : { latest_per_signal_then_quality_filter: true, latest_quality_node_count: telemetryResult.rows.length }),
+            } : { latest_per_signal_then_quality_filter: true, quality_filter: (args.quality ?? 'BAD').trim().toUpperCase(), latest_quality_node_count: sourceRows.filter(row => String(row.quality).toUpperCase() === (args.quality ?? 'BAD').trim().toUpperCase()).length }),
             returned_active_equipment_signal_count: rows.length,
             unresolved_nodes: unresolvedNodes,
             truncated: truncated || telemetryResult.rows.length >= MAX_ROWS,
