@@ -394,12 +394,21 @@ export async function readFleetSnapshot(config, metadata, temperature, args, tok
     client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
   const query = fleetSnapshotQuery(temperature, args)
   const readStartedAt = new Date().toISOString()
-  const [equipment, instruments, workOrders, telemetry] = await Promise.all([
+  const labels = ['equipment metadata', 'instrument metadata', 'work-order inventory', 'telemetry']
+  const reads = await Promise.allSettled([
     readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql, fetcher),
     readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql, fetcher),
     readWorkInventory(),
     readTelemetryQuery(metadata, query, tokens.kusto, fetcher),
   ])
+  const failures = reads.flatMap((read, index) => {
+    if (read.status === 'fulfilled') return []
+    const code = typeof read.reason?.code === 'string' && /^[A-Z_0-9]+$/.test(read.reason.code)
+      ? read.reason.code : 'READ_FAILED'
+    return [`${labels[index]} failed (${code})`]
+  })
+  if (failures.length) throw new Error(`${failures.join('; ')}. No partial fleet snapshot is permitted.`)
+  const [equipment, instruments, workOrders, telemetry] = reads.map(read => read.value)
   return shapeFleetSnapshot(temperature, args, {
     equipment, instruments, inventoryComplete: true, telemetryRows: telemetry.rows, workOrders,
     workInventoryComplete: true, readStartedAt, readCompletedAt: new Date().toISOString(),

@@ -373,9 +373,11 @@ test('backend fleet reader completes metadata pagination, uses authoritative Kus
   assert.equal(hot.population.expected_signal_count, 7)
   assert.match(hot.provenance.work_orders, /complete paginated/)
   await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens, fetcher,
-    async () => { throw new Error('EXCHANGE_NOT_ENABLED') }), /EXCHANGE_NOT_ENABLED/)
+    async () => { const error = new TypeError('sensitive SDK detail'); error.code = 'EXCHANGE_NOT_ENABLED'; throw error }),
+  /work-order inventory failed \(EXCHANGE_NOT_ENABLED\).*No partial fleet snapshot/)
   await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens,
-    async () => response({ errors: [{ message: 'metadata failed' }] }), workReader), /failed|envelope/)
+    async () => response({ errors: [{ message: 'metadata failed' }] }), workReader),
+  /equipment metadata failed \(READ_FAILED\); instrument metadata failed \(READ_FAILED\)/)
   await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens,
     async (url, options) => url.includes('/graphql') ? fetcher(url, options)
       : response({ Tables: [], HasErrors: true }), workReader), /error|partial/)
