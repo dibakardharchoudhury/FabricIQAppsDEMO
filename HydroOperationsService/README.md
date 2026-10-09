@@ -7,31 +7,41 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v22 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v23 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v22 image is
-`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
-(`validated-20261009155318`, ACR run `dts`). The source configuration digest is
+The active v23 image is
+`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`
+(`validated-20261009223856`, ACR run `dtt`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
 acceptance test created production work.
 
-The supported-runtime regression on October 9 passed all 129 backend tests under
-Node 24.21.0 and Pyright with zero errors or warnings. The companion SPA cleanup
-passed 378 frontend tests, typecheck, lint, environment validation and production
-build under the same Node 24 runtime.
+The supported-runtime regression on October 9 passed all 135 backend tests under
+Node 24 and Pyright with zero errors or warnings. The companion SPA passed 208
+frontend tests, typecheck, lint, environment validation and production build.
 
-The final signed-browser Prompt 10 v22 acceptance passed on app version 1.0.800.
+Chief now exposes one strict `plan_orchestration` tool. It returns one complete
+ordered plan of one to eight specialist steps; the backend validates and executes
+those steps serially, propagates immutable evidence and completed reports, and adds
+independent Gauge verification after RCA/work review when required. Prompt-specific
+runtime routing shortcuts and the open-ended Chief function loop are removed.
+Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
+projection runtime use `gpt-5.6-sol`.
+
+The final signed-browser Prompt 10 v22 acceptance passed historically on app version 1.0.800.
 The primary work-order draft completed in 1m31s and was rejected by the backend
 without a write. Its same-chat RCA follow-up completed in 46.6s through Chief,
 Sleuth and Gauge, retained two literal source rows in two tables, created no
 second proposal, and displayed the validated no-fault/undetermined conclusion
-with explicit evidence gaps.
+with explicit evidence gaps. It does not certify v23. The current app 1.0.803
+deployment passed readiness, and direct Chief invocations verified all canonical
+plans plus the BAD/UNCERTAIN and T010 RCA regressions. Protected hosting then
+required normal sign-in, so current delegated-source/UI acceptance remains pending.
 
 ## Thin-client contract
 

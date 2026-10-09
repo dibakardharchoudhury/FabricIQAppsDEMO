@@ -6,15 +6,25 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## Current state: Foundry-owned execution
+## Current state: bounded Foundry-owned planner/executor
 
-Hosted Agent v22 is active on immutable image
-`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
-(`validated-20261009155318`, ACR run `dts`). It runs the Microsoft Agent Framework
+Hosted Agent v23 is active on immutable image
+`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`
+(`validated-20261009223856`, ACR run `dtt`). It runs the Microsoft Agent Framework
 workflow that coordinates Chief, Gauge, Sleuth, Fixer and Sparky. The SPA uses
 one authenticated Invocations endpoint for normal Foundry chat and for both
 Battle comparison routes. Real backend events drive the crew animation; the
 browser neither invents handoffs nor executes specialist tools.
+
+The architecture now uses a true bounded planner/executor rather than an open-ended
+Chief function loop. Chief v17 exposes only `plan_orchestration` and returns one
+complete ordered plan of one to eight steps. The backend validates each delegation
+through the shared contract, executes specialists serially, injects prior reports
+and immutable evidence into later steps, adds independent Gauge verification where
+required, and renders non-chart answers from literal source receipts. No prompt
+regex, BAD/UNCERTAIN shortcut, direct T010 route or post-draft routing bypass remains.
+Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
+projection runtime use `gpt-5.6-sol`.
 
 The legacy `browserFoundry.ts` coordinator and its dedicated runtime suite were
 removed after hosted parity dependency analysis. Administration now retains only
@@ -24,7 +34,8 @@ tool allowlists and table/source switches were removed. The packaged Node source
 bridge, direct query schemas, embedded SQL/work-order UI, approval cards, native
 Data Agent support for the classic app surface and Battle presentation remain.
 
-Prompt 1 through Prompt 9 passed the live hosted matrix. The final signed-browser
+Prompt 1 through Prompt 9 and the final Prompt 10 passed the historical v22 live
+hosted matrix. The final signed-browser
 Prompt 10 v22 run also passed. Its primary completed in 1m31s through Chief v16,
 Gauge v15 and Fixer v15 and produced exactly one editable Low-priority T005 card
 with the requested title. Backend rejection confirmed that no work order was
@@ -38,12 +49,17 @@ plus validated evidence-gap labels and `No production writes executed`. Authenti
 used the existing target-tenant browser account and normal application connection
 controls; no credential, cookie or CLI-token substitution was used.
 
-Supported-runtime validation passed 129 backend tests and Pyright, plus 378
-frontend tests, typecheck, lint, environment validation and production build on
-Node 24.21.0.
+The v23 candidate passed 135 backend tests and Pyright, plus 208 frontend tests,
+typecheck, lint, environment validation and production build on Node 24. Direct
+GPT-5.6 Chief invocations verified one-call plans for all ten canonical primary
+prompts, both documented follow-ups and the BAD/UNCERTAIN and T010 RCA regressions.
+One concurrent planning request returned an MCP HTTP 504 and passed on bounded retry.
+The protected app then required normal Fabric sign-in; no interactive login or token
+substitution was attempted. Consequently current source execution, answer quality,
+latency, current-bundle animation, Battle parity and cards remain unaccepted.
 
-The canonical Fabric orchestrator deployed cleanup commit `d4074c5` at
-`2026-10-09T15:48:45Z` as deployment `deploy-20261009154808-50966658`. It
+The canonical Fabric orchestrator deployed planner commit `5a47c24` as app
+1.0.803. It
 reapplied AppBackend runtime/CORS, passed GraphQL and token preflight/POST
 contracts, preserved 39 redirects and reported `SUCCESS`.
 

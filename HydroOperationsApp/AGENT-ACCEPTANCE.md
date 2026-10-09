@@ -1,23 +1,55 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
 This report distinguishes implemented behavior, observed runtime results and proposals.
-**The ten-flow hosted suite is accepted for the bounded behaviors recorded below.**
-Deployment success and unit tests alone are not proof of agent answers, causal
-diagnosis, SQL mutations or notification delivery; the live signed-browser runs
-and explicit limitations remain part of this acceptance.
+**The earlier v22 ten-flow result is historical evidence, not acceptance of the
+current planner/executor release.** Deployment success, unit tests and planner-only
+invocations are not proof of source-backed answers, causal diagnosis, SQL mutations,
+notification delivery or current signed-browser behavior.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPTS.md).
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## October 9 hosted orchestration status
+## October 9 planner/executor deployment status
 
-**Current deployed Fabric app: 1.0.800 (`d4074c5`). Current Hosted Agent: v22.**
+**Current deployed Fabric app: 1.0.803 (`5a47c24`). Current Hosted Agent: v23.**
 The active image is
-`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
-(`validated-20261009155318`, ACR run `dts`). The canonical Fabric deployment
-reported `SUCCESS`, restored AppBackend runtime/CORS and passed browser-equivalent
-preflight and POST checks for `/graphql` and `/api/auth/v1/token`.
+`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`
+(`validated-20261009223856`, ACR run `dtt`). The runtime and all five prompt agents
+use `gpt-5.6-sol`; verified versions are Chief v17, Gauge v16, Sleuth v18, Fixer v16
+and Sparky v13.
+
+The previous open-ended Chief function loop and prompt-specific routing shortcuts
+have been removed. Chief now makes one schema-bound `plan_orchestration` call with
+one to eight ordered specialist steps. The Agent Framework backend validates the
+complete plan, executes it serially, propagates immutable evidence and completed
+specialist reports, appends independent Gauge verification after RCA/work review
+when required, and builds non-chart tables directly from literal source receipts.
+Chart projection remains separately bounded and pointer-validated.
+
+The canonical Fabric deployment reported `SUCCESS`, observed the assigned capacity
+Active, restored AppBackend runtime/CORS, preserved 39 redirects and passed
+browser-equivalent preflight and POST checks for `/graphql` and
+`/api/auth/v1/token`. Current validation passed 135 backend tests, Pyright with
+zero diagnostics, 208 frontend tests, typecheck, lint, environment validation and
+the production build on Node 24.
+
+Direct GPT-5.6 Chief invocations covered all ten canonical primary prompts, both
+required follow-ups, `Which turbines had BAD or UNCERTAIN telemetry quality in the
+last 6 hours?`, and `RCA for T010`. Every successful response called
+`plan_orchestration` exactly once and selected the expected specialist/source
+sequence. One concurrent MCP invocation returned HTTP 504 and passed on bounded
+retry. These are planning-contract checks only: they did not execute delegated
+Fabric/SQL sources or certify answer latency, tables, charts or cards.
+
+After deployment, refreshing the protected hosting page returned Fabric's normal
+`Sign in to continue` gate. No interactive login was started and no CLI token was
+substituted for the SPA-issued delegated leases. Therefore the v23 source-backed
+ten-prompt matrix, the two production regressions, current-bundle handoff animation,
+Battle parity and approval-card behavior remain pending normal signed-browser
+acceptance. Production writes remain disabled in the Hosted Agent.
+
+## Historical v22 hosted orchestration result
 
 The browser now uses only the authenticated Hosted Agent Invocations transport
 for Foundry and Battle orchestration. The old browser supervisor/tool loop and
@@ -54,11 +86,11 @@ and application connection controls; no credentials, cookies or CLI tokens were
 copied, and no authorization check was weakened. One earlier v21 attempt remains
 recorded as a bounded Sleuth inference stall rather than being hidden by this pass.
 
-Current regression evidence on Node 24.21.0: 129/129 backend tests, Pyright with
+Historical v22 regression evidence on Node 24.21.0: 129/129 backend tests, Pyright with
 zero errors/warnings, 378/378 frontend tests, typecheck, lint, environment
 validation and production build.
 
-**Current deployed release: 1.0.775 (`41d458a`).** Canonical deployment returned
+**Historical browser-coordinated release 1.0.775 (`41d458a`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
 GraphQL POST returned 200 and the deliberately incomplete token POST returned 400,
@@ -707,28 +739,30 @@ errors were retained in the session evidence file `compound-flows-1.0.742.json`.
 
 ## Current implementation and limitations
 
-Five persistent **Foundry Prompt Agent definitions** execute through the Responses API.
-They are model-plus-instructions-plus-tools, not five continuously running application
-processes. The browser runs the coordination loop, dispatches approved read tools using
-the signed-in identity, returns their results to the requesting agent, and records actual
-handoffs. Chief delegates; specialists return to Chief, not directly to one another.
-This is not hosted Agent Framework orchestration, durable background execution or direct A2A.
-Closing/reloading the page loses in-memory conversation state.
+Five persistent **Foundry Prompt Agent definitions** execute through the Responses API
+inside Hosted Agent `hydro-orchestrator`. They are model-plus-instructions-plus-tools,
+not five continuously running application processes. The Python Microsoft Agent
+Framework runtime owns planning, serial specialist execution, source-tool callbacks,
+checkpoint journals, evidence validation, final verification and streamed handoff
+events. The browser is a thin authenticated Invocations client and approval surface;
+it does not run a supervisor or specialist tool loop.
 
 | Display name / deployed name | Responsibility and triggers | Actual tools and knowledge |
 |---|---|---|
-| **Chief / hydro-supervisor-agent** | Decompose requests, preserve source and scope, coordinate capability order, synthesize results and caveats | `delegate_to_agent`; shared evidence policy; current conversation history; returned specialist findings. No direct database write tool. |
+| **Chief / hydro-supervisor-agent** | Produce one complete minimal ordered plan while preserving requested source and scope | `plan_orchestration` only; one to eight validated `qa`, `rca`, `work-order` or `fabric-iq` steps. No source or database write tool. |
 | **Gauge / hydro-qa-agent** | Factual retrieval, current health, existing work, stock lists, charts, independent factual verification | `hydro_query`: catalog-governed asset/operations reads, KQL and telemetry templates, canonical BAD/HOT snapshots, station-power chart, visualization and 3D model retrieval. |
 | **Sleuth / hydro-rca-agent** | Explicit investigation, diagnosis or root-cause analysis | The same read-only data tools; assigned evidence and scientific RCA instructions. No validated OEM manual retrieval corpus or numerical causal model is currently attached. |
 | **Fixer / hydro-work-order-agent** | Explicit or conditional requests for editable new work | Read tools plus `propose_work_order` (in-memory card only) and `complete_work_order_review` (no-draft/clarification decision). SQL creation belongs to the human-approved application path, not the agent. |
 | **Sparky / hydro-fabric-iq-agent** | Explicit published Data Agent or ontology-native context/query tasks | Two separate native `fabric_iq_preview` connections: `fabriciq-data-agent` and `fabriciq-ontology`. These are distinct sources, not interchangeable fallback tools. |
 
 The source catalog describes allowed entities, columns and KQL functions; it is not a
-copy of the underlying business data. Tools retrieve current records. Browser TypeScript
-implements validation, query templates, visualization, orchestration and approval state.
-The Python deployment orchestrator provisions/readbacks agent definitions and app resources;
-it is not an RCA script or a runtime specialist. Fabric setup notebooks provision data,
-ontology and native agents. Model-generated text alone cannot create a SQL work order.
+copy of the underlying business data. Hosted Node/TypeScript contracts implement query
+templates and shared schema validation; Python owns Agent Framework execution, immutable
+receipts and answer certification. Browser TypeScript renders the certified stream,
+visualizations and approval state. The deployment orchestrator provisions/readbacks agent
+definitions and app resources; it is not a runtime specialist. Fabric setup notebooks
+provision data, ontology and native agents. Model-generated text alone cannot create a SQL
+work order.
 
 Full prior conversation is provided to Chief only. Direct specialists receive their scoped
 assignment, the original request as context and current-turn specialist evidence.

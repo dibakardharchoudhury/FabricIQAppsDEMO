@@ -8,11 +8,26 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.775 (`41d458a`)**. The October 8 deployment completed
-through the canonical deployer after its supported tenant-switch flow. It printed
-`SUCCESS` and `DEPLOYED_APP_URL`, preserved all 39 redirects, verified the five
-agent definitions and passed AppBackend preflight/POST checks. Hosting verification
-returned `protected-sign-in-gate`; authenticated agent acceptance is still pending.
+Current deployed release: **1.0.803 (`5a47c24`)** with Hosted Agent v23.
+The October 9 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
+observed the assigned capacity Active, preserved all 39 redirects, verified
+GPT-5.6-sol agent definitions Chief v17, Gauge v16, Sleuth v18, Fixer v16 and
+Sparky v13, and passed AppBackend preflight/POST checks. Hosted Agent v23 uses
+immutable image digest
+`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`.
+Hosting verification returned `protected-sign-in-gate`; the current release's
+signed-user source execution and ten-prompt acceptance matrix remain pending.
+Do not infer runtime acceptance from deployment or planner-only checks.
+
+The v23 runtime replaces the open-ended Chief tool loop with one schema-bound
+`plan_orchestration` call and bounded serial specialist execution. All ten canonical
+primary prompts, both documented follow-ups and the BAD/UNCERTAIN and T010 RCA
+regression prompts produced the expected one-call plans under GPT-5.6. These checks
+did not execute delegated sources. Refreshing the protected page required normal
+Fabric sign-in, so no interactive authentication was initiated during unattended
+testing and no CLI token was substituted for SPA-issued delegated source leases.
+
+Historical deployment notes follow.
 The browser previously confirmed 1.0.772 and ran several compound tests. On
 refresh after the 1.0.773 deployment, the hosting session had expired and the
 integrated browser blocked its Fabric sign-in popup. The operator must complete
