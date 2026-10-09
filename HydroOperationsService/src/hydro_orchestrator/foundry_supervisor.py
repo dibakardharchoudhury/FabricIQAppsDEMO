@@ -315,6 +315,25 @@ def _encoded(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
+def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -> tuple[str, ...]:
+    examples: list[str] = []
+    for evidence_id, receipt in evidence.items():
+        rows = receipt.result.get("rows")
+        if isinstance(rows, list):
+            for index, row in enumerate(rows[:4]):
+                if len(_encoded(row)) <= 2400:
+                    examples.append(f"{evidence_id}:/rows/{index}")
+        for key, value in receipt.result.items():
+            if key == "rows" or isinstance(value, (dict, list)) or type(value) not in (str, int, float):
+                continue
+            path = "/" + key.replace("~", "~0").replace("/", "~1")
+            if len(_encoded(value)) <= 2400:
+                examples.append(f"{evidence_id}:{path}")
+        if len(examples) >= limit:
+            break
+    return tuple(examples[:limit])
+
+
 class RunJournal:
     """Atomic local receipts; the caller must hold the run's process lock."""
 
@@ -691,9 +710,12 @@ class FoundrySupervisor:
                 })
             except SourceFailure as error:
                 allowed_evidence_ids = ", ".join(list(self.evidence)[:20])
+                allowed_references = ", ".join(rca_reference_examples(self.evidence)[:20])
                 raise ToolInputError(f"Structured assessment rejected: {str(error)[:512]}. "
                                      "Correct only the completion using existing evidence; no new source read is needed. "
-                                     f"Use one of these exact evidence IDs: {allowed_evidence_ids}.") from error
+                                     f"Use one of these exact evidence IDs: {allowed_evidence_ids}. "
+                                     f"Use exact result-relative ID/path pairs such as: {allowed_references}. "
+                                     "Never reference receipt metadata such as /limitations.") from error
             completed_report = validated_report
             if role == "work-order" and completed_report.get("decision") == "no_draft" and not any(
                 item.work_coverage_equipment_ids for item in self.evidence.values()
@@ -746,6 +768,7 @@ class FoundrySupervisor:
             "source": request.source.model_dump(mode="json"),
             "evidence": [item.receipt() for item in self.evidence.values()],
             "allowed_evidence_ids": list(self.evidence),
+            "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
             "completed_specialists": [item.model_dump(mode="json") for item in self.specialists],
             "output_policy": "Tables by default. Values must be source references, never authored cells. "
                              "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
@@ -757,7 +780,9 @@ class FoundrySupervisor:
                                                "decisions": ["no_draft", "needs_clarification"]},
                 "complete_rca_assessment": {"references": "Use an exact value from allowed_evidence_ids. JSON pointers "
                                                            "resolve inside that receipt's result object, without a "
-                                                           "/result prefix.",
+                                                           "/result prefix. Prefer an exact pair from "
+                                                           "allowed_evidence_references. Never reference receipt "
+                                                           "metadata such as /limitations.",
                                           "hypotheses": "Two to four distinct categories; no prose diagnosis fields."},
             },
             "trusted_operation_skills": operation_skill_guidance(role),

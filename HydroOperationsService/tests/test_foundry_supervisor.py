@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
-    ToolEvidence, post_draft_rca_delegation, safe_exception_signature,
+    ToolEvidence, post_draft_rca_delegation, rca_reference_examples, safe_exception_signature,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -79,6 +79,20 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_rca_reference_examples_expose_only_result_relative_paths(self):
+        receipt = ToolEvidence(
+            id="reading-1", source=SOURCE, tool="query_telemetry", arguments={},
+            completed_at=utc_now(), result={
+                "rows": [{"equipment_id": "TEST_T005", "quality": "BAD"}],
+                "row_count": 1,
+            }, limitations=("Not part of the result object.",),
+        )
+        self.assertEqual(
+            rca_reference_examples({"reading-1": receipt}),
+            ("reading-1:/rows/0", "reading-1:/row_count"),
+        )
+        self.assertNotIn("limitations", " ".join(rca_reference_examples({"reading-1": receipt})))
+
     def test_post_draft_fault_review_has_a_bounded_rca_only_route(self):
         previous = HistoricalContext(
             run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
@@ -792,6 +806,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                            if payload.get("agent_reference", {}).get("name") == "hydro-rca-agent")
         rca_context = json.loads(rca_payload["input"][0]["content"][0]["text"])
         self.assertEqual(rca_context["allowed_evidence_ids"], ["reading-1"])
+        self.assertEqual(rca_context["allowed_evidence_references"],
+                         ["reading-1:/rows/0"])
         self.assertIn("without a /result prefix",
                       rca_context["completion_constraints"]["complete_rca_assessment"]["references"])
 
