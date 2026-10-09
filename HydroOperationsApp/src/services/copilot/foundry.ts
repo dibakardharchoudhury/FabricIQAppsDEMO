@@ -16,10 +16,11 @@ export type FoundryAnswer = AgentAnswer & {
 const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {}
 const invocationUrl = env.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL
 const clients = new Map<'foundry' | 'data-agent', { key: string; client: HostedTransport }>()
-let browser: typeof import('./browserFoundry.ts') | undefined
 
 export function isHostedFoundryConfigured() { return Boolean(invocationUrl) }
-export function isFoundryConfigured() { return isHostedFoundryConfigured() || Boolean(loadCopilotSettings().projectEndpoint) }
+export function isFoundryConfigured() {
+  return isHostedFoundryConfigured() && Boolean(loadCopilotSettings().projectEndpoint)
+}
 
 export function requireProjectEndpoint(endpoint: string): string {
   const url = new URL(endpoint)
@@ -32,7 +33,6 @@ export function requireProjectEndpoint(endpoint: string): string {
 
 export function resetFoundryConversation() {
   for (const { client } of clients.values()) client.reset()
-  browser?.resetFoundryConversation()
 }
 
 function hostedClient(engine: 'foundry' | 'data-agent') {
@@ -81,7 +81,6 @@ export async function askFoundryCopilot(
   question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void,
   onEvents?: (events: OrchestrationEvent[]) => void,
 ): Promise<FoundryAnswer> {
-  if (isHostedFoundryConfigured()) return askHostedCopilot('foundry', question, onProgress, onEvents)
-  browser ??= await import('./browserFoundry.ts')
-  return browser.askFoundryCopilot(question, onProgress, onSteps, onEvents)
+  void onSteps
+  return askHostedCopilot('foundry', question, onProgress, onEvents)
 }

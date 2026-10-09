@@ -4,18 +4,34 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-**Not the production agent backend.** The Fabric app still uses its browser
-orchestrator. This isolated Python service exercises Microsoft Agent Framework
-1.19.0 workflows, typed handoffs, checkpoint recovery and human approval.
-This HTTP service does not provision Azure resources, change cloud authentication
-or perform unapproved production SQL writes.
+## Current production boundary
 
-## Current gated thin-client candidate
+This service is the implementation packaged in the Foundry Hosted Agent
+`hydro-orchestrator`. Hosted Agent v22 runs the Microsoft Agent Framework workflow
+for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
+client: it submits bounded requests, renders backend-owned NDJSON execution events
+and certified answers, and collects explicit human work-order decisions. It does
+not run a browser-side supervisor or specialist tool loop.
 
-The local Foundry/Data Agent/Battle consumer can use the hosted Invocations
-transport when `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL` is explicitly configured.
-The SPA switch is **not activated or deployed**. It preserves the existing browser coordinator
-as a lazy-loaded rollback until hosted parity is accepted.
+The active v22 image is
+`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
+(`validated-20261009155318`, ACR run `dts`). The source configuration digest is
+`210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
+Production writes remain disabled in the Hosted Agent. Work-order proposals are
+editable drafts until an explicit, separately validated human approval; no
+acceptance test created production work.
+
+The supported-runtime regression on October 9 passed all 129 backend tests under
+Node 24.21.0 and Pyright with zero errors or warnings. The companion SPA cleanup
+passed 378 frontend tests, typecheck, lint, environment validation and production
+build under the same Node 24 runtime.
+
+## Thin-client contract
+
+Foundry, the Hosted Data Agent route and both Battle panes require the hosted
+Invocations transport configured by `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL`.
+There is no browser coordinator fallback. Missing hosted configuration is an
+explicit unavailable state rather than permission to execute local orchestration.
 
 The backend owns intent normalization using the existing canonical helpers,
 literal table/CSV presentation, chart validation and specialist execution receipts.

@@ -6,16 +6,49 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## Current correction: Foundry-owned execution, not more browser routing
+## Current state: Foundry-owned execution
 
-The October 8 design review rejects further expansion of the browser coordinator.
+Hosted Agent v22 is active on immutable image
+`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
+(`validated-20261009155318`, ACR run `dts`). It runs the Microsoft Agent Framework
+workflow that coordinates Chief, Gauge, Sleuth, Fixer and Sparky. The SPA uses
+one authenticated Invocations endpoint for normal Foundry chat and for both
+Battle comparison routes. Real backend events drive the crew animation; the
+browser neither invents handoffs nor executes specialist tools.
+
+The legacy `browserFoundry.ts` coordinator and its dedicated runtime suite were
+removed after hosted parity dependency analysis. Administration now retains only
+the editable Foundry project endpoint, optional Battle preference and read-only
+Hosted Agent version/image/source provenance. Browser-editable specialist prompts,
+tool allowlists and table/source switches were removed. The packaged Node source
+bridge, direct query schemas, embedded SQL/work-order UI, approval cards, native
+Data Agent support for the classic app surface and Battle presentation remain.
+
+Prompt 1 through Prompt 9 passed the live hosted matrix. Prompt 10's primary draft
+was rejected without a write; its v21 follow-up completed in 79 seconds with
+Chief, Sleuth and Gauge, while Fixer remained idle and no second proposal appeared.
+One identical attempt had previously failed closed when a Sleuth model call
+returned no tool call before its bounded deadline. V22 adds deterministic
+operator-facing text derived from the validated RCA report:
+`No physical fault is established by the returned evidence; cause remains undetermined`,
+plus validated evidence-gap labels. The final signed-browser v22 presentation
+rerun remains outstanding because the browser automation tool service did not
+return a capability; cached CLI tokens cannot replace the SPA-issued delegated
+tokens and no authorization check was weakened.
+
+Supported-runtime validation passed 129 backend tests and Pyright, plus 378
+frontend tests, typecheck, lint, environment validation and production build on
+Node 24.21.0.
+
+## Historical correction: Foundry-owned execution, not more browser routing
+
+The October 8 design review rejected further expansion of the browser coordinator.
 The target is an Agent Framework workflow hosted in the existing Foundry project,
 reusing the deployed prompt agents rather than creating replacement specialists.
 The SPA submits runs, renders typed results and execution events, and collects
 human approval. Routing, retries, source execution, checkpoints and result
-validation belong in the backend. This migration is **not complete**: a hosted
-coordinator has been published, but its current runtime fails startup and the SPA
-switch remains off.
+validation belong in the backend. The paragraphs below preserve the historical
+migration state; the current state above supersedes their old readiness claims.
 
 The latest local migration wires Foundry, Data Agent and Battle to an explicitly
 gated thin Invocations client. The backend now supplies literal tables, requested

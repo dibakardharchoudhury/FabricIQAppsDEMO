@@ -1,13 +1,9 @@
-import { askDataAgent } from '../fabric'
-import { askFoundryCopilot, askHostedCopilot, isHostedFoundryConfigured } from './foundry'
-import { isWorkOrderRequest } from './orchestration'
+import { askFoundryCopilot, askHostedCopilot } from './foundry'
 
-/** The Fabric Data Agent is read-only; mutation requests use the real Foundry supervisor. */
+/** Both comparison panes use the deployment-owned Hosted Agent runtime. */
 export function askCopilot(
   engine: 'data-agent' | 'foundry',
   ...args: Parameters<typeof askFoundryCopilot>
 ): ReturnType<typeof askFoundryCopilot> {
-  if (isHostedFoundryConfigured()) return askHostedCopilot(engine, args[0], args[1], args[3])
-  if (engine === 'foundry' || isWorkOrderRequest(args[0])) return askFoundryCopilot(...args)
-  return askDataAgent(args[0], args[1], args[2])
+  return askHostedCopilot(engine, args[0], args[1], args[3])
 }

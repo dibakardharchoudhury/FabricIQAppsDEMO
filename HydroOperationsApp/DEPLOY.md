@@ -998,16 +998,20 @@ and deployment state. Metadata-resolution failures stop before source writes or 
 
 ### Supervisor-led Hydro Intelligence
 
-Both layouts use the persistent Foundry Supervisor for ordinary chat. Direct Data Agent access
-is retained only in optional Battle comparisons; it still requires live generation-2 identity
-and verified published source readback. Explicit Data Agent requests in normal chat use the
-Fabric IQ specialist. Missing Foundry configuration is an error, not an implicit engine fallback.
+Both layouts use the Foundry Hosted Agent for ordinary chat. Its Microsoft Agent Framework
+runtime coordinates the persistent Chief, Gauge, Sleuth, Fixer and Sparky prompt agents.
+Optional Battle comparisons use the same Hosted Agent boundary with an explicit Data Agent
+source request for the Data Agent pane. Direct Data Agent support remains in the classic app
+surface, but Hydro Intelligence and Battle have no browser coordinator fallback. Missing
+Hosted Agent configuration is an error.
 
 The canonical orchestrator provisions and verifies agents using
 `HYDRO_FOUNDRY_PROJECT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>`.
-It exports the verified project endpoint for **Administration → Foundry Copilot**. Requests go to
-the project's `/openai/v1/responses` with `agent_reference`, not a model-inference URL. Model selection
-belongs to provisioning (`HYDRO_FOUNDRY_MODEL`), not a browser deployment-name field.
+It exports the verified project endpoint, Hosted Agent Invocations endpoint, runtime version,
+immutable image digest and source digest for **Administration → Agent runtime settings**.
+The browser may select the verified project and enable Battle, but cannot edit specialist
+prompts, tools, tables or source catalogs. Model selection and specialist capabilities belong
+to provisioning (`HYDRO_FOUNDRY_MODEL`), not browser configuration.
 
 **The Foundry resource MUST live in the same Entra tenant as the Fabric workspace.** The app's MSAL
 authority is pinned to `RAYFIN_PUBLIC_TENANT_ID`, so a resource in any other tenant rejects the
@@ -1021,9 +1025,9 @@ bundles delegated permissions and consent. The obsolete Cognitive Services infer
 no longer required. Existing grants are not revoked automatically. Fabric IQ source-definition
 verification uses read scopes; only direct Data Agent execution requests `DataAgent.Execute.All`.
 
-No CORS configuration is needed — the data plane already returns `Access-Control-Allow-Origin: *`
-and permits `Authorization` on POST. Do keep the resource on **public network access**: a private
-endpoint or a "selected networks" firewall cuts the browser off.
+The canonical deployer validates Hosted Agent access and reapplies AppBackend CORS/runtime
+configuration. Do not add a browser CORS workaround. Keep the Foundry resource on **public
+network access**: a private endpoint or a "selected networks" firewall cuts the browser off.
 
 No key is ever placed in the browser. Because the tools run as the signed-in user, the copilot
 cannot read anything that user could not read in Fabric.

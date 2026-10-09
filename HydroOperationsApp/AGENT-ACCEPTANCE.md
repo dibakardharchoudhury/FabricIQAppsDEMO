@@ -8,6 +8,45 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 9 hosted orchestration status
+
+**Current deployed Fabric app: 1.0.798 (`d4d1dfc`). Current Hosted Agent: v22.**
+The active image is
+`sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
+(`validated-20261009155318`, ACR run `dts`). The canonical Fabric deployment
+reported `SUCCESS`, restored AppBackend runtime/CORS and passed browser-equivalent
+preflight and POST checks for `/graphql` and `/api/auth/v1/token`.
+
+The browser now uses only the authenticated Hosted Agent Invocations transport
+for Foundry and Battle orchestration. The old browser supervisor/tool loop and
+its Administration prompt/tool/table controls have been removed. The application
+still retains Battle enablement, editable project identity, runtime provenance,
+embedded SQL/work-order approval UI and the server-side source bridge.
+
+| Prompt | Live result |
+|---|---|
+| 1 | Work-order draft path exercised, rejected and reconciled without a production write. |
+| 2 | 42 source rows, 6 tables; Gauge, Sleuth and final Gauge; 37 seconds. |
+| 3 | Five-row chart; Chief and Gauge; 32 seconds. |
+| 4 | Correct source-grounded empty result; Chief and Gauge; 17 seconds. |
+| 5 | Impossible 500 ms deadline failed closed in 1.2 seconds. |
+| 6 | Data Agent through Sparky; 1 row; 55 seconds. |
+| 7 | Ontology v2 through Sparky; 1 row; 22 seconds. |
+| 8 | Combined Data Agent and Ontology; two Sparky calls, 2 rows; 43 seconds. |
+| 9 | Primary plus same-chat follow-up passed; 20 rows, 3 tables; 54 + 34 seconds. |
+| 10 | Primary draft succeeded and was rejected. The v21 follow-up succeeded on retry in 79 seconds with Chief, Sleuth and Gauge, no Fixer handoff and no second proposal. One prior attempt failed closed on a bounded Sleuth inference stall. |
+
+V22 deterministically surfaces the validated conclusion that no physical fault
+is established and cause remains undetermined, together with validated evidence
+gaps. Unit and contract tests cover that presentation. The final signed-browser
+v22 presentation rerun is still outstanding because browser-tool discovery timed
+out; CLI credentials are not SPA-issued delegated tokens and were not substituted.
+Therefore this report does not relabel the full ten-flow suite as accepted.
+
+Current regression evidence on Node 24.21.0: 129/129 backend tests, Pyright with
+zero errors/warnings, 378/378 frontend tests, typecheck, lint, environment
+validation and production build.
+
 **Current deployed release: 1.0.775 (`41d458a`).** Canonical deployment returned
 `SUCCESS` on October 8 with verified agent definitions, all 39 redirects preserved,
 and effective current-operator consent. Both backend preflights returned HTTP 200;
