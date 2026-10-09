@@ -15,6 +15,10 @@ const entityToggles = (entities: CatalogEntity[]): Toggle[] => entities.map(enti
   hint: `${entity.physicalName} — ${entity.description}`,
 }))
 
+const runtimeEnv = (import.meta as { env?: Record<string, string | undefined> }).env ?? {}
+const hostedInvocationUrl = runtimeEnv.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL ?? ''
+const hostedSourceDigest = runtimeEnv.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST ?? ''
+
 export function CopilotSettingsPanel() {
   const defaults = useMemo(() => defaultCopilotSettings(), [])
   const [saved, setSaved] = useState<CopilotSettings>(() => loadCopilotSettings())
@@ -51,14 +55,18 @@ export function CopilotSettingsPanel() {
     <summary>
       <span><Bot size={17} /></span>
       <div>
-        <h2>Advanced agent settings</h2>
-        <p>Optional browser overrides and agent comparison. Deployed defaults work without editing these settings.</p>
+        <h2>{hostedInvocationUrl ? 'Agent runtime settings' : 'Advanced agent settings'}</h2>
+        <p>{hostedInvocationUrl
+          ? 'Deployment-owned Agent Framework configuration and optional agent comparison.'
+          : 'Optional browser overrides and agent comparison. Deployed defaults work without editing these settings.'}</p>
       </div>
     </summary>
     <div className="copilot-settings-body">
-    <p>These controls restrict the agent's available tools and sources; they do not grant Entra permissions,
-      change Fabric access, or authorize work-order creation. Human approval is still required.
-      Use them for troubleshooting or deliberate customization, not routine sign-in.</p>
+    <p>{hostedInvocationUrl
+      ? 'Chief and specialist instructions, skills, tools and source catalogs are deployment-owned. This browser cannot redefine their capabilities, grant Entra permissions or authorize work-order creation.'
+      : <>These controls restrict the agent's available tools and sources; they do not grant Entra permissions,
+        change Fabric access, or authorize work-order creation. Human approval is still required.
+        Use them for troubleshooting or deliberate customization, not routine sign-in.</>}</p>
 
     {!draft.projectEndpoint ? <p className="copilot-settings-warning">
       Set the Foundry project endpoint below to enable the provisioned agents. The signed-in user also needs the
@@ -86,9 +94,18 @@ export function CopilotSettingsPanel() {
           <span>Project endpoint</span>
           <input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} />
         </label>
+        {hostedInvocationUrl && <label>
+          <span>Hosted Agent invocation endpoint</span>
+          <input type="url" value={hostedInvocationUrl} readOnly />
+        </label>}
+        {hostedSourceDigest && <label>
+          <span>Verified source configuration digest</span>
+          <input type="text" value={hostedSourceDigest} readOnly />
+        </label>}
       </div>
     </div>
 
+    {!hostedInvocationUrl && <>
     <div className="copilot-settings-group">
       <h4>Direct-source specialist prompt
         <button type="button" className="copilot-settings-inline" disabled={draft.systemPrompt === defaults.systemPrompt} onClick={() => setDraft(current => ({ ...current, systemPrompt: defaults.systemPrompt }))}>Restore default</button>
@@ -136,14 +153,15 @@ export function CopilotSettingsPanel() {
       <summary>Preview direct-source specialist context</summary>
       <pre>{renderSystemPrompt(draft, catalogPrompt(draft))}</pre>
     </details>
+    </>}
 
     <footer>
       <button type="button" className="copilot-settings-primary" disabled={!dirty} onClick={apply}>
         <Save size={14} />{dirty ? 'Save changes' : 'Saved'}
       </button>
-      <button type="button" disabled={JSON.stringify(draft) === JSON.stringify(defaults)} onClick={restore}>
+      {!hostedInvocationUrl && <button type="button" disabled={JSON.stringify(draft) === JSON.stringify(defaults)} onClick={restore}>
         <RotateCcw size={14} />Reset to defaults
-      </button>
+      </button>}
     </footer>
     </div>
   </details>

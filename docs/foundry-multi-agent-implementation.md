@@ -66,6 +66,14 @@ delegated SQL still failed explicitly as `AUTH_FAILED`. A separate real Sleuth v
 call completed in 11.08 seconds with a typed `cause_undetermined` result. The
 unattended browser could not complete protected-hosting or MSAL popups, so these
 checks do not replace signed-user streaming, SQL or ten-prompt acceptance.
+Hosted deployments now present a single browser control plane in Administration:
+the project endpoint remains editable, while the invocation endpoint and verified
+source digest are read-only and Battle remains an explicit browser preference.
+Browser-editable specialist prompts, tool schemas and source catalogs are hidden
+when the Hosted Agent endpoint is configured; those capabilities are owned by the
+versioned Agent Framework runtime and provisioned specialists. The legacy controls
+remain available only for an unhosted rollback until signed-user parity permits
+deleting the browser coordinator itself.
 The redundant `hydro-data-agent-bridge` was verified as unpublished and
 unreferenced by the repository or retained agents, then deleted. Chief, Gauge,
 Sleuth, Fixer, Sparky and the hosted `hydro-orchestrator` remain.
