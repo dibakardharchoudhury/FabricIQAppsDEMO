@@ -168,7 +168,7 @@ export class HostedTransport {
         method: 'POST', redirect: 'error', cache: 'no-store',
         headers: { Authorization: `Bearer ${tokens.foundry}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, ...(onEvent ? { stream: true } : {}), tokens }),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(315_000),
       })
       if (onEvent && response.headers.get('content-type')?.includes('application/x-ndjson')) {
           if (!response.body) throw new Error('Hosted streaming invocation returned no response body.')
