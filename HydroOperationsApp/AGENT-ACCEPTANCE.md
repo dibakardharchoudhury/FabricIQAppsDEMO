@@ -23,6 +23,12 @@ its Administration prompt/tool/table controls have been removed. The application
 still retains Battle enablement, editable project identity, runtime provenance,
 embedded SQL/work-order approval UI and the server-side source bridge.
 
+Commit `d4074c5` was deployed by the canonical orchestrator at
+`2026-10-09T15:48:45Z` (deployment `deploy-20261009154808-50966658`) to the
+existing protected hosting URL. GraphQL preflight/POST returned 200/200; the token
+preflight returned 200 and its deliberately incomplete POST returned the expected
+400. The deployer preserved all 39 Entra redirects and reported `SUCCESS`.
+
 | Prompt | Live result |
 |---|---|
 | 1 | Work-order draft path exercised, rejected and reconciled without a production write. |

@@ -40,6 +40,11 @@ Supported-runtime validation passed 129 backend tests and Pyright, plus 378
 frontend tests, typecheck, lint, environment validation and production build on
 Node 24.21.0.
 
+The canonical Fabric orchestrator deployed cleanup commit `d4074c5` at
+`2026-10-09T15:48:45Z` as deployment `deploy-20261009154808-50966658`. It
+reapplied AppBackend runtime/CORS, passed GraphQL and token preflight/POST
+contracts, preserved 39 redirects and reported `SUCCESS`.
+
 ## Historical correction: Foundry-owned execution, not more browser routing
 
 The October 8 design review rejected further expansion of the browser coordinator.
