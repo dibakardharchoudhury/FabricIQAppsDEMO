@@ -105,6 +105,7 @@ class HistoricalContext(Contract):
     question: str = Field(min_length=1, max_length=8000)
     rendered_answer: str = Field(max_length=16000)
     requested_at: AwareDatetime
+    proposal_ids: tuple[UUID, ...] = Field(default=(), max_length=8)
 
 
 class ChatRequest(Contract):
@@ -295,7 +296,7 @@ def post_draft_rca_delegation(request: ChatRequest) -> Delegation | None:
             "submit work order", "submit the work order", "save work order", "save the work order",
         )
     )
-    had_draft = "review work-order draft" in previous or "work-order draft" in previous
+    had_draft = bool(request.historical_context.proposal_ids)
     if not had_draft or not asks_for_fault_review or asks_for_draft_change:
         return None
     return Delegation(

@@ -411,6 +411,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 saved = RunJournal(namespaces[-1] / response.json()["run_id"] / "receipts").read("request")
                 self.assertEqual(saved["historical_context"]["run_id"], run_id)
                 self.assertEqual(saved["historical_context"]["question"], first["chat"]["question"])
+                self.assertEqual(saved["historical_context"]["proposal_ids"], [])
                 foreign = self.invocation(UUID("66666666-6666-4666-8666-666666666666"))
                 denied = await client.post("/invocations", json={**followup, "tokens": foreign["tokens"]})
                 self.assertEqual(denied.status_code, 404)

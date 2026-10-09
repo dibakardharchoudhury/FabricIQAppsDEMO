@@ -84,6 +84,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
             rendered_answer="Review work-order draft\nBackend-grounded human approval",
             requested_at=utc_now() - timedelta(minutes=1),
+            proposal_ids=(uuid4(),),
         )
         request = ChatRequest(
             run_id=uuid4(), source=SOURCE,
@@ -800,6 +801,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
             rendered_answer="Review work-order draft\nBackend-grounded human approval",
             requested_at=utc_now() - timedelta(minutes=1),
+            proposal_ids=(uuid4(),),
         )
         request = self.request.model_copy(update={
             "run_id": uuid4(),

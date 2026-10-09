@@ -145,7 +145,8 @@ def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID
     if len(text) > 16000:
         raise HTTPException(409, "The preceding display exceeds the conversation bound; restate the target explicitly.")
     return HistoricalContext(run_id=previous_run_id, source=source, question=request.question,
-                             rendered_answer=text, requested_at=answer.requested_at)
+                             rendered_answer=text, requested_at=answer.requested_at,
+                             proposal_ids=tuple(item.id for item in answer.proposals))
 
 
 class RuntimeConfiguration(Contract):
