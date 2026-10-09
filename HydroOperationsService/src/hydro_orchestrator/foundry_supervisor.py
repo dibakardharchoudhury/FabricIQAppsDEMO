@@ -44,6 +44,24 @@ ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
 }
 
 
+def safe_exception_signature(error: BaseException) -> str:
+    signatures: list[str] = []
+    current: BaseException | None = error
+    while current is not None and len(signatures) < 4:
+        fields = [type(current).__name__]
+        for name in ("status_code", "code", "type", "param"):
+            value = getattr(current, name, None)
+            if isinstance(value, int) or (
+                isinstance(value, str) and 0 < len(value) <= 100
+                and re.fullmatch(r"[A-Za-z0-9_.:/ -]+", value)
+            ):
+                fields.append(f"{name}={value}")
+        signatures.append(",".join(fields))
+        cause = current.__cause__ or current.__context__
+        current = cause if isinstance(cause, BaseException) and cause is not current else None
+    return " <- ".join(signatures)
+
+
 def operation_skills(role: Role) -> SkillsProvider:
     root = Path(__file__).resolve().parents[2] / "skills"
     paths = [root / name for name in ROLE_SKILLS[role]]
@@ -750,7 +768,8 @@ class FoundrySupervisor:
                 options: ChatOptions = {"store": False, "max_tokens": 8192}
                 try:
                     response = await agent.run(json.dumps(context), options=options)
-                except AgentFrameworkException:
+                except AgentFrameworkException as error:
+                    logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
                     self.healthy(request)
                     raise
                 except APIStatusError as error:

@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, NativeBinding, RunJournal, ToolEvidence,
+    safe_exception_signature,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -78,6 +79,23 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_exception_signature_exposes_only_bounded_diagnostic_fields(self):
+        class ProviderError(Exception):
+            status_code = 400
+            code = "invalid_request"
+            type = "bad_request"
+            param = "tools"
+
+        provider = ProviderError("private provider response")
+        wrapped = RuntimeError("private wrapper")
+        wrapped.__cause__ = provider
+        signature = safe_exception_signature(wrapped)
+        self.assertEqual(
+            signature,
+            "RuntimeError <- ProviderError,status_code=400,code=invalid_request,type=bad_request,param=tools",
+        )
+        self.assertNotIn("private", signature)
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
