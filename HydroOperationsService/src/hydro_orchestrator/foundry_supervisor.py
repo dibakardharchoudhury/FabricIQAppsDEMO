@@ -827,7 +827,7 @@ class FoundrySupervisor:
             self.healthy(request)
             if ((completed_report is not None and invocation.function.name in (
                     "complete_rca_assessment", "complete_work_order_review"))
-                    or invocation.function.name == "plan_orchestration"):
+                    or invocation.function.name in ("plan_orchestration", "propose_work_order")):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
         agent = FoundryAgent(

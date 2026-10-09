@@ -467,6 +467,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft.source, self.request.source)
         self.assertEqual(result.proposal_digests, {str(draft.id): draft.digest()})
         self.assertFalse(result.production_write_executed)
+        self.assertEqual(result.specialists[2].model_round_count, 2)
         self.assertEqual(result.tables[0].rows[0].values, {
             "equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD",
         })
