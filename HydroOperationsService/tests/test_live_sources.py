@@ -186,7 +186,7 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(validator.is_valid(arguments))
         sources.credential.get_token.assert_not_awaited()
 
-    async def test_backend_sql_read_requires_only_fabric_token_and_preserves_exact_source_cells(self):
+    async def test_backend_sql_read_uses_fabric_discovery_and_power_bi_exchange_tokens(self):
         sources = reader()
         request = self.chat(sources)
         arguments = {"entity": "work_orders", "columns": ["id", "equipmentId", "status"]}
@@ -200,8 +200,17 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence.arguments, arguments)
         self.assertEqual(evidence.source, request.source)
         self.assertFalse(evidence.production_write_executed)
-        sources.credential.get_token.assert_awaited_once_with("https://api.fabric.microsoft.com/.default")
-        self.assertEqual(sources.bridge.call.call_args.args[0]["tokens"], {"fabric": "synthetic-token-never-log"})
+        self.assertEqual(
+            {call.args[0] for call in sources.credential.get_token.await_args_list},
+            {
+                "https://api.fabric.microsoft.com/.default",
+                "https://analysis.windows.net/powerbi/api/.default",
+            },
+        )
+        self.assertEqual(
+            sources.bridge.call.call_args.args[0]["tokens"],
+            {"fabric": "synthetic-token-never-log", "graphql": "synthetic-token-never-log"},
+        )
         self.assertNotIn("synthetic-token", evidence.model_dump_json())
 
     async def test_station_power_uses_kusto_and_attests_only_converted_mean_units(self):
@@ -408,6 +417,18 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
                 await NodeSourceBridge().call({"action": "configuration"})
         self.assertNotIn("private", str(caught.exception))
 
+    async def test_bridge_reads_only_bounded_final_envelope_after_library_output(self):
+        process = AsyncMock()
+        process.returncode = 0
+        process.communicate.return_value = (
+            b"library output that must not be parsed or returned\n__HYDRO_RESULT__="
+            b'{"ok":true,"result":{"status":"ready"}}',
+            b"",
+        )
+        with patch("asyncio.create_subprocess_exec", return_value=process):
+            result = await NodeSourceBridge().call({"action": "configuration"})
+        self.assertEqual(result, {"status": "ready"})
+
     async def test_bridge_cancellation_terminates_only_its_owned_process(self):
         process = AsyncMock()
         process.returncode = None
@@ -580,7 +601,9 @@ class ContainerPackagingTests(unittest.TestCase):
                     [node, str(script)], input=json.dumps({"action": action}), env=env, cwd=packaged,
                     check=True, capture_output=True, text=True, timeout=30,
                 )
-                envelope = json.loads(completed.stdout)
+                _prefix, marker, payload = completed.stdout.rpartition("\n__HYDRO_RESULT__=")
+                self.assertTrue(marker)
+                envelope = json.loads(payload)
                 self.assertTrue(envelope["ok"])
                 results[action] = envelope["result"]
             self.assertTrue(results["source_contracts"]["tools"])

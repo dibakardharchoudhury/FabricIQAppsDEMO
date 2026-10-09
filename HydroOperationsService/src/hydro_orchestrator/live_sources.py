@@ -60,6 +60,8 @@ class Bridge(Protocol):
 
 
 class NodeSourceBridge:
+    result_marker = b"\n__HYDRO_RESULT__="
+
     def __init__(self, node: str | None = None):
         self.node = node or os.environ.get("HYDRO_LOCAL_NODE", "node")
         self.script = Path(__file__).resolve().parents[3] / "HydroOperationsApp" / "scripts" / "local-fabric-sources.mjs"
@@ -76,8 +78,13 @@ class NodeSourceBridge:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+        if len(stdout) > 2 * 1024 * 1024:
+            raise SourceFailure("Local source process response exceeds its bounded size.")
+        _prefix, marker, payload = stdout.rpartition(self.result_marker)
+        if not marker:
+            raise SourceFailure("Local source process returned an invalid response; output suppressed.")
         try:
-            envelope = json.loads(stdout)
+            envelope = json.loads(payload)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise SourceFailure("Local source process returned an invalid response; output suppressed.") from error
         if not isinstance(envelope, dict):

@@ -627,14 +627,14 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    process.stdout.write(JSON.stringify({ ok: true, result: await main() }))
+    process.stdout.write(`\n__HYDRO_RESULT__=${JSON.stringify({ ok: true, result: await main() })}`)
   } catch (error) {
     // Do not serialize SDK exceptions, request headers, tokens or response bodies.
     const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
       || (error instanceof Error && error.constructor === Error)
       ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
-    process.stdout.write(JSON.stringify({ ok: false, error: message,
-      ...(error instanceof WorkOrderSubmissionError ? { write_attempted: error.writeAttempted } : {}) }))
+    process.stdout.write(`\n__HYDRO_RESULT__=${JSON.stringify({ ok: false, error: message,
+      ...(error instanceof WorkOrderSubmissionError ? { write_attempted: error.writeAttempted } : {}) })}`)
     process.exitCode = 1
   }
 }
