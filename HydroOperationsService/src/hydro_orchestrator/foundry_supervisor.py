@@ -661,8 +661,10 @@ class FoundrySupervisor:
                     "receipts": [item.receipt() for item in self.evidence.values()],
                 })
             except SourceFailure as error:
+                allowed_evidence_ids = ", ".join(list(self.evidence)[:20])
                 raise ToolInputError(f"Structured assessment rejected: {str(error)[:512]}. "
-                                     "Correct only the completion using existing evidence; no new source read is needed.") from error
+                                     "Correct only the completion using existing evidence; no new source read is needed. "
+                                     f"Use one of these exact evidence IDs: {allowed_evidence_ids}.") from error
             completed_report = validated_report
             if role == "work-order" and completed_report.get("decision") == "no_draft" and not any(
                 item.work_coverage_equipment_ids for item in self.evidence.values()
@@ -708,6 +710,7 @@ class FoundrySupervisor:
                                          "Never reuse a prior approval or infer human consent from conversation.",
             "source": request.source.model_dump(mode="json"),
             "evidence": [item.receipt() for item in self.evidence.values()],
+            "allowed_evidence_ids": list(self.evidence),
             "completed_specialists": [item.model_dump(mode="json") for item in self.specialists],
             "output_policy": "Tables by default. Values must be source references, never authored cells. "
                              "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
@@ -717,7 +720,9 @@ class FoundrySupervisor:
             "completion_constraints": {
                 "complete_work_order_review": {"exact_fields": ["decision", "reason"], "reason_max_characters": 1000,
                                                "decisions": ["no_draft", "needs_clarification"]},
-                "complete_rca_assessment": {"references": "Use existing evidence IDs and JSON pointers relative to data.",
+                "complete_rca_assessment": {"references": "Use an exact value from allowed_evidence_ids. JSON pointers "
+                                                           "resolve inside that receipt's result object, without a "
+                                                           "/result prefix.",
                                           "hypotheses": "Two to four distinct categories; no prose diagnosis fields."},
             },
             "trusted_operation_skills": operation_skill_guidance(role),

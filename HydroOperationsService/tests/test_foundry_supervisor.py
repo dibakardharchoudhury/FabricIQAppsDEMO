@@ -758,6 +758,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         contexts = [json.loads(payload["input"][0]["content"][0]["text"]) for payload in initial_calls]
         self.assertEqual([item["role"] for item in contexts[-1]["completed_specialists"]],
                          ["qa", "rca", "work-order"])
+        rca_payload = next(payload for payload in self.payloads
+                           if payload.get("agent_reference", {}).get("name") == "hydro-rca-agent")
+        rca_context = json.loads(rca_payload["input"][0]["content"][0]["text"])
+        self.assertEqual(rca_context["allowed_evidence_ids"], ["reading-1"])
+        self.assertIn("without a /result prefix",
+                      rca_context["completion_constraints"]["complete_rca_assessment"]["references"])
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"
