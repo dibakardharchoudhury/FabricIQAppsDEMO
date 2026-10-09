@@ -14,6 +14,22 @@ const reply = () => ({ run_id: 'run-1', source, production_write_executed: false
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'Content-Type': 'application/json' } })
 
+test('default fetch preserves the browser receiver', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async function (this: typeof globalThis, input, init) {
+    assert.equal(this, globalThis)
+    void input
+    void init
+    return response(reply())
+  }
+  try {
+    const client = new HostedTransport(project, endpoint, source, async () => tokens())
+    assert.equal((await client.run({ question: 'Browser request.' })).text, 'Backend-provided answer.')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
 test('thin transport preserves backend output, renews leases and keeps session affinity without routing', async () => {
   const calls: Array<{ url: URL; body: Record<string, unknown> }> = []
   const leases: SourceTokens[] = []

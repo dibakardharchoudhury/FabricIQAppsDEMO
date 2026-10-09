@@ -121,7 +121,8 @@ export class HostedTransport {
 
   constructor(
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
-    credentials: () => Promise<SourceTokens>, fetcher: typeof fetch = fetch,
+    credentials: () => Promise<SourceTokens>,
+    fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init),
   ) {
     const project = new URL(projectEndpoint)
     const endpoint = new URL(invocationUrl)
