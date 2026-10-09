@@ -58,6 +58,14 @@ AppBackend runtime/database settings, and passed browser-equivalent CORS and POS
 checks for `/graphql` and `/api/auth/v1/token`. It reported `SUCCESS` with the
 protected sign-in gate. This proves deployment and ingress readiness, not
 signed-user source execution or the ten-prompt application acceptance matrix.
+The follow-up `fe48419` deployment reused the persistent tenant-scoped Azure CLI
+cache without an interactive login and corrected the hosted client to consume the
+canonical `VITE_FABRIC_TENANT_ID` and `VITE_FABRIC_WORKSPACE_ID` exports. A real
+read-only probe verified generation 2 and six current T005 telemetry observations;
+delegated SQL still failed explicitly as `AUTH_FAILED`. A separate real Sleuth v17
+call completed in 11.08 seconds with a typed `cause_undetermined` result. The
+unattended browser could not complete protected-hosting or MSAL popups, so these
+checks do not replace signed-user streaming, SQL or ten-prompt acceptance.
 The redundant `hydro-data-agent-bridge` was verified as unpublished and
 unreferenced by the repository or retained agents, then deleted. Chief, Gauge,
 Sleuth, Fixer, Sparky and the hosted `hydro-orchestrator` remain.

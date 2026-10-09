@@ -38,6 +38,25 @@ multi-agent runtime correctness is not yet certified.
 
 ### Latest hosted verification
 
+**October 9 Agent Framework checkpoint (`fe48419`):** the canonical deployment
+completed with `SUCCESS` and reused its tenant-scoped Azure CLI cache without an
+interactive login. Hosted `hydro-orchestrator` v7 is active on immutable image
+digest `sha256:1a8ce284f0b0de8bed4a4a243efcb2097ffaac391ff1c9bbcb6f6ee3c7a3dfc7`.
+The deployed bundle contains the exact invocation endpoint and verified v2 source
+digest `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
+All 121 backend tests, Pyright, dependency checks, 427 frontend tests, typecheck,
+lint and production build passed. A real read-only diagnostic verified live
+generation 2 and six current T005 STID/telemetry observations, but delegated
+AppBackend work-order exchange failed explicitly as `AUTH_FAILED`; it did not
+become an empty-work answer. A separate real Sleuth v17 invocation completed in
+11.08 seconds with response `resp_0aee7ed7f1e3af01016ac89c07bd9c81908d12b83424af4a56`
+and retained missing work/inspection evidence and `cause_undetermined`.
+Protected-hosting and local MSAL popups are blocked in the unattended automation
+browser, so signed-user streaming, SQL authorization and the ten-prompt matrix
+remain unaccepted. The legacy browser coordinator and advanced browser control
+plane must remain only until those gates pass; this checkpoint is not cleanup
+authorization or enterprise runtime certification.
+
 **Latest deployment attempts:** source commit `c601e34` was pushed only to
 `feat/dibakar`. The canonical deployer stopped at step 1 because Azure CLI was
 signed into a different tenant than `ad340c84-1886-4202-a483-2da2cb9168eb`.

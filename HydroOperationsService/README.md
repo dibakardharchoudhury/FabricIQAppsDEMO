@@ -463,15 +463,15 @@ This command does not start an HTTP server, save source data or invoke agents.
 It exits nonzero when any source check fails. A passed read is not evidence of
 fresh ingestion; inspect `missing_sources`.
 
-**Observed live result, October 8:** verified ontology generation 2 and six
-STID-mapped T005 measurements, explicitly labelled `fresh_telemetry` missing.
-The local diagnostic work-order read failed with **`EXCHANGE_NOT_ENABLED`**.
+**Observed live result, October 9:** verified ontology generation 2 and six
+current STID-mapped T005 measurements with no telemetry source gap. The local
+diagnostic work-order read failed explicitly with **`AUTH_FAILED`**.
 This does not establish a failure in the working app: the app uses embedded
 Fabric authentication and `ensureSignedInWithFabric`, not this diagnostic's
 direct Entra exchange. Its existing approval/write path is unchanged. The installed Rayfin
 guidance identifies `services.auth.fabric.externalEntraExchange: true` as the
-setting for delegated exchange. It was subsequently set and tested locally,
-but has not been applied to the live AppBackend.
+setting for delegated exchange. The canonical deployer has applied that setting
+to the live AppBackend, but the Azure CLI diagnostic still returns `AUTH_FAILED`.
 The SDK also requires delegated `Item.Execute.All`, owning-tenant identity and
 item Execute permission. The inspected Fabric token from the existing CLI session
 lacked that named scope; enabling the setting alone is not a verified solution.
@@ -519,10 +519,10 @@ This explicit **telemetry-only** diagnostic never reads SQL, proposes work or se
 notifications. It marks work orders/inspections as not requested rather than claiming
 none exist. The proposal contract independently rejects this incomplete coverage.
 
-**Observed live result, October 8:** Sleuth v13 processed six verified T005 samples
-in one invocation lasting **14.38 seconds**, using 2,392 input and 1,728 output
-tokens. Response ID: `resp_0a5e2d14804d33bb016ac7b88f67f081939ff231b4f22fe555`;
-request ID: `2fea9529-d38a-448d-8091-57ee2de118c4`. Its three competing hypotheses
+**Observed live result, October 9:** Sleuth v17 processed six verified T005 samples
+in one invocation lasting **11.08 seconds**, using 2,569 input and 1,265 output
+tokens. Response ID: `resp_0aee7ed7f1e3af01016ac89c07bd9c81908d12b83424af4a56`;
+request ID: `8f50f77b-3010-4bd2-9a1f-b97c0acfec57`. Its three competing hypotheses
 remained untested; stale telemetry, missing maintenance/inspection evidence,
 approved limits and matched-baseline gaps were retained. This timing is for the
 model invocation, not end-to-end source discovery or an interactive performance SLA.
