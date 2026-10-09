@@ -69,6 +69,9 @@ checks do not replace signed-user streaming, SQL or ten-prompt acceptance.
 Hosted deployments now present a single browser control plane in Administration:
 the project endpoint remains editable, while the invocation endpoint and verified
 source digest are read-only and Battle remains an explicit browser preference.
+The active Hosted Agent version and immutable runtime image digest are also
+deployment-readback fields, so an operator can correlate streamed handoffs with
+the exact runtime artifact.
 Browser-editable specialist prompts, tool schemas and source catalogs are hidden
 when the Hosted Agent endpoint is configured; those capabilities are owned by the
 versioned Agent Framework runtime and provisioned specialists. The legacy controls

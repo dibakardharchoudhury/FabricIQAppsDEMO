@@ -17,6 +17,8 @@ const entityToggles = (entities: CatalogEntity[]): Toggle[] => entities.map(enti
 
 const runtimeEnv = (import.meta as { env?: Record<string, string | undefined> }).env ?? {}
 const hostedInvocationUrl = runtimeEnv.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL ?? ''
+const hostedRuntimeVersion = runtimeEnv.VITE_RAYFIN_ORCHESTRATOR_VERSION ?? ''
+const hostedImageDigest = runtimeEnv.VITE_RAYFIN_ORCHESTRATOR_IMAGE_DIGEST ?? ''
 const hostedSourceDigest = runtimeEnv.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST ?? ''
 
 export function CopilotSettingsPanel() {
@@ -97,6 +99,14 @@ export function CopilotSettingsPanel() {
         {hostedInvocationUrl && <label>
           <span>Hosted Agent invocation endpoint</span>
           <input type="url" value={hostedInvocationUrl} readOnly />
+        </label>}
+        {hostedRuntimeVersion && <label>
+          <span>Hosted Agent version</span>
+          <input type="text" value={hostedRuntimeVersion} readOnly />
+        </label>}
+        {hostedImageDigest && <label>
+          <span>Immutable runtime image digest</span>
+          <input type="text" value={hostedImageDigest} readOnly />
         </label>}
         {hostedSourceDigest && <label>
           <span>Verified source configuration digest</span>

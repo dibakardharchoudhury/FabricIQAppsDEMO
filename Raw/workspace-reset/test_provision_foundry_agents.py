@@ -95,6 +95,24 @@ class PublishedIdentityTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module.hosted_invocations_url(agent, "http://untrusted.example")
 
+    def test_hosted_runtime_identity_requires_immutable_digest(self):
+        agent = {"versions": {"latest": {
+            "version": "7",
+            "definition": {"container_configuration": {
+                "image": f"demo.azurecr.io/hydro-orchestrator@sha256:{'a' * 64}",
+            }},
+        }}}
+        self.assertEqual(module.hosted_runtime_identity(agent), ("7", f"sha256:{'a' * 64}"))
+        for invalid in [
+            {},
+            {"versions": {"latest": {**agent["versions"]["latest"], "version": "candidate"}}},
+            {"versions": {"latest": {**agent["versions"]["latest"], "definition": {
+                "container_configuration": {"image": "demo.azurecr.io/hydro-orchestrator:latest"},
+            }}}},
+        ]:
+            with self.assertRaises(RuntimeError):
+                module.hosted_runtime_identity(invalid)
+
     def test_source_digest_matches_runtime_configuration_contract(self):
         ids = [f"{index:08x}-1111-4111-8111-{index:012x}" for index in range(1, 8)]
         values = {

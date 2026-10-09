@@ -92,6 +92,16 @@ def hosted_invocations_url(agent: dict, endpoint: str) -> str:
     return endpoint.rstrip("/") + "/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1"
 
 
+def hosted_runtime_identity(agent: dict) -> tuple[str, str]:
+    latest = agent.get("versions", {}).get("latest", {})
+    version = str(latest.get("version") or "")
+    image = latest.get("definition", {}).get("container_configuration", {}).get("image")
+    match = re.fullmatch(r"[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})", image or "")
+    if not version.isdecimal() or not match:
+        raise RuntimeError("The active hosted runtime must expose a numeric version and immutable image digest.")
+    return version, match.group("digest")
+
+
 def source_configuration_digest(tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> str:
     config = {
         "tenant_id": tenant,
@@ -273,6 +283,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     hosted = request("GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", agent_headers).json()
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint)
+        runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
         verify_hosted_source(hosted, tenant, workspace, ontology, source_digest)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
@@ -282,6 +293,8 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
         "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,
         "RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL": invocations_url,
+        "RAYFIN_PUBLIC_ORCHESTRATOR_VERSION": runtime_version,
+        "RAYFIN_PUBLIC_ORCHESTRATOR_IMAGE_DIGEST": runtime_image_digest,
         "RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST": source_digest,
     }), encoding="utf-8")
     print("Foundry configuration readback verified; agent runtime acceptance is a separate check.", flush=True)
