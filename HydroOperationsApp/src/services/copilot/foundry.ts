@@ -38,8 +38,8 @@ export function resetFoundryConversation() {
 function hostedClient(engine: 'foundry' | 'data-agent') {
   if (!invocationUrl) throw new Error('No accepted hosted invocation endpoint is configured.')
   const project = requireProjectEndpoint(loadCopilotSettings().projectEndpoint)
-  const tenant = env.VITE_RAYFIN_TENANT_ID
-  const workspace = env.VITE_RAYFIN_WORKSPACE_ID
+  const tenant = env.VITE_FABRIC_TENANT_ID ?? env.VITE_RAYFIN_TENANT_ID
+  const workspace = env.VITE_FABRIC_WORKSPACE_ID ?? env.VITE_RAYFIN_WORKSPACE_ID
   const digest = env.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST
   if (!tenant || !workspace || !digest) throw new Error('Verified hosted source identity/digest configuration is missing.')
   const binding: unknown = JSON.parse(env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING ?? 'null')

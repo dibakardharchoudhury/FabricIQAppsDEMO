@@ -522,6 +522,16 @@ def isolated_azure_cli_config(tenant: str) -> Path:
     return AZURE_CLI_SESSION_ROOT / safe_tenant
 
 
+def prefer_tenant_scoped_azure_cli_config(tenant: str) -> bool:
+    """Reuse a previously refreshed tenant cache before consulting the default cache."""
+    config_dir = isolated_azure_cli_config(tenant)
+    if not config_dir.is_dir():
+        return False
+    os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
+    print(f"Reusing tenant-scoped Azure CLI session at {config_dir}.", flush=True)
+    return True
+
+
 def secure_private_directory(directory: Path, *, recursive: bool = False) -> None:
     """Create an owner-only directory, including an explicit Windows ACL."""
     try:
@@ -1832,6 +1842,7 @@ def deploy(args: argparse.Namespace) -> None:
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
+    prefer_tenant_scoped_azure_cli_config(args.tenant)
     ensure_azure_tenant(args.tenant)
     workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)

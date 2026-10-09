@@ -608,6 +608,36 @@ class DeployOrderTests(unittest.TestCase):
         )
         reauthenticate.assert_not_called()
 
+    def test_existing_tenant_scoped_cache_is_reused_by_new_process(self):
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir) / "tenant-id"
+            config_dir.mkdir()
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                reused = DEPLOY.prefer_tenant_scoped_azure_cli_config("TENANT-ID")
+
+            self.assertTrue(reused)
+            self.assertEqual(os.environ.get("AZURE_CONFIG_DIR"), str(config_dir))
+
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
+
+    def test_missing_tenant_scoped_cache_preserves_current_configuration(self):
+        shared_config = os.environ.get("AZURE_CONFIG_DIR")
+        os.environ["AZURE_CONFIG_DIR"] = "existing-config"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                reused = DEPLOY.prefer_tenant_scoped_azure_cli_config("tenant-id")
+
+        self.assertFalse(reused)
+        self.assertEqual(os.environ.get("AZURE_CONFIG_DIR"), "existing-config")
+        if shared_config is None:
+            os.environ.pop("AZURE_CONFIG_DIR", None)
+        else:
+            os.environ["AZURE_CONFIG_DIR"] = shared_config
+
     def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")
         with tempfile.TemporaryDirectory() as temp_dir:

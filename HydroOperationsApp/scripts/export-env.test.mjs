@@ -28,6 +28,7 @@ test('binding survives real Rayfin rewrites and framework export into Vite', asy
     await mkdir(path.join(root, 'rayfin'))
     const primary = path.join(root, 'rayfin/.env')
     await writeFile(primary, [
+      'RAYFIN_PUBLIC_TENANT_ID=ad340c84-1886-4202-a483-2da2cb9168eb',
       `RAYFIN_PUBLIC_WORKSPACE_ID=${binding.workspaceId}`,
       `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='${canonicalGraphBinding(JSON.stringify(binding), binding.workspaceId)}'`,
       'RAYFIN_PUBLIC_KQL_DATABASE=RTI_Demo_Eventhouse_V3',
@@ -53,6 +54,8 @@ test('binding survives real Rayfin rewrites and framework export into Vite', asy
       assert.equal(browserEnv.VITE_RAYFIN_KQL_DATABASE, 'RTI_Demo_Eventhouse_V3')
       assert.match(browserEnv.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL, /hydro-orchestrator/)
       assert.equal(browserEnv.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST, 'a'.repeat(64))
+      assert.equal(browserEnv.VITE_FABRIC_TENANT_ID, 'ad340c84-1886-4202-a483-2da2cb9168eb')
+      assert.equal(browserEnv.VITE_FABRIC_WORKSPACE_ID, binding.workspaceId)
       assert.equal(browserEnv.VITE_FABRIC_ITEM_ID, `backend-${cycle}`)
       assert.deepEqual(JSON.parse((await readEnvMap(path.dirname(primary))).get('RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING')), binding)
       assert.doesNotMatch(await readFile(path.join(root, '.env.local'), 'utf8'), /PRIVATE_TEST_SECRET|not-for-the-browser/)
