@@ -681,7 +681,13 @@ class FoundrySupervisor:
             delegation = Delegation.model_validate(parsed)
             return await self.handoff(delegation, request, journal, versions)
 
+        async def complete() -> dict[str, object]:
+            if not self.specialists:
+                raise SourceFailure("Orchestration cannot complete before a specialist returns.")
+            return {"status": "handoffs_complete", "completed_specialist_count": len(self.specialists)}
+
         callbacks = {"hydro_query": query, "delegate_to_agent": delegate,
+                     "complete_orchestration": complete,
                      "complete_rca_assessment": report, "complete_work_order_review": report}
         functions = []
         for definition in version.tools:
@@ -731,8 +737,9 @@ class FoundrySupervisor:
             context["handoff_execution"] = (
                 "The backend serializes delegate_to_agent calls in the order supplied and injects all completed "
                 "specialist reports and immutable source receipts into each subsequent assignment. When the "
-                "operator already specifies the full sequence, issue that ordered sequence in one tool-call "
-                "batch instead of waiting for another Supervisor model round between every handoff. Assign each "
+                "operator already specifies the full sequence, issue that ordered sequence followed by "
+                "complete_orchestration as the last call in one tool-call batch. The backend creates the final "
+                "typed presentation after that call; do not generate a separate answer. Assign each "
                 "specialist its own capability and evidence criteria; do not guess source values or downstream "
                 "findings. Branch-dependent follow-ups still require inspecting the returned results."
             )
@@ -753,9 +760,9 @@ class FoundrySupervisor:
         ) -> None:
             await call_next()
             self.healthy(request)
-            if completed_report is not None and invocation.function.name in (
-                "complete_rca_assessment", "complete_work_order_review",
-            ):
+            if ((completed_report is not None and invocation.function.name in (
+                    "complete_rca_assessment", "complete_work_order_review"))
+                    or invocation.function.name == "complete_orchestration"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
         agent = FoundryAgent(
@@ -916,7 +923,7 @@ class FoundrySupervisor:
             raise SourceFailure("Answer-projection evidence exceeds the bounded model context.")
         started = perf_counter()
         async with agent:
-            async with asyncio.timeout(min(60, (request.deadline - utc_now()).total_seconds())):
+            async with asyncio.timeout(min(90, (request.deadline - utc_now()).total_seconds())):
                 options: ChatOptions = {
                     "response_format": {"type": "json_schema", "json_schema": {
                         "name": "SourceBoundAnswerPlan", "strict": True, "schema": self.answer_schema(),

@@ -217,6 +217,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     ("qa", "Read and verify quality."), ("rca", "Investigate quality."),
                     ("work-order", "Review existing work."), ("qa", "Read and verify quality."),
                 ]]
+                output.append(self.function("complete_orchestration", {}))
             elif self.mode == "batch_handoffs":
                 output = [self.message(json.dumps(self.plan()))]
             elif self.mode.startswith("native") and round_number == 0:
@@ -740,14 +741,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "batch_handoffs"
         result = await self.owner.run(self.request)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
-        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual(self.calls["hydro-rca-agent"], 1)
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual(result.specialists[1].model_round_count, 1)
         self.assertEqual(result.specialists[2].model_round_count, 1)
         audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
-        self.assertEqual(audit["supervisor"]["model_round_count"], 2)
+        self.assertEqual(audit["supervisor"]["model_round_count"], 1)
         graph = RunJournal(self.root / str(self.request.run_id) / "receipts").read("workflow_graph")
         self.assertEqual(graph["format"], "mermaid")
         self.assertIn("chief_orchestration", graph["definition"])
