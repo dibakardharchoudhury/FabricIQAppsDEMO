@@ -1,6 +1,25 @@
 import Papa from 'papaparse'
 import type { AgentVisualization } from '../assistantStream.ts'
 import type { AgentStep } from '../agentSteps.ts'
+import { requiresChartOutput } from './orchestration.ts'
+
+const auditSection = (title = '') => /^(?:Sources?|Source observations|Returned source inventory:.*|Native-source retrieval claims|Work-order query coverage|Source-derived station summary)$/i.test(title)
+
+export function operatorNarrative(text: string): string {
+  return answerSections(hideRenderedData(text)).filter(section => !auditSection(section.title))
+    .map(section => section.markdown.trim())
+    .filter(section => section.replace(/^#{1,6}\s+.*$/gm, '').trim())
+    .join('\n\n')
+}
+
+export function showRequestedCharts(question: string): boolean {
+  return !/\b(?:table[- ]only|only (?:a |the )?table|no charts?|without charts?)\b/i.test(question)
+    && requiresChartOutput(question)
+}
+
+export function operatorDatasets(datasets: readonly AnswerDataset[]): AnswerDataset[] {
+  return datasets.filter(dataset => !auditSection(dataset.title))
+}
 
 export const OPERATIONAL_EVIDENCE_CONTRACT = `Operational evidence contract:
 "Operational SQL work orders" means records from the operational SQL data source, not a work-order type or category. Do not invent a SQL/type/category filter. Open means status neither Completed nor Cancelled.
@@ -17,7 +36,7 @@ Start with a concise direct answer. Use these headings only when relevant: Findi
 Default to at most two summary sentences and three short action/limitation bullets, plus any requested records or charts. Do not repeat the question, tool payloads, filters or the same numbers in multiple sections. Never end with an unsolicited menu or permission question.
 When actual editable work-order cards were staged, those cards are the only draft presentation. Do not repeat titles, descriptions, field lists, acceptance criteria or copy/paste templates in prose. At most say the cards are ready for review; retain only separately requested findings and material limitations. No card means no claim that an editable draft exists.
 For multiple comparable records, return a compact Markdown table with a header separator and one record per row. Use human-readable labels, explicit units, UTC timestamps, and canonical identifiers where needed. Do not replace a complete result with selected examples.
-For charts or dashboards, provide the exact supporting rows as fenced csv with a header. Use a descriptive heading immediately before each dataset. Numeric measures must be plain numbers; put units in column names. Use timestamp for the time axis and series for multiple signals. Never mix incompatible units in one measure column. Tables and charts must use the same rows, filters and labels, not independent recounts.
+Default to tables, not charts. Only prepare charts when the operator explicitly requests them; never chart identifiers, coordinates, inventory costs or incidental numeric fields merely because they are numeric. For requested charts or dashboards, provide the exact supporting rows as fenced csv with a header. Use a descriptive heading immediately before each dataset. Numeric measures must be plain numbers; put units in column names. Use timestamp for the time axis and series for multiple signals. Never mix incompatible units in one measure column. Tables and charts must use the same rows, filters and labels, not independent recounts.
 When calling visualize_dataset, preserve exact source column names and returned cell values: no aliases, rounding, invented calculations or duplicated rows. Only returned source projections and application-derived record counts are accepted. Derived counts use the exact column name record_count and the original grouping field, for example equipmentId,record_count for work inventory. The application supplies factual chart titles and axis labels; a chart never proves a fault. Retrieve a source-computed aggregation when another calculation is needed.
 If a specific chart is requested, emit CSV only for that chart's requested labels and measures, not unrelated numeric columns or the full inventory behind a top-N table. A top-five temperature chart must contain exactly the same five turbines as its table.
 Do not invent chart images, links, KPI totals or zeroes. Distinguish no matching records from unavailable, failed, stale or truncated sources. State material time/population scope and source limitations. End with concise Sources. Separate observations from hypotheses and recommendations.`

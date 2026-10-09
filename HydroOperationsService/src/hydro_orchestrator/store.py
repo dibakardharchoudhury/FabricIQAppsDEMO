@@ -102,6 +102,16 @@ class Store:
 
     def wait(self, proposal: Proposal) -> None:
         with self.transaction() as db:
+            row = db.execute(
+                "SELECT request,status,proposal,outcome FROM runs WHERE id=?",
+                (str(proposal.request.run_id),),
+            ).fetchone()
+            if row is None or row["request"] != proposal.request.model_dump_json():
+                raise Conflict("Proposal must match the persisted operator request.")
+            if row["status"] == "waiting" and row["proposal"] == proposal.model_dump_json():
+                return
+            if row["status"] != "running" or row["outcome"] is not None:
+                raise Conflict("Only an executing run without a committed outcome can await approval.")
             db.execute(
                 "UPDATE runs SET status='waiting', proposal=? WHERE id=?",
                 (proposal.model_dump_json(), str(proposal.request.run_id)),
@@ -131,6 +141,13 @@ class Store:
 
     def finish(self, outcome: Outcome) -> None:
         with self.transaction() as db:
+            row = db.execute("SELECT status,outcome FROM runs WHERE id=?", (str(outcome.run_id),)).fetchone()
+            if row is None or row["outcome"] is None:
+                raise Conflict("Completion requires a transactionally recorded typed outcome.")
+            if Outcome.model_validate_json(row["outcome"]) != outcome:
+                raise Conflict("The committed run outcome cannot be replaced.")
+            if row["status"] not in ("running", "completed"):
+                raise Conflict("Only an executing run can complete; retry failed runs explicitly.")
             db.execute(
                 "UPDATE runs SET status='completed', outcome=?, error=NULL WHERE id=?",
                 (outcome.model_dump_json(), str(outcome.run_id)),
@@ -138,7 +155,12 @@ class Store:
 
     def fail(self, run_id: UUID, message: str) -> None:
         with self.transaction() as db:
-            db.execute("UPDATE runs SET status='failed', error=? WHERE id=?", (message, str(run_id)))
+            changed = db.execute(
+                "UPDATE runs SET status='failed', error=? WHERE id=? AND status!='completed'",
+                (message, str(run_id)),
+            ).rowcount
+            if changed != 1:
+                raise Conflict("A completed or missing run cannot become failed.")
 
     def retry(self, run_id: UUID) -> StoredRun:
         with self.transaction() as db:
@@ -191,13 +213,15 @@ class Store:
     def record_decision(self, proposal: Proposal, approval: Approval) -> Outcome:
         run_id, digest = str(proposal.request.run_id), proposal.digest()
         with self.transaction() as db:
-            row = db.execute("SELECT proposal,approval,outcome FROM runs WHERE id=?", (run_id,)).fetchone()
+            row = db.execute("SELECT status,proposal,approval,outcome FROM runs WHERE id=?", (run_id,)).fetchone()
             if (approval.proposal_digest != digest or row is None
                     or row["proposal"] != proposal.model_dump_json()
                     or row["approval"] != approval.model_dump_json()):
                 raise Conflict("A matching persisted human approval is required before a validation write.")
             if row["outcome"]:
                 return Outcome.model_validate_json(row["outcome"])
+            if row["status"] != "running":
+                raise Conflict("Only an executing approved run can record a validation decision.")
             if approval.approved:
                 if proposal.expires_at <= utc_now():
                     raise Conflict("Proposal expired before execution.")

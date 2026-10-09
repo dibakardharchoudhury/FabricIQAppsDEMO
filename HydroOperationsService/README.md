@@ -1,4 +1,4 @@
-# Hydro durable orchestration: local validation milestone
+# Hydro durable orchestration: local and hosted validation milestones
 
 For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
@@ -7,7 +7,71 @@ distinction and production gates, see the
 **Not the production agent backend.** The Fabric app still uses its browser
 orchestrator. This isolated Python service exercises Microsoft Agent Framework
 1.19.0 workflows, typed handoffs, checkpoint recovery and human approval.
-No Azure resources, cloud authentication changes or production SQL writes are made.
+This HTTP service does not provision Azure resources, change cloud authentication
+or perform unapproved production SQL writes.
+
+## Current gated thin-client candidate
+
+The local Foundry/Data Agent/Battle consumer can use the hosted Invocations
+transport when `RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL` is explicitly configured.
+The SPA switch is **not activated or deployed**. It preserves the existing browser coordinator
+as a lazy-loaded rollback until hosted parity is accepted.
+
+The backend owns intent normalization using the existing canonical helpers,
+literal table/CSV presentation, chart validation and specialist execution receipts.
+The SPA displays that contract without narrative repair, table inference,
+automatic charts or mutation routing. `RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST`
+must match the runtime's complete source configuration; the explicit selected
+ontology binding must belong to the same workspace.
+
+Each client keeps a session ID and only the preceding accepted run ID, not
+analytical results in browser storage. The backend loads at most one historical
+display from that same signed-in user/source, bounded to 30 minutes and 16,000
+characters. Historical text is context, never fresh evidence or approval.
+Failed runs/new chats clear the client's preceding run ID. Old cards cannot
+submit after their conversation resets.
+
+Human decisions verify run/card identity. Explicit disabled/blocked no-write
+receipts differ from uncertain outcomes. The separate `reconcile` operation
+requires an existing identical approval intent and can only check the original
+submission: it cannot initiate SQL creation. No automatic submission retry exists.
+
+Validation of this candidate passed 117 backend tests, Pyright, 93 focused
+transport/runtime/source tests and 143 related frontend regressions, typecheck,
+focused lint, environment validation and production build. Vite still reports
+large-chunk and mixed static/dynamic-import warnings. The subsequent state
+bootstrap/source checks passed 43 targeted tests and Pyright; the container HOME
+correction passed the 21 source/packaging tests and Pyright.
+
+The existing Foundry coordinator has been published through immutable images.
+Version 1 rejected incomplete operator configuration; version 2 started with the
+complete nine-field public source configuration and returned sanitized HTTP 401
+for fake source credentials. That check did not exercise state writes. Version 3
+added an actual application-user create/write/FileLock startup probe and failed
+with `PermissionError`. Version 4 prepares private session HOME/state directories
+in the image, but the real hosted probe still fails with the same permission
+error. **The current hosted runtime is not operational.** Image compilation and
+platform OPTIONS HTTP 200 are not runtime acceptance. Failed synthetic sessions
+were stopped while retaining diagnostics; no state check was bypassed.
+
+The latest Linux-amd64 candidate is ACR run `dt7`,
+`hydro-orchestrator:validated-20261009041410`, digest
+`sha256:b611ca2b48c05fa2eb22cd54af7f7e10a3ed0c2ade4e9ccd249058ff9ee80dd6`.
+It contains only 26 allowlisted runtime files. Its build verifies state locking
+and packaged contracts as UID 10001; this does not prove hosted mount permissions.
+
+Two bounded capacity resume/read/suspend windows verified live numeric generation
+2 and the matching 13-part published Data Agent definition, restoring the original
+Paused state afterward. The operator subsequently reported the capacity active;
+leave it active. No source schema/data or production work order was changed.
+The hosted coordinator's delegated SQL probe explicitly returned
+`EXCHANGE_NOT_ENABLED`; the local opt-in
+has not been applied to AppBackend. Graph renewal in both legitimate CLI/azd
+contexts received a CAE `InteractionRequired / TokenCreatedWithOutdatedPolicies`
+challenge. Do not bypass normal authentication. Hosted state access, signed-SPA
+execution, platform credential redaction, live SQL/native-source execution,
+session recovery and latency remain acceptance gates. No Fabric app deployment
+or commit accompanied these corrections.
 
 The default HTTP service has **no configured source/agent adapters**, returns HTTP 503 for
 readiness/run submission, and reports `live_fabric_connected: false`. It does not
@@ -15,10 +79,279 @@ substitute bundled data for Fabric. Synthetic adapters exist only in tests.
 The four framework executors are application steps, not evidence that four Foundry
 agents have executed. No production UI is pointed at this service.
 Separate read-only source and Foundry RCA adapters now verify live Fabric identities,
-exercise source access and invoke the existing persistent Sleuth agent. They are not
-a complete multi-agent provider or a switch to production orchestration.
+exercise source access and invoke the existing persistent Sleuth agent. They are not a switch to production orchestration.
+
+## Existing Foundry agents through Agent Framework
+
+The separate `FoundrySupervisor` now uses the supported
+`agent_framework.foundry.FoundryAgent` provider to execute the existing Chief,
+Gauge, Sleuth, Fixer and explicitly selected Sparky capabilities. Each run pins
+read-back agent names, versions, model deployment and declared tool schemas.
+Python executes the existing function callbacks; no browser routing was added.
+
+- Authenticated local `/chat/runs` submit/status/answer/evidence endpoints run
+  independently of the submit connection. The CLI does not configure production
+  source tools automatically.
+- Immutable source receipts and specialist handoffs are persisted atomically.
+  Handoff reuse includes the evidence and prior-specialist context, so final
+  verification cannot accidentally reuse pre-investigation Gauge output.
+- Investigation/maintenance review requires a final Gauge handoff. Source reads
+  are coalesced; verification does not imply a second unchanged source read.
+- Chief can submit an already-specified sequence in one ordered tool-call batch.
+  SDK dispatch is sequential before asynchronous delegation validation; specialist
+  source calls remain concurrent. Accepted RCA/work-review completions terminate
+  their SDK loop through supported middleware rather than generating extra prose.
+- Invalid source arguments and invalid structured completions each have one
+  bounded correction. Real source/authentication failures are never retried as
+  formatting mistakes or converted into empty results.
+- Cells must reference actual scalar fields in the same source row. An invalid
+  Chief answer gets one tool-free `FoundryChatClient` projection with a strict
+  schema enumerating actual evidence/field/pointer combinations. This uses the
+  verified Chief model deployment without creating another persistent agent.
+  The audit distinguishes Chief's output from the projection's response identity.
+- Tables are the default. Charts require explicit intent, numeric series and
+  nonblank compatible units. An explicit chart request cannot silently disappear
+  when the source receipts contain a numeric measure with verified units;
+  otherwise a source-derived inability is reported. Cross-source rows require
+  matching equipment or signal identity in every contributing source row, even
+    when those identities are not display columns. Generic asset/operational reads
+    retain private identities from the exact filtered/capped source rows before
+    projection; these do not become display columns or model reference fields.
+    Missing or contradictory identities do not prove a join. Missing-source
+    warnings survive presentation.
+
+**Live evidence, October 8:** Chief v12 coordinated Gauge v14 -> Sleuth v16 ->
+Fixer v14 -> Gauge v14 against six real T005 measurements. Exact source cells,
+five requested columns, zero charts and zero writes passed in **133.67 seconds**.
+A later pass, exercising the structured projection and an RCA completion
+correction, took **170.02 seconds**. Earlier repeat failures remain failures;
+these bounded passes do not establish reliability or an acceptable latency SLA.
+Stale telemetry and work/inspection sources not requested remained explicit.
+
+An additional exact-data live run, `3bc0428f-1c7e-48fe-91fb-08083b8bc85e`,
+passed in **133.73 seconds** with two Chief model rounds, one source read, one
+RCA model round, and two Fixer rounds including a bounded completion correction.
+The audit now records actual specialist/Chief model-round counts. This is a
+measured round-trip reduction, not production latency acceptance.
+
+The earlier SDK milestone's complete backend run passed **106 tests in 200.848 seconds**, Pyright and dependency
+compatibility checks. SDK tests mock network boundaries; they do not certify
+hosted execution. Production source authorization,
+hosted image execution, distributed durability, human-approved SQL writes and SPA/Battle
+integration are not accepted. A gated thin SPA/Battle consumer now exists locally;
+the later hosted publication and startup failures are recorded above.
+
+## Delegated invocation boundary
+
+`create_delegated_app` is a tested HTTP composition boundary, **not a configured
+or deployed production service**. It requires an explicit source identity,
+authorization policy and asynchronous supervisor/source factory. The existing
+local CLI and Fabric app do not enable it automatically.
+
+`create_fabric_delegated_app` now supplies a concrete per-request factory:
+verify live Fabric discovery, reject changed identity, construct the existing
+`FoundrySupervisor` with `FabricBackendTools`, and close the delegated lease.
+The read-only candidate exposes `query_assets`, `query_operations`,
+`query_telemetry`, `run_kql`, `query_signal_quality_snapshot` and
+`query_turbine_temperature_snapshot` and `query_station_power`. It is not the complete production provider.
+Snapshots reuse the existing shared calculations: BAD means latest signal
+quality BAD; hot rankings use latest raw temperature, not averages. Complete
+bounded asset/work reads precede backend snapshot coverage attestations. Unit
+and equipment coverage metadata derive from returned source data. The existing
+browser reuses the calculations but does not attest complete work coverage.
+Station power reuses the source-side unit conversion and sample-weighted means,
+with an attested MW measure. It is not total station generation or energy.
+The backend source tool returns rows and semantics, not an automatic chart;
+the existing answer validator applies the user's explicit chart intent.
+The station-power addition passed 20 focused backend tests (19 source tests plus
+answer/chart integration), 26 Node source tests and 40 existing shared/browser
+tool tests. The earlier 106-test full-suite result predates this addition.
+Unsafe aggregate sample-count/numeric overflow is explicitly rejected.
+
+### Source-grounded work approval candidate
+
+`propose_work_order` is now a backend staging capability, not a SQL write.
+It verifies active equipment and any selected signal against complete STID reads,
+requires fresh complete equipment-filtered open-work coverage, and returns typed
+editable cards with stable IDs and approval digests. Priority comes from the
+typed operator input (default Medium), never model escalation. Cards expire
+within 15 minutes of the work-source read.
+
+The same signed-user `/invocations` boundary accepts `operation: "decide"` with
+`run_id` and a `decision` containing `proposal_id`, `proposal_digest`, explicit
+`approved`, and reviewed `edits` (title, description, priority) for approval.
+Rejection contains no edits. Another user/source, changed card, expired draft,
+or changed terminal decision cannot create work.
+
+Production writes remain disabled by default. Explicit runtime
+`production_writes_enabled: true` enables the separate human-decision provider,
+not an agent tool. It revalidates the target and duplicate open work, uses a
+stable creation ID, and verifies exact SQL readback including the signed-in
+creator and approved fields. Lost acknowledgements are reconciled by ID;
+an uncertain submission never automatically repeats a SQL create. Known
+pre-write failures explicitly report no write. Decision intents/results are
+available in the same authenticated evidence audit.
+
+Tests use signed synthetic tokens and simulated SQL boundaries. This is not
+live SQL authorization, distributed idempotency or production-write acceptance.
+The existing browser approval flow has not been removed or redirected.
+
+The disabled direct-exchange prerequisite is now understood: Rayfin 1.36 requires
+`services.auth.fabric.externalEntraExchange: true`, while ordinary Fabric SSO
+does not. The repository configuration now opts in, without changing redirects
+or database schemas. The change still requires the canonical Fabric deployment
+engine to apply it; no manual runtime patch is used. A delegated owning-tenant
+token with `Item.Execute.All` and item Execute access is also required. See
+[direct Entra token sign-in](https://rayfin.ai/docs/auth/entra-token).
+
+- `POST /invocations` accepts `operation: "run"`, a `chat` input and a `tokens`
+  map containing short-lived Fabric/Foundry delegated tokens, plus GraphQL/Kusto
+  tokens when those sources are enabled. Tokens must come from the existing SPA,
+  not browser-storage extraction, CLI exchange or a new registration.
+- RS256 signatures, selected tenant, configured resource audiences, SPA client,
+  delegated identity, same user across resources and expiry covering the bounded
+  run are verified before constructing a supervisor. Actual source permissions
+  are still enforced by the source services; this does not certify the new
+  hosted delegated SQL path. The embedded app's working SQL/WO path is separate.
+- State is namespaced by signed-in principal and complete configured source
+  identity. The factory cannot substitute another state namespace, source or
+  CLI/managed-identity credential. Returned answers must match the invocation.
+- Raw tokens are not passed into `ChatRequest`, model context or receipts.
+  Validation responses never include raw Pydantic inputs. Leases are cleared
+  after success, source failure, timeout or cancellation.
+- The boundary rejects oversized bodies and full execution capacity explicitly.
+  Signing-key reads are coalesced and cached; unknown key IDs cannot force an
+  immediate refresh on every request.
+- The returned `audit_url` is `/invocations`: retrieve evidence with another
+  authenticated **POST**, `operation: "evidence"` and the returned `run_id`,
+  without `chat`. Another user's completed or failed run returns HTTP 404.
+- A failed authorized run returns its server-assigned `run_id` and a sanitized
+  failure audit through the same authenticated POST protocol. The audit records
+  source identity, clocks and failure category, not exception bodies or tokens.
+  It is not a completed execution certificate. A storage failure explicitly
+  reports `audit_available: false`; no audit success is invented.
+
+Unlike the existing queued local API, this request-scoped endpoint is not a
+distributed durable scheduler. Reconnection/resume, hosted protocol packaging,
+platform trace/body redaction, complete production source composition and the
+SPA token transport remain rollout gates. It has no WO write/approval endpoint.
+The working app sign-in and human-approved WO flow remain unchanged.
+
+### Explicit runtime startup
+
+`python -m hydro_orchestrator --serve-delegated` starts the composed backend
+without enabling the unconfigured local validation API. It requires:
+
+- `HYDRO_ORCHESTRATOR_CONFIG`: JSON with `source`, `authorization` and
+  `project_endpoint`, matching the typed `RuntimeConfiguration` contract.
+  `source` requires numeric generation 2 and the exact configuration digest.
+  Fabric and Foundry scopes must match the SDK resources. Optional
+  `native_binding` forwards explicit matching source/connection identities to
+  the existing supervisor; runtime agent-definition readback still checks the
+  selected connection. Supplying a binding is not live native-source acceptance.
+- `HYDRO_FABRIC_SOURCE_CONFIG`: explicit source GUIDs, the current authoritative
+  AppBackend `api_url` and its public `publishable_key`. The Node bridge
+  canonicalizes this configuration and computes the digest. Invalid explicit
+  JSON never falls back to repository deployment files. The CLI requires this
+  setting; its local diagnostic file-based configuration remains unchanged.
+  Use the canonical deployer's verified target configuration, never a copied
+  endpoint from another capacity or target.
+- `HYDRO_RUNTIME_STATE_DIR`: an absolute directory for local receipts.
+  This is still local filesystem state, not distributed persistence.
+
+`HYDRO_RUNTIME_HOST` defaults to loopback and `HYDRO_RUNTIME_PORT` to 8088.
+Deployments must provide TLS at the ingress before transporting delegated
+credentials; public binding alone is not a secure hosting configuration.
+Access logging is disabled for this entrypoint. The lifespan owns and closes
+the JWKS HTTP client. `/health` and the Foundry contract's `/readiness` report only that the process awaits an
+authorized invocation, with live-source verification and writes explicitly
+false; it cannot certify source access, hosting, durability or delivery.
+
+Seventeen authorization/runtime tests include a real subprocess listener:
+missing runtime configuration stops startup, health responds, invalid
+invocations are rejected, and the test terminates its exact process. No live
+credentials, source reads or production records are involved.
+
+The essential container package retains Python 3.12, Node 24 and the bridge's
+sibling source layout. Its Dockerfile-specific build context is deny-by-default:
+no Rayfin deployment configuration, credentials, virtual environments or
+browser build assets are included. Builder dependencies use the existing locks;
+the final Node package keeps only the source runtime dependency closure.
+Packaging tests exercise the isolated contracts/configuration and exact COPY
+boundaries, and the pinned Python wheels were checked for Linux amd64.
+At the earlier image-only milestone, the Linux-amd64 image compiled in the provisioned Basic ACR. Native ACR
+run `dt4` succeeded and its build log confirms backend imports and the packaged
+Node contract probe passed as UID 10001 without live-source access.
+The image is
+`cr7pa6m5kav6cig.azurecr.io/hydro-orchestrator:validated-20261009024916`,
+digest `sha256:12caea5e3cc87b1fe17b81297dde4c12942b2becf85fbfde919a7ac62c330fa7`.
+
+Real builds exposed and corrected three packaging issues: legacy builders do
+not populate automatic `TARGETARCH` or execute this Docker heredoc; npm also
+requires the app's existing, nonsecret `.npmrc` peer policy. The package now
+checks actual Debian architecture, uses portable inline Node dependency
+pruning, and includes that exact configuration. Browser packages remain
+excluded from the final runtime. Source/packaging tests passed after these fixes.
+Temporary source directories and named upload archives were cleaned.
+
+The preview `azd publish` stalled without an ACR run and was stopped; native ACR
+performed image-only compilation. At that milestone, no hosted agent version or
+Fabric app was deployed, Fabric discovery returned `CapacityNotActive`, and no
+runtime configuration was seeded from unverified live generation. The later
+verified source configuration, publications and startup failures are recorded
+above. The compiled
+image is not hosted-session, delegated-SQL, platform-redaction, distributed
+durability or SPA/Battle acceptance.
+
+Read-only Entra metadata confirms the existing SPA lists Fabric
+`Item.Execute.All`, GraphQL/Data Agent execution and Foundry
+`user_impersonation` permissions. Configured permissions are not proof of
+effective consent, item authorization or successful delegated source execution.
+No registration, permission, consent or authentication setting was changed.
+
+The canonical tool definitions and row shaping were moved unchanged into the
+existing browser-free `query.ts` module; browser imports are re-exported for
+compatibility. No additional TypeScript helper file or browser routing was added.
+The Node bridge derives entity-specific backend validation from that catalog,
+rejecting wrong column aliases, duplicate selections and out-of-bound limits
+before a model invocation can request the source read.
+
+Generic asset and operational readers use declared entity identity columns,
+complete bounded pagination and the shared field projection. They preserve
+native types and reject partial, duplicate or malformed results rather than
+claiming empty work. SQL primitives request only the Fabric token, not unused
+GraphQL/Kusto tokens. Existing SDK exchange failures still propagate: these
+tests do not prove that delegated SQL exchange is enabled.
+
+The generic candidate still requires metadata discovery, supports neither fleet
+snapshot helpers nor proposal/approval writes, and does not attach chart-unit or
+cross-source join provenance. It is not a production SQL-independence, general
+charting, native Data Agent or Battle acceptance result.
 
 ## Implemented boundary
+
+The current local candidate also exposes authenticated
+`GET /runs/{run_id}/answer` and `GET /runs/{run_id}/evidence`. The answer is generated
+from a persisted proposal/assessment or committed outcome, not agent prose:
+
+- Each column has a distinct key and declared text/number/timestamp type.
+  Every row must have exactly those keys. Transposed unit/value fields, numeric
+  strings in numeric columns, duplicate columns and non-finite values fail.
+- Measurement cells are copied from the immutable evidence. Row citations resolve
+  to the same telemetry receipt sent to the existing Foundry specialist.
+- Work coverage retains only the actual returned work-order numbers. It does not
+  invent titles, priorities or statuses that this bounded adapter did not return.
+  The audit labels this coverage receipt as an adapter summary, not a raw SQL query.
+- Queued, running and failed runs return HTTP 409 instead of a successful answer.
+  Neither endpoint invokes providers again or creates a production work order.
+
+This contract has no chart field because the bounded inspection-review input does
+not request charts. General chart-request handling and the thin SPA consumer belong
+to the broader hosted integration; no automatic inventory/count chart is implied.
+Reconstructed live RCA assessments recheck all report pointers and the existing
+specialist identity, in addition to validating live responses before persistence.
+Terminal SQLite updates reject replacement outcomes and late failures.
+These are local corrections, not proof of a hosted Agent Framework migration.
 
 ```text
 Authenticated local request + idempotency key
@@ -127,9 +460,13 @@ fresh ingestion; inspect `missing_sources`.
 
 **Observed live result, October 8:** verified ontology generation 2 and six
 STID-mapped T005 measurements, explicitly labelled `fresh_telemetry` missing.
-Work-order access failed with **`EXCHANGE_NOT_ENABLED`**. The installed Rayfin
+The local diagnostic work-order read failed with **`EXCHANGE_NOT_ENABLED`**.
+This does not establish a failure in the working app: the app uses embedded
+Fabric authentication and `ensureSignedInWithFabric`, not this diagnostic's
+direct Entra exchange. Its existing approval/write path is unchanged. The installed Rayfin
 guidance identifies `services.auth.fabric.externalEntraExchange: true` as the
-setting for delegated exchange, but it was not changed or deployed.
+setting for delegated exchange. It was subsequently set and tested locally,
+but has not been applied to the live AppBackend.
 The SDK also requires delegated `Item.Execute.All`, owning-tenant identity and
 item Execute permission. The inspected Fabric token from the existing CLI session
 lacked that named scope; enabling the setting alone is not a verified solution.
@@ -139,12 +476,14 @@ or granting customer-tenant admin consent. The documented `RayfinAuth` silent-to
 alternative was also tested and had no usable cached login. A supported interactive
 Rayfin identity or a properly authorized server-side delegated/OBO path is still
 required; no browser token extraction, app-only substitution or auth bypass was used.
-Approve and implement the supported delegated authentication path through the
-canonical deployer before claiming end-to-end SQL access.
+The hosted backend requires a supported, authorized delegated source path before
+claiming hosted-coordinator SQL access. The embedded Fabric app SQL/WO path is
+working and remains the accepted write path. Do not replace its broker login,
+use app-only tokens for Rayfin exchange, or weaken its approval safeguards.
 
 The workflow regression verifies that this failure produces a failed run with
 no investigation, proposal or approvable card. It cannot become "no open work."
-The complete read adapter is ready for composition only after its live prerequisites
+The diagnostic read adapter is ready for composition only after its live prerequisites
 pass. The independent telemetry-only investigation below does not substitute for
 the failed work-order read. The proposal adapter and SPA integration remain pending.
 
@@ -237,7 +576,8 @@ Do not put this token in the SPA, source control, a URL or a production configur
 2. Implement and test server-side Entra authorization and the supported delegated
    access path for each Fabric/Foundry endpoint. Do not assume every native endpoint
    supports managed identity or app-only access.
-3. Finish the live Foundry adapters and unblock/test the read adapter's SQL access
+3. Finish the live Foundry adapters and unblock/test the hosted read adapter's
+   delegated SQL path
    against verified v2 identities, retaining source failures,
    direct-source evidence and native-source limitations. Never migrate by treating
    arbitrary model narrative as an authoritative dataset.

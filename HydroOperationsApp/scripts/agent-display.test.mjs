@@ -40,7 +40,7 @@ const sourceSteps = rows => [{ tool: 'query_telemetry', status: 'done', detail: 
 
 test('native bullet records render real tables and charts without acquiring verified-source status', () => {
   const text = '## Latest readings\n- **T005** (`EQUIP_RTI_T005`)\n  - Raw reading: **91.156 C**\n  - Quality: **GOOD**\n- **T013** (`EQUIP_RTI_T013`)\n  - Raw reading: **94.101 C**\n  - Quality: **GOOD**'
-  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text, question: 'Show a chart.' }))
   assert.equal((html.match(/<table>/g) ?? []).length, 1)
   assert.equal((html.match(/<tr>/g) ?? []).length, 3)
   assert.match(html, /role="img"/)
@@ -133,7 +133,7 @@ test('deterministic category counts are permitted chart sources', () => {
     inlineCsvData: 'equipmentId,record_count\nT1,2\nT2,1' }, workSteps).title, /Source-backed/)
 })
 
-test('a requested explicit chart does not suppress automatic charts from other returned tools', () => {
+test('a requested explicit chart does not add unrelated automatic count charts', () => {
   const steps = [...sourceSteps([{ signal: 'temperature', value: 70, unit: 'C' }]), {
     tool: 'query_operations', status: 'done', result: JSON.stringify({ rows: [
       { workOrderNumber: 'WO-1', equipmentId: 'T1', status: 'Draft' },
@@ -141,10 +141,12 @@ test('a requested explicit chart does not suppress automatic charts from other r
     ] }),
   }]
   const explicit = sourcePresentation.presentSourceRows(steps.slice(0, 1), '').visualizations
-  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text: '', steps, visualizations: explicit }))
-  assert.match(html, /returned records by equipmentId/)
-  assert.match(html, /returned records by status/)
-  assert.equal((html.match(/<svg/g) ?? []).length, 3)
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text: '', question: 'Show a temperature chart.', steps, visualizations: explicit }))
+  assert.doesNotMatch(html, /returned records by equipmentId/)
+  assert.doesNotMatch(html, /returned records by status/)
+  assert.equal((html.match(/<svg/g) ?? []).length, 1)
+  assert.match(html, /WO-1/)
+  assert.match(html, /WO-2/)
 })
 
 test('invalid or streaming structured output is not dumped into narrative', () => {
@@ -260,7 +262,7 @@ test('chart panels are bounded without dropping table rows and timestamp uncerta
   assert.match(source.summary, /limited to 12 panels/)
 })
 
-test('BAD and UNCERTAIN snapshot rows always render real tables and automatic charts without a chart request', () => {
+test('BAD and UNCERTAIN snapshots render tables without unrequested charts', () => {
   const steps = ['BAD', 'UNCERTAIN'].map((quality, index) => ({
     tool: 'query_signal_quality_snapshot', status: 'done',
     result: JSON.stringify({ quality_filter: quality, rows: [{
@@ -273,27 +275,27 @@ test('BAD and UNCERTAIN snapshot rows always render real tables and automatic ch
     text: 'Detailed rows: | asset | quality | | --- | --- | | invented | BAD |',
     question: 'Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?', steps,
   }))
-  assert.equal((html.match(/<table>/g) ?? []).length, 3)
-  assert.ok((html.match(/<svg/g) ?? []).length >= 2)
+  assert.ok((html.match(/<table>/g) ?? []).length >= 3)
+  assert.doesNotMatch(html, /<svg/)
   assert.match(html, /WO-1/)
   assert.match(html, /same-signal/)
   assert.doesNotMatch(html, /invented/)
-  assert.ok(html.indexOf('<table>') < html.indexOf('<svg'))
+  assert.ok(html.indexOf('<table>') < html.indexOf('Evidence audit'))
 })
 
-test('all row-returning tools get automatic tables and charts, including newly registered tools', () => {
+test('all row-returning tools get tables without unrequested charts, including new tools', () => {
   for (const tool of ['query_assets', 'query_operations', 'query_station_power', 'query_turbine_temperature_snapshot', 'new_inventory_tool']) {
     const html = renderToStaticMarkup(createElement(AnswerDashboard, {
       text: '', question: 'List the records.', steps: [{ tool, status: 'done',
         result: JSON.stringify({ rows: [{ asset: 'T005', available: 3 }, { asset: 'T008', available: 7 }] }) }],
     }))
     assert.match(html, /<table>/, tool)
-    assert.match(html, /<svg/, tool)
+    assert.doesNotMatch(html, /<svg/, tool)
     assert.match(html, /<td[^>]*>T005<\/td>/, tool)
   }
 })
 
-test('Data Agent Markdown and JSON records render tables and automatic charts with no source steps', () => {
+test('Data Agent Markdown and JSON records default to tables with no source steps', () => {
   for (const text of [
     'Findings: | Asset | Count | | --- | --- | | T005 | 3 | | T008 | 7 |',
     'Findings: | Asset | Count |\n| --- | --- |\n| T005 | 3 |\n| T008 | 7 |',
@@ -301,7 +303,7 @@ test('Data Agent Markdown and JSON records render tables and automatic charts wi
   ]) {
     const html = renderToStaticMarkup(createElement(AnswerDashboard, { text, question: 'List open work.' }))
     assert.match(html, /<table>/)
-    assert.match(html, /<svg/)
+    assert.doesNotMatch(html, /<svg/)
     assert.match(html, /T005/)
     const prose = answerPresentation.hideRenderedData(text)
     assert.doesNotMatch(prose, /\||T005|```json/)
@@ -316,7 +318,7 @@ test('categorical data charts actual returned-record counts without inventing ze
   assert.match(charts[0].inlineCsvData, /BAD,2/)
   assert.match(charts[0].inlineCsvData, /UNCERTAIN,1/)
   assert.doesNotMatch(charts[0].inlineCsvData, /GOOD/)
-  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text }))
+  const html = renderToStaticMarkup(createElement(AnswerDashboard, { text, question: 'Show a quality chart.' }))
   assert.match(html, /<table>/)
   assert.match(html, /<svg/)
 })

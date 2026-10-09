@@ -5,34 +5,33 @@ from time import perf_counter
 from urllib.parse import urlparse
 
 import httpx
-from azure.identity.aio import AzureCliCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 from .contracts import AgentReceipt, Assessment, Evidence, RcaReport
 from .live_sources import Bridge, SourceFailure
 
 
+def verified_project_endpoint(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    if (parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".services.ai.azure.com")
+            or parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment
+            or not re.fullmatch(r"/api/projects/[A-Za-z0-9][A-Za-z0-9_-]*/?", parsed.path)):
+        raise ValueError("Use the explicitly configured HTTPS Foundry project endpoint.")
+    return endpoint.rstrip("/")
+
+
 class FoundryRca:
-    def __init__(self, endpoint: str, credential: AzureCliCredential, bridge: Bridge, client: httpx.AsyncClient):
-        parsed = urlparse(endpoint)
-        if (parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".services.ai.azure.com")
-                or parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment
-                or not re.fullmatch(r"/api/projects/[A-Za-z0-9][A-Za-z0-9_-]*/?", parsed.path)):
-            raise ValueError("Use the explicitly configured HTTPS Foundry project endpoint.")
-        self.endpoint, self.credential, self.bridge, self.client = endpoint.rstrip("/"), credential, bridge, client
+    def __init__(self, endpoint: str, credential: AsyncTokenCredential, bridge: Bridge, client: httpx.AsyncClient):
+        self.endpoint, self.credential, self.bridge, self.client = verified_project_endpoint(endpoint), credential, bridge, client
         self.agent_name = "hydro-rca-agent"
 
     async def investigate(self, evidence: Evidence) -> Assessment:
         if not evidence.observations:
             raise SourceFailure("RCA requires actual source observations.")
         digest = sha256(evidence.model_dump_json().encode()).hexdigest()
-        receipt_id = f"{evidence.request.run_id}:telemetry"
-        receipts = [{
-            "id": receipt_id, "tool": "query_telemetry",
-            "completedAt": evidence.read_completed_at.isoformat(),
-            "result": {"rows": [item.model_dump(mode="json") for item in evidence.observations],
-                       "read_completed_at_utc": evidence.read_completed_at.isoformat(),
-                       "missing_sources": list(evidence.missing_sources)},
-        }]
+        receipt = evidence.telemetry_receipt()
+        receipt_id = receipt["id"]
+        receipts = [receipt]
         contract = await self.bridge.call({"action": "rca_contract"})
         tool = contract.get("tool")
         if not isinstance(tool, dict) or tool.get("name") != "complete_rca_assessment":

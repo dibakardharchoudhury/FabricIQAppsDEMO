@@ -55,6 +55,17 @@ class Evidence(Contract):
     missing_sources: tuple[str, ...] = Field(max_length=20)
     work_orders_read_at: AwareDatetime | None = None
 
+    def telemetry_receipt(self) -> dict[str, object]:
+        return {
+            "id": f"{self.request.run_id}:telemetry", "tool": "query_telemetry",
+            "completedAt": self.read_completed_at.isoformat(),
+            "result": {
+                "rows": [item.model_dump(mode="json") for item in self.observations],
+                "read_completed_at_utc": self.read_completed_at.isoformat(),
+                "missing_sources": list(self.missing_sources),
+            },
+        }
+
     @model_validator(mode="after")
     def bound_identity(self) -> "Evidence":
         if self.source != self.request.source or self.equipment_id != self.request.equipment_id:
@@ -128,10 +139,41 @@ class Assessment(Contract):
         if (self.report is None) != (self.agent_receipt is None):
             raise ValueError("Live assessment requires both a structured report and an invocation receipt.")
         if self.report and self.agent_receipt:
+            if self.agent_receipt.agent_name != "hydro-rca-agent":
+                raise ValueError("Assessment receipt belongs to a different specialist.")
             if self.agent_receipt.input_digest != sha256(self.evidence.model_dump_json().encode()).hexdigest():
                 raise ValueError("Agent receipt does not match the immutable evidence input.")
             if self.hypotheses != tuple(item.category for item in self.report.hypotheses):
                 raise ValueError("Assessment changed the structured hypothesis categories.")
+            receipt = self.evidence.telemetry_receipt()
+            references = [
+                *self.report.observations,
+                *(reference for item in self.report.hypotheses
+                  for reference in (*item.supporting, *item.contradicting)),
+            ]
+            for reference in references:
+                if reference.evidence_id != receipt["id"]:
+                    raise ValueError("Assessment references a different source receipt.")
+                value = receipt["result"]
+                for encoded in reference.path.split("/")[1:]:
+                    key = encoded.replace("~1", "/").replace("~0", "~")
+                    if isinstance(value, dict) and key in value:
+                        value = value[key]
+                    elif isinstance(value, list) and key.isascii() and key.isdecimal() and int(key) < len(value):
+                        value = value[int(key)]
+                    else:
+                        raise ValueError("Assessment pointer does not resolve into its source receipt.")
+            selected = {
+                self.evidence.observations[int(segments[2])].evidence_id
+                for reference in self.report.observations
+                if len(segments := reference.path.split("/")) >= 3 and segments[1] == "rows"
+                and segments[2].isascii() and segments[2].isdecimal()
+            }
+            if not selected or set(self.observations) != selected:
+                raise ValueError("Selected observations differ from the source-referenced report.")
+            gaps = {gap for hypothesis in self.report.hypotheses for gap in hypothesis.missing}
+            if not gaps <= set(self.missing_evidence):
+                raise ValueError("Assessment omitted missing evidence from the structured report.")
         return self
 
 
@@ -179,6 +221,65 @@ class Proposal(Contract):
 class Approval(Contract):
     approved: bool = Field(strict=True)
     proposal_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+class WorkOrderDraft(Contract):
+    id: UUID
+    run_id: UUID
+    source: SourceIdentity
+    equipment_id: str = Field(min_length=1, max_length=200)
+    instrument_id: str | None = Field(default=None, min_length=1, max_length=200)
+    opcua_node_id: str | None = Field(default=None, min_length=1, max_length=500)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=4000)
+    priority: Literal["Low", "Medium", "High", "Critical"]
+    work_read_at: AwareDatetime
+    expires_at: AwareDatetime
+    existing_work: tuple[dict[str, object], ...] = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def verified_draft(self) -> "WorkOrderDraft":
+        if any(not value.strip() for value in (self.equipment_id, self.title, self.description)):
+            raise ValueError("Work-order identity, title and description must not be blank.")
+        if not self.work_read_at < self.expires_at <= self.work_read_at + timedelta(minutes=15):
+            raise ValueError("A draft expires within 15 minutes of its complete work read.")
+        identities = set()
+        for row in self.existing_work:
+            identity, status = row.get("id"), row.get("status")
+            if (not isinstance(identity, str) or not identity.strip() or identity in identities
+                    or row.get("equipmentId") != self.equipment_id
+                    or not isinstance(status, str) or not status.strip()
+                    or status.strip().lower() in ("completed", "cancelled")):
+                raise ValueError("Draft work coverage contains invalid, duplicate or unrelated open work.")
+            identities.add(identity)
+        return self
+
+    def digest(self) -> str:
+        return sha256(self.model_dump_json().encode()).hexdigest()
+
+
+class WorkOrderEdits(Contract):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=4000)
+    priority: Literal["Low", "Medium", "High", "Critical"]
+
+    @model_validator(mode="after")
+    def not_blank(self) -> "WorkOrderEdits":
+        if not self.title.strip() or not self.description.strip():
+            raise ValueError("Approved work requires a nonblank title and description.")
+        return self
+
+
+class WorkOrderDecision(Contract):
+    proposal_id: UUID
+    proposal_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    approved: bool = Field(strict=True)
+    edits: WorkOrderEdits | None = None
+
+    @model_validator(mode="after")
+    def explicit_edits(self) -> "WorkOrderDecision":
+        if self.approved != (self.edits is not None):
+            raise ValueError("Approval requires the reviewed fields; rejection cannot edit a draft.")
+        return self
 
 
 class Outcome(Contract):

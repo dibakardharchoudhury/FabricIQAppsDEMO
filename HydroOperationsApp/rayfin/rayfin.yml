@@ -14,6 +14,7 @@ services:
       enabled: false
     fabric:
       enabled: true
+      externalEntraExchange: true
     allowedRedirectUris:
       - https://lofty-coast-a9601204e1-swedencentral.webapp.fabricapps.net
       - https://fair-hill-c529b5e004-swedencentral.webapp.fabricapps.net

@@ -27,7 +27,7 @@ const hooks = registerHooks({
   resolve(specifier, context, next) {
     const sourceBoundary = context.parentURL?.endsWith('/copilot/tools.ts')
       && ['../fabric.ts', '../rayfin.ts', './workOrderApproval.ts'].includes(specifier)
-    if ((context.parentURL?.endsWith('/copilot/foundry.ts') || sourceBoundary) && Object.hasOwn(stubs, specifier)) {
+    if ((context.parentURL?.endsWith('/copilot/foundry.ts') || context.parentURL?.endsWith('/copilot/browserFoundry.ts') || sourceBoundary) && Object.hasOwn(stubs, specifier)) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true }
     }
     return next(specifier, context)
@@ -115,9 +115,10 @@ test('full-fleet snapshots enumerate all quality states and disclose inventory s
   }
   harness.kusto = async query => {
     assert.doesNotMatch(query, /where.*quality/)
+    const observed = new Date(Date.now() - 1000).toISOString()
     return { columns: ['opcua_node_id', 'value', 'event_time', 'quality'],
-      rows: [['ns=2;s=T001.turbine_temp', 80, '2026-10-08T06:00:00Z', 'BAD'],
-        ['ns=2;s=T002.turbine_temp', 70, '2026-10-08T06:00:00Z', 'GOOD']] }
+      rows: [['ns=2;s=T001.turbine_temp', 80, observed, 'BAD'],
+        ['ns=2;s=T002.turbine_temp', 70, observed, 'GOOD']] }
   }
   const run = createToolRuntime(defaultCopilotSettings())
   const result = await run('query_signal_quality_snapshot', { quality: 'BAD', equipment_type: 'turbine', lookback: 'today' })

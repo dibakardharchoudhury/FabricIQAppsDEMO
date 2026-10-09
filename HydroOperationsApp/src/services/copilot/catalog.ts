@@ -11,6 +11,7 @@ export type CatalogEntity = {
   key: string
   source: 'lakehouse' | 'sql'
   physicalName: string
+  identityColumn: string
   description: string
   columns: CatalogColumn[]
 }
@@ -20,6 +21,7 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
     key: 'facilities',
     source: 'lakehouse',
     physicalName: 'silver_facilities',
+    identityColumn: 'facility_id',
     description: 'Hydro power stations.',
     columns: [
       { name: 'facility_id' }, { name: 'facility_name' }, { name: 'type' }, { name: 'country' },
@@ -30,6 +32,7 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
     key: 'equipment',
     source: 'lakehouse',
     physicalName: 'silver_equipments',
+    identityColumn: 'equipment_id',
     description: 'Turbines and other equipment installed at a facility.',
     columns: [
       { name: 'equipment_id' }, { name: 'facility_id' }, { name: 'system_id' },
@@ -43,6 +46,7 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
     key: 'instruments',
     source: 'lakehouse',
     physicalName: 'silver_instruments',
+    identityColumn: 'instrument_id',
     description: 'Sensors attached to equipment. Join to telemetry on opcua_node_id.',
     columns: [
       { name: 'opcua_node_id', description: 'Join key to the OPCUAEvents telemetry table.' },
@@ -57,6 +61,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'work_orders',
     source: 'sql',
     physicalName: 'WorkOrder',
+    identityColumn: 'id',
     description: 'Maintenance work orders raised against equipment.',
     columns: [
       { name: 'id' }, { name: 'workOrderNumber' }, { name: 'equipmentId' }, { name: 'instrumentId' },
@@ -68,6 +73,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'inspections',
     source: 'sql',
     physicalName: 'Inspection',
+    identityColumn: 'id',
     description: 'Completed inspections and their findings.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'opcuaNodeId' }, { name: 'inspectionType' },
@@ -78,6 +84,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'spare_parts',
     source: 'sql',
     physicalName: 'SparePart',
+    identityColumn: 'id',
     description: 'Spare part stock levels.',
     columns: [
       { name: 'id' }, { name: 'partNumber' }, { name: 'name' }, { name: 'category' },
@@ -89,6 +96,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'notifications',
     source: 'sql',
     physicalName: 'MaintenanceNotification',
+    identityColumn: 'id',
     description: 'Operator-raised maintenance notifications.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'opcuaNodeId' }, { name: 'summary' },
@@ -99,6 +107,7 @@ export const OPERATIONS_ENTITIES: CatalogEntity[] = [
     key: 'asset_models',
     source: 'sql',
     physicalName: 'Asset3DModel',
+    identityColumn: 'id',
     description: '3D model files per equipment. Call show_3d_model to render one in the chat.',
     columns: [
       { name: 'id' }, { name: 'equipmentId' }, { name: 'modelName' },

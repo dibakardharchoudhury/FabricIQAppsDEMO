@@ -1,10 +1,328 @@
 # Foundry and multi-agent implementation record
 
-Work period: **October 7-8, 2026**. This is the end-to-end record of the
+Work period: **October 7-9, 2026**. This is the end-to-end record of the
 implementation, corrections, measured results and unfinished migration, grounded
 in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
+
+## Current correction: Foundry-owned execution, not more browser routing
+
+The October 8 design review rejects further expansion of the browser coordinator.
+The target is an Agent Framework workflow hosted in the existing Foundry project,
+reusing the deployed prompt agents rather than creating replacement specialists.
+The SPA submits runs, renders typed results and execution events, and collects
+human approval. Routing, retries, source execution, checkpoints and result
+validation belong in the backend. This migration is **not complete**: a hosted
+coordinator has been published, but its current runtime fails startup and the SPA
+switch remains off.
+
+The latest local migration wires Foundry, Data Agent and Battle to an explicitly
+gated thin Invocations client. The backend now supplies literal tables, requested
+charts and real specialist response/version receipts; hosted messages bypass the
+old browser narrative/table/chart inference. Server intent normalization reuses
+the canonical helpers rather than adding browser routing.
+
+The thin client renews delegated leases per request, clears its ephemeral token
+dictionary, preserves session affinity and sends only the preceding accepted run
+ID for follow-ups. The backend loads bounded same-user/same-source historical
+display context, never reclassifying it as current evidence or human approval.
+Reset/failed reads clear conversation linkage, and reset cards cannot submit.
+Explicit no-write failures remain distinct from uncertain creation; a separate
+read-only reconciliation operation cannot perform a first create.
+
+The migration passed 117 backend tests and Pyright, 93 focused transport/runtime/
+source tests, 143 related frontend regressions, typecheck, focused lint,
+environment validation and production build. Subsequent state bootstrap/source
+checks passed 43 targeted tests and Pyright; the container HOME correction passed
+21 source/packaging tests and Pyright. The endpoint gate is not enabled, and the
+original browser coordinator remains lazy rollback. No Fabric deployment, commit,
+database schema mutation or production work-order creation accompanied these changes.
+
+The coordinator was published in the existing project. Version 1 failed because
+operator source JSON omitted the bridge's two redacted public fields. Version 2
+started with the complete nine-field configuration, preserved the client-selected
+session ID and returned sanitized HTTP 401 for fake source credentials in 6.3
+seconds. This did not certify state writes. Version 3 added an actual runtime-user
+state creation/FileLock probe and failed with `PermissionError`. Version 4
+prepares privately owned session HOME/state directories and tests locking as UID
+10001 during image compilation, but its hosted startup still fails with the same
+permission error. **Current hosted execution is blocked, not accepted.** Platform
+preflight HTTP 200 does not certify application readiness. Failed synthetic
+sessions were stopped without deleting diagnostics.
+
+The latest candidate is ACR `dt7`, tag `validated-20261009041410`, digest
+`sha256:b611ca2b48c05fa2eb22cd54af7f7e10a3ed0c2ade4e9ccd249058ff9ee80dd6`.
+Its package includes only 26 allowlisted runtime files; temporary staging/upload
+directories were cleaned. The published coordinator is visible in
+[Foundry v4](https://ai.azure.com/nextgen/r/2sFlAVw1TJGv8BGvjeF_Lg,rg_ai,,foundryfabriciqappsdemo-resource,foundryfabriciqappsdemo/build/agents/hydro-orchestrator/build?version=4).
+
+Two bounded capacity resume/read/suspend windows reverified live numeric
+generation 2, exact native connection targets and the matching 13-part published
+Data Agent definition, restoring Paused after each window. The operator has since
+reported capacity active; leave it active. Identity readback is not native query
+execution. Telemetry disclosed `fresh_telemetry` missing, and the hosted
+coordinator's delegated work read failed explicitly with `EXCHANGE_NOT_ENABLED`.
+The required local exchange opt-in
+is not applied to AppBackend. Both legitimate CLI and azd Graph credential renewal
+received CAE `InteractionRequired / TokenCreatedWithOutdatedPolicies`; normal
+authentication renewal remains necessary, with no bypass or copied caches.
+Signed-SPA source execution, live SQL/native answers, platform-wide payload
+redaction, recovery, full chat/Battle parity and latency remain unaccepted.
+
+Read-only Foundry readback confirmed the existing enabled agents: Chief v12,
+Gauge v14, Sleuth v16, Fixer v14 and Sparky v11. Chief exposes
+`delegate_to_agent`; Gauge/Sleuth/Fixer expose application-executed function tools.
+These definitions explain why publishing agents alone did not create a durable
+server-side workflow. Keep these identities and their verified source bindings.
+
+### Actual SDK integration and current live boundary
+
+The local service now uses `agent-framework-foundry` 1.13.1 alongside framework
+core 1.19.0. `FoundrySupervisor` executes the existing version-pinned agents and
+their declared functions in Python. Authenticated local chat-run endpoints,
+atomic receipts, source-read coalescing, contextual specialist reuse, mandatory
+post-review Gauge verification and strict source-built answers are implemented.
+
+Foundry rejects request-level structured formatting when an existing agent
+reference is supplied. An invalid final Chief output therefore gets one
+tool-free model-client projection using the read-back Chief model deployment.
+Its strict JSON schema enumerates actual evidence IDs, literal field keys and
+valid source pointers. No new persistent formatting agent is created. Chief and
+projection response identities remain separate in the audit; source failures
+cannot enter the formatting-correction path.
+
+Read-only live compound run `ae230899-ddd5-4b64-845e-90e8e2fb426a` passed in
+**133.67 seconds**: Gauge v14 -> Sleuth v16 -> Fixer v14 -> Gauge v14, with six
+exact source rows, five requested columns, no charts and no SQL writes.
+Run `9994d766-2fb4-4751-916a-fcf7de72dda1` also passed, including a bounded RCA
+completion correction and the typed presentation stage, in **170.02 seconds**.
+Earlier compound runs failed on omitted verification, extra display columns,
+invalid pointers and an incorrectly shared correction budget. Those failures
+are retained, not relabelled as passes. These two passes do not establish
+production reliability or acceptable performance.
+
+Further performance corrections use SDK-ordered batched handoffs and supported
+middleware termination after accepted structured RCA/work review. Dispatch must
+be sequential before asynchronous validation; locking after validation alone
+did not preserve batch order. Live run `3bc0428f-1c7e-48fe-91fb-08083b8bc85e`
+passed exact six-row/five-column checks in **133.73 seconds**, with two Chief
+model rounds, one actual source read, one RCA model round and two Fixer rounds
+including a correction. Runtime model-round counts are included in the audit.
+Latency remains unaccepted; these counters do not replace a performance SLA.
+
+The preceding approval/image milestone's complete backend suite passed **114 tests in 200.815 seconds**, with zero Pyright errors
+or warnings. Source-bound proposal, signed decision, rejection, uncertainty
+reconciliation and authenticated approval-audit tests are included. The actual
+Agent Framework Fixer staging test also rejects conflicting duplicate card IDs;
+its focused follow-up passed. The combined shared-tool/source suite passed
+**69 tests** (29 backend-source and 40 existing shared-tool tests), with focused
+bridge lint and environment validation clean. Existing frontend validation passed
+216 tests, typecheck, lint, environment validation and production build.
+Foundry now hosts `hydro-orchestrator` v5, whose startup, non-root state
+initialization, CORS, fail-closed ingress and same-session file persistence were
+verified. The newer explicit Chief -> Gauge -> presentation graph and packaged
+operation skills remain a local candidate until their full regression, image
+publication and live prompt acceptance complete. The SPA/Battle hosted switch
+remains off. Local and hosted-session files are not a distributed durability or
+tenant-isolation guarantee.
+
+The diagnostic `EXCHANGE_NOT_ENABLED` result belongs to its direct CLI-token
+exchange. It does **not** mean the app's embedded Fabric session or existing
+human-approved WO creation is broken. Those working paths are preserved.
+The new hosted coordinator's delegated SQL authorization remains a separate gate;
+the existing embedded SQL/WO flow is working and preserved.
+No database/Eventhouse/Lakehouse schema, production records or source data changed.
+No commit, push or Fabric deployment was made during this correction.
+
+### Source-grounded approval and hosting preparation
+
+Fixer may now stage editable, source-bound work cards after fresh active-target
+and complete open-work verification. It cannot submit SQL. Explicit signed human
+decisions use the existing WorkOrder API/schema, stable creation IDs, immutable
+intent/result receipts and exact approved-field readback. An uncertain previous
+write is read/reconciled, never automatically submitted again. Production writes
+remain disabled; tests use simulated SQL. This is not distributed idempotency.
+
+The direct SQL exchange failure has a concrete configuration prerequisite:
+Rayfin requires `services.auth.fabric.externalEntraExchange: true`. The installed
+1.36 configuration type and official direct-token documentation confirm that
+location. It is now set and regression-tested in the repository, but not applied
+to the live AppBackend. Effective delegated `Item.Execute.All`/item Execute access
+and live readback remain separate acceptance gates; normal embedded Fabric SSO
+continues unchanged.
+
+At the earlier hosting-preparation milestone, minimal infrastructure reused the existing Foundry project/model and
+specialists. One Basic authenticated ACR, its ManagedIdentity project connection
+and the project principal's AcrPull assignment were provisioned. No hosted
+coordinator version had yet been deployed. The manifest declares the actual Invocations
+2.0.0 protocol and explicit runtime/source/state configuration. Foundry's session
+contract identifies `/home/session` as the session-persistent HOME; continuity
+requires `agent_session_id`, is session-scoped and is not global durability.
+
+At that milestone, source discovery was blocked by the existing Fabric capacity's
+`CapacityNotActive` response. Workspace and generic item metadata are readable
+and confirm the selected ontology still exists. Its live numeric generation
+could not be reverified while capacity was paused. The later bounded verification
+and current hosted startup failures are recorded above. No ontology replacement,
+source fallback, schema change or source-data mutation was performed.
+
+Image-only native ACR build `dt4` subsequently succeeded. Its Linux-amd64 image
+`hydro-orchestrator:validated-20261009024916` has digest
+`sha256:12caea5e3cc87b1fe17b81297dde4c12942b2becf85fbfde919a7ac62c330fa7`.
+The build executes backend imports and the packaged Node contract probe as
+nonroot UID 10001, without source tokens or live queries. Actual compilation
+exposed missing legacy-builder architecture defaults, an unexecuted Docker
+heredoc and omission of the existing npm peer policy; these were corrected and
+the 21 source/packaging tests rerun successfully. A stalled preview `azd publish`
+was stopped before a hosted version was created; native ACR built the image
+from only 26 explicitly allowlisted runtime files. Temporary staging directories
+and named upload archives were cleaned. Compilation is not a hosted rollout
+or source/runtime/latency certification.
+
+### Delegated request isolation, not a hosted rollout
+
+The chosen integration direction reuses short-lived delegated source tokens from
+the existing SPA rather than adding a confidential OBO registration.
+`source_auth.py` verifies tenant-issued RS256 signatures, configured audiences,
+SPA identity, delegated user consistency and token expiry. `LiveSources` and
+the existing RCA client now accept the shared asynchronous credential protocol;
+the tested delegated opening path does not instantiate CLI authentication.
+
+The `create_delegated_app` HTTP boundary verifies credentials before execution,
+isolates receipt namespaces by user and source, enforces the supplied credential
+and request identity, bounds concurrency/deadlines, sanitizes validation errors
+and clears leases on exit. Its raw POST protocol supports run invocation and
+same-user completed/failed-run evidence retrieval. Fifteen signed-token/HTTP tests cover
+these boundaries, including expiry, cross-user audit denial, credential/namespace
+substitution, oversized input, saturation, timeout, source failures and failure
+audit storage errors. Authorized failures include a server-assigned run ID and
+sanitized category/source/clock audit, never raw exception bodies or tokens.
+Audit storage errors explicitly report that the audit is unavailable.
+The earlier complete 100-test backend run took 176.939 seconds; these are transport/SDK
+tests, not production source, hosted or latency acceptance.
+
+Read-only resource-permission metadata resolved the existing SPA's configured
+Fabric `Item.Execute.All`, GraphQL/Data Agent execution and Foundry
+`user_impersonation` grants. This confirms configuration only, not effective
+consent, signed SPA token acquisition or AppBackend SQL exchange.
+No login popup, credential copying, permission/registration change or source
+schema/data change was made.
+
+An explicit request factory now composes live delegated discovery, the existing
+supervisor and seven read-only backend tools: asset metadata, operational
+records, templated telemetry, guarded KQL, latest signal-quality snapshots and
+latest raw turbine-temperature snapshots and station-power means. Station power
+reuses the shared metadata-based W/kW/MW/GW conversion and sample-weighted mean,
+attests MW without claiming total generation or work coverage, and adds no
+automatic chart or browser routing. Shared schemas and row shaping were
+extracted into the existing pure query module, with compatibility re-exports;
+no new TypeScript module or browser routing was added. Backend JSON schemas
+derive column constraints from the same catalog, rejecting SQL/asset alias
+mixups before authentication or source I/O. Catalog row identities are explicitly
+declared rather than guessed from the first display column.
+
+Asset/operational readers require complete bounded pagination and preserve
+actual typed fields. Telemetry uses the existing authoritative Kusto parser and
+rejects over-bound results. SQL source callbacks request only the Fabric token;
+real exchange failures propagate rather than becoming empty work.
+Tests use synthetic source/SDK boundaries, including the factory composition;
+they do not attest live SPA token relay or SQL execution.
+
+Snapshot calculations are now shared between the original browser caller and
+the backend, rather than duplicated. BAD remains latest signal quality BAD;
+hot ranking remains latest raw temperature with authoritative instrument units.
+The backend requires complete bounded metadata/work reads and derives coverage
+from actual returned data. Browser work coverage remains explicitly unattested.
+Invalid readings, ambiguous metadata and missing/mixed temperature units fail
+instead of producing misleading rankings. Source/display/copilot validation
+passed 90 targeted Node tests (23 source, 27 display, 40 copilot); the backend
+source suite passed 15 tests. No production snapshot or SQL pass is claimed.
+
+Answer validation now rejects cross-source rows without matching actual
+equipment or signal identity in every contributing source row. This closes the
+unsafe projected-away identity case. Generic asset/operational readers now keep
+private row identities aligned through filtering, limiting and projection.
+The backend removes them from model/display result data and uses them only for
+join validation/audit. Missing or contradictory identities still fail closed.
+Explicit charts cannot silently disappear
+when numeric measures have verified source units; otherwise the absence of
+those units produces a source-derived limitation. Blank chart units fail.
+
+The candidate has no complete production provider or accepted hosted deployment.
+An explicit `--serve-delegated` entrypoint now validates runtime source/policy
+configuration, checks the Node-derived digest/identities before binding, owns
+the JWKS client's lifespan and forwards explicit matching native bindings.
+It requires explicit runtime source JSON rather than local deployment-file
+fallback. A real subprocess HTTP test confirms startup, truthful uncertified
+health, invalid-body rejection and process cleanup. The current targeted
+authorization/runtime suite passes 17 tests. After the station-power addition,
+the targeted backend source suite passed 19 tests plus the station answer/chart
+integration test (20 combined), the Node source suite passed 26 tests, and 40
+existing shared/browser tool tests passed. Backend Pyright, application typecheck
+and focused lint are clean. Aggregate sample-count/numeric overflow is rejected,
+and answer integration preserves exact MW cells while enforcing chart intent.
+The first new Node
+test used an invalid Kusto response fixture; correcting the fixture to the
+actual `Tables` envelope made the suite pass without weakening the parser.
+Runtime/private-identity changes are covered by the complete-suite record above;
+the subsequent station-power addition is covered by the targeted checks, not a
+new full-suite run. These tests do not certify live source access.
+
+The mixed-runtime container package now has a deny-by-default Dockerfile-specific
+context, locked builder dependencies, the actual Node runtime import closure,
+Python 3.12/Node 24 and a non-root writable local state directory. Isolated
+contract/configuration execution and COPY/context tests passed; the 59 pinned
+Python Linux-amd64 wheels were checked. No actual image build or hosted
+deployment occurred, and no registry was provisioned. The local Docker engine
+is unavailable and the selected subscription has no existing registry.
+The existing Foundry child project ARM identity was independently read back.
+A request to provision one billable registry for remote builds could not obtain
+an operator response; no new registry or other Azure resource was created.
+Platform credential redaction, production provider composition, distributed
+durability, SQL authorization, approval/write integration and thin SPA/Battle
+transport remain incomplete. No placeholder hosted agent was published and no
+existing browser implementation was deleted before replacement parity.
+Live fleet snapshot acceptance, generic-read chart-unit provenance and native-source
+configuration remain additional gates before this provider replaces the app runtime.
+
+Current local corrections, still uncommitted:
+
+- SQLite completion requires the exact transactionally committed outcome. Late
+  failures or replacement outcomes cannot overwrite a completed run. Waiting
+  proposals must match the persisted request and executing state.
+- Reconstructed RCA contracts revalidate the specialist identity, every
+  supporting/contradictory/observation pointer, selected observations and missing
+  evidence against the same receipt supplied to Foundry. Live-response validation
+  alone was insufficient for recovered checkpoints.
+- The bounded service returns a source-built answer with keyed, strictly typed
+  columns/rows and resolvable row citations, separate from the full evidence audit.
+  It does not accept model-authored cell values or recover columns from CSV.
+  This covers the existing inspection-review contract, not all free-form flows.
+- Shared presentation defaults to tables, hides technical ledgers in an
+  expandable audit and shows requested charts without adding unrelated automatic
+  count charts. No client-side source-column selection or new routing logic was
+  retained. This is compatibility presentation, not the orchestration replacement.
+
+The latest user preference **supersedes automatic charts for all numeric outputs**.
+Charts must answer an explicit request with verified source data; table-only
+requests take precedence. Required charts must not be silently omitted.
+
+Repository inventory found **58 newly tracked paths since October 7**, all still
+present: 39 in the app, 16 in the service, two in workspace-reset and one in docs.
+No tracked fixture, log, session-state or checkpoint path was found by the targeted
+inventory. New redundant presentation helper/test files were consolidated into
+the existing modules. Existing imports/deployment references still require the
+browser modules until the backend replacement passes acceptance; do not delete
+them just to reduce the count or preserve two permanent orchestration paths.
+
+Development authentication uses the existing Azure CLI session. `azd` successfully
+reused it with its supported `auth.useAzCliAuth` setting in session-local
+configuration. No passwords, access tokens or refresh tokens were copied.
+User-session reuse cannot override expiration or Conditional Access.
+Foundry runtime identity and delegated Fabric/SQL source authorization remain
+separate production gates; a managed identity must not silently substitute for
+delegated access.
 
 ## 1. Are we using Microsoft Agent Framework?
 
@@ -14,8 +332,8 @@ as passes after a later code change.
 |---|---|---|
 | Hosted Fabric app | Release **1.0.775 / `41d458a`**, browser-coordinated persistent Foundry Prompt Agents | Deployment/readiness passed. Latest browser acceptance is blocked by an expired private-hosting session and blocked sign-in popup; full matrix not accepted |
 | Local orchestration service | Actual **Microsoft Agent Framework 1.19.0** executors, workflow edges and file checkpoints, with a SQLite run/approval journal | Durable recovery and approval tests; not distributed or production hosting |
-| Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; SQL access blocked |
-| Backend live RCA | Version-pinned call to persistent Sleuth v13 with the shared structured-report validator | One real telemetry-only specialist invocation; not a full multi-agent provider |
+| Backend live sources | Separate read-only Fabric adapter with source-identity checks | Live v2 identity and six T005 telemetry samples read; samples stale; diagnostic CLI SQL exchange unavailable, not an app SQL failure |
+| Backend live agent execution | Existing Chief v12, Gauge v14, Sleuth v16 and Fixer v14 through the supported Agent Framework provider | Two bounded telemetry-only compound passes; hosted source tools, approval and broad performance acceptance remain incomplete |
 | Backend proposal/SQL/SPA integration | Not complete | Default HTTP service deliberately returns 503 for readiness/run submission without adapters |
 | Latest chart comparison correction | Deployed in **1.0.766**, locally regression-tested | Historical/current numerical comparison and shared KQL response validation; no hosted acceptance yet |
 
@@ -393,7 +711,8 @@ Completed/Cancelled are excluded. Source failure does not become "no open work."
 Live results:
 
 1. Six T005 measurements were returned and explicitly marked stale.
-2. Rayfin delegated SQL exchange returned **`EXCHANGE_NOT_ENABLED`**.
+2. The new hosted coordinator's Rayfin delegated SQL exchange returned
+   **`EXCHANGE_NOT_ENABLED`**; the embedded app's working SQL/WO path is separate.
 3. The inspected CLI token lacked delegated **`Item.Execute.All`**. Requesting
    that scope through Azure CLI returned **`AADSTS65002`**, a first-party client
    preauthorization restriction, not a proven customer-consent fix.

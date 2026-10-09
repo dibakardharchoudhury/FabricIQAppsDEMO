@@ -79,6 +79,18 @@ def linked_application_insights(connections: list[dict]) -> str:
     return resource_id
 
 
+def hosted_invocations_url(agent: dict, endpoint: str) -> str:
+    latest = agent.get("versions", {}).get("latest", {})
+    definition = latest.get("definition", {})
+    if (agent.get("name") != "hydro-orchestrator" or definition.get("kind") != "hosted"
+            or latest.get("status") != "active"):
+        raise RuntimeError("The existing Hydro Agent Framework runtime must be an active hosted agent.")
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".services.ai.azure.com"):
+        raise RuntimeError("The Foundry project endpoint is invalid.")
+    return endpoint.rstrip("/") + "/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1"
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip() or values.get("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "").strip()
@@ -199,10 +211,16 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
 
+    hosted = request("GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", agent_headers).json()
+    try:
+        invocations_url = hosted_invocations_url(hosted, endpoint)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
         "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,
+        "RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL": invocations_url,
     }), encoding="utf-8")
     print("Foundry configuration readback verified; agent runtime acceptance is a separate check.", flush=True)

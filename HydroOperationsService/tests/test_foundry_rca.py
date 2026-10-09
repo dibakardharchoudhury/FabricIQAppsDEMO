@@ -102,6 +102,29 @@ class FoundryRcaTests(unittest.IsolatedAsyncioTestCase):
                          "inspection_evidence"} <= set(result.missing_evidence))
         self.assertEqual(self.invocations, 1)
 
+    async def test_recovered_assessment_revalidates_every_source_pointer_and_agent_identity(self):
+        assessment = await self.adapter.investigate(self.evidence)
+        for target, change in (
+            ("observation", {"evidence_id": "invented"}),
+            ("observation", {"path": "/rows/99"}),
+            ("observation", {"path": "/rows/0/invented_field"}),
+            ("supporting", {"path": "/rows/99"}),
+            ("contradicting", {"evidence_id": "invented"}),
+            ("agent", {"agent_name": "unrelated-agent"}),
+        ):
+            with self.subTest(target=target, change=change):
+                payload = assessment.model_dump(mode="json")
+                if target == "agent":
+                    payload["agent_receipt"].update(change)
+                elif target == "observation":
+                    payload["report"]["observations"][0].update(change)
+                else:
+                    payload["report"]["hypotheses"][0][target] = [
+                        {**payload["report"]["observations"][0], **change},
+                    ]
+                with self.assertRaises(ValidationError):
+                    Assessment.model_validate(payload)
+
     async def test_schema_drift_stops_before_model_invocation(self):
         self.mode = "schema_drift"
         with self.assertRaisesRegex(SourceFailure, "schema differs"):

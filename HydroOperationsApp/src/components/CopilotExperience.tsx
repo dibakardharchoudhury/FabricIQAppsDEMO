@@ -9,9 +9,10 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { hideRenderedData, answerSections } from '../services/copilot/answerPresentation'
+import { hideRenderedData, answerSections, operatorNarrative } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
+import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
 import { VoiceInput } from './VoiceInput'
 import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
@@ -29,6 +30,7 @@ export type CopilotMessage = {
   steps?: AgentStep[]
   orchestrationEvents?: OrchestrationEvent[]
   proposals?: WorkOrderProposal[]
+  backendOwned?: boolean
   meta?: { elapsedMs: number; tokens?: number }
 }
 
@@ -175,11 +177,14 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   const draftReady = !streaming && Boolean(message.proposals?.length)
   const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
     entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false
-  const answer = message.text && <AnswerText text={stripOptionsMarker(hideRenderedData(message.text, streaming))} streaming={streaming} />
+  const answer = message.text && (message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+    : <AnswerText text={stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))} streaming={streaming} />)
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
-    <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
+    {streaming ? <CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} />
+      : steps.length > 0 && <details className="v2-answer-support"><summary>Execution audit — tool calls and receipts</summary><CopilotSteps steps={message.steps} receiptPrefix={receiptPrefix} /></details>}
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
@@ -187,7 +192,11 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {!streaming && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
+    {!streaming && !message.backendOwned && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
+    {!streaming && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
+    {!streaming && !message.backendOwned && message.text && <details className="v2-answer-support"><summary>Assessment audit — full report and source references</summary>
+      <AnswerText text={hideRenderedData(message.text)} streaming={false} />
+    </details>}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>
@@ -196,7 +205,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
 function AnswerText({ text, streaming }: { text: string; streaming: boolean }) {
   if (streaming) return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
   return answerSections(text).map((section, index) => section.collapsed
-    ? <details className="v2-answer-support" key={index}><summary>{section.title}</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.markdown}</ReactMarkdown></details>
+    ? <details className="v2-answer-support" key={index}><summary>{section.title}</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.markdown.replace(/^#{1,6}\s+.*\n?/, '')}</ReactMarkdown></details>
     : <ReactMarkdown remarkPlugins={[remarkGfm]} key={index}>{section.markdown}</ReactMarkdown>)
 }
 

@@ -42,6 +42,11 @@ export type WorkOrderProposal = {
   description: string
   priority: 'Low' | 'Medium' | 'High' | 'Critical'
   createdAt: number
+  backend?: {
+    expiresAt: string
+    decide: (approved: boolean, edits?: Pick<WorkOrderProposal, 'title' | 'description' | 'priority'>) => Promise<Record<string, unknown>>
+    reconcile: (approved: boolean, edits?: Pick<WorkOrderProposal, 'title' | 'description' | 'priority'>) => Promise<Record<string, unknown>>
+  }
 }
 
 const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work[\s-]*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work[\s-]*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work[\s-]*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work[\s-]*orders?|wos?)\b/i

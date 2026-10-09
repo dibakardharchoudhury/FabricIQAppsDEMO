@@ -1,11 +1,42 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
+
+test('operator narrative excludes technical inventories and pointer ledgers but keeps limitations', () => {
+  const text = '### Investigation\nCause undetermined.\n### Source observations\n52 fields from call_123/rows/0.\n### Sources\ncall_123\n### Returned source inventory: instruments\nRaw IDs.\n### Limitations\nMeasurements are stale.'
+  const result = operatorNarrative(text)
+  assert.match(result, /Cause undetermined|Measurements are stale/)
+  assert.doesNotMatch(result, /52 fields|call_123|Raw IDs|Source observations|Returned source/)
+})
+
+test('table-only requests override charts and routine numeric questions do not request them', () => {
+  for (const question of ['List the stock.', 'Which turbines are BAD?', 'Show a chart, but only a table.', 'Show a dashboard; no charts.', 'Return table-only.', 'Do not show charts.']) {
+    assert.equal(showRequestedCharts(question), false, question)
+  }
+  assert.equal(showRequestedCharts('Show a temperature chart.'), true)
+})
+
+test('operator tables retain every work order and missing value while moving forensic ledgers to audit', () => {
+  const text = '### Source observations\n| Pointer | Value |\n| --- | --- |\n| /rows/0 | 7 |\n### Open work\n| workOrderNumber | status |\n| --- | --- |\n| WO-1 | Planned |\n| WO-2 | |\n### Competing hypotheses - untested\n| Hypothesis | Missing evidence |\n| --- | --- |\n| Calibration | Approved limits |'
+  const datasets = readAnswerDatasets(text).datasets
+  const findings = operatorDatasets(datasets)
+  assert.equal(findings.length, 2)
+  assert.deepEqual(findings[0].rows, [['WO-1', 'Planned'], ['WO-2', '']])
+  assert.equal(datasets.length, 3)
+})
+
+test('presentation preserves every source column and row without client-side projections', () => {
+  const original = { ...readAnswerDatasets('```csv\nequipmentId,status,internal_metadata\nE1,Planned,opaque\nE2,Approved,opaque2\n```').datasets[0], sourceStep: 0 }
+  const findings = operatorDatasets([original])
+  assert.deepEqual(findings[0].columns, original.columns)
+  assert.equal(findings[0].rows.length, original.rows.length)
+  assert.equal(findings[0], original)
+})
 
 function responseStream(events: unknown[]) {
   return new ReadableStream<Uint8Array>({

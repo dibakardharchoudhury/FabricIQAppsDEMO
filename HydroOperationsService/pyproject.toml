@@ -9,12 +9,15 @@ description = "Local validation of durable Hydro agent workflow boundaries"
 requires-python = ">=3.12"
 dependencies = [
     "agent-framework-core==1.19.0",
+    "agent-framework-foundry==1.13.1",
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",
     "pydantic>=2.11,<3",
     "filelock>=3.16,<4",
     "azure-identity>=1.25,<2",
     "httpx>=0.28,<1",
+    "jsonschema>=4.23,<5",
+    "PyJWT[crypto]>=2.10,<3",
 ]
 
 [project.optional-dependencies]

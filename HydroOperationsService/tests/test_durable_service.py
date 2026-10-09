@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import (
-    Approval, Assessment, Evidence, Observation, Proposal, ReviewRequest, SourceIdentity, utc_now,
+    Approval, Assessment, Evidence, Observation, Outcome, Proposal, ReviewRequest, SourceIdentity, utc_now,
 )
 from hydro_orchestrator.service import LocalRunner, create_app
 from hydro_orchestrator.store import Conflict, Store
@@ -103,6 +103,41 @@ class DurableApiTests(unittest.TestCase):
 
     def app(self):
         return create_app(self.root, TOKEN, adapters=self.adapters, source=SOURCE)
+
+    def test_completion_requires_an_executing_run_and_a_recorded_outcome(self):
+        store = Store(self.root)
+        request = ReviewRequest(**BODY, source=SOURCE, run_id=uuid4())
+        store.create(request)
+        outcome = Outcome(run_id=request.run_id, status="rejected")
+        with self.assertRaises(Conflict):
+            store.finish(outcome)
+        store.start(request.run_id)
+        with self.assertRaises(Conflict):
+            store.finish(outcome)
+        self.assertEqual(store.get(request.run_id).status, "running")
+
+    def test_completed_run_cannot_be_failed_or_changed_by_late_results(self):
+        run_id = str(uuid4())
+        with TestClient(self.app()) as client:
+            waiting = self.submit(client, run_id)
+            client.post(f"/runs/{run_id}/approval", json=decision(waiting, False), headers=HEADERS).raise_for_status()
+            completed = wait_for(client, run_id, "completed")
+        store = Store(self.root)
+        outcome = Outcome.model_validate(completed["outcome"])
+        store.finish(outcome)
+        with self.assertRaises(Conflict):
+            store.fail(outcome.run_id, "Late worker failure")
+        with self.assertRaises(Conflict):
+            store.finish(Outcome(run_id=outcome.run_id, status="validation_work_recorded", validation_work_id="OTHER"))
+        self.assertEqual(store.get(outcome.run_id).outcome, outcome)
+        self.assertEqual(store.get(outcome.run_id).status, "completed")
+        runner = LocalRunner(store, self.adapters, SOURCE)
+        with self.assertLogs("hydro_orchestrator.service", level="ERROR"):
+            runner.record_failure(outcome.run_id, RuntimeError("Late worker failure"))
+        self.assertEqual(store.get(outcome.run_id).outcome, outcome)
+        self.assertEqual(store.events(outcome.run_id, 0)[-1]["kind"], "late_failure_rejected")
+        with self.assertRaises(KeyError):
+            runner.record_failure(uuid4(), RuntimeError("Missing run"))
 
     def submit(self, client: TestClient, run_id: str) -> dict:
         response = client.post("/runs", json=BODY, headers={**HEADERS, "Idempotency-Key": run_id})

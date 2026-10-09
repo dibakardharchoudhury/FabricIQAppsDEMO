@@ -74,6 +74,26 @@ class PublishedIdentityTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 module.linked_application_insights(invalid)
 
+    def test_hosted_invocations_url_requires_active_named_runtime(self):
+        endpoint = "https://demo.services.ai.azure.com/api/projects/hydro"
+        agent = {
+            "name": "hydro-orchestrator",
+            "versions": {"latest": {"status": "active", "definition": {"kind": "hosted"}}},
+        }
+        self.assertEqual(
+            module.hosted_invocations_url(agent, endpoint),
+            endpoint + "/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1",
+        )
+        for invalid in [
+            {**agent, "name": "other"},
+            {**agent, "versions": {"latest": {"status": "inactive", "definition": {"kind": "hosted"}}}},
+            {**agent, "versions": {"latest": {"status": "active", "definition": {"kind": "prompt"}}}},
+        ]:
+            with self.assertRaises(RuntimeError):
+                module.hosted_invocations_url(invalid, endpoint)
+        with self.assertRaises(RuntimeError):
+            module.hosted_invocations_url(agent, "http://untrusted.example")
+
     def test_regional_definition_operations_are_polled_on_canonical_origin(self):
         path = "/v1/operations/46823fb9-2ddd-4c7b-8089-068435f979f0"
         for host in ["api.fabric.microsoft.com", "wabi-us-central-b-primary-redirect.analysis.windows.net"]:

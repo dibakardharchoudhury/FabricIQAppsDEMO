@@ -12,14 +12,17 @@ never replaced with an invented diagnosis, record or successful result.
 Native compound requests have taken 3-5 minutes; this is not a latency guarantee.
 
 For **every test**, structured records must be real HTML tables, not pipe-delimited
-paragraphs, JSON or CSV dumps. Suitable numeric/time-series or categorical records
-must also produce charts automatically, even without the word "chart". Tables stay
-visible alongside charts. Check source-receipt links, exact row counts, units,
+paragraphs, JSON or CSV dumps. Tables are the default. Explicitly requested charts
+must use verified rows and the requested scope; do not add unrelated inventory or
+count charts merely because numeric fields exist. Table-only instructions take
+precedence. Tables stay visible alongside requested charts.
+Check source-receipt links, exact row counts, units,
 timestamps, truncation and missing-value warnings. Raw payloads are collapsed
 diagnostics. An agent-response-only table is labelled as not independently
 verified; displaying a table does not establish source provenance.
-For RCA, verify that the source-observation and competing-hypothesis tables are
-actually visible, not just their headings. Every cited ID/path must resolve to a
+For RCA, verify that the competing-hypothesis table is visible and the complete
+source-observation table is available in the expandable audit, not just a heading.
+Every cited ID/path must resolve to a
 real receipt. No approved threshold, matched baseline, numerical diagnostic
 confidence or physical cause may be invented. Inspect rejected chart/tool calls
 and their corrections; a finished animation alone is not an acceptance result.

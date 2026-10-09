@@ -1,5 +1,8 @@
 # Agent instructions
 
+This project was built with the microsoft-foundry skill. Before working on or
+answering questions about Foundry agents, read the microsoft-foundry skill first.
+
 ## Ontology v2 documentation and implementation contract
 
 - This project is v2-only: require live `properties.generation == 2`; never restore v1

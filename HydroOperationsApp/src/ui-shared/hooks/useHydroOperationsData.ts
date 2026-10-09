@@ -50,7 +50,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
@@ -779,9 +779,10 @@ function useHydroOperationsDataController() {
     let liveSteps: AgentStep[] | undefined
     let liveEvents: OrchestrationEvent[] | undefined
     let proposals: WorkOrderProposal[] | undefined
+    let backendOwned: boolean | undefined
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, proposals, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
       return next
     })
     try {
@@ -793,6 +794,7 @@ function useHydroOperationsDataController() {
           events => { liveEvents = events; paint() },
         )
       liveText = answer.text
+      backendOwned = answer.backendOwned
       proposals = answer.proposals
       liveSteps = answer.steps ?? liveSteps
       liveEvents = answer.orchestrationEvents ?? liveEvents

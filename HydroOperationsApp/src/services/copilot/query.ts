@@ -1,4 +1,4 @@
-import { KUSTO_SOURCE_NAMES } from './catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
 import type { AgentVisualization } from '../assistantStream.ts'
 
 export const MAX_ROWS = 500
@@ -12,7 +12,51 @@ export type FilterCondition = { column: string; op: FilterOperator; value?: unkn
 
 export const FILTER_OPERATORS: FilterOperator[] = ['eq', 'neq', 'contains', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'not_null']
 
+export type ToolDefinition = {
+  type: 'function'
+  function: { name: string; description: string; parameters: Record<string, unknown> }
+}
+
+const whereSchema = {
+  type: 'array',
+  description: 'Optional filter. All conditions must match.',
+  items: {
+    type: 'object',
+    properties: {
+      column: { type: 'string' },
+      op: { type: 'string', enum: FILTER_OPERATORS },
+      value: { description: 'Literal comparison value, never a column name. An array when op is "in". Omitted for is_null/not_null or value_column.' },
+      value_column: { type: 'string', description: 'Compare with this catalog column on the same row, instead of a literal value. Only eq/neq/gt/gte/lt/lte. For low stock: column quantityOnHand, op lte, value_column reorderLevel.' },
+    },
+    required: ['column', 'op'],
+  },
+}
+
+
+
 export class QueryInputValidationError extends Error {}
+
+export function shapeCatalogRows(
+  entity: CatalogEntity, rows: Record<string, unknown>[],
+  args: { columns?: string[]; where?: FilterCondition[]; limit?: number },
+  sourceTruncated = false,
+  retainIdentities = false,
+) {
+  const allowed = entity.columns.map(column => column.name)
+  const requested = args.columns?.filter(column => allowed.includes(column))
+  const filtered = applyFilter(rows, args.where)
+  const limited = filtered.slice(0, Math.min(args.limit ?? MAX_ROWS, MAX_ROWS))
+  const projected = projectColumns(projectColumns(limited, allowed), requested)
+  const { rows: capped, truncated } = truncateForModel(projected)
+  const rowIdentities = retainIdentities ? Object.fromEntries(limited.slice(0, capped.length).map((row, index) => [
+    `/rows/${index}`,
+    Object.fromEntries(['equipment_id', 'equipmentId', 'opcua_node_id', 'opcuaNodeId']
+      .filter(key => allowed.includes(key) && typeof row[key] === 'string' && row[key].trim())
+      .map(key => [key, row[key]])),
+  ])) : undefined
+  return { result: { rows: capped, row_count: capped.length, total_matched: sourceTruncated ? null : filtered.length, truncated: truncated || sourceTruncated },
+    rowCount: capped.length, ...(retainIdentities ? { rowIdentities } : {}) }
+}
 
 const text = (value: unknown) => value instanceof Date ? value.toISOString() : String(value ?? '')
 const lower = (value: unknown) => text(value).toLowerCase()
@@ -143,6 +187,9 @@ export function stationPowerEvidence(rows: Record<string, unknown>[], lookback: 
     station.sum += row.average * factor * row.samples
     station.samples += row.samples
     station.bad += row.bad_samples
+    if (!Number.isFinite(station.sum) || !Number.isSafeInteger(station.samples) || !Number.isSafeInteger(station.bad)) {
+      throw new Error('Station power aggregation exceeded numeric limits; sample counts and means cannot be attested.')
+    }
     if (Date.parse(row.latest_event_time) > Date.parse(station.latest)) station.latest = row.latest_event_time
     stations.set(row.Station, station)
   }
@@ -185,6 +232,165 @@ const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }
 export const TELEMETRY_AGGREGATIONS = ['none', 'latest', ...Object.keys(AGGREGATIONS)]
+
+export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'query_station_power',
+      description: 'Return and chart mean power-output readings per station over a window (default 24h). Uses exact power_output node suffix, authoritative station/unit metadata, sample-weighted means converted to MW. Includes all qualities and reports BAD sample counts. Not total station generation or energy.',
+      parameters: { type: 'object', properties: { lookback: { type: 'string', description: 'Positive duration, e.g. 24h or 7d, or today (since midnight UTC).' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_assets',
+      description: 'Read asset metadata from the Lakehouse: facilities, equipment and instruments.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: ASSET_ENTITIES.map(entity => entity.key) },
+          where: whereSchema,
+          columns: { type: 'array', items: { type: 'string' }, description: 'Optional subset of columns to return.' },
+          limit: { type: 'integer', description: `Maximum rows to return (default ${MAX_ROWS}).` },
+        },
+        required: ['entity'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_operations',
+      description: 'Read operational records from the app database: work orders, inspections, spare parts and maintenance notifications.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: OPERATIONS_ENTITIES.map(entity => entity.key) },
+          where: whereSchema,
+          columns: { type: 'array', items: { type: 'string' } },
+          limit: { type: 'integer' },
+        },
+        required: ['entity'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_telemetry',
+      description: 'Read OPC UA telemetry over a time window. Prefer this over run_kql for trends, latest-per-signal snapshots and "the last N readings". Use aggregation "latest" for one latest raw row per verified node; "none" returns individual readings.',
+      parameters: {
+        type: 'object',
+        properties: {
+          opcua_node_ids: { type: 'array', items: { type: 'string' }, description: 'Signals to include. Omit for all signals.' },
+          lookback: { type: 'string', description: 'Window ending now: today (since midnight UTC) or a positive duration such as 30m, 6h, 7d. Default 24h.' },
+          bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none" or "latest".' },
+          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings or "latest" for the latest raw value, event_time and quality per opcua_node_id in the window, without averaging or quality filtering.' },
+          limit: { type: 'integer', description: `How many of the most recent rows to return (default ${MAX_ROWS}, max ${MAX_ROWS}).` },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_kql',
+      description: 'Run one read-only KQL statement against the Eventhouse when the templated tools cannot express the question. One statement only: no let statements and no semicolon outside a string literal (a node id like \'ns=2;s=T004.power_output\' is fine). The query must start with OPCUAEvents, AssetMaster or TelemetryEnriched.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'A single read-only KQL statement.' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_signal_quality_snapshot',
+      description: 'Get every active signal whose single latest raw reading in the window has the requested quality, resolved to equipment with all open work. Use this for "running bad", current quality, and equivalent fleet-health questions instead of assembling multiple inventory/telemetry/work-order calls.',
+      parameters: {
+        type: 'object',
+        properties: {
+          quality: { type: 'string', enum: ['GOOD', 'UNCERTAIN', 'BAD'], description: 'Requested latest quality. Default BAD.' },
+          lookback: { type: 'string', description: 'Window ending now: 30m, 6h, or today for since midnight UTC. Default 30m.' },
+          equipment_type: { type: 'string', description: 'Optional equipment type substring, e.g. turbine.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_turbine_temperature_snapshot',
+      description: 'Get the hottest active turbines by their latest raw turbine_temp reading, with all open work joined and labeled by exact signal or equipment-level relation. Use for running hot questions instead of inventing KQL. Default top five over 30m; an explicit threshold returns all matches unless a limit is supplied. No quality-based exclusions or averages.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lookback: { type: 'string', description: 'Window ending now: 30m, 6h, or today for since midnight UTC. Default 30m.' },
+          limit: { type: 'integer', minimum: 1, description: 'Explicit requested count; default five without a threshold, otherwise all matches.' },
+          threshold: { type: 'number', description: 'Optional temperature threshold, in the returned instrument unit.' },
+          threshold_operator: { type: 'string', enum: ['gt', 'gte'], description: 'gt means above; gte means at least. Default gt.' },
+          equipment_ids: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Optional exact equipment IDs resolved from metadata for an explicitly requested scope. Omit for all turbines.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'visualize_dataset',
+      description: 'Render a chart in the chat. Call this after retrieving data when a chart helps; still summarize the finding in your reply.',
+      parameters: {
+        type: 'object',
+        properties: {
+          chart_type: { type: 'string', enum: ['bar', 'line', 'pie'] },
+          title: { type: 'string' },
+          x_column: { type: 'string' },
+          y_columns: { type: 'array', items: { type: 'string' } },
+          x_axis_title: { type: 'string' },
+          y_axis_title: { type: 'string' },
+          inline_csv_data: { type: 'string', description: 'The data to plot as CSV, including a header row.' },
+        },
+        required: ['chart_type', 'title', 'x_column', 'y_columns', 'inline_csv_data'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_3d_model',
+      description: 'Render an asset\u2019s 3D model in the chat. Call this directly with equipment_id \u2014 it resolves the model itself, so no lookup is needed first. If no model exists the tool says so and lists the equipment that do have one. Never claim an asset has no 3D model without calling this.',
+      parameters: {
+        type: 'object',
+        properties: {
+          equipment_id: { type: 'string', description: 'Equipment the model belongs to, e.g. an equipment_id from query_assets.' },
+          model_id: { type: 'string', description: 'Exact Asset3DModel id, when known.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_work_order',
+      description: 'Stage a complete work-order draft for human approval. This does not create or modify data. Use only for an explicit request to create work, after checking relevant open work.',
+      parameters: {
+        type: 'object',
+        properties: {
+          equipment_id: { type: 'string', description: 'Canonical equipment_id resolved from asset metadata.' },
+          instrument_id: { type: 'string', description: 'Optional directly affected instrument_id.' },
+          opcua_node_id: { type: 'string', description: 'Optional directly affected telemetry node.' },
+          title: { type: 'string', maxLength: 200, description: 'Specific action-oriented work title, maximum 200 characters. Preserve an explicit operator title.' },
+          description: { type: 'string', maxLength: 4000, description: 'Two to four short sentences: observed condition, source IDs, scope and operator-requested action. Maximum 4000 characters. Do not paste raw rows or invent repair procedures, acceptance thresholds or a diagnosis.' },
+          priority: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'] },
+        },
+        required: ['equipment_id', 'title', 'description', 'priority'],
+      },
+    },
+  },
+]
 
 export type TelemetryQueryArgs = {
   opcua_node_ids?: string[]
@@ -232,6 +438,175 @@ export function rankTemperatureRows<T extends { value: unknown; equipment_id: st
   return rows.filter(row => threshold === undefined || (threshold_operator === 'gte' ? Number(row.value) >= threshold : Number(row.value) > threshold))
     .sort((a, b) => Number(b.value) - Number(a.value) || a.equipment_id.localeCompare(b.equipment_id))
     .slice(0, limit)
+}
+
+export type FleetSnapshotArgs = {
+  lookback?: string
+  quality?: string
+  equipment_type?: string
+  equipment_ids?: string[]
+  limit?: number
+  threshold?: number
+  threshold_operator?: string
+}
+
+export function fleetSnapshotQuery(temperature: boolean, args: FleetSnapshotArgs): string {
+  if (temperature) {
+    if (args.equipment_ids !== undefined && (!Array.isArray(args.equipment_ids) || !args.equipment_ids.length
+      || args.equipment_ids.some(id => typeof id !== 'string' || !id.trim())
+      || new Set(args.equipment_ids).size !== args.equipment_ids.length)) {
+      throw new Error('Equipment scope must be a nonempty array of distinct exact equipment IDs.')
+    }
+    rankTemperatureRows([], args)
+    return buildTemperatureSnapshotQuery(args.lookback)
+  }
+  if (args.equipment_type !== undefined && (typeof args.equipment_type !== 'string' || !args.equipment_type.trim())) {
+    throw new Error('Equipment type must be a nonempty string.')
+  }
+  buildQualitySnapshotQuery(args.quality, args.lookback)
+  return buildLatestSignalSnapshotQuery(args.lookback)
+}
+
+/** Shared browser/backend join. Coverage describes the actual reader, not a presumed SQL population. */
+export function shapeFleetSnapshot(temperature: boolean, args: FleetSnapshotArgs, data: {
+  equipment: { equipment_id: string; tag?: string; equipment_type_code?: string; equipment_type_name?: string; is_active?: boolean }[]
+  instruments: { instrument_id: string; equipment_id: string; opcua_node_id: string; unit?: string; tag?: string; instrument_type?: string; is_active?: boolean }[]
+  inventoryComplete: boolean
+  telemetryRows: Record<string, unknown>[]
+  workOrders: Record<string, unknown>[]
+  workInventoryComplete?: boolean
+  readStartedAt: string
+  readCompletedAt: string
+}) {
+  fleetSnapshotQuery(temperature, args)
+  if (!data.inventoryComplete) throw new Error('Asset inventory pagination did not attest a complete equipment/instrument population. Fleet verification is incomplete; no partial snapshot was returned.')
+  if (data.telemetryRows.length >= MAX_ROWS) throw new Error('Fleet snapshot reached the source row limit; complete membership and ranking cannot be verified.')
+  const nonempty = (value: unknown): value is string => typeof value === 'string' && !!value.trim()
+  const started = Date.parse(data.readStartedAt), completed = Date.parse(data.readCompletedAt)
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) throw new Error('Snapshot read clock is invalid.')
+  const lookback = args.lookback ?? '30m'
+  const duration = lookback === 'today' ? 0 : Number.parseFloat(lookback)
+    * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[lookback.slice(-1)] ?? Number.NaN)
+  const windowStart = lookback === 'today' ? Date.parse(`${data.readStartedAt.slice(0, 10)}T00:00:00Z`) : started - duration
+  if (!Number.isFinite(windowStart)) throw new Error('Snapshot lookback is invalid.')
+  const equipment = new Map<string, (typeof data.equipment)[number]>()
+  const equipmentIdentities = new Set<string>()
+  for (const asset of data.equipment) {
+    if (!nonempty(asset.equipment_id) || equipmentIdentities.has(asset.equipment_id)
+      || (asset.is_active !== undefined && typeof asset.is_active !== 'boolean')
+      || [asset.equipment_type_code, asset.equipment_type_name, asset.tag].some(value => value != null && typeof value !== 'string')) {
+      throw new Error('Asset metadata has invalid or ambiguous equipment identity/type.')
+    }
+    equipmentIdentities.add(asset.equipment_id)
+    if (asset.is_active !== false) equipment.set(asset.equipment_id, asset)
+  }
+  const instruments = new Map<string, (typeof data.instruments)[number]>()
+  const instrumentIdentities = new Set<string>()
+  for (const instrument of data.instruments) {
+    if (!nonempty(instrument.instrument_id) || instrumentIdentities.has(instrument.instrument_id)
+      || !nonempty(instrument.opcua_node_id) || !nonempty(instrument.equipment_id)
+      || (instrument.is_active !== undefined && typeof instrument.is_active !== 'boolean')) {
+      throw new Error('Asset metadata has invalid or ambiguous instrument identity.')
+    }
+    instrumentIdentities.add(instrument.instrument_id)
+    if (instrument.is_active === false) continue
+    if (!equipmentIdentities.has(instrument.equipment_id)) throw new Error('Active instrument references unresolved equipment metadata.')
+    if (instruments.has(instrument.opcua_node_id)) throw new Error('Multiple active instruments map to the same telemetry node.')
+    instruments.set(instrument.opcua_node_id, instrument)
+  }
+  const wantedType = temperature ? 'turbine' : args.equipment_type?.trim().toLowerCase()
+  const inScope = (instrument: (typeof data.instruments)[number]) => {
+    const asset = equipment.get(instrument.equipment_id)
+    if (!asset) return false
+    const assetType = `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim()
+    if (wantedType && !assetType) throw new Error('Active equipment type metadata is missing; fleet membership cannot be verified.')
+    return (!wantedType || assetType.toLowerCase().includes(wantedType))
+      && (!temperature || (instrument.opcua_node_id.endsWith('.turbine_temp')
+        && (!args.equipment_ids || args.equipment_ids.includes(asset.equipment_id))))
+  }
+  if (temperature && args.equipment_ids?.some(id => !equipment.has(id))) throw new Error('Requested equipment scope is unresolved or inactive.')
+  const expectedInstruments = [...instruments.values()].filter(inScope)
+  for (const instrument of expectedInstruments) {
+    if (!nonempty(instrument.unit)) throw new Error('Instrument unit metadata is missing or invalid; snapshot readings cannot be attested.')
+  }
+  if (temperature && new Set(expectedInstruments.map(instrument => instrument.unit)).size > 1) {
+    throw new Error('Temperature instruments use different units; a comparable ranking requires explicit unit conversion.')
+  }
+  const workIdentities = new Set<string>(), workNumbers = new Set<string>()
+  for (const order of data.workOrders) {
+    if (!nonempty(order.id) || workIdentities.has(order.id) || !nonempty(order.workOrderNumber)
+      || workNumbers.has(order.workOrderNumber) || !nonempty(order.equipmentId) || !nonempty(order.status)
+      || [order.instrumentId, order.opcuaNodeId].some(value => value != null && typeof value !== 'string')) {
+      throw new Error('Work-order source has invalid or duplicate identity, status or signal metadata.')
+    }
+    workIdentities.add(order.id)
+    workNumbers.add(order.workOrderNumber)
+  }
+  const observedNodes = new Set<string>(), unresolvedNodes: string[] = []
+  const qualityFilter = (args.quality ?? 'BAD').trim().toUpperCase()
+  const rows = data.telemetryRows.flatMap(reading => {
+    const node = reading.opcua_node_id
+    if (!nonempty(node) || observedNodes.has(node) || typeof reading.value !== 'number' || !Number.isFinite(reading.value)
+      || !nonempty(reading.quality) || !['GOOD', 'BAD', 'UNCERTAIN'].includes(reading.quality.toUpperCase())
+      || typeof reading.event_time !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/.test(reading.event_time)
+      || !Number.isFinite(Date.parse(reading.event_time)) || Date.parse(reading.event_time) > completed
+      || new Date(reading.event_time).toISOString().slice(0, 19) !== reading.event_time.slice(0, 19)
+      || Date.parse(reading.event_time) < windowStart
+      || (temperature && !node.endsWith('.turbine_temp'))) {
+      throw new Error('Latest raw telemetry identity, value, quality or timestamp is invalid or ambiguous.')
+    }
+    observedNodes.add(node)
+    const instrument = instruments.get(node)
+    const asset = instrument ? equipment.get(instrument.equipment_id) : undefined
+    if (!instrument || !asset) { unresolvedNodes.push(node); return [] }
+    if (!inScope(instrument) || (!temperature && reading.quality.toUpperCase() !== qualityFilter)) return []
+    const relatedWork = data.workOrders
+      .filter(order => order.equipmentId === asset.equipment_id
+        && !['completed', 'cancelled'].includes(String(order.status).trim().toLowerCase()))
+      .map(order => ({
+        workOrderNumber: order.workOrderNumber, title: order.title, priority: order.priority, status: order.status,
+        instrumentId: order.instrumentId, opcuaNodeId: order.opcuaNodeId,
+        relation: order.opcuaNodeId === node || order.instrumentId === instrument.instrument_id ? 'same-signal' : 'equipment-level',
+      }))
+    return [{
+      turbine: asset.tag, equipment_id: asset.equipment_id,
+      equipment_type: `${asset.equipment_type_code ?? ''} ${asset.equipment_type_name ?? ''}`.trim(),
+      instrument_id: instrument.instrument_id, signal: instrument.instrument_type ?? instrument.tag,
+      opcua_node_id: node, value: reading.value, unit: instrument.unit, quality: reading.quality,
+      event_time: reading.event_time, open_work_orders: relatedWork,
+    }]
+  })
+  const selected = temperature ? rankTemperatureRows(rows, args) : rows
+  const { rows: capped, truncated } = truncateForModel(selected)
+  const expectedNodes = expectedInstruments.map(instrument => instrument.opcua_node_id)
+  return {
+    result: {
+      read_completed_at_utc: data.readCompletedAt, lookback,
+      provenance: {
+        metadata: 'Lakehouse equipment/instruments; complete inventory',
+        telemetry: 'Eventhouse OPCUAEvents; latest raw row per node in window',
+        work_orders: data.workInventoryComplete ? 'SQL WorkOrder; complete paginated inventory' : 'SQL WorkOrder; returned records only, population completeness not attested',
+      },
+      population: {
+        equipment_type: wantedType ?? null, equipment_ids: temperature ? args.equipment_ids ?? null : null,
+        inventory_complete: true, expected_signal_count: expectedNodes.length,
+        signals_without_readings: expectedNodes.filter(node => !observedNodes.has(node)),
+        work_inventory_complete: data.workInventoryComplete === true,
+        work_coverage_equipment_ids: data.workInventoryComplete ? [...new Set(expectedInstruments.map(instrument => instrument.equipment_id))] : [],
+      },
+      rows: capped, row_count: capped.length,
+      ...(temperature ? {
+        latest_raw_temperature_ranked_descending: true, threshold: args.threshold,
+        threshold_operator: args.threshold_operator ?? 'gt', requested_limit: args.limit ?? (args.threshold === undefined ? 5 : null),
+        requested_equipment_without_readings: (args.equipment_ids ?? []).filter(id => !rows.some(row => row.equipment_id === id)),
+      } : {
+        latest_per_signal_then_quality_filter: true, quality_filter: qualityFilter,
+        latest_quality_node_count: data.telemetryRows.filter(row => String(row.quality).toUpperCase() === qualityFilter).length,
+      }),
+      returned_active_equipment_signal_count: rows.length, unresolved_nodes: unresolvedNodes, truncated,
+    },
+    rowCount: capped.length,
+  }
 }
 
 /** Build the telemetry query from validated fragments — no model text reaches the query body.

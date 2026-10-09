@@ -291,6 +291,22 @@ export async function foundryAgentToken(interactive: boolean): Promise<string | 
   return popupToken(FOUNDRY_AGENT_SCOPES)
 }
 
+export async function hostedSourceTokens() {
+  const config = await ensureConfig(false)
+  const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
+  if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
+  const [fabric, foundry, graphql, kusto] = await Promise.all([
+    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])]),
+    silentToken(FOUNDRY_AGENT_SCOPES),
+    silentToken([GRAPHQL_SCOPE]),
+    silentToken([kustoScope(cluster)]),
+  ])
+  if (!fabric || !foundry || !graphql || !kusto) {
+    throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')
+  }
+  return { fabric, foundry, graphql, kusto }
+}
+
 /** Force a fresh workspace discovery on the next call (e.g. after RTI_011 provisions new items). */
 export function clearWorkspaceConfigCache() {
   configRevision++
