@@ -205,6 +205,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
         name = reference["name"]
+        self.assertEqual(payload["max_output_tokens"], 8192 if name == "hydro-supervisor-agent" else 4096)
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if name == "hydro-supervisor-agent":

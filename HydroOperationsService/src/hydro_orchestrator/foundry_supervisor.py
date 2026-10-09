@@ -767,7 +767,10 @@ class FoundrySupervisor:
         remaining = (request.deadline - utc_now()).total_seconds()
         async with agent:
             async with asyncio.timeout(remaining if role == "supervisor" else min(90, remaining)):
-                options: ChatOptions = {"store": False, "max_tokens": 4096}
+                options: ChatOptions = {
+                    "store": False,
+                    "max_tokens": 8192 if role == "supervisor" else 4096,
+                }
                 try:
                     response = await agent.run(json.dumps(context), options=options)
                 except AgentFrameworkException as error:
