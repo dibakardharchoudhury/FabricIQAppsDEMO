@@ -233,12 +233,14 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                                 "label": "Chief", "detail": "Coordinating.", "timestamp": 1})
                 if run is not None:
                     return await run(request)
+                draft = draft_factory(request) if draft_factory is not None else None
                 answer = ChatAnswer(
                     run_id=request.run_id, source=source, requested_at=request.requested_at,
                     source_read_times=(), summary="Transport fixture, not an operational answer.",
                     tables=(), charts=(), limitations=(), cell_sources=(), specialists=(),
                     audit_url=f"/chat/runs/{request.run_id}/evidence",
-                    proposals=(draft_factory(request),) if draft_factory is not None else (),
+                    proposals=(draft,) if draft is not None else (),
+                    proposal_digests={str(draft.id): draft.digest()} if draft is not None else {},
                 )
                 journal = RunJournal(state / str(request.run_id) / "receipts")
                 journal.save("request", request.model_dump(mode="json"))
@@ -293,6 +295,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 initial = self.invocation()
                 run = await client.post("/invocations", json=initial)
                 draft = WorkOrderDraft.model_validate(run.json()["proposals"][0])
+                self.assertEqual(run.json()["proposal_digests"][str(draft.id)], draft.digest())
                 decision = {"proposal_id": str(draft.id), "proposal_digest": draft.digest(), "approved": True,
                             "edits": {"title": "Reviewed inspection", "description": "Approved human scope.", "priority": "High"}}
                 body = {"operation": "decide", "run_id": run.json()["run_id"], "decision": decision,

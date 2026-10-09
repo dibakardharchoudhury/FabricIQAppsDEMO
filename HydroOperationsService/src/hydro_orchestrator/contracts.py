@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+import json
 from typing import Literal
 from uuid import UUID
 
@@ -8,6 +9,16 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+def contract_digest(value: Contract) -> str:
+    encoded = json.dumps(
+        value.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode()
+    return sha256(encoded).hexdigest()
 
 
 class SourceIdentity(Contract):
@@ -215,7 +226,7 @@ class Proposal(Contract):
         return self
 
     def digest(self) -> str:
-        return sha256(self.model_dump_json().encode()).hexdigest()
+        return contract_digest(self)
 
 
 class Approval(Contract):
@@ -254,7 +265,7 @@ class WorkOrderDraft(Contract):
         return self
 
     def digest(self) -> str:
-        return sha256(self.model_dump_json().encode()).hexdigest()
+        return contract_digest(self)
 
 
 class WorkOrderEdits(Contract):

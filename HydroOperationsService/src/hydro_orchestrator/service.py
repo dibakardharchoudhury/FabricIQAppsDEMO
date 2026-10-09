@@ -248,7 +248,8 @@ async def decide_work_order(
     if (answer.run_id != run_id or answer.source != source or draft is None
             or draft.source != source or draft.run_id != run_id):
         raise HTTPException(404, "No approval card is available for this signed-in user and source.")
-    if not secrets.compare_digest(draft.digest(), decision.proposal_digest):
+    expected_digest = answer.proposal_digests.get(str(draft.id))
+    if expected_digest is None or not secrets.compare_digest(expected_digest, decision.proposal_digest):
         raise HTTPException(409, "The approval card changed; review the current draft.")
     approval_key = f"approval:{draft.id}"
     lock = FileLock(str(journal.root / f"approval-{draft.id}.lock"), timeout=0)
