@@ -7,7 +7,7 @@ export function askCopilot(
   engine: 'data-agent' | 'foundry',
   ...args: Parameters<typeof askFoundryCopilot>
 ): ReturnType<typeof askFoundryCopilot> {
-  if (isHostedFoundryConfigured()) return askHostedCopilot(engine, args[0], args[1])
+  if (isHostedFoundryConfigured()) return askHostedCopilot(engine, args[0], args[1], args[3])
   if (engine === 'foundry' || isWorkOrderRequest(args[0])) return askFoundryCopilot(...args)
   return askDataAgent(args[0], args[1], args[2])
 }

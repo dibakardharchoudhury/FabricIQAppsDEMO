@@ -5,6 +5,7 @@ Called by deploy_fabric_app.py, never a separate app deployment path.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -91,6 +92,49 @@ def hosted_invocations_url(agent: dict, endpoint: str) -> str:
     return endpoint.rstrip("/") + "/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1"
 
 
+def source_configuration_digest(tenant: str, workspace: str, ontology: str, values: dict[str, str]) -> str:
+    config = {
+        "tenant_id": tenant,
+        "workspace_id": workspace,
+        "ontology_id": ontology,
+        "eventhouse_id": values.get("RAYFIN_PUBLIC_EVENTHOUSE_ID", ""),
+        "database_id": values.get("RAYFIN_PUBLIC_KQL_DATABASE_ID", ""),
+        "graphql_id": values.get("RAYFIN_PUBLIC_STID_GRAPHQL_ID", ""),
+        "appbackend_id": values.get("RAYFIN_PUBLIC_ITEM_ID", ""),
+        "api_url": values.get("RAYFIN_PUBLIC_API_URL", ""),
+        "publishable_key": values.get("RAYFIN_PUBLIC_PUBLISHABLE_KEY", ""),
+    }
+    if any(not re.fullmatch(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        config[key],
+    ) for key in tuple(config)[:7]):
+        raise RuntimeError("Hosted source identity is incomplete; all selected item IDs must be verified GUIDs.")
+    api = urlparse(config["api_url"])
+    if (api.scheme != "https" or api.username or api.password or api.port or api.query or api.fragment
+            or not re.fullmatch(r"[0-9a-f]{32}\.pbidedicated\.windows\.net", api.hostname or "")):
+        raise RuntimeError("Hosted source AppBackend endpoint is not the selected capacity endpoint.")
+    if not re.fullmatch(r"pk-\S+", config["publishable_key"]):
+        raise RuntimeError("Hosted source publishable key is missing.")
+    return hashlib.sha256(json.dumps(config, separators=(",", ":")).encode()).hexdigest()
+
+
+def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str, digest: str) -> None:
+    try:
+        raw = agent["versions"]["latest"]["definition"]["environment_variables"]["HYDRO_ORCHESTRATOR_CONFIG"]
+        source = json.loads(raw)["source"]
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise RuntimeError("The active hosted runtime has no readable source identity configuration.") from error
+    expected = {
+        "tenant_id": tenant,
+        "workspace_id": workspace,
+        "ontology_id": ontology,
+        "generation": 2,
+        "configuration_digest": digest,
+    }
+    if source != expected:
+        raise RuntimeError("The active hosted runtime source identity does not match the selected Fabric deployment.")
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip() or values.get("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "").strip()
@@ -149,6 +193,21 @@ def provision(deploy, tenant: str, workspace: str) -> None:
 
     binding = json.loads(deploy._public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
     ontology = binding["ontologyId"]
+    public_values = {
+        key: deploy._public_config_value(values, key)
+        for key in (
+            "RAYFIN_PUBLIC_EVENTHOUSE_ID",
+            "RAYFIN_PUBLIC_KQL_DATABASE_ID",
+            "RAYFIN_PUBLIC_STID_GRAPHQL_ID",
+            "RAYFIN_PUBLIC_ITEM_ID",
+            "RAYFIN_PUBLIC_API_URL",
+            "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
+        )
+    }
+    try:
+        source_digest = source_configuration_digest(tenant, workspace, ontology, public_values)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
     metadata = request("GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/ontologies/{ontology}", fabric_headers).json()
     generation = metadata.get("properties", {}).get("generation")
     if type(generation) is not int or generation != 2:
@@ -214,6 +273,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     hosted = request("GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", agent_headers).json()
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint)
+        verify_hosted_source(hosted, tenant, workspace, ontology, source_digest)
     except RuntimeError as error:
         raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"
@@ -222,5 +282,6 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
         "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,
         "RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL": invocations_url,
+        "RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST": source_digest,
     }), encoding="utf-8")
     print("Foundry configuration readback verified; agent runtime acceptance is a separate check.", flush=True)

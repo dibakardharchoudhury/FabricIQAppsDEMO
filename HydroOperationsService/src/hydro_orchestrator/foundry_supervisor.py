@@ -329,6 +329,33 @@ class FoundrySupervisor:
         self.delegation_lock = asyncio.Lock()
         self.run_id: UUID | None = None
         self.invocation_inputs: dict[str, str] = {}
+        self.event_sink: Callable[[dict[str, object]], None] | None = None
+        self.chief_trace: list[dict[str, object]] = []
+
+    def set_event_sink(self, sink: Callable[[dict[str, object]], None]) -> None:
+        if self.run_id is not None or self.event_sink is not None:
+            raise ValueError("Execution event sink must be assigned once before the run starts.")
+        self.event_sink = sink
+
+    def emit_event(
+        self, event_id: str, role: Role, status: Literal["queued", "running", "completed", "error"],
+        label: str, detail: str, *, agent_name: str | None = None, response_id: str | None = None,
+        parent_id: str | None = None, parent_call_id: str | None = None,
+        trace: list[dict[str, object]] | None = None,
+    ) -> None:
+        if self.event_sink is None:
+            return
+        event: dict[str, object] = {
+            "id": event_id, "role": role, "status": status, "label": label, "detail": detail,
+            "timestamp": int(utc_now().timestamp() * 1000),
+        }
+        for key, value in (
+            ("agentName", agent_name), ("responseId", response_id), ("parentId", parent_id),
+            ("parentCallId", parent_call_id), ("trace", trace),
+        ):
+            if value is not None:
+                event[key] = value
+        self.event_sink(event)
 
     def healthy(self, request: ChatRequest) -> None:
         if self.failures:
@@ -395,6 +422,26 @@ class FoundrySupervisor:
             self.delegations += 1
             if self.delegations > self.max_delegations:
                 raise SourceFailure("The per-run specialist budget was exceeded.")
+            assert self.run_id is not None
+            chief_id = f"{self.run_id}:chief"
+            call_id = f"{self.run_id}:delegation:{self.delegations}"
+            specialist_id = f"{call_id}:{selected}"
+            dispatched_at = int(utc_now().timestamp() * 1000)
+            self.chief_trace.append({
+                "id": f"{call_id}:dispatch", "timestamp": dispatched_at, "source": "application",
+                "label": f"Chief delegated to {versions[selected].name}.", "callId": call_id,
+                "activity": "tool-start",
+            })
+            self.emit_event(
+                chief_id, "supervisor", "running", "Chief", "Coordinating verified specialist work.",
+                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+            )
+            self.emit_event(
+                specialist_id, selected, "running", versions[selected].name,
+                delegation.reason or f"Chief delegated verified {selected} work.",
+                agent_name=versions[selected].name,
+                parent_id=chief_id, parent_call_id=call_id,
+            )
             handoff_context = {
                 "evidence": [item.receipt() for item in self.evidence.values()],
                 "completed_specialists": [item.model_dump(mode="json") for item in self.specialists],
@@ -404,35 +451,68 @@ class FoundrySupervisor:
                 "context_digest": sha256(_encoded(handoff_context)).hexdigest(),
             }).decode()
             saved = journal.read(key)
-            if saved is not None:
-                handoff = CachedHandoff.model_validate(saved)
-                result = handoff.specialist
-                if result.role != selected or result.agent_name != versions[selected].name or result.version != versions[selected].version:
-                    raise SourceFailure("Recovered specialist receipt differs from the pinned role or version.")
-                for receipt in handoff.evidence:
-                    if receipt.source != request.source:
-                        raise SourceFailure("Recovered handoff belongs to a different source.")
-                    self.evidence[receipt.id] = receipt
-                if result.report is not None:
-                    await self.bridge.call({
-                        "action": "validate_rca" if selected == "rca" else "validate_work_review",
-                        "report": json.dumps(result.report),
-                        "receipts": [item.receipt() for item in self.evidence.values()],
-                    })
-            else:
-                response, assessment, elapsed = await self.invoke(
-                    selected, delegation.question, request, journal, versions, selected_native,
+            try:
+                if saved is not None:
+                    handoff = CachedHandoff.model_validate(saved)
+                    result = handoff.specialist
+                    if result.role != selected or result.agent_name != versions[selected].name or result.version != versions[selected].version:
+                        raise SourceFailure("Recovered specialist receipt differs from the pinned role or version.")
+                    for receipt in handoff.evidence:
+                        if receipt.source != request.source:
+                            raise SourceFailure("Recovered handoff belongs to a different source.")
+                        self.evidence[receipt.id] = receipt
+                    if result.report is not None:
+                        await self.bridge.call({
+                            "action": "validate_rca" if selected == "rca" else "validate_work_review",
+                            "report": json.dumps(result.report),
+                            "receipts": [item.receipt() for item in self.evidence.values()],
+                        })
+                else:
+                    response, assessment, elapsed = await self.invoke(
+                        selected, delegation.question, request, journal, versions, selected_native,
+                    )
+                    if not response.response_id:
+                        raise SourceFailure("Specialist invocation has no service response identity.")
+                    result = SpecialistResult(
+                        role=selected, agent_name=versions[selected].name, version=versions[selected].version,
+                        response_id=response.response_id, duration_ms=elapsed,
+                        model_round_count=sum(message.role == "assistant" for message in response.messages),
+                        input_digest=self.invocation_inputs[response.response_id], text=response.text, report=assessment,
+                    )
+                    journal.save(key, CachedHandoff(specialist=result, evidence=tuple(self.evidence.values()))
+                                 .model_dump(mode="json"))
+            except Exception:
+                failed_at = int(utc_now().timestamp() * 1000)
+                self.emit_event(
+                    specialist_id, selected, "error", versions[selected].name,
+                    "Specialist execution failed; no result was accepted.", agent_name=versions[selected].name,
+                    parent_id=chief_id, parent_call_id=call_id,
                 )
-                if not response.response_id:
-                    raise SourceFailure("Specialist invocation has no service response identity.")
-                result = SpecialistResult(
-                    role=selected, agent_name=versions[selected].name, version=versions[selected].version,
-                    response_id=response.response_id, duration_ms=elapsed,
-                    model_round_count=sum(message.role == "assistant" for message in response.messages),
-                    input_digest=self.invocation_inputs[response.response_id], text=response.text, report=assessment,
+                self.chief_trace.append({
+                    "id": f"{call_id}:return", "timestamp": failed_at, "source": "application",
+                    "label": f"{versions[selected].name} returned a failure.", "callId": call_id,
+                    "failed": True, "activity": "delegation-return",
+                })
+                self.emit_event(
+                    chief_id, "supervisor", "running", "Chief", "A specialist failure was returned.",
+                    agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
                 )
-                journal.save(key, CachedHandoff(specialist=result, evidence=tuple(self.evidence.values()))
-                             .model_dump(mode="json"))
+                raise
+            self.emit_event(
+                specialist_id, selected, "completed", versions[selected].name,
+                f"Version {result.version}; measured duration {result.duration_ms:.0f} ms.",
+                agent_name=result.agent_name, response_id=result.response_id,
+                parent_id=chief_id, parent_call_id=call_id,
+            )
+            self.chief_trace.append({
+                "id": f"{call_id}:return", "timestamp": int(utc_now().timestamp() * 1000),
+                "source": "foundry", "label": f"{versions[selected].name} returned verified output.",
+                "responseId": result.response_id, "callId": call_id, "activity": "delegation-return",
+            })
+            self.emit_event(
+                chief_id, "supervisor", "running", "Chief", "Specialist output returned for verification.",
+                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+            )
             if result not in self.specialists:
                 self.specialists.append(result)
             return {"specialist": result.model_dump(mode="json"),
@@ -1009,6 +1089,11 @@ class FoundrySupervisor:
                 return ChatAnswer.model_validate(committed)
             self.healthy(request)
             versions = await self.versions(journal)
+            self.emit_event(
+                f"{request.run_id}:chief", "supervisor", "running", "Chief",
+                "Reading the request and coordinating the verified workflow.",
+                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+            )
             if journal.read("tool_catalog") is None:
                 catalog = SourceCatalog.model_validate(await self.tools.catalog(request))
                 journal.save("tool_catalog", catalog.model_dump(mode="json"))
@@ -1171,4 +1256,10 @@ class FoundrySupervisor:
                                       if prepared.answer_projection else None),
             })
             journal.save("answer", answer.model_dump(mode="json"))
+            self.emit_event(
+                f"{request.run_id}:chief", "supervisor", "completed", "Chief",
+                "Verified answer committed with source and specialist receipts.",
+                agent_name=versions["supervisor"].name,
+                response_id=prepared.supervisor_response_id, trace=list(self.chief_trace),
+            )
             return answer

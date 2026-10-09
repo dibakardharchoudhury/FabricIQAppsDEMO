@@ -104,7 +104,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                                  http_client=self.network, max_retries=0)
         self.client_patch = patch("azure.ai.projects.aio.AIProjectClient.get_openai_client", return_value=self.openai)
         self.client_patch.start()
+        self.events = []
         self.owner = self.make_owner()
+        self.owner.set_event_sink(self.events.append)
         self.seed(self.request)
 
     async def asyncTearDown(self):
@@ -299,6 +301,34 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No approved diagnostic", result.limitations[0])
         self.assertFalse(result.production_write_executed)
         self.assertEqual(result.charts, ())
+        specialist_events = [event for event in self.events if event["role"] != "supervisor"]
+        self.assertEqual(
+            [(event["role"], event["status"]) for event in specialist_events],
+            [
+                ("qa", "running"), ("qa", "completed"),
+                ("rca", "running"), ("rca", "completed"),
+                ("work-order", "running"), ("work-order", "completed"),
+                ("qa", "running"), ("qa", "completed"),
+            ],
+        )
+        for running, completed in zip(specialist_events[::2], specialist_events[1::2], strict=True):
+            self.assertEqual(running["id"], completed["id"])
+            self.assertEqual(running["parentId"], f"{self.request.run_id}:chief")
+            self.assertEqual(running["parentCallId"], completed["parentCallId"])
+            self.assertEqual(completed["agentName"], completed["label"])
+            self.assertTrue(str(completed["responseId"]).startswith("resp_"))
+        chief_events = [event for event in self.events if event["role"] == "supervisor"]
+        self.assertEqual(chief_events[0]["status"], "running")
+        self.assertEqual(chief_events[-1]["status"], "completed")
+        trace = chief_events[-1]["trace"]
+        self.assertEqual(len(trace), 8)
+        self.assertEqual(
+            [item["activity"] for item in trace],
+            ["tool-start", "delegation-return"] * 4,
+        )
+        serialized = json.dumps(self.events)
+        self.assertNotIn("test-not-a-real-token", serialized)
+        self.assertNotIn("rows", serialized)
 
     async def test_actual_framework_fixer_stages_source_bound_human_approval_card_without_sql(self):
         self.mode = "proposal"
@@ -338,6 +368,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 await self.owner.run(self.request)
         self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
         self.assertNotIn("hydro-rca-agent", self.calls)
+        qa_events = [event for event in self.events if event["role"] == "qa"]
+        self.assertEqual([event["status"] for event in qa_events], ["running", "error"])
+        self.assertEqual(qa_events[0]["parentCallId"], qa_events[1]["parentCallId"])
+        chief_events = [event for event in self.events if event["role"] == "supervisor"]
+        self.assertEqual(chief_events[-1]["status"], "running")
+        self.assertTrue(chief_events[-1]["trace"][-1]["failed"])
 
     async def test_unrequested_charts_wrong_cells_and_invented_sources_fail_closed(self):
         for mode in ("chart", "invented", "transposed", "extra_column"):

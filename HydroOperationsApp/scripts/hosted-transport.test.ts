@@ -43,6 +43,41 @@ test('thin transport preserves backend output, renews leases and keeps session a
   assert.notEqual(calls[0].url.searchParams.get('agent_session_id'), calls[3].url.searchParams.get('agent_session_id'))
 })
 
+test('streaming transport paints only backend execution events and returns the certified final answer', async () => {
+  const snapshots: Array<Array<{ id: string; status: string }>> = []
+  let body: Record<string, unknown> | undefined
+  const chief = { id: 'run-1:chief', role: 'supervisor', status: 'running', label: 'Chief',
+    detail: 'Coordinating.', timestamp: 1, agentName: 'hydro-supervisor-agent', trace: [] }
+  const gauge = { id: 'run-1:gauge', role: 'qa', status: 'running', label: 'Gauge',
+    detail: 'Verifying.', timestamp: 2, agentName: 'hydro-qa-agent',
+    parentId: chief.id, parentCallId: 'call-1' }
+  const lines = [
+    { type: 'run', run_id: 'run-1', source },
+    { type: 'event', event: chief },
+    { type: 'event', event: gauge },
+    { type: 'event', event: { ...gauge, status: 'completed', responseId: 'resp_gauge' } },
+    { type: 'event', event: { ...chief, status: 'completed', responseId: 'resp_chief' } },
+    { type: 'answer', answer: reply() },
+  ]
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    body = JSON.parse(String(init?.body))
+    return new Response(lines.map(line => JSON.stringify(line)).join('\n') + '\n',
+      { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  const answer = await client.run({ question: 'Verify.' }, events => {
+    snapshots.push(events.map(event => ({ id: event.id, status: event.status })))
+  })
+  assert.equal(body?.stream, true)
+  assert.equal(answer.text, 'Backend-provided answer.')
+  assert.deepEqual(answer.executionEvents.map(event => [event.id, event.status]),
+    [['run-1:chief', 'completed'], ['run-1:gauge', 'completed']])
+  assert.ok(snapshots.some(snapshot => snapshot.some(event => event.status === 'running')))
+  assert.deepEqual(snapshots.at(-1), [
+    { id: 'run-1:chief', status: 'completed' },
+    { id: 'run-1:gauge', status: 'completed' },
+  ])
+})
+
 test('foreign source, changed write boundary and malformed display never become connected answers', async () => {
   for (const changed of [
     { ...reply(), source: { ...source, workspace_id: 'foreign' } },

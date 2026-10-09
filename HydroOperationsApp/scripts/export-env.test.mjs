@@ -32,6 +32,7 @@ test('binding survives real Rayfin rewrites and framework export into Vite', asy
       `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='${canonicalGraphBinding(JSON.stringify(binding), binding.workspaceId)}'`,
       'RAYFIN_PUBLIC_KQL_DATABASE=RTI_Demo_Eventhouse_V3',
       'RAYFIN_PUBLIC_FOUNDRY_INVOCATIONS_URL=https://demo.services.ai.azure.com/api/projects/hydro/agents/hydro-orchestrator/endpoint/protocols/invocations?api-version=v1',
+      `RAYFIN_PUBLIC_ORCHESTRATOR_SOURCE_DIGEST=${'a'.repeat(64)}`,
       'PRIVATE_TEST_SECRET=not-for-the-browser',
     ].join('\n') + '\n')
     for (let cycle = 0; cycle < 4; cycle++) {
@@ -51,6 +52,7 @@ test('binding survives real Rayfin rewrites and framework export into Vite', asy
       ), binding)
       assert.equal(browserEnv.VITE_RAYFIN_KQL_DATABASE, 'RTI_Demo_Eventhouse_V3')
       assert.match(browserEnv.VITE_RAYFIN_FOUNDRY_INVOCATIONS_URL, /hydro-orchestrator/)
+      assert.equal(browserEnv.VITE_RAYFIN_ORCHESTRATOR_SOURCE_DIGEST, 'a'.repeat(64))
       assert.equal(browserEnv.VITE_FABRIC_ITEM_ID, `backend-${cycle}`)
       assert.deepEqual(JSON.parse((await readEnvMap(path.dirname(primary))).get('RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING')), binding)
       assert.doesNotMatch(await readFile(path.join(root, '.env.local'), 'utf8'), /PRIVATE_TEST_SECRET|not-for-the-browser/)

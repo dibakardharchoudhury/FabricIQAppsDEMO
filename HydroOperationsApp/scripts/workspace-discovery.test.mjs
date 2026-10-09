@@ -10,7 +10,7 @@ const copilotPageSource = await readFile(new URL('../src/ui-shared/pages/Copilot
 const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
-  'dataAgentConversation', 'dataAgentVisualizations',
+  'dataAgentConversation', 'dataAgentVisualizations', 'entraTokens', 'copilot/answerPresentation',
 ].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
 const serviceCode = ts.transpileModule(source.replaceAll('import.meta.env', 'testEnv'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -36,7 +36,8 @@ function graphService(onRequest = async () => undefined) {
     '@azure/msal-browser': { PublicClientApplication: class {
       async initialize() {}
       async handleRedirectPromise() {}
-      getAllAccounts() { return [{}] }
+      getActiveAccount() { return { tenantId: 'test-tenant' } }
+      getAllAccounts() { return [{ tenantId: 'test-tenant' }] }
       async acquireTokenSilent() { return { accessToken: 'test-token' } }
     } },
   }
@@ -86,7 +87,8 @@ function weatherService() {
     '@azure/msal-browser': { PublicClientApplication: class {
       async initialize() {}
       async handleRedirectPromise() {}
-      getAllAccounts() { return [{}] }
+      getActiveAccount() { return { tenantId: 'test-tenant' } }
+      getAllAccounts() { return [{ tenantId: 'test-tenant' }] }
       async acquireTokenSilent() { return { accessToken: 'test-token' } }
     } },
   }
@@ -119,9 +121,9 @@ function weatherService() {
 }
 
 test('Data Agent MCP runtime preserves bounded follow-up context without changing standalone questions', () => {
-  assert.match(source, /import \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
-  assert.match(source, /import \{ StreamableHTTPClientTransport \} from '@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'/)
-  assert.doesNotMatch(source, /import\('@modelcontextprotocol\/sdk\/client\//)
+  assert.match(source, /import type \{ Client \} from '@modelcontextprotocol\/sdk\/client\/index\.js'/)
+  assert.match(source, /import\('@modelcontextprotocol\/sdk\/client\/index\.js'\)/)
+  assert.match(source, /import\('@modelcontextprotocol\/sdk\/client\/streamableHttp\.js'\)/)
   assert.match(source, /arguments: \{ \[session\.questionArgument\]: question \}/)
   assert.match(source, /contextualizeDataAgentQuestion\(question, dataAgentUserQuestions\)/)
   assert.match(source, /resetDataAgentConversation\(\) \{\s+dataAgentUserQuestions = \[\]\s+\}/)
@@ -141,7 +143,7 @@ test('Data Agent MCP runtime preserves bounded follow-up context without changin
   assert.match(source, /extractDataAgentVisualizations\(answer\.text, question\)/)
   assert.doesNotMatch(source, /selectedFacility|selectedAsset/)
   assert.doesNotMatch(hydroDataHookSource, /warmDataAgentMcp\(\)/)
-  assert.match(copilotPageSource, /copilotEngine === 'data-agent'[\s\S]+warmDataAgentMcp\(\)/)
+  assert.doesNotMatch(copilotPageSource, /warmDataAgentMcp\(\)/)
 })
 
 test('Data Agent progress maps real Fabric tool lifecycle without inventing arguments', () => {

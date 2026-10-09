@@ -35,36 +35,43 @@ The migration passed 117 backend tests and Pyright, 93 focused transport/runtime
 source tests, 143 related frontend regressions, typecheck, focused lint,
 environment validation and production build. Subsequent state bootstrap/source
 checks passed 43 targeted tests and Pyright; the container HOME correction passed
-21 source/packaging tests and Pyright. The endpoint gate is not enabled, and the
-original browser coordinator remains lazy rollback. No Fabric deployment, commit,
-database schema mutation or production work-order creation accompanied these changes.
+21 source/packaging tests and Pyright. The original browser coordinator remains a
+lazy rollback until the ten-prompt hosted acceptance matrix passes. No database
+schema mutation or production work-order creation accompanied these changes.
 
-The coordinator was published in the existing project. Version 1 failed because
-operator source JSON omitted the bridge's two redacted public fields. Version 2
-started with the complete nine-field configuration, preserved the client-selected
-session ID and returned sanitized HTTP 401 for fake source credentials in 6.3
-seconds. This did not certify state writes. Version 3 added an actual runtime-user
-state creation/FileLock probe and failed with `PermissionError`. Version 4
-prepares privately owned session HOME/state directories and tests locking as UID
-10001 during image compilation, but its hosted startup still fails with the same
-permission error. **Current hosted execution is blocked, not accepted.** Platform
-preflight HTTP 200 does not certify application readiness. Failed synthetic
-sessions were stopped without deleting diagnostics.
+The coordinator was published in the existing project. Versions 1-4 exposed
+incomplete configuration and hosted session-volume permission issues. Version 5
+verified startup, non-root state initialization, CORS, fail-closed ingress and
+same-session file persistence. Version 7 is active on ACR run `dta`, tag
+`validated-20261009090642`, digest
+`sha256:1a8ce284f0b0de8bed4a4a243efcb2097ffaac391ff1c9bbcb6f6ee3c7a3dfc7`.
+It adds authenticated NDJSON execution streaming and backend-owned Chief/specialist
+handoff events. Its deployed boundary accepted the streamed Foundry invocation
+envelope and returned the intended sanitized HTTP 401 for fake delegated source
+credentials. The exact synthetic session was stopped while retaining state. The
+published coordinator is visible in
+[Foundry v7](https://ai.azure.com/nextgen/r/2sFlAVw1TJGv8BGvjeF_Lg,rg_ai,,foundryfabriciqappsdemo-resource,foundryfabriciqappsdemo/build/agents/hydro-orchestrator/build?version=7).
 
-The latest candidate is ACR `dt7`, tag `validated-20261009041410`, digest
-`sha256:b611ca2b48c05fa2eb22cd54af7f7e10a3ed0c2ade4e9ccd249058ff9ee80dd6`.
-Its package includes only 26 allowlisted runtime files; temporary staging/upload
-directories were cleaned. The published coordinator is visible in
-[Foundry v4](https://ai.azure.com/nextgen/r/2sFlAVw1TJGv8BGvjeF_Lg,rg_ai,,foundryfabriciqappsdemo-resource,foundryfabriciqappsdemo/build/agents/hydro-orchestrator/build?version=4).
+The October 9 canonical Fabric deployment exported the active invocation endpoint,
+verified Chief v13, Gauge v15, Sleuth v17, Fixer v15 and Sparky v12, reapplied the
+AppBackend runtime/database settings, and passed browser-equivalent CORS and POST
+checks for `/graphql` and `/api/auth/v1/token`. It reported `SUCCESS` with the
+protected sign-in gate. This proves deployment and ingress readiness, not
+signed-user source execution or the ten-prompt application acceptance matrix.
+The redundant `hydro-data-agent-bridge` was verified as unpublished and
+unreferenced by the repository or retained agents, then deleted. Chief, Gauge,
+Sleuth, Fixer, Sparky and the hosted `hydro-orchestrator` remain.
 
 Two bounded capacity resume/read/suspend windows reverified live numeric
 generation 2, exact native connection targets and the matching 13-part published
 Data Agent definition, restoring Paused after each window. The operator has since
 reported capacity active; leave it active. Identity readback is not native query
 execution. Telemetry disclosed `fresh_telemetry` missing, and the hosted
-coordinator's delegated work read failed explicitly with `EXCHANGE_NOT_ENABLED`.
-The required local exchange opt-in
-is not applied to AppBackend. Both legitimate CLI and azd Graph credential renewal
+coordinator's earlier delegated work read failed explicitly with
+`EXCHANGE_NOT_ENABLED`. The repository opt-in has now been applied by the
+canonical deployment, but signed-user hosted SQL execution still requires live
+acceptance; the existing embedded SQL/WO path remains separate and working.
+Both legitimate CLI and azd Graph credential renewal
 received CAE `InteractionRequired / TokenCreatedWithOutdatedPolicies`; normal
 authentication renewal remains necessary, with no bypass or copied caches.
 Signed-SPA source execution, live SQL/native answers, platform-wide payload
@@ -119,21 +126,22 @@ its focused follow-up passed. The combined shared-tool/source suite passed
 **69 tests** (29 backend-source and 40 existing shared-tool tests), with focused
 bridge lint and environment validation clean. Existing frontend validation passed
 216 tests, typecheck, lint, environment validation and production build.
-Foundry now hosts `hydro-orchestrator` v5, whose startup, non-root state
-initialization, CORS, fail-closed ingress and same-session file persistence were
-verified. The newer explicit Chief -> Gauge -> presentation graph and packaged
-operation skills remain a local candidate until their full regression, image
-publication and live prompt acceptance complete. The SPA/Battle hosted switch
-remains off. Local and hosted-session files are not a distributed durability or
-tenant-isolation guarantee.
+Foundry now hosts active `hydro-orchestrator` v7 on immutable digest
+`sha256:1a8ce284f0b0de8bed4a4a243efcb2097ffaac391ff1c9bbcb6f6ee3c7a3dfc7`.
+The explicit Chief -> Gauge -> presentation graph and packaged operation skills
+passed full backend regression, were included in the published image, and are
+wired into the deployed SPA. Ten-prompt signed-user acceptance is still pending,
+so the lazy browser coordinator remains a temporary rollback. Local and
+hosted-session files are not a distributed durability or tenant-isolation
+guarantee.
 
 The diagnostic `EXCHANGE_NOT_ENABLED` result belongs to its direct CLI-token
 exchange. It does **not** mean the app's embedded Fabric session or existing
 human-approved WO creation is broken. Those working paths are preserved.
-The new hosted coordinator's delegated SQL authorization remains a separate gate;
+The hosted coordinator's delegated SQL authorization remains a separate live gate;
 the existing embedded SQL/WO flow is working and preserved.
 No database/Eventhouse/Lakehouse schema, production records or source data changed.
-No commit, push or Fabric deployment was made during this correction.
+No production work order was created during deployment or smoke testing.
 
 ### Source-grounded approval and hosting preparation
 

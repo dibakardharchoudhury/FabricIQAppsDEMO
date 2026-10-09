@@ -43,35 +43,40 @@ large-chunk and mixed static/dynamic-import warnings. The subsequent state
 bootstrap/source checks passed 43 targeted tests and Pyright; the container HOME
 correction passed the 21 source/packaging tests and Pyright.
 
-The existing Foundry coordinator has been published through immutable images.
-Version 1 rejected incomplete operator configuration; version 2 started with the
-complete nine-field public source configuration and returned sanitized HTTP 401
-for fake source credentials. That check did not exercise state writes. Version 3
-added an actual application-user create/write/FileLock startup probe and failed
-with `PermissionError`. Version 4 prepares private session HOME/state directories
-in the image, but the real hosted probe still fails with the same permission
-error. **The current hosted runtime is not operational.** Image compilation and
-platform OPTIONS HTTP 200 are not runtime acceptance. Failed synthetic sessions
-were stopped while retaining diagnostics; no state check was bypassed.
+The existing Foundry coordinator is published through immutable images. Versions
+1-4 exposed incomplete configuration and hosted session-volume permission issues.
+Version 5 verified startup, non-root state initialization, CORS, fail-closed
+ingress and same-session file persistence. Version 7 is active on ACR run `dta`,
+`hydro-orchestrator:validated-20261009090642`, digest
+`sha256:1a8ce284f0b0de8bed4a4a243efcb2097ffaac391ff1c9bbcb6f6ee3c7a3dfc7`.
+It adds authenticated NDJSON execution streaming and backend-owned Chief/specialist
+handoff events. Its deployed boundary accepted the streamed Foundry invocation
+envelope and returned the intended sanitized HTTP 401 for fake delegated source
+credentials; the exact synthetic session was then stopped without deleting its
+state.
 
-The latest Linux-amd64 candidate is ACR run `dt7`,
-`hydro-orchestrator:validated-20261009041410`, digest
-`sha256:b611ca2b48c05fa2eb22cd54af7f7e10a3ed0c2ade4e9ccd249058ff9ee80dd6`.
-It contains only 26 allowlisted runtime files. Its build verifies state locking
-and packaged contracts as UID 10001; this does not prove hosted mount permissions.
+The October 9 canonical Fabric deployment exported the active invocation endpoint,
+verified Chief v13, Gauge v15, Sleuth v17, Fixer v15 and Sparky v12, reapplied the
+AppBackend runtime/database settings, and passed `/graphql` and
+`/api/auth/v1/token` browser-equivalent preflight and POST checks. It reported
+`SUCCESS` with the protected sign-in gate. This proves deployment and ingress
+readiness, not signed-user source execution or the ten-prompt application
+acceptance matrix.
 
 Two bounded capacity resume/read/suspend windows verified live numeric generation
 2 and the matching 13-part published Data Agent definition, restoring the original
 Paused state afterward. The operator subsequently reported the capacity active;
 leave it active. No source schema/data or production work order was changed.
-The hosted coordinator's delegated SQL probe explicitly returned
-`EXCHANGE_NOT_ENABLED`; the local opt-in
-has not been applied to AppBackend. Graph renewal in both legitimate CLI/azd
+The earlier hosted coordinator delegated SQL probe explicitly returned
+`EXCHANGE_NOT_ENABLED`. The repository opt-in has now been applied by the
+canonical deployment, but signed-user hosted SQL execution still requires live
+acceptance; the existing embedded SQL/WO path remains separate and working.
+Graph renewal in both legitimate CLI/azd
 contexts received a CAE `InteractionRequired / TokenCreatedWithOutdatedPolicies`
 challenge. Do not bypass normal authentication. Hosted state access, signed-SPA
 execution, platform credential redaction, live SQL/native-source execution,
-session recovery and latency remain acceptance gates. No Fabric app deployment
-or commit accompanied these corrections.
+session recovery and latency remain acceptance gates. No production work order
+was created by deployment or smoke testing.
 
 The default HTTP service has **no configured source/agent adapters**, returns HTTP 503 for
 readiness/run submission, and reports `live_fabric_connected: false`. It does not

@@ -67,10 +67,11 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
 
 export async function askHostedCopilot(
   engine: 'foundry' | 'data-agent', question: string, onProgress?: (text: string) => void,
+  onEvents?: (events: OrchestrationEvent[]) => void,
 ): Promise<FoundryAnswer> {
   const answer = await hostedClient(engine).run({
     question, ...(engine === 'data-agent' ? { native_sources: ['data-agent'] } : {}),
-  })
+  }, onEvents)
   onProgress?.(answer.text)
   return { text: answer.text, visualizations: answer.visualizations,
     proposals: answer.proposals, orchestrationEvents: answer.executionEvents, backendOwned: true }
@@ -80,7 +81,7 @@ export async function askFoundryCopilot(
   question: string, onProgress?: (text: string) => void, onSteps?: (steps: AgentStep[]) => void,
   onEvents?: (events: OrchestrationEvent[]) => void,
 ): Promise<FoundryAnswer> {
-  if (isHostedFoundryConfigured()) return askHostedCopilot('foundry', question, onProgress)
+  if (isHostedFoundryConfigured()) return askHostedCopilot('foundry', question, onProgress, onEvents)
   browser ??= await import('./browserFoundry.ts')
   return browser.askFoundryCopilot(question, onProgress, onSteps, onEvents)
 }

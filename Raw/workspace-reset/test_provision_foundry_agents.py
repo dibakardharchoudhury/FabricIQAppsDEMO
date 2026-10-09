@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -93,6 +94,55 @@ class PublishedIdentityTests(unittest.TestCase):
                 module.hosted_invocations_url(invalid, endpoint)
         with self.assertRaises(RuntimeError):
             module.hosted_invocations_url(agent, "http://untrusted.example")
+
+    def test_source_digest_matches_runtime_configuration_contract(self):
+        ids = [f"{index:08x}-1111-4111-8111-{index:012x}" for index in range(1, 8)]
+        values = {
+            "RAYFIN_PUBLIC_EVENTHOUSE_ID": ids[3],
+            "RAYFIN_PUBLIC_KQL_DATABASE_ID": ids[4],
+            "RAYFIN_PUBLIC_STID_GRAPHQL_ID": ids[5],
+            "RAYFIN_PUBLIC_ITEM_ID": ids[6],
+            "RAYFIN_PUBLIC_API_URL": f"https://{'a' * 32}.pbidedicated.windows.net/workload",
+            "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-runtime-contract",
+        }
+        config = {
+            "tenant_id": ids[0], "workspace_id": ids[1], "ontology_id": ids[2],
+            "eventhouse_id": ids[3], "database_id": ids[4], "graphql_id": ids[5],
+            "appbackend_id": ids[6], "api_url": values["RAYFIN_PUBLIC_API_URL"],
+            "publishable_key": values["RAYFIN_PUBLIC_PUBLISHABLE_KEY"],
+        }
+        expected = hashlib.sha256(json.dumps(config, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(module.source_configuration_digest(ids[0], ids[1], ids[2], values), expected)
+        for key in values:
+            with self.subTest(missing=key):
+                invalid = {**values, key: ""}
+                with self.assertRaises(RuntimeError):
+                    module.source_configuration_digest(ids[0], ids[1], ids[2], invalid)
+
+    def test_active_hosted_source_must_match_selected_deployment(self):
+        tenant = "00000001-1111-4111-8111-000000000001"
+        workspace = "00000002-1111-4111-8111-000000000002"
+        ontology = "00000003-1111-4111-8111-000000000003"
+        digest = "a" * 64
+        source = {
+            "tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology,
+            "generation": 2, "configuration_digest": digest,
+        }
+        agent = {"versions": {"latest": {"definition": {"environment_variables": {
+            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": source}),
+        }}}}}
+        module.verify_hosted_source(agent, tenant, workspace, ontology, digest)
+        for invalid in [
+            {},
+            {"versions": {"latest": {"definition": {"environment_variables": {
+                "HYDRO_ORCHESTRATOR_CONFIG": "not-json",
+            }}}}},
+            {"versions": {"latest": {"definition": {"environment_variables": {
+                "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": {**source, "workspace_id": tenant}}),
+            }}}}},
+        ]:
+            with self.assertRaises(RuntimeError):
+                module.verify_hosted_source(invalid, tenant, workspace, ontology, digest)
 
     def test_regional_definition_operations_are_polled_on_canonical_origin(self):
         path = "/v1/operations/46823fb9-2ddd-4c7b-8089-068435f979f0"

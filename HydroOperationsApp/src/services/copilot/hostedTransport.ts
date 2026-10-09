@@ -1,5 +1,5 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import type { OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
+import type { AgentTraceEntry, OrchestrationEvent, WorkOrderProposal } from './orchestration.ts'
 
 export type HostedSource = {
   tenant_id: string
@@ -68,6 +68,47 @@ function executionEvent(value: unknown): OrchestrationEvent {
     timestamp: item.timestamp, agentName: item.agentName, responseId: item.responseId }
 }
 
+function streamedExecutionEvent(value: unknown): OrchestrationEvent {
+  const item = record(value)
+  const role = item.role
+  const status = item.status
+  if ((role !== 'supervisor' && role !== 'qa' && role !== 'rca' && role !== 'work-order' && role !== 'fabric-iq')
+    || (status !== 'queued' && status !== 'running' && status !== 'completed' && status !== 'error')
+    || typeof item.id !== 'string' || !item.id || typeof item.label !== 'string'
+    || typeof item.detail !== 'string' || typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)
+    || (item.agentName !== undefined && typeof item.agentName !== 'string')
+    || (item.responseId !== undefined && typeof item.responseId !== 'string')
+    || (item.parentId !== undefined && typeof item.parentId !== 'string')
+    || (item.parentCallId !== undefined && typeof item.parentCallId !== 'string')) {
+    throw new Error('Hosted streaming execution event is invalid.')
+  }
+  let trace: AgentTraceEntry[] | undefined
+  if (item.trace !== undefined) {
+    if (!Array.isArray(item.trace)) throw new Error('Hosted streaming execution trace is invalid.')
+    trace = item.trace.map(value => {
+      const entry = record(value)
+      if (typeof entry.id !== 'string' || typeof entry.timestamp !== 'number' || !Number.isFinite(entry.timestamp)
+        || (entry.source !== 'foundry' && entry.source !== 'application') || typeof entry.label !== 'string'
+        || (entry.responseId !== undefined && typeof entry.responseId !== 'string')
+        || (entry.callId !== undefined && typeof entry.callId !== 'string')
+        || (entry.failed !== undefined && typeof entry.failed !== 'boolean')
+        || (entry.activity !== undefined && entry.activity !== 'tool-start' && entry.activity !== 'tool-end'
+          && entry.activity !== 'delegation-return' && entry.activity !== 'checked-presentation')) {
+        throw new Error('Hosted streaming execution trace entry is invalid.')
+      }
+      return entry as AgentTraceEntry
+    })
+  }
+  return {
+    id: item.id, role, status, label: item.label, detail: item.detail, timestamp: item.timestamp,
+    ...(typeof item.agentName === 'string' ? { agentName: item.agentName } : {}),
+    ...(typeof item.responseId === 'string' ? { responseId: item.responseId } : {}),
+    ...(typeof item.parentId === 'string' ? { parentId: item.parentId } : {}),
+    ...(typeof item.parentCallId === 'string' ? { parentCallId: item.parentCallId } : {}),
+    ...(trace ? { trace } : {}),
+  }
+}
+
 export class HostedTransport {
   private sessionId = crypto.randomUUID()
   private running = false
@@ -107,7 +148,9 @@ export class HostedTransport {
     this.previousRunId = undefined
   }
 
-  private async invoke(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async invoke(
+    body: Record<string, unknown>, onEvent?: (event: OrchestrationEvent) => void,
+  ): Promise<Record<string, unknown>> {
     this.inFlight++
     let tokens: SourceTokens | undefined
     try {
@@ -123,8 +166,40 @@ export class HostedTransport {
       const response = await this.fetcher(endpoint, {
         method: 'POST', redirect: 'error', cache: 'no-store',
         headers: { Authorization: `Bearer ${tokens.foundry}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, tokens }), signal: AbortSignal.timeout(300_000),
+        body: JSON.stringify({ ...body, ...(onEvent ? { stream: true } : {}), tokens }),
+        signal: AbortSignal.timeout(300_000),
       })
+      if (onEvent && response.headers.get('content-type')?.includes('application/x-ndjson')) {
+          if (!response.body) throw new Error('Hosted streaming invocation returned no response body.')
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let answer: Record<string, unknown> | undefined
+          while (true) {
+            const { value, done } = await reader.read()
+            buffer += decoder.decode(value, { stream: !done })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() ?? ''
+            for (const line of lines) {
+              if (!line) continue
+              const message = record(JSON.parse(line))
+              if (message.type === 'event') onEvent(streamedExecutionEvent(message.event))
+              else if (message.type === 'answer') answer = record(message.answer)
+              else if (message.type === 'error') {
+                const status = typeof message.status === 'number' ? message.status : 500
+                throw new HostedInvocationError(status,
+                  message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail)
+                    ? record(message.detail) : undefined)
+              } else if (message.type !== 'run') {
+                throw new Error('Hosted streaming invocation returned an unknown message type.')
+              }
+            }
+            if (done) break
+          }
+          if (buffer.trim()) throw new Error('Hosted streaming invocation ended with an incomplete message.')
+          if (!answer) throw new Error('Hosted streaming invocation returned no certified answer.')
+          return answer
+      }
       if (!response.ok) {
         if (!response.headers.get('content-type')?.includes('application/json')) {
           throw new HostedInvocationError(response.status)
@@ -144,12 +219,18 @@ export class HostedTransport {
     }
   }
 
-  async run(chat: HostedChat): Promise<HostedAnswer> {
+  async run(chat: HostedChat, onEvents?: (events: OrchestrationEvent[]) => void): Promise<HostedAnswer> {
     if (this.running) throw new Error('A hosted request is already running.')
     this.running = true
     try {
+      const streamedEvents: OrchestrationEvent[] = []
       const reply = await this.invoke({ operation: 'run', chat: { ...chat,
-        ...(this.previousRunId ? { previous_run_id: this.previousRunId } : {}) } })
+        ...(this.previousRunId ? { previous_run_id: this.previousRunId } : {}) } }, onEvents ? event => {
+          const index = streamedEvents.findIndex(item => item.id === event.id)
+          if (index < 0) streamedEvents.push(event)
+          else streamedEvents[index] = event
+          onEvents([...streamedEvents])
+        } : undefined)
       const source = record(reply.source)
       if (Object.entries(this.source).some(([key, value]) => source[key] !== value)
         || reply.production_write_executed !== false || typeof reply.run_id !== 'string') {
@@ -204,7 +285,8 @@ export class HostedTransport {
         } satisfies WorkOrderProposal
       })
       const visualizations = presentation.visualizations.map(visualization)
-      const executionEvents = presentation.execution_events.map(executionEvent)
+      const committedEvents = presentation.execution_events.map(executionEvent)
+      const executionEvents = streamedEvents.length ? streamedEvents : committedEvents
       this.previousRunId = runId
       return { runId, text: presentation.text, proposals, visualizations, executionEvents, receipt: reply }
     } catch (error) {

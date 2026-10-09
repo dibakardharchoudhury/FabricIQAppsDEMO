@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
+import json
 import logging
 import secrets
 import sqlite3
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,6 +20,7 @@ from filelock import FileLock, Timeout as LockTimeout
 from .contracts import Approval, Contract, Outcome, Proposal, ReviewInput, ReviewRequest, SourceIdentity, WorkOrderDecision, utc_now
 from .foundry_supervisor import ChatAnswer, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource, RunJournal
 from pydantic import Field, ValidationError, model_validator
+from starlette.responses import StreamingResponse
 from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy, SourceAuthorizationError, SourceTokenVerifier
 from .store import Conflict, Store, StoredRun
 from .workflow import ReviewAdapters, build_workflow, checkpoint_store
@@ -218,6 +220,7 @@ class DelegatedInvocation(DelegatedTokens):
     chat: ChatInput | None = None
     run_id: UUID | None = None
     decision: WorkOrderDecision | None = None
+    stream: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def distinct_operations(self) -> "DelegatedInvocation":
@@ -227,6 +230,8 @@ class DelegatedInvocation(DelegatedTokens):
             raise ValueError("Evidence invocations require only a run identity.")
         if self.operation in ("decide", "reconcile") and (self.run_id is None or self.chat is not None or self.decision is None):
             raise ValueError("Decision invocations require a run identity and an explicit reviewed decision.")
+        if self.operation != "run" and self.stream:
+            raise ValueError("Only run invocations can stream execution events.")
         return self
 
 
@@ -325,7 +330,7 @@ def create_delegated_app(
     app = FastAPI()
 
     @app.post("/invocations")
-    async def invoke(request: Request) -> ChatAnswer | dict[str, object]:
+    async def invoke(request: Request):
         raw = bytearray()
         async for chunk in request.stream():
             if len(raw) + len(chunk) > 100000:
@@ -406,14 +411,82 @@ def create_delegated_app(
             if utc_now() >= deadline:
                 raise TimeoutError("Delegated authorization exceeded the invocation deadline.")
             assert body.chat is not None
+            input_chat = await normalize_chat(body.chat) if normalize_chat else body.chat
+            if input_chat.question != body.chat.question:
+                raise ValueError("Intent normalization changed the operator question.")
+            chat = ChatRequest(run_id=uuid4(), source=source, requested_at=requested_at, deadline=deadline,
+                               historical_context=preceding_context(state, source, input_chat.previous_run_id),
+                               **input_chat.model_dump())
+            if body.stream:
+                assert credential is not None and state is not None
+                stream_credential = credential
+                credential = None
+
+                async def stream_run() -> AsyncIterator[bytes]:
+                    events: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=64)
+
+                    def line(value: dict[str, object]) -> bytes:
+                        return (json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n").encode()
+
+                    async def execute() -> ChatAnswer:
+                        async with capacity:
+                            async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
+                                async with factory(state, stream_credential) as owner:
+                                    if owner.root != state or owner.source != source or owner.credential is not stream_credential:
+                                        raise ValueError("Supervisor factory changed its user, source or delegated credential.")
+                                    owner.set_event_sink(events.put_nowait)
+                                    return await owner.run(chat)
+
+                    task = asyncio.create_task(execute())
+                    try:
+                        yield line({"type": "run", "run_id": str(chat.run_id),
+                                    "source": source.model_dump(mode="json")})
+                        while not task.done():
+                            try:
+                                event = await asyncio.wait_for(events.get(), timeout=.25)
+                            except TimeoutError:
+                                continue
+                            yield line({"type": "event", "event": event})
+                        while not events.empty():
+                            yield line({"type": "event", "event": events.get_nowait()})
+                        answer = await task
+                        if (answer.run_id != chat.run_id or answer.source != source
+                                or answer.requested_at != chat.requested_at):
+                            raise ValueError("Supervisor returned an answer for a different invocation.")
+                        completed = answer.model_copy(update={
+                            "audit_url": "/invocations", "presentation": client_presentation(answer),
+                        })
+                        yield line({"type": "answer", "answer": completed.model_dump(mode="json")})
+                    except asyncio.CancelledError:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                        raise
+                    except SourceAuthorizationError:
+                        error = failed(401, "authorization", "Renew source access through the existing sign-in session.")
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    except httpx.HTTPError:
+                        error = failed(502, "source_request",
+                                       "An authorized source request failed; inspect the execution audit.")
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    except TimeoutError:
+                        error = failed(504, "deadline",
+                                       "Orchestration exceeded its deadline; no answer is certified.")
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    except Exception:
+                        error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                        yield line({"type": "error", "status": error.status_code, "detail": error.detail})
+                    finally:
+                        if not task.done():
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
+                        await stream_credential.close()
+
+                return StreamingResponse(
+                    stream_run(), media_type="application/x-ndjson",
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+                )
             async with capacity:
                 async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
-                    input_chat = await normalize_chat(body.chat) if normalize_chat else body.chat
-                    if input_chat.question != body.chat.question:
-                        raise ValueError("Intent normalization changed the operator question.")
-                    chat = ChatRequest(run_id=uuid4(), source=source, requested_at=requested_at, deadline=deadline,
-                                       historical_context=preceding_context(state, source, input_chat.previous_run_id),
-                                       **input_chat.model_dump())
                     async with factory(state, credential) as owner:
                         if owner.root != state or owner.source != source or owner.credential is not credential:
                             raise ValueError("Supervisor factory changed its user, source or delegated credential.")

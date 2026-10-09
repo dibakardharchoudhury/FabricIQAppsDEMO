@@ -81,7 +81,12 @@ export function CopilotSettingsPanel() {
         <button type="button" className="copilot-settings-inline" disabled={draft.projectEndpoint === defaults.projectEndpoint} onClick={() => setDraft(current => ({ ...current, projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint }))}>Restore deployed project</button>
       </h4>
       <p>Every Foundry request goes through the persistent Hydro Supervisor, which delegates to Q&amp;A, RCA, Work Order, or Fabric IQ specialists. The deployment orchestrator provisions their definitions and model selection; no separate model-inference endpoint is used here.</p>
-      <label>Project endpoint<input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} /></label>
+      <div className="copilot-settings-fields">
+        <label>
+          <span>Project endpoint</span>
+          <input type="url" value={draft.projectEndpoint} placeholder="https://resource.services.ai.azure.com/api/projects/project" onChange={event => setDraft(current => ({ ...current, projectEndpoint: event.target.value }))} />
+        </label>
+      </div>
     </div>
 
     <div className="copilot-settings-group">

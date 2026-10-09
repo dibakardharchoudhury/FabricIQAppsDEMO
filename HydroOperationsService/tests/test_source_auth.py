@@ -225,8 +225,12 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         async def factory(state, credential):
             leases.append(credential)
             namespaces.append(state)
+            event_sink = None
 
             async def execute(request):
+                if event_sink is not None:
+                    event_sink({"id": f"{request.run_id}:chief", "role": "supervisor", "status": "running",
+                                "label": "Chief", "detail": "Coordinating.", "timestamp": 1})
                 if run is not None:
                     return await run(request)
                 answer = ChatAnswer(
@@ -240,10 +244,19 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 journal.save("request", request.model_dump(mode="json"))
                 journal.save("answer", answer.model_dump(mode="json"))
                 journal.save("evidence", {"request": request.model_dump(mode="json")})
+                if event_sink is not None:
+                    event_sink({"id": f"{request.run_id}:chief", "role": "supervisor", "status": "completed",
+                                "label": "Chief", "detail": "Committed.", "timestamp": 2,
+                                "agentName": "hydro-supervisor-agent", "responseId": "resp_test"})
                 return answer
 
+            def set_event_sink(sink):
+                nonlocal event_sink
+                event_sink = sink
+
             try:
-                owner = SimpleNamespace(root=state, source=source, credential=credential, run=execute)
+                owner = SimpleNamespace(root=state, source=source, credential=credential,
+                                        run=execute, set_event_sink=set_event_sink)
                 if alter_owner is not None:
                     alter_owner(owner)
                 yield owner
@@ -434,6 +447,25 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             persisted = "".join(path.read_text() for path in root.rglob("*.json"))
             for raw in first["tokens"].values():
                 self.assertNotIn(raw, persisted)
+
+    async def test_streaming_ingress_emits_backend_events_and_one_certified_answer(self):
+        with TemporaryDirectory() as directory:
+            app, leases, _, contexts = self.ingress(Path(directory))
+            invocation = {**self.invocation(), "stream": True}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                response = await client.post("/invocations", json=invocation)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("application/x-ndjson", response.headers["content-type"])
+            messages = [json.loads(line) for line in response.text.splitlines()]
+            self.assertEqual([message["type"] for message in messages],
+                             ["run", "event", "event", "answer"])
+            self.assertEqual(messages[1]["event"]["status"], "running")
+            self.assertEqual(messages[2]["event"]["status"], "completed")
+            self.assertEqual(messages[-1]["answer"]["presentation"]["schema_version"], 1)
+            self.assertEqual(contexts, ["closed"])
+            with self.assertRaises(SourceAuthorizationError):
+                await leases[0].get_token(self.policy.scopes["fabric"])
 
     async def test_ingress_validation_and_auth_errors_never_echo_token_input(self):
         with TemporaryDirectory() as directory:
