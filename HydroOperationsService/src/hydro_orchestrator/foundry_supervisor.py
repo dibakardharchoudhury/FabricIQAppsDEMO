@@ -334,6 +334,42 @@ def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -
     return tuple(examples[:limit])
 
 
+RCA_GAP_LABELS = {
+    "fresh_measurements": "fresh, timestamped measurements and ingestion-health evidence",
+    "independent_measurement": "an independently obtained measurement",
+    "matched_baseline": "a baseline matched for load and operating regime",
+    "approved_limits": "versioned, engineering-approved diagnostic limits",
+    "operating_context": "dispatch, control-state and operating-condition records",
+    "inspection_evidence": "qualified inspection evidence relevant to the signal and time window",
+    "maintenance_scope": "verified scope and closure evidence for existing maintenance work",
+    "parts_compatibility": "authoritative BOM, compatibility, reservation and lead-time evidence",
+}
+
+
+def rca_answer_limitations(specialists: list[SpecialistResult]) -> tuple[str, ...]:
+    missing: set[str] = set()
+    has_rca = False
+    for specialist in specialists:
+        if specialist.role != "rca":
+            continue
+        has_rca = True
+        report = specialist.report
+        hypotheses = report.get("hypotheses") if isinstance(report, dict) else None
+        if not isinstance(hypotheses, list):
+            raise SourceFailure("Validated RCA specialist output has no hypothesis collection.")
+        for hypothesis in hypotheses:
+            gaps = hypothesis.get("missing") if isinstance(hypothesis, dict) else None
+            if not isinstance(gaps, list) or any(gap not in RCA_GAP_LABELS for gap in gaps):
+                raise SourceFailure("Validated RCA specialist output contains unsupported evidence gaps.")
+            missing.update(gaps)
+    if not has_rca:
+        return ()
+    result = ["No physical fault is established by the returned evidence; cause remains undetermined."]
+    if missing:
+        result.append("RCA evidence gaps: " + "; ".join(RCA_GAP_LABELS[key] for key in sorted(missing)) + ".")
+    return tuple(result)
+
+
 class RunJournal:
     """Atomic local receipts; the caller must hold the run's process lock."""
 
@@ -1179,6 +1215,7 @@ class FoundrySupervisor:
                 raise SourceFailure("Chart measures require explicit, consistent source units; incompatible units cannot share an axis.")
         limitations = tuple(dict.fromkeys([
             *(gap for item in self.evidence.values() for gap in item.limitations), *chart_limitations,
+            *rca_answer_limitations(self.specialists),
         ]))
         summary = f"Returned {sum(len(table.rows) for table in tables)} source rows in {len(tables)} tables. No production writes executed."
         proposals_by_id: dict[UUID, WorkOrderDraft] = {}

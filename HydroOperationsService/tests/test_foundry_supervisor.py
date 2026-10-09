@@ -19,7 +19,8 @@ from pydantic import ValidationError
 from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
-    ToolEvidence, post_draft_rca_delegation, rca_reference_examples, safe_exception_signature,
+    SpecialistResult, ToolEvidence, post_draft_rca_delegation, rca_answer_limitations, rca_reference_examples,
+    safe_exception_signature,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -92,6 +93,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ("reading-1:/rows/0", "reading-1:/row_count"),
         )
         self.assertNotIn("limitations", " ".join(rca_reference_examples({"reading-1": receipt})))
+
+    def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
+        specialist = SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="12", response_id="response-1",
+            duration_ms=10, model_round_count=1, input_digest="0" * 64, text="", report={
+                "observations": [{"evidence_id": "reading-1", "path": "/rows/0"}],
+                "hypotheses": [
+                    {"category": "sensor_or_ingestion", "supporting": [], "contradicting": [],
+                     "missing": ["independent_measurement"]},
+                    {"category": "equipment_condition", "supporting": [], "contradicting": [],
+                     "missing": ["inspection_evidence", "independent_measurement"]},
+                ],
+            },
+        )
+        limitations = rca_answer_limitations([specialist])
+        self.assertIn("No physical fault is established", limitations[0])
+        self.assertIn("an independently obtained measurement", limitations[1])
+        self.assertIn("qualified inspection evidence", limitations[1])
 
     def test_post_draft_fault_review_has_a_bounded_rca_only_route(self):
         previous = HistoricalContext(
