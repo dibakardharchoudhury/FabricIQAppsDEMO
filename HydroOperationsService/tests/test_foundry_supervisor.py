@@ -185,6 +185,40 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private", signature)
 
+    def test_fixer_model_context_projects_referenced_equipment_without_mutating_audit_evidence(self):
+        rows = [
+            {"equipment_id": "TEST_T005", "quality": "BAD", "payload": "x" * 1000},
+            {"equipment_id": "TEST_T999", "quality": "GOOD", "payload": "y" * 1000},
+        ]
+        receipt = ToolEvidence(
+            id="fleet-1", source=SOURCE, tool="query_signal_quality_snapshot", arguments={},
+            completed_at=utc_now(), result={"rows": rows, "row_count": 2},
+            row_identities={
+                "/rows/0": {"equipment_id": "TEST_T005"},
+                "/rows/1": {"equipment_id": "TEST_T999"},
+            },
+            resolved_equipment_ids=("TEST_T005", "TEST_T999"),
+            work_coverage_equipment_ids=("TEST_T005", "TEST_T999"),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        self.owner.specialists.append(SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="12", response_id="response-1",
+            duration_ms=10, model_round_count=1, input_digest="0" * 64, text="large narrative " * 1000,
+            report={
+                "observations": [{"evidence_id": "fleet-1", "path": "/rows/0"}],
+                "hypotheses": [],
+            },
+        ))
+
+        projected = self.owner.model_evidence("work-order")
+        specialists = self.owner.model_specialists("work-order")
+
+        self.assertEqual(projected[0]["result"]["rows"], [rows[0]])
+        self.assertEqual(projected[0]["result"]["projected_row_count"], 1)
+        self.assertEqual(self.owner.evidence["fleet-1"].result["rows"], rows)
+        self.assertNotIn("text", specialists[0])
+        self.assertEqual(specialists[0]["report"]["observations"][0]["path"], "/rows/0")
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

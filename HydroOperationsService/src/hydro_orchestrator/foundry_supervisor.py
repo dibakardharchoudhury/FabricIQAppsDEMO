@@ -443,6 +443,96 @@ class FoundrySupervisor:
         if request.deadline <= utc_now():
             raise SourceFailure("The persisted run deadline has elapsed; start a new source-grounded run.")
 
+    def model_evidence(self, role: Role) -> list[dict[str, object]]:
+        if role != "work-order":
+            return [item.receipt() for item in self.evidence.values()]
+
+        referenced_rows: dict[str, set[str]] = {}
+        for specialist in self.specialists:
+            if specialist.role != "rca" or not isinstance(specialist.report, dict):
+                continue
+
+            def collect(value: object) -> None:
+                if isinstance(value, dict):
+                    evidence_id, path = value.get("evidence_id"), value.get("path")
+                    if isinstance(evidence_id, str) and isinstance(path, str):
+                        segments = path.split("/")
+                        if len(segments) >= 3 and segments[1] == "rows" and segments[2].isascii() and segments[2].isdecimal():
+                            referenced_rows.setdefault(evidence_id, set()).add(f"/rows/{segments[2]}")
+                    for child in value.values():
+                        collect(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect(child)
+
+            collect(specialist.report)
+
+        target_equipment_ids: set[str] = set()
+        for evidence_id, paths in referenced_rows.items():
+            receipt = self.evidence.get(evidence_id)
+            if receipt is None:
+                continue
+            for path in paths:
+                identity = receipt.row_identities.get(path, {})
+                for key in ("equipment_id", "equipmentId"):
+                    value = identity.get(key)
+                    if value:
+                        target_equipment_ids.add(value)
+
+        projected: list[dict[str, object]] = []
+        for receipt in self.evidence.values():
+            relevant_paths = set(referenced_rows.get(receipt.id, ()))
+            for path, identity in receipt.row_identities.items():
+                if any(identity.get(key) in target_equipment_ids for key in ("equipment_id", "equipmentId")):
+                    relevant_paths.add(path)
+            metadata_match = bool(
+                target_equipment_ids.intersection(receipt.resolved_equipment_ids)
+                or target_equipment_ids.intersection(receipt.work_coverage_equipment_ids)
+            )
+            result: dict[str, object] = {
+                key: value for key, value in receipt.result.items()
+                if type(value) in (str, int, float, bool) or value is None
+            }
+            rows = receipt.result.get("rows")
+            if isinstance(rows, list):
+                selected_rows = [
+                    row for index, row in enumerate(rows) if f"/rows/{index}" in relevant_paths
+                ]
+                if selected_rows:
+                    result["rows"] = selected_rows
+                    result["projected_row_count"] = len(selected_rows)
+            elif metadata_match or receipt.id in referenced_rows:
+                result = dict(receipt.result)
+            if not relevant_paths and not metadata_match and receipt.id not in referenced_rows:
+                continue
+            projected.append({
+                "id": receipt.id,
+                "tool": receipt.tool,
+                "completedAt": receipt.completed_at.isoformat(),
+                "result": result,
+                "limitations": receipt.limitations,
+                "resolved_equipment_ids": tuple(
+                    value for value in receipt.resolved_equipment_ids if value in target_equipment_ids
+                ),
+                "work_coverage_equipment_ids": tuple(
+                    value for value in receipt.work_coverage_equipment_ids if value in target_equipment_ids
+                ),
+                "model_context_scope": "Role-relevant projection; the complete immutable receipt remains in the audit.",
+            })
+        return projected
+
+    def model_specialists(self, role: Role) -> list[dict[str, object]]:
+        if role != "work-order":
+            return [item.model_dump(mode="json") for item in self.specialists]
+        return [{
+            "role": item.role,
+            "agent_name": item.agent_name,
+            "version": item.version,
+            "response_id": item.response_id,
+            "duration_ms": item.duration_ms,
+            "report": item.report,
+        } for item in self.specialists]
+
     async def versions(self, journal: RunJournal) -> dict[Role, AgentVersion]:
         contracts = await self.bridge.call({"action": "agent_contracts"})
         names, expected = contracts.get("names"), contracts.get("tools")
@@ -788,10 +878,10 @@ class FoundrySupervisor:
                                          "Execute fresh reads for all current facts and work proposals. "
                                          "Never reuse a prior approval or infer human consent from conversation.",
             "source": request.source.model_dump(mode="json"),
-            "evidence": [item.receipt() for item in self.evidence.values()],
+            "evidence": self.model_evidence(role),
             "allowed_evidence_ids": list(self.evidence),
             "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
-            "completed_specialists": [item.model_dump(mode="json") for item in self.specialists],
+            "completed_specialists": self.model_specialists(role),
             "output_policy": "Tables by default. Values must be source references, never authored cells. "
                              "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
                              "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
