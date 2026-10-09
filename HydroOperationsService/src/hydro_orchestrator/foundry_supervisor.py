@@ -278,32 +278,8 @@ class Delegation(Contract):
     native_source: NativeSource | None = Field(default=None, alias="nativeSource")
 
 
-def post_draft_rca_delegation(request: ChatRequest) -> Delegation | None:
-    if request.historical_context is None:
-        return None
-    question = request.question.casefold()
-    previous = request.historical_context.rendered_answer.casefold()
-    asks_for_fault_review = (
-        "physical fault" in question
-        or "fault was established" in question
-        or "evidence gap" in question
-    )
-    asks_for_draft_change = any(
-        phrase in question
-        for phrase in (
-            "new draft", "another draft", "revised draft", "revise the draft", "update the draft",
-            "create work order", "create a work order", "prepare work order", "prepare a work order",
-            "submit work order", "submit the work order", "save work order", "save the work order",
-        )
-    )
-    had_draft = bool(request.historical_context.proposal_ids)
-    if not had_draft or not asks_for_fault_review or asks_for_draft_change:
-        return None
-    return Delegation(
-        specialist="rca",
-        question=request.question,
-        reason="A post-draft physical-fault or evidence-gap review requires RCA only; no new draft was requested.",
-    )
+class OrchestrationPlan(Contract):
+    steps: tuple[Delegation, ...] = Field(min_length=1, max_length=8)
 
 
 class CachedHandoff(Contract):
@@ -761,20 +737,30 @@ class FoundrySupervisor:
                 raise SourceFailure("Fixer cannot both stage a proposal and complete a no-draft review.")
             return completed_report
 
-        async def delegate(specialist: str, question: str, reason: str, native_source: str | None) -> dict[str, object]:
-            parsed = await self.bridge.call({"action": "validate_delegation", "report": json.dumps({
-                "specialist": specialist, "question": question, "reason": reason, "native_source": native_source,
-            })})
-            delegation = Delegation.model_validate(parsed)
-            return await self.handoff(delegation, request, journal, versions)
-
-        async def complete() -> dict[str, object]:
-            if not self.specialists:
-                raise SourceFailure("Orchestration cannot complete before a specialist returns.")
+        async def plan_orchestration(steps: list[dict[str, object]]) -> dict[str, object]:
+            normalized = []
+            for step in steps:
+                value = dict(step)
+                value["nativeSource"] = value.pop("native_source", None)
+                normalized.append(value)
+            plan = OrchestrationPlan.model_validate({"steps": normalized})
+            delegations = []
+            for step in plan.steps:
+                parsed = await self.bridge.call({
+                    "action": "validate_delegation",
+                    "report": json.dumps({
+                        "specialist": step.specialist,
+                        "question": step.question,
+                        "reason": step.reason,
+                        "native_source": step.native_source,
+                    }),
+                })
+                delegations.append(Delegation.model_validate(parsed))
+            for delegation in delegations:
+                await self.handoff(delegation, request, journal, versions)
             return {"status": "handoffs_complete", "completed_specialist_count": len(self.specialists)}
 
-        callbacks = {"hydro_query": query, "delegate_to_agent": delegate,
-                     "complete_orchestration": complete,
+        callbacks = {"hydro_query": query, "plan_orchestration": plan_orchestration,
                      "complete_rca_assessment": report, "complete_work_order_review": report}
         functions = []
         for definition in version.tools:
@@ -825,22 +811,11 @@ class FoundrySupervisor:
         }
         if role == "supervisor":
             context["handoff_execution"] = (
-                "The backend serializes delegate_to_agent calls in the order supplied and injects all completed "
-                "specialist reports and immutable source receipts into each subsequent assignment. When the "
-                "operator already specifies the full sequence, issue that ordered sequence followed by "
-                "complete_orchestration as the last call in one tool-call batch. The backend creates the final "
-                "typed presentation after that call; do not generate a separate answer. Assign each "
-                "specialist its own capability and evidence criteria; do not guess source values or downstream "
-                "findings. Branch-dependent follow-ups still require inspecting the returned results."
+                "Call plan_orchestration exactly once with the complete minimal ordered specialist plan. The backend "
+                "executes steps serially and injects completed specialist reports and immutable source receipts into "
+                "each subsequent assignment. Do not emit prose, call another tool, guess source values or predict "
+                "downstream findings. Assign each specialist only its own capability and evidence criteria."
             )
-            context["required_final_answer"] = {
-                "format": "Return exactly one JSON object, without Markdown fences or surrounding prose.",
-                "schema": AnswerPlan.model_json_schema(),
-                "cell_rule": "Each cell contains only a source evidence_id and JSON pointer. "
-                             "Column keys must equal the literal referenced source field. Never author cell values. "
-                             "Display only requested columns when specified; source references belong in cell.source, "
-                             "not additional technical display columns.",
-            }
         if len(_encoded(context)) > 524288:
             raise SourceFailure("Combined evidence exceeds the bounded model-context size.")
 
@@ -852,7 +827,7 @@ class FoundrySupervisor:
             self.healthy(request)
             if ((completed_report is not None and invocation.function.name in (
                     "complete_rca_assessment", "complete_work_order_review"))
-                    or invocation.function.name == "complete_orchestration"):
+                    or invocation.function.name == "plan_orchestration"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
         agent = FoundryAgent(
@@ -860,7 +835,9 @@ class FoundrySupervisor:
             credential=self.credential, tools=functions, timeout=45,
             middleware=[finish_assessment],
             function_invocation_configuration={
-                "max_iterations": 12, "max_function_calls": 40, "max_consecutive_errors_per_request": 2,
+                "max_iterations": 2 if role == "supervisor" else 12,
+                "max_function_calls": 1 if role == "supervisor" else 40,
+                "max_consecutive_errors_per_request": 1 if role == "supervisor" else 2,
                 "terminate_on_unknown_calls": True, "include_detailed_errors": False,
                 "allow_concurrent_invocation": role != "supervisor",
             },
@@ -1025,7 +1002,12 @@ class FoundrySupervisor:
             if len(tables) == 12:
                 break
         if not tables:
-            return None
+            return AnswerPlan(
+                summary="Verified source receipts returned no tabular rows.",
+                tables=(),
+                charts=(),
+                limitations=(),
+            )
         return AnswerPlan(
             summary="Verified source rows.",
             tables=tuple(tables),
@@ -1330,25 +1312,13 @@ class FoundrySupervisor:
                         await ctx.send_message(restore_turn(SupervisorTurn.model_validate(recovered).model_dump_json())
                                                .model_dump_json())
                         return
-                    policy_delegation = post_draft_rca_delegation(request)
-                    if policy_delegation is not None:
-                        started = perf_counter()
-                        await owner.handoff(policy_delegation, request, journal, versions)
-                        response_id = f"policy-{request.run_id}"
-                        response_text = ""
-                        model_round_count = None
-                        elapsed = (perf_counter() - started) * 1000
-                        journal.save(f"supervisor_output:{response_id}", {
-                            "text": response_text, "policy": "post_draft_rca",
-                        })
-                    else:
-                        response, _report, elapsed = await owner.invoke(
-                            "supervisor", question, request, journal, versions,
-                        )
-                        response_id = response.response_id
-                        response_text = response.text
-                        model_round_count = sum(message.role == "assistant" for message in response.messages)
-                        journal.save(f"supervisor_output:{response_id}", {"text": response_text})
+                    response, _report, elapsed = await owner.invoke(
+                        "supervisor", question, request, journal, versions,
+                    )
+                    response_id = response.response_id
+                    response_text = response.text
+                    model_round_count = sum(message.role == "assistant" for message in response.messages)
+                    journal.save(f"supervisor_output:{response_id}", {"text": response_text})
                     if not owner.specialists:
                         raise SourceFailure("Supervisor did not execute any existing specialist.")
                     if not response_id:
@@ -1408,11 +1378,7 @@ class FoundrySupervisor:
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     projection: ProjectionReceipt | None = None
-                    source_plan = (
-                        owner.source_answer_plan()
-                        if not turn.text.strip() and not request.charts_requested
-                        else None
-                    )
+                    source_plan = owner.source_answer_plan() if not request.charts_requested else None
                     try:
                         plan = source_plan or AnswerPlan.model_validate_json(turn.text)
                         result = owner.answer(request, plan)

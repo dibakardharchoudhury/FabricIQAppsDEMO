@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
-    SpecialistResult, ToolEvidence, post_draft_rca_delegation, rca_answer_limitations, rca_reference_examples,
+    SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -36,12 +36,22 @@ class SourceTools:
         self.changed_source = False
         self.extra_row = False
         self.stage = False
+        self.quality_snapshot = False
+        self.empty_quality_snapshot = False
 
     async def catalog(self, request):
         tools = [{"name": "query_telemetry", "parameters": {
             "type": "object", "properties": {"equipment_id": {"type": "string"}},
             "required": ["equipment_id"], "additionalProperties": False,
         }}]
+        if self.quality_snapshot:
+            tools.append({"name": "query_signal_quality_snapshot", "parameters": {
+                "type": "object", "properties": {
+                    "quality": {"type": "string", "enum": ["GOOD", "UNCERTAIN", "BAD"]},
+                    "lookback": {"type": "string"},
+                    "equipment_type": {"type": "string"},
+                }, "required": ["quality", "lookback", "equipment_type"], "additionalProperties": False,
+            }})
         if self.stage:
             tools.append({"name": "propose_work_order", "parameters": {
                 "type": "object", "properties": {
@@ -54,6 +64,38 @@ class SourceTools:
         self.calls += 1
         if self.failure:
             raise SourceFailure("Injected source outage")
+        if name == "query_signal_quality_snapshot":
+            quality = arguments["quality"]
+            rows = [] if self.empty_quality_snapshot else [{
+                "equipment_id": f"TEST_{quality}",
+                "instrument_id": f"INST_{quality}",
+                "opcua_node_id": f"ns=2;s={quality}.quality",
+                "event_time": "2026-10-09T21:00:00Z",
+                "value": 1.0,
+                "unit": "state",
+                "quality": quality,
+                "open_work_order_count": 0,
+            }]
+            return ToolEvidence(
+                id=f"quality-{quality.lower()}", source=request.source, tool=name, arguments=arguments,
+                completed_at=utc_now(), result={
+                    "rows": rows, "row_count": len(rows),
+                    "population": {
+                        "inventory_complete": True,
+                        "work_inventory_complete": True,
+                        "work_coverage_equipment_ids": [row["equipment_id"] for row in rows],
+                    },
+                    "unresolved_nodes": [], "truncated": False,
+                },
+                row_identities={
+                    f"/rows/{index}": {
+                        "equipment_id": row["equipment_id"],
+                        "opcua_node_id": row["opcua_node_id"],
+                    } for index, row in enumerate(rows)
+                },
+                resolved_equipment_ids=tuple(row["equipment_id"] for row in rows),
+                work_coverage_equipment_ids=tuple(row["equipment_id"] for row in rows),
+            )
         if name == "propose_work_order":
             clock = utc_now()
             draft = WorkOrderDraft(
@@ -80,6 +122,20 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_all_roles_receive_nonempty_bounded_operation_skills(self):
+        expected = {
+            "supervisor": {"source-reconciliation", "grounded-presentation"},
+            "qa": {"condition-triage", "source-reconciliation", "maintenance-planning"},
+            "rca": {"root-cause-evidence", "maintenance-planning"},
+            "work-order": {"maintenance-planning", "work-order-review"},
+            "fabric-iq": {"source-reconciliation"},
+        }
+        for role, names in expected.items():
+            guidance = operation_skill_guidance(role)
+            self.assertEqual({item["name"] for item in guidance}, names)
+            self.assertTrue(all(item["instructions"].startswith("---\nname:") for item in guidance))
+            self.assertTrue(all("# " in item["instructions"] for item in guidance))
+
     def test_rca_reference_examples_expose_only_result_relative_paths(self):
         receipt = ToolEvidence(
             id="reading-1", source=SOURCE, tool="query_telemetry", arguments={},
@@ -111,29 +167,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No physical fault is established", limitations[0])
         self.assertIn("an independently obtained measurement", limitations[1])
         self.assertIn("qualified inspection evidence", limitations[1])
-
-    def test_post_draft_fault_review_has_a_bounded_rca_only_route(self):
-        previous = HistoricalContext(
-            run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
-            rendered_answer="Review work-order draft\nBackend-grounded human approval",
-            requested_at=utc_now() - timedelta(minutes=1),
-            proposal_ids=(uuid4(),),
-        )
-        request = ChatRequest(
-            run_id=uuid4(), source=SOURCE,
-            question="Investigate whether any physical fault was established. Show the evidence gaps.",
-            requested_at=utc_now(), deadline=utc_now() + timedelta(minutes=3),
-            previous_run_id=previous.run_id, historical_context=previous,
-        )
-        delegation = post_draft_rca_delegation(request)
-        self.assertIsNotNone(delegation)
-        self.assertEqual(delegation.specialist, "rca")
-        self.assertIsNone(post_draft_rca_delegation(request.model_copy(update={
-            "question": "Revise the draft after investigating the physical fault.",
-        })))
-        self.assertIsNone(post_draft_rca_delegation(request.model_copy(update={
-            "historical_context": None, "previous_run_id": None,
-        })))
 
     def test_exception_signature_exposes_only_bounded_diagnostic_fields(self):
         class ProviderError(Exception):
@@ -265,40 +298,45 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if name == "hydro-supervisor-agent":
-            if self.mode == "batch_handoffs" and round_number == 0:
-                output = [self.function("delegate_to_agent", {
-                    "specialist": role, "question": question, "reason": "Execute the requested sequence.",
-                    "native_source": None,
-                }) for role, question in [
-                    ("qa", "Read and verify quality."), ("rca", "Investigate quality."),
-                    ("work-order", "Review existing work."), ("qa", "Read and verify quality."),
-                ]]
-                output.append(self.function("complete_orchestration", {}))
-            elif self.mode == "batch_handoffs":
-                output = [self.message(json.dumps(self.plan()))]
-            elif self.mode.startswith("native") and round_number == 0:
-                output = [self.function("delegate_to_agent", {
+            if self.mode.startswith("native"):
+                steps = [{
                     "specialist": "fabric-iq", "question": "Use the Data Agent to return the requested rows as JSON.",
                     "reason": "Use the explicitly selected native source.", "native_source": "data-agent",
-                })]
-            elif self.mode.startswith("native"):
-                output = [self.message(json.dumps(self.plan()))]
-            elif self.mode == "skip_verify" and round_number >= 3:
-                output = [self.message(json.dumps(self.plan()))]
-            elif round_number < 4:
-                roles = ["qa", "rca", "work-order", "qa"]
+                }]
+            elif self.mode == "direct_rca":
+                steps = [{
+                    "specialist": "rca", "question": self.request.question,
+                    "reason": "Investigate the requested equipment.", "native_source": None,
+                }]
+            elif self.mode in ("quality_snapshot", "empty_quality_snapshot"):
+                steps = [{
+                    "specialist": "qa",
+                    "question": "Read BAD and UNCERTAIN turbine quality snapshots for the requested six-hour window.",
+                    "reason": "Retrieve the requested factual fleet state.", "native_source": None,
+                }]
+            else:
+                roles = ["qa", "rca", "work-order"] if self.mode == "skip_verify" else [
+                    "qa", "rca", "work-order", "qa",
+                ]
                 questions = ["Read and verify quality.", "Investigate quality.", "Review existing work.",
                              "Read and verify quality."]
-                output = [self.function("delegate_to_agent", {
-                    "specialist": roles[round_number], "question": questions[round_number],
+                steps = [{
+                    "specialist": role, "question": questions[index],
                     "reason": "Execute the assigned capability.", "native_source": None,
-                })]
-            else:
-                output = [self.message(json.dumps(self.plan()))]
+                } for index, role in enumerate(roles)]
+            output = [self.function("plan_orchestration", {"steps": steps})]
         elif name == "hydro-qa-agent":
-            output = [self.function("hydro_query", {"tool_name": "query_telemetry",
-                                                  "arguments": {"equipment_id": "TEST_T005"}})] if round_number % 2 == 0 else [
-                self.message("Actual BAD quality sample; no physical fault is established.")]
+            if self.mode in ("quality_snapshot", "empty_quality_snapshot"):
+                output = [
+                    self.function("hydro_query", {
+                        "tool_name": "query_signal_quality_snapshot",
+                        "arguments": {"quality": quality, "lookback": "6h", "equipment_type": "turbine"},
+                    }) for quality in ("BAD", "UNCERTAIN")
+                ] if round_number == 0 else [self.message("The requested quality snapshots are complete.")]
+            else:
+                output = [self.function("hydro_query", {"tool_name": "query_telemetry",
+                                                      "arguments": {"equipment_id": "TEST_T005"}})] if round_number % 2 == 0 else [
+                    self.message("Actual BAD quality sample; no physical fault is established.")]
             if self.mode == "batch" and round_number % 2 == 0:
                 output.append(self.function("hydro_query", {"tool_name": "query_telemetry",
                                                          "arguments": {"equipment_id": "TEST_T005"}}))
@@ -378,7 +416,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual(self.calls["hydro-rca-agent"], 1)
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
-        self.assertEqual(result.tables[0].rows[0].values, {"value": 75.0, "unit": "C"})
+        self.assertEqual(result.tables[0].rows[0].values, {
+            "equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD",
+        })
         self.assertNotIn("diagnosis", result.summary)
         self.assertIn("No approved diagnostic", result.limitations[0])
         self.assertFalse(result.production_write_executed)
@@ -427,7 +467,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft.source, self.request.source)
         self.assertEqual(result.proposal_digests, {str(draft.id): draft.digest()})
         self.assertFalse(result.production_write_executed)
-        self.assertEqual(result.tables[0].rows[0].values, {"value": 75.0, "unit": "C"})
+        self.assertEqual(result.tables[0].rows[0].values, {
+            "equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD",
+        })
         evidence = self.owner.evidence["proposal-1"]
         self.owner.evidence["proposal-copy"] = evidence.model_copy(update={"id": "proposal-copy"})
         self.assertEqual(len(self.owner.answer(self.request, AnswerPlan.model_validate(self.plan())).proposals), 1)
@@ -458,14 +500,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(chief_events[-1]["trace"][-1]["failed"])
 
     async def test_unrequested_charts_wrong_cells_and_invented_sources_fail_closed(self):
+        receipt = await self.tools.execute("query_telemetry", {"equipment_id": "TEST_T005"}, self.request)
+        self.owner.evidence[receipt.id] = receipt
         for mode in ("chart", "invented", "transposed", "extra_column"):
             with self.subTest(mode=mode):
                 self.mode = mode
-                self.calls.clear()
-                request = self.request.model_copy(update={"run_id": uuid4()})
-                self.seed(request)
                 with self.assertRaises((SourceFailure, ValidationError)):
-                    await self.make_owner().run(request)
+                    self.owner.answer(self.request, AnswerPlan.model_validate(self.plan()))
 
     async def test_explicit_chart_is_typed_and_unrelated_chart_is_not_added(self):
         self.mode = "chart"
@@ -646,7 +687,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual(result.specialists[0].role, "fabric-iq")
-        self.assertEqual(result.tables[0].rows[0].values, {"value": 75.0, "unit": "C"})
+        self.assertEqual(result.tables[0].rows[0].values, {
+            "equipment_id": "TEST_T005", "value": 75.0, "unit": "C",
+        })
         self.assertEqual(self.tools.calls, 0)
         self.assertIn("does not attest", result.limitations[0])
 
@@ -715,11 +758,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse((self.root / "chat" / str(missing_id)).exists())
         self.assertEqual(self.tools.calls, 1)
 
-    async def test_numeric_value_and_unit_cannot_come_from_different_signal_rows(self):
+    async def test_generic_source_projection_keeps_different_signal_rows_separate(self):
         self.mode = "mixed_rows"
         self.tools.extra_row = True
-        with self.assertRaisesRegex(SourceFailure, "different source rows"):
-            await self.owner.run(self.request)
+        result = await self.owner.run(self.request)
+        self.assertEqual(len(result.tables[0].rows), 2)
+        self.assertEqual(result.tables[0].rows[0].values["unit"], "C")
+        self.assertEqual(result.tables[0].rows[1].values["unit"], "MW")
 
     async def test_failure_after_final_agent_response_recovers_without_repeating_agents_or_sources(self):
         save = FileCheckpointStorage.save
@@ -737,7 +782,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(journal.read("prepared_answer"))
         before = dict(self.calls)
         result = await self.make_owner().run(self.request)
-        self.assertEqual(result.tables[0].rows[0].values, {"value": 75.0, "unit": "C"})
+        self.assertEqual(result.tables[0].rows[0].values, {
+            "equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD",
+        })
         self.assertEqual(self.calls, before)
         self.assertEqual(self.tools.calls, 1)
 
@@ -771,7 +818,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(self.request)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
         self.assertEqual(self.tools.calls, 1)
-        self.assertEqual(self.calls["hydro-supervisor-agent"], 4)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertIn("Independently verify", json.dumps(self.payloads[-1]))
 
     async def test_projection_schema_allows_only_actual_source_field_pointer_pairs(self):
@@ -830,7 +877,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("without a /result prefix",
                       rca_context["completion_constraints"]["complete_rca_assessment"]["references"])
 
-    async def test_post_draft_fault_review_bypasses_slow_model_routing_and_runs_rca(self):
+    async def test_post_draft_fault_review_uses_one_generic_chief_plan_and_runs_rca(self):
         self.mode = "direct_rca"
         previous = HistoricalContext(
             run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
@@ -846,27 +893,77 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         self.seed(request)
         result = await self.owner.run(request)
-        self.assertNotIn("hydro-supervisor-agent", self.calls)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
         self.assertFalse(result.proposals)
         audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
-        self.assertIsNone(audit["supervisor"]["model_round_count"])
-        self.assertTrue(audit["supervisor"]["response_id"].startswith("policy-"))
+        self.assertEqual(audit["supervisor"]["model_round_count"], 1)
+        self.assertEqual(audit["supervisor"]["response_id"], "resp_hydro-supervisor-agent_0")
+
+    async def test_terse_equipment_rca_uses_one_generic_chief_plan(self):
+        self.mode = "direct_rca"
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "RCA for T010",
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
+        self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
+
+    async def test_multi_quality_snapshot_uses_one_generic_chief_plan_and_verified_rows(self):
+        self.mode = "quality_snapshot"
+        self.tools.quality_snapshot = True
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?",
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
+        self.assertEqual(self.calls["hydro-qa-agent"], 2)
+        self.assertEqual(self.tools.calls, 2)
+        self.assertEqual([item.role for item in result.specialists], ["qa"])
+        self.assertEqual(len(result.tables), 2)
+        self.assertEqual(
+            {row.values["quality"] for table in result.tables for row in table.rows},
+            {"BAD", "UNCERTAIN"},
+        )
+        self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
+
+    async def test_empty_multi_quality_snapshot_returns_certified_zero_rows(self):
+        self.mode = "empty_quality_snapshot"
+        self.tools.quality_snapshot = True
+        self.tools.empty_quality_snapshot = True
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?",
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
+        self.assertEqual(self.tools.calls, 2)
+        self.assertEqual(result.tables, ())
+        self.assertEqual(result.summary, "Returned 0 source rows in 0 tables. No production writes executed.")
+        self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"
+        self.request = self.request.model_copy(update={"charts_requested": True})
         with self.assertRaisesRegex(SourceFailure, "unverified execution"):
             await self.owner.run(self.request)
         self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
 
-    async def test_completion_only_correction_preserves_sources_and_does_not_repeat_specialists(self):
-        self.mode = "alias_once"
+    async def test_chart_projection_preserves_sources_and_does_not_repeat_specialists(self):
+        self.mode = "chart"
+        self.request = self.request.model_copy(update={"charts_requested": True})
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
             result = await self.owner.run(self.request)
         self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(len(result.charts), 1)
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
-        self.assertEqual(self.calls["hydro-supervisor-agent"], 5)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertNotIn("agent_reference", self.payloads[-1])
         self.assertIn("source_receipts", json.dumps(self.payloads[-1]))
         audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")

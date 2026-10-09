@@ -13,6 +13,24 @@ test('Chief routes post-draft physical-fault follow-ups only to RCA', () => {
   assert.match(instructions, /Never repeat the Work Order delegation or stage another draft/is)
 })
 
+test('agent definitions use role-specific reasoning and least-privilege tools', () => {
+  const chief = agentDefinition('supervisor', 'test-model')
+  const gauge = agentDefinition('qa', 'test-model')
+  const sleuth = agentDefinition('rca', 'test-model')
+  const fixer = agentDefinition('work-order', 'test-model')
+  const sparky = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq', 'ontology-iq')
+  assert.equal(chief.reasoning.effort, 'medium')
+  assert.equal(gauge.reasoning.effort, 'low')
+  assert.equal(sleuth.reasoning.effort, 'medium')
+  assert.equal(fixer.reasoning.effort, 'medium')
+  assert.equal(sparky.reasoning.effort, 'low')
+  assert.deepEqual(chief.tools.map(tool => tool.name), ['plan_orchestration'])
+  assert.deepEqual(gauge.tools.map(tool => tool.name), ['hydro_query'])
+  assert.deepEqual(sleuth.tools.map(tool => tool.name), ['hydro_query', 'complete_rca_assessment'])
+  assert.deepEqual(fixer.tools.map(tool => tool.name), ['hydro_query', 'complete_work_order_review'])
+  assert.deepEqual(sparky.tools.map(tool => tool.server_label), ['fabriciq-data-agent', 'fabriciq-ontology'])
+})
+
 test('operator narrative excludes technical inventories and pointer ledgers but keeps limitations', () => {
   const text = '### Investigation\nCause undetermined.\n### Source observations\n52 fields from call_123/rows/0.\n### Sources\ncall_123\n### Returned source inventory: instruments\nRaw IDs.\n### Limitations\nMeasurements are stale.'
   const result = operatorNarrative(text)

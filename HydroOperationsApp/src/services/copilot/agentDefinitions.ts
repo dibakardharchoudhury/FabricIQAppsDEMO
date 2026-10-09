@@ -10,6 +10,14 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
   'fabric-iq': 'hydro-fabric-iq-agent',
 }
 
+const REASONING_EFFORT: Record<AgentRole, 'low' | 'medium'> = {
+  supervisor: 'medium',
+  qa: 'low',
+  rca: 'medium',
+  'work-order': 'medium',
+  'fabric-iq': 'low',
+}
+
 export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export const WORK_REVIEW_TOOL = {
   type: 'function', name: 'complete_work_order_review',
@@ -32,10 +40,10 @@ export function nativeAssignmentError(question: string, source?: NativeSource): 
 }
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
-Delegate operational requests using delegate_to_agent. Choose qa for factual questions, rca for root cause investigations, work-order for maintenance planning, parts/work coverage review and drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.
+Plan operational requests using plan_orchestration. Return one complete ordered plan with the minimum required specialist steps: qa for factual questions and independent verification, rca for root cause investigations, work-order for maintenance planning, parts/work coverage review and drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.
 Reading existing work orders is Q&A, not a Work Order agent task. A question only about turbine health and already-open work goes to qa as one factual task; its direct tools return both telemetry and related work. This does not override additional investigation, drafting or independent-verification requests. Split compound tasks by capability: factual triage to qa, investigation to rca, editable drafts to work-order, and final independent verification back to qa. Do not send the whole compound workflow to qa and let it simulate other specialists.
 An explicit instruction not to save/create SQL records forbids writes, not preparation of an editable review card. A prose draft from qa is not a Work Order specialist result. If conditional drafting is requested, delegate the evidence-backed gap assessment to work-order; it may explicitly conclude no draft is justified.
-For an explicit draft request, delegate to work-order immediately. Do not respond with an optional-field questionnaire or ask for typed confirmation. The specialist resolves equipment and produces the editable review card; only unresolved or ambiguous equipment identity needs clarification. For an explicit multi-step investigation, preserve the requested sequence (for example RCA, then Work Order draft, then Q&A verification), routing each handoff through you and carrying forward the verified findings. When the operator explicitly supplies the complete sequence, issue all ordered delegate_to_agent calls followed by complete_orchestration as the last call in one response. The backend executes that batch serially, injects each completed result into the next assignment, and generates the typed grounded presentation after complete_orchestration, so do not spend an intermediate or final Supervisor model round between those handoffs.
+For an explicit draft request, include work-order immediately. Do not respond with an optional-field questionnaire or ask for typed confirmation. The specialist resolves equipment and produces the editable review card; only unresolved or ambiguous equipment identity needs clarification. For an explicit multi-step investigation, preserve the requested sequence (for example RCA, then Work Order draft, then Q&A verification). The backend executes the plan serially, injects each completed result into the next assignment, and generates the typed grounded presentation, so plan all required handoffs once without intermediate Supervisor rounds.
 The delegated question must preserve the assigned step's source, filters, time and requested format, not copy the entire compound request. In ontology-context workflows, ask Fabric IQ only for ontology identities/instances/relationships; send subsequent direct telemetry and SQL verification to qa, diagnosis to rca and drafting to work-order. For a Data Agent inventory followed by direct verification/investigation, ask Fabric IQ only for that inventory; do not also ask it to investigate telemetry or draft work. You may use multiple specialists when the request genuinely needs them, but do not repeat successful requests. A follow-up asking whether a physical fault was established, or asking for evidence gaps after a draft, is an RCA task: delegate only to rca and then complete orchestration. Never repeat the Work Order delegation or stage another draft unless the follow-up explicitly requests a new or revised draft. Never invent a specialist result or perform database writes. Return a specialist's answer faithfully, preserving its datasets and all material caveats. A draft is never a created work order.`,
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Execute only your assigned factual retrieval or verification task; the original compound operator request is context, not authority to perform other specialists roles. Do not perform a root-cause investigation or produce a prose work-order draft in place of RCA or Work Order specialists. Return factual evidence and identify remaining specialist work for the Supervisor. Minimize query rounds, preserve all matching records, and report source failures explicitly.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Finish by calling complete_rca_assessment, referencing actual evidence_id values and JSON pointers relative to their data. Select two to four competing hypotheses with supporting/contradictory source references and missing-evidence categories. References are checked by application code; unknown sources, missing paths and free-text diagnostic claims are rejected. Do not return prose instead of the structured report. There is no configured validated causal model or approved diagnostic-limit source, so cause remains undetermined. Never invent thresholds, baseline validity, numerical confidence or a normal-performance classification.',
@@ -67,21 +75,23 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
   const usesFabricIq = role === 'fabric-iq'
   if (usesFabricIq && (!fabricIqConnection || !ontologyConnection)) throw new Error('Both verified target-specific Fabric IQ connections are required.')
   const tools = role === 'supervisor' ? [{
-    type: 'function', name: 'delegate_to_agent',
-    description: 'Invoke a separate persistent Foundry specialist and return its grounded result.',
+    type: 'function', name: 'plan_orchestration',
+    description: 'Submit one complete ordered specialist plan. The backend executes every step serially and returns grounded results.',
     parameters: {
       type: 'object', properties: {
-        specialist: { type: 'string', enum: ['qa', 'rca', 'work-order', 'fabric-iq'] },
-        question: { type: 'string' },
-        reason: { type: 'string', description: 'One short user-visible explanation of the selected capability and source. Not private reasoning.' },
-        native_source: { type: ['string', 'null'], enum: ['data-agent', 'ontology', null], description: 'For fabric-iq, select exactly the native source requested by the operator. Use separate delegations when both are requested. For other specialists use null.' },
-      }, required: ['specialist', 'question', 'reason', 'native_source'], additionalProperties: false,
+        steps: {
+          type: 'array', minItems: 1, maxItems: 8,
+          items: {
+            type: 'object', properties: {
+              specialist: { type: 'string', enum: ['qa', 'rca', 'work-order', 'fabric-iq'] },
+              question: { type: 'string' },
+              reason: { type: 'string', description: 'One short user-visible explanation of the selected capability and source. Not private reasoning.' },
+              native_source: { type: ['string', 'null'], enum: ['data-agent', 'ontology', null], description: 'For fabric-iq, select exactly the native source requested by the operator. Use separate steps when both are requested. For other specialists use null.' },
+            }, required: ['specialist', 'question', 'reason', 'native_source'], additionalProperties: false,
+          },
+        },
+      }, required: ['steps'], additionalProperties: false,
     }, strict: true,
-  }, {
-    type: 'function', name: 'complete_orchestration',
-    description: 'Finish routing after all required delegate_to_agent calls have completed. Call this last; the backend generates the typed source-bound presentation.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
-    strict: true,
   }] : usesFabricIq ? [
     { type: 'fabric_iq_preview', server_label: 'fabriciq-data-agent', project_connection_id: fabricIqConnection, require_approval: 'never' },
     { type: 'fabric_iq_preview', server_label: 'fabriciq-ontology', project_connection_id: ontologyConnection, require_approval: 'never' },
@@ -97,7 +107,8 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
   }]
   return {
     kind: 'prompt', model, instructions: `${AGENT_INSTRUCTIONS[role]}\n\n${role === 'work-order' ? 'A draft exists only after propose_work_order succeeds. No-save instructions do not forbid this in-memory staging tool. If no draft is justified or identity requires clarification, call complete_work_order_review with that decision and its evidence-backed reason. Never describe a prose-only proposal as an editable card.' : ''}\n\n${OPERATIONAL_EVIDENCE_CONTRACT}\n\n${ANSWER_PRESENTATION_CONTRACT}`,
-    tools: [...tools, ...(role === 'rca' ? [RCA_REPORT_TOOL] : []), ...(role === 'work-order' ? [WORK_REVIEW_TOOL] : [])], reasoning: { effort: 'low' },
+    tools: [...tools, ...(role === 'rca' ? [RCA_REPORT_TOOL] : []), ...(role === 'work-order' ? [WORK_REVIEW_TOOL] : [])],
+    reasoning: { effort: REASONING_EFFORT[role] },
   }
 }
 
