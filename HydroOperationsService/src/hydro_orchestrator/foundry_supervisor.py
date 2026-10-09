@@ -890,6 +890,59 @@ class FoundrySupervisor:
             raise SourceFailure("Verified reference schema exceeds the bounded model-contract size.")
         return schema
 
+    def source_answer_plan(self) -> AnswerPlan | None:
+        tables = []
+        for evidence_index, receipt in enumerate(self.evidence.values()):
+            for field, records in receipt.result.items():
+                if (not isinstance(records, list) or not records or len(records) > 500
+                        or not all(isinstance(record, dict) for record in records)):
+                    continue
+                typed_records = [record for record in records if isinstance(record, dict)]
+                columns = []
+                for key in typed_records[0]:
+                    values = [record.get(key) for record in typed_records]
+                    if any(key not in record or (value is not None and type(value) not in (str, int, float))
+                           or (isinstance(value, str) and len(value) > 2400)
+                           for record, value in zip(typed_records, values, strict=True)):
+                        continue
+                    kind: Literal["text", "number", "timestamp"] = (
+                        "number" if any(value is not None for value in values)
+                        and all(value is None or type(value) in (int, float) for value in values)
+                        else "text"
+                    )
+                    columns.append(AnswerColumn(key=key, label=key, kind=kind))
+                if not columns:
+                    continue
+                escaped_field = field.replace("~", "~0").replace("/", "~1")
+                rows = tuple(PlannedRow(cells=tuple(
+                    AnswerCell(
+                        key=column.key,
+                        source=EvidenceReference(
+                            evidence_id=receipt.id,
+                            path=f"/{escaped_field}/{row_index}/"
+                                 f"{column.key.replace('~', '~0').replace('/', '~1')}",
+                        ),
+                    ) for column in columns
+                )) for row_index in range(len(typed_records)))
+                tables.append(PlannedTable(
+                    id=f"source-{evidence_index + 1}-{len(tables) + 1}",
+                    title=f"{receipt.tool} {field}",
+                    columns=tuple(columns),
+                    rows=rows,
+                ))
+                if len(tables) == 12:
+                    break
+            if len(tables) == 12:
+                break
+        if not tables:
+            return None
+        return AnswerPlan(
+            summary="Verified source rows.",
+            tables=tuple(tables),
+            charts=(),
+            limitations=(),
+        )
+
     async def project_answer(
         self, request: ChatRequest, journal: RunJournal, version: AgentVersion, rejected: str, error: Exception,
     ) -> tuple[AnswerPlan, ProjectionReceipt]:
@@ -1249,8 +1302,13 @@ class FoundrySupervisor:
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     projection: ProjectionReceipt | None = None
+                    source_plan = (
+                        owner.source_answer_plan()
+                        if not turn.text.strip() and not request.charts_requested
+                        else None
+                    )
                     try:
-                        plan = AnswerPlan.model_validate_json(turn.text)
+                        plan = source_plan or AnswerPlan.model_validate_json(turn.text)
                         result = owner.answer(request, plan)
                     except (ValidationError, SourceFailure) as error:
                         logger.warning("Supervisor presentation rejected; applying one tool-free typed answer projection.")

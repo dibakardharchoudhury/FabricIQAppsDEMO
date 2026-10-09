@@ -745,6 +745,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-rca-agent"], 1)
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
         self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(len(result.tables), 1)
+        self.assertFalse(any("agent_reference" not in payload for payload in self.payloads))
         self.assertEqual(result.specialists[1].model_round_count, 1)
         self.assertEqual(result.specialists[2].model_round_count, 1)
         audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
