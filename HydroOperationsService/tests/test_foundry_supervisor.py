@@ -200,7 +200,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         reference = payload["agent_reference"]
         self.assertEqual(reference["version"], "12")
         self.assertNotIn("tools", payload)
+        self.assertNotIn("instructions", payload)
         self.assertNotIn("text", payload)
+        self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
         name = reference["name"]
         round_number = self.calls.get(name, 0)

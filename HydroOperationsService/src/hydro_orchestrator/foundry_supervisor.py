@@ -16,8 +16,7 @@ from uuid import UUID
 import httpx
 from agent_framework import (
     Agent, AgentFrameworkException, AgentResponse, ChatOptions, Executor, FunctionInvocationContext, FunctionTool,
-    FileSkillsSource, SkillsProvider, MiddlewareTermination, WorkflowBuilder, WorkflowContext, WorkflowViz,
-    function_middleware, handler,
+    MiddlewareTermination, WorkflowBuilder, WorkflowContext, WorkflowViz, function_middleware, handler,
 )
 from agent_framework.foundry import FoundryAgent, FoundryChatClient
 from azure.core.credentials_async import AsyncTokenCredential
@@ -62,15 +61,18 @@ def safe_exception_signature(error: BaseException) -> str:
     return " <- ".join(signatures)
 
 
-def operation_skills(role: Role) -> SkillsProvider:
+def operation_skill_guidance(role: Role) -> tuple[dict[str, str], ...]:
     root = Path(__file__).resolve().parents[2] / "skills"
     paths = [root / name for name in ROLE_SKILLS[role]]
     if any(not (path / "SKILL.md").is_file() for path in paths):
         raise SourceFailure("Required trusted operation skills are missing from the runtime package.")
-    return SkillsProvider(
-        FileSkillsSource(paths, search_depth=1, script_extensions=(), resource_extensions=()),
-        disable_load_skill_approval=True,
-    )
+    guidance = tuple({
+        "name": path.name,
+        "instructions": (path / "SKILL.md").read_text(encoding="utf-8"),
+    } for path in paths)
+    if any(not item["instructions"].strip() or len(item["instructions"]) > 30000 for item in guidance):
+        raise SourceFailure("Trusted operation skill guidance is empty or exceeds its bounded size.")
+    return guidance
 
 
 class ToolInputError(ValueError):
@@ -718,6 +720,7 @@ class FoundrySupervisor:
                 "complete_rca_assessment": {"references": "Use existing evidence IDs and JSON pointers relative to data.",
                                           "hypotheses": "Two to four distinct categories; no prose diagnosis fields."},
             },
+            "trusted_operation_skills": operation_skill_guidance(role),
         }
         if role == "supervisor":
             context["handoff_execution"] = (
@@ -753,7 +756,6 @@ class FoundrySupervisor:
         agent = FoundryAgent(
             project_endpoint=self.endpoint, agent_name=version.name, agent_version=version.version,
             credential=self.credential, tools=functions, timeout=45,
-            context_providers=[operation_skills(role)],
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 12, "max_function_calls": 40, "max_consecutive_errors_per_request": 2,
