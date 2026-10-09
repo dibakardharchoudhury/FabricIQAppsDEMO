@@ -428,6 +428,19 @@ def create_delegated_app(
                     def line(value: dict[str, object]) -> bytes:
                         return (json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n").encode()
 
+                    def terminal_event(detail: str) -> dict[str, object]:
+                        return {
+                            "type": "event",
+                            "event": {
+                                "id": f"{chat.run_id}:chief",
+                                "role": "supervisor",
+                                "status": "error",
+                                "label": "Chief",
+                                "detail": detail,
+                                "timestamp": int(utc_now().timestamp() * 1000),
+                            },
+                        }
+
                     async def execute() -> ChatAnswer:
                         async with capacity:
                             async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
@@ -462,17 +475,23 @@ def create_delegated_app(
                         await asyncio.gather(task, return_exceptions=True)
                         raise
                     except SourceAuthorizationError:
+                        yield line(terminal_event("Source authorization expired; no answer was certified."))
                         error = failed(401, "authorization", "Renew source access through the existing sign-in session.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
-                    except httpx.HTTPError:
+                    except httpx.HTTPError as failure:
+                        logger.error("Streamed source request failed (%s).", type(failure).__name__)
+                        yield line(terminal_event("An authorized source request failed; no answer was certified."))
                         error = failed(502, "source_request",
                                        "An authorized source request failed; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except TimeoutError:
+                        yield line(terminal_event("The orchestration deadline elapsed; no answer was certified."))
                         error = failed(504, "deadline",
                                        "Orchestration exceeded its deadline; no answer is certified.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
-                    except Exception:
+                    except Exception as failure:
+                        logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
+                        yield line(terminal_event("Orchestration failed; no answer was certified."))
                         error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     finally:

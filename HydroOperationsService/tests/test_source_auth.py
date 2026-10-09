@@ -467,6 +467,28 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
 
+    async def test_streaming_failure_terminates_chief_without_disclosing_exception_text(self):
+        async def fail(_request):
+            raise RuntimeError("private diagnostic content")
+
+        with TemporaryDirectory() as directory:
+            app, _, _, contexts = self.ingress(Path(directory), run=fail)
+            invocation = {**self.invocation(), "stream": True}
+            with self.assertLogs("hydro_orchestrator.service", level="ERROR") as logs:
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json=invocation)
+            messages = [json.loads(line) for line in response.text.splitlines()]
+            self.assertEqual([message["type"] for message in messages],
+                             ["run", "event", "event", "error"])
+            self.assertEqual(messages[-2]["event"]["status"], "error")
+            self.assertEqual(messages[-2]["event"]["id"], messages[1]["event"]["id"])
+            self.assertEqual(messages[-1]["status"], 500)
+            combined = response.text + "\n".join(logs.output)
+            self.assertIn("RuntimeError", combined)
+            self.assertNotIn("private diagnostic content", combined)
+            self.assertEqual(contexts, ["closed"])
+
     async def test_ingress_validation_and_auth_errors_never_echo_token_input(self):
         with TemporaryDirectory() as directory:
             app, leases, _, _ = self.ingress(Path(directory))
