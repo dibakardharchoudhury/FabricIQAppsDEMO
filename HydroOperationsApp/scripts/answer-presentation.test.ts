@@ -7,6 +7,12 @@ import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/
 import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
 
+test('Chief routes post-draft physical-fault follow-ups only to RCA', () => {
+  const instructions = agentDefinition('supervisor', 'test-model').instructions
+  assert.match(instructions, /physical fault was established.*delegate only to rca/is)
+  assert.match(instructions, /Never repeat the Work Order delegation or stage another draft/is)
+})
+
 test('operator narrative excludes technical inventories and pointer ledgers but keeps limitations', () => {
   const text = '### Investigation\nCause undetermined.\n### Source observations\n52 fields from call_123/rows/0.\n### Sources\ncall_123\n### Returned source inventory: instruments\nRaw IDs.\n### Limitations\nMeasurements are stale.'
   const result = operatorNarrative(text)
