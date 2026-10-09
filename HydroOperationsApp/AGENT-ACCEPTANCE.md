@@ -1,8 +1,10 @@
 # Hydro Intelligence: implementation, routing and acceptance
 
 This report distinguishes implemented behavior, observed runtime results and proposals.
-**The ten-flow suite is not yet accepted.** Deployment success and unit tests are not
-proof of agent answers, causal diagnosis, SQL mutations or notification delivery.
+**The ten-flow hosted suite is accepted for the bounded behaviors recorded below.**
+Deployment success and unit tests alone are not proof of agent answers, causal
+diagnosis, SQL mutations or notification delivery; the live signed-browser runs
+and explicit limitations remain part of this acceptance.
 Deployment entry points: [DEPLOY.md](DEPLOY.md). Source architecture: [README.md](README.md).
 Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPTS.md).
 Consolidated change history and architecture:
@@ -10,7 +12,7 @@ Consolidated change history and architecture:
 
 ## October 9 hosted orchestration status
 
-**Current deployed Fabric app: 1.0.798 (`d4d1dfc`). Current Hosted Agent: v22.**
+**Current deployed Fabric app: 1.0.800 (`d4074c5`). Current Hosted Agent: v22.**
 The active image is
 `sha256:8bdaedf511cc0919d1c46eb38875c0c4486b2dfc324c0ff8816406b5fdb1262a`
 (`validated-20261009155318`, ACR run `dts`). The canonical Fabric deployment
@@ -40,14 +42,17 @@ preflight returned 200 and its deliberately incomplete POST returned the expecte
 | 7 | Ontology v2 through Sparky; 1 row; 22 seconds. |
 | 8 | Combined Data Agent and Ontology; two Sparky calls, 2 rows; 43 seconds. |
 | 9 | Primary plus same-chat follow-up passed; 20 rows, 3 tables; 54 + 34 seconds. |
-| 10 | Primary draft succeeded and was rejected. The v21 follow-up succeeded on retry in 79 seconds with Chief, Sleuth and Gauge, no Fixer handoff and no second proposal. One prior attempt failed closed on a bounded Sleuth inference stall. |
+| 10 | Final v22 signed-browser run passed. The primary completed in 1m31s with Chief v16, Gauge v15 and Fixer v15; it produced one editable `EQUIP_RTI_T005` card with exact title `Acceptance review T005 DO NOT DISPATCH` and Low priority. The backend rejection confirmed that no work order was created. The same-chat follow-up completed in 46.6s with Chief v16, Sleuth v17 and Gauge v15; Fixer and Sparky remained standing by, no second proposal appeared, and 2 source rows were retained in 2 tables. |
 
 V22 deterministically surfaces the validated conclusion that no physical fault
 is established and cause remains undetermined, together with validated evidence
-gaps. Unit and contract tests cover that presentation. The final signed-browser
-v22 presentation rerun is still outstanding because browser-tool discovery timed
-out; CLI credentials are not SPA-issued delegated tokens and were not substituted.
-Therefore this report does not relabel the full ten-flow suite as accepted.
+gaps. The final signed-browser run displayed fresh timestamped/ingestion-health
+measurements, independent measurement, qualified inspection evidence, matched
+baseline and operating-context records as missing evidence. It also stated
+`No production writes executed`. The run used the existing target-tenant account
+and application connection controls; no credentials, cookies or CLI tokens were
+copied, and no authorization check was weakened. One earlier v21 attempt remains
+recorded as a bounded Sleuth inference stall rather than being hidden by this pass.
 
 Current regression evidence on Node 24.21.0: 129/129 backend tests, Pyright with
 zero errors/warnings, 378/378 frontend tests, typecheck, lint, environment

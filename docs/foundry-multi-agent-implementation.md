@@ -24,17 +24,19 @@ tool allowlists and table/source switches were removed. The packaged Node source
 bridge, direct query schemas, embedded SQL/work-order UI, approval cards, native
 Data Agent support for the classic app surface and Battle presentation remain.
 
-Prompt 1 through Prompt 9 passed the live hosted matrix. Prompt 10's primary draft
-was rejected without a write; its v21 follow-up completed in 79 seconds with
-Chief, Sleuth and Gauge, while Fixer remained idle and no second proposal appeared.
-One identical attempt had previously failed closed when a Sleuth model call
-returned no tool call before its bounded deadline. V22 adds deterministic
-operator-facing text derived from the validated RCA report:
+Prompt 1 through Prompt 9 passed the live hosted matrix. The final signed-browser
+Prompt 10 v22 run also passed. Its primary completed in 1m31s through Chief v16,
+Gauge v15 and Fixer v15 and produced exactly one editable Low-priority T005 card
+with the requested title. Backend rejection confirmed that no work order was
+created. The same-chat follow-up completed in 46.6s through Chief v16, Sleuth v17
+and Gauge v15; Fixer and Sparky remained idle, no second proposal appeared, and
+two literal source rows remained visible in two tables. One earlier v21 attempt
+remains recorded as a bounded Sleuth inference stall. V22 displayed the
+backend-derived conclusion:
 `No physical fault is established by the returned evidence; cause remains undetermined`,
-plus validated evidence-gap labels. The final signed-browser v22 presentation
-rerun remains outstanding because the browser automation tool service did not
-return a capability; cached CLI tokens cannot replace the SPA-issued delegated
-tokens and no authorization check was weakened.
+plus validated evidence-gap labels and `No production writes executed`. Authentication
+used the existing target-tenant browser account and normal application connection
+controls; no credential, cookie or CLI-token substitution was used.
 
 Supported-runtime validation passed 129 backend tests and Pyright, plus 378
 frontend tests, typecheck, lint, environment validation and production build on

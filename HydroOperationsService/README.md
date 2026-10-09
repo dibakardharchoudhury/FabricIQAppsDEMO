@@ -26,6 +26,13 @@ Node 24.21.0 and Pyright with zero errors or warnings. The companion SPA cleanup
 passed 378 frontend tests, typecheck, lint, environment validation and production
 build under the same Node 24 runtime.
 
+The final signed-browser Prompt 10 v22 acceptance passed on app version 1.0.800.
+The primary work-order draft completed in 1m31s and was rejected by the backend
+without a write. Its same-chat RCA follow-up completed in 46.6s through Chief,
+Sleuth and Gauge, retained two literal source rows in two tables, created no
+second proposal, and displayed the validated no-fault/undetermined conclusion
+with explicit evidence gaps.
+
 ## Thin-client contract
 
 Foundry, the Hosted Data Agent route and both Battle panes require the hosted
