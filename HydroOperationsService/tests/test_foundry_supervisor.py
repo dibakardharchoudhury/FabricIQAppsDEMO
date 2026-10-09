@@ -18,8 +18,8 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, NativeBinding, RunJournal, ToolEvidence,
-    safe_exception_signature,
+    AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
+    ToolEvidence, post_draft_rca_delegation, safe_exception_signature,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -79,6 +79,28 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_post_draft_fault_review_has_a_bounded_rca_only_route(self):
+        previous = HistoricalContext(
+            run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
+            rendered_answer="Review work-order draft\nBackend-grounded human approval",
+            requested_at=utc_now() - timedelta(minutes=1),
+        )
+        request = ChatRequest(
+            run_id=uuid4(), source=SOURCE,
+            question="Investigate whether any physical fault was established. Show the evidence gaps.",
+            requested_at=utc_now(), deadline=utc_now() + timedelta(minutes=3),
+            previous_run_id=previous.run_id, historical_context=previous,
+        )
+        delegation = post_draft_rca_delegation(request)
+        self.assertIsNotNone(delegation)
+        self.assertEqual(delegation.specialist, "rca")
+        self.assertIsNone(post_draft_rca_delegation(request.model_copy(update={
+            "question": "Revise the draft after investigating the physical fault.",
+        })))
+        self.assertIsNone(post_draft_rca_delegation(request.model_copy(update={
+            "historical_context": None, "previous_run_id": None,
+        })))
+
     def test_exception_signature_exposes_only_bounded_diagnostic_fields(self):
         class ProviderError(Exception):
             status_code = 400
@@ -265,6 +287,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ]}
             output = [self.function("complete_rca_assessment", report)] if round_number == 0 else [
                 self.message("Structured source-referenced investigation completed.")]
+            if self.mode == "direct_rca":
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
+                })] if round_number == 0 else [self.function("complete_rca_assessment", report)]
             if self.mode == "repair_query_and_report":
                 if round_number == 0:
                     output = [self.function("hydro_query", {
@@ -767,6 +793,28 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rca_context["allowed_evidence_ids"], ["reading-1"])
         self.assertIn("without a /result prefix",
                       rca_context["completion_constraints"]["complete_rca_assessment"]["references"])
+
+    async def test_post_draft_fault_review_bypasses_slow_model_routing_and_runs_rca(self):
+        self.mode = "direct_rca"
+        previous = HistoricalContext(
+            run_id=uuid4(), source=SOURCE, question="Prepare an inspection draft.",
+            rendered_answer="Review work-order draft\nBackend-grounded human approval",
+            requested_at=utc_now() - timedelta(minutes=1),
+        )
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Investigate whether any physical fault was established. Show the evidence gaps.",
+            "previous_run_id": previous.run_id,
+            "historical_context": previous,
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertNotIn("hydro-supervisor-agent", self.calls)
+        self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
+        self.assertFalse(result.proposals)
+        audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
+        self.assertIsNone(audit["supervisor"]["model_round_count"])
+        self.assertTrue(audit["supervisor"]["response_id"].startswith("policy-"))
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"

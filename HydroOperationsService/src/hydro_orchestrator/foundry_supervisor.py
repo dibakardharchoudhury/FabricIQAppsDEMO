@@ -277,6 +277,34 @@ class Delegation(Contract):
     native_source: NativeSource | None = Field(default=None, alias="nativeSource")
 
 
+def post_draft_rca_delegation(request: ChatRequest) -> Delegation | None:
+    if request.historical_context is None:
+        return None
+    question = request.question.casefold()
+    previous = request.historical_context.rendered_answer.casefold()
+    asks_for_fault_review = (
+        "physical fault" in question
+        or "fault was established" in question
+        or "evidence gap" in question
+    )
+    asks_for_draft_change = any(
+        phrase in question
+        for phrase in (
+            "new draft", "another draft", "revised draft", "revise the draft", "update the draft",
+            "create work order", "create a work order", "prepare work order", "prepare a work order",
+            "submit work order", "submit the work order", "save work order", "save the work order",
+        )
+    )
+    had_draft = "review work-order draft" in previous or "work-order draft" in previous
+    if not had_draft or not asks_for_fault_review or asks_for_draft_change:
+        return None
+    return Delegation(
+        specialist="rca",
+        question=request.question,
+        reason="A post-draft physical-fault or evidence-gap review requires RCA only; no new draft was requested.",
+    )
+
+
 class CachedHandoff(Contract):
     specialist: SpecialistResult
     evidence: tuple[ToolEvidence, ...]
@@ -1239,18 +1267,33 @@ class FoundrySupervisor:
                         await ctx.send_message(restore_turn(SupervisorTurn.model_validate(recovered).model_dump_json())
                                                .model_dump_json())
                         return
-                    response, _report, elapsed = await owner.invoke(
-                        "supervisor", question, request, journal, versions,
-                    )
-                    journal.save(f"supervisor_output:{response.response_id}", {"text": response.text})
+                    policy_delegation = post_draft_rca_delegation(request)
+                    if policy_delegation is not None:
+                        started = perf_counter()
+                        await owner.handoff(policy_delegation, request, journal, versions)
+                        response_id = f"policy-{request.run_id}"
+                        response_text = ""
+                        model_round_count = None
+                        elapsed = (perf_counter() - started) * 1000
+                        journal.save(f"supervisor_output:{response_id}", {
+                            "text": response_text, "policy": "post_draft_rca",
+                        })
+                    else:
+                        response, _report, elapsed = await owner.invoke(
+                            "supervisor", question, request, journal, versions,
+                        )
+                        response_id = response.response_id
+                        response_text = response.text
+                        model_round_count = sum(message.role == "assistant" for message in response.messages)
+                        journal.save(f"supervisor_output:{response_id}", {"text": response_text})
                     if not owner.specialists:
                         raise SourceFailure("Supervisor did not execute any existing specialist.")
-                    if not response.response_id:
+                    if not response_id:
                         raise SourceFailure("Supervisor has no service response identity.")
                     turn = SupervisorTurn(
-                        text=response.text, response_id=response.response_id,
+                        text=response_text, response_id=response_id,
                         version=versions["supervisor"].version, duration_ms=elapsed,
-                        model_round_count=sum(message.role == "assistant" for message in response.messages),
+                        model_round_count=model_round_count,
                         evidence=tuple(owner.evidence.values()), specialists=tuple(owner.specialists),
                         request_digest=request_digest,
                     )
