@@ -492,7 +492,11 @@ def create_delegated_app(
                                        "Orchestration exceeded its deadline; no answer is certified.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except Exception as failure:
-                        logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
+                        if isinstance(failure, SourceFailure):
+                            detail = str(failure).replace("\r", " ").replace("\n", " ")[:512]
+                            logger.error("Streamed orchestration failed (SourceFailure: %s).", detail)
+                        else:
+                            logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
                         yield line(terminal_event("Orchestration failed; no answer was certified."))
                         error = failed(500, "execution", "Orchestration failed; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
