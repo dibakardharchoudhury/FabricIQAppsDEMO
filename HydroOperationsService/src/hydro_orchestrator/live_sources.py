@@ -241,7 +241,7 @@ class FabricBackendTools:
             raise SourceFailure("This source tool has no configured backend implementation.")
         credential, discovery = self.sources.credential, self.sources.discovery
         tokens = {"fabric": (await credential.get_token("https://api.fabric.microsoft.com/.default")).token}
-        if name in ("query_assets", "propose_work_order") or name in self.snapshot_tools:
+        if name in ("query_assets", "query_operations", "propose_work_order") or name in self.snapshot_tools:
             tokens["graphql"] = (await credential.get_token("https://analysis.windows.net/powerbi/api/.default")).token
         if name in ("query_telemetry", "query_station_power", "run_kql") or name in self.snapshot_tools:
             tokens["kusto"] = (await credential.get_token(f"{discovery.cluster}/.default")).token

@@ -55,6 +55,24 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
+    async def test_operations_use_power_bi_execute_token_for_rayfin_exchange(self):
+        sources = reader()
+        request = self.chat(sources)
+        sources.bridge.call.return_value = {
+            "source": request.source.model_dump(mode="json"),
+            "completed_at": utc_now().isoformat(),
+            "result": {"rows": [], "row_count": 0, "truncated": False},
+        }
+        await FabricBackendTools(sources).execute("query_operations", {"entity": "work_orders"}, request)
+        self.assertEqual(
+            {call.args[0] for call in sources.credential.get_token.await_args_list},
+            {
+                "https://api.fabric.microsoft.com/.default",
+                "https://analysis.windows.net/powerbi/api/.default",
+            },
+        )
+        self.assertEqual(set(sources.bridge.call.call_args.args[0]["tokens"]), {"fabric", "graphql"})
+
     async def test_backend_snapshots_use_only_required_resources_and_attest_returned_source_identities(self):
         sources = reader()
         request = self.chat(sources)

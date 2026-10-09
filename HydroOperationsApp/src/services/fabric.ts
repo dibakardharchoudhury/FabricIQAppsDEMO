@@ -49,6 +49,7 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 }) : undefined
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
+const POWER_BI_ITEM_EXECUTE_SCOPE = 'https://analysis.windows.net/powerbi/api/Item.Execute.All'
 // A named scope, not `.default`: `.default` only returns permissions already statically configured
 // for the exact cluster audience, so Entra escalates to "Need admin approval" instead of consenting.
 const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/user_impersonation`
@@ -298,7 +299,7 @@ export async function hostedSourceTokens() {
   const [fabric, foundry, graphql, kusto] = await Promise.all([
     silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])]),
     silentToken(FOUNDRY_AGENT_SCOPES),
-    silentToken([GRAPHQL_SCOPE]),
+    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE]),
     silentToken([kustoScope(cluster)]),
   ])
   if (!fabric || !foundry || !graphql || !kusto) {

@@ -390,7 +390,7 @@ export async function readOperationEntity(config, entityKey, args, token) {
 }
 
 export async function readFleetSnapshot(config, metadata, temperature, args, tokens, fetcher = fetch,
-  readWorkInventory = () => operationalRead(config, tokens.fabric, 'work-order snapshot',
+  readWorkInventory = () => operationalRead(config, tokens.graphql, 'work-order snapshot',
     client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
   const query = fleetSnapshotQuery(temperature, args)
   const readStartedAt = new Date().toISOString()
@@ -407,7 +407,7 @@ export async function readFleetSnapshot(config, metadata, temperature, args, tok
 }
 
 export async function stageWorkOrder(config, args, priority, tokens, fetcher = fetch,
-  readExisting = () => readWork(config, args.equipment_id, tokens.fabric)) {
+  readExisting = () => readWork(config, args.equipment_id, tokens.graphql)) {
   const proposal = createWorkOrderProposal({
     equipmentId: args.equipment_id, instrumentId: args.instrument_id, opcuaNodeId: args.opcua_node_id,
     title: args.title, description: args.description, priority,
@@ -497,7 +497,7 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
   const client = new RayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
     publishableKey: config.publishable_key, authStorage: false })
   try {
-    await signInWithEntraToken(client.auth, { entraToken: tokens.fabric })
+    await signInWithEntraToken(client.auth, { entraToken: tokens.graphql })
     return await execute(client)
   } catch (error) {
     if (error instanceof WorkOrderSubmissionError) throw error
@@ -567,7 +567,7 @@ async function main() {
         result = await readAssetEntity(config, args.entity, args, request.tokens.graphql)
         break
       case 'query_operations':
-        result = await readOperationEntity(config, args.entity, args, request.tokens.fabric)
+        result = await readOperationEntity(config, args.entity, args, request.tokens.graphql)
         break
       case 'query_telemetry':
         if (request.cluster !== metadata.cluster) throw new Error('The KQL endpoint changed.')
@@ -606,7 +606,7 @@ async function main() {
   }
   const results = await Promise.allSettled([
     readTelemetry(config, metadata, request.equipment_id, request.tokens),
-    readWork(config, request.equipment_id, request.tokens.fabric),
+    readWork(config, request.equipment_id, request.tokens.graphql),
   ])
   const failures = results.flatMap((result, index) => result.status === 'rejected'
     ? [{ source: index === 0 ? 'stid_telemetry' : 'work_orders', message: result.reason.message }] : [])

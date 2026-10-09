@@ -42,6 +42,14 @@ test('Rayfin enables delegated external exchange without replacing existing Fabr
   assert.equal(parsed.services.auth.fabric.externalEntraExchange, true)
 })
 
+test('Rayfin operations use the Power BI delegated token required by direct exchange', async () => {
+  const source = await readFile(new URL('./local-fabric-sources.mjs', import.meta.url), 'utf8')
+  assert.match(source, /operationalRead\(config, tokens\.graphql, 'work-order snapshot'/)
+  assert.match(source, /readOperationEntity\(config, args\.entity, args, request\.tokens\.graphql\)/)
+  assert.match(source, /signInWithEntraToken\(client\.auth, \{ entraToken: tokens\.graphql \}\)/)
+  assert.doesNotMatch(source, /signInWithEntraToken\(client\.auth, \{ entraToken: tokens\.fabric \}\)/)
+})
+
 test('backend drafts freshly verify target and complete work without a SQL write or model priority escalation', async () => {
   const data = fleetData()
   const args = { equipment_id: 'T2', instrument_id: 'I2', title: 'Inspect signal',

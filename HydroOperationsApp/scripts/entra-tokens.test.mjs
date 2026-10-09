@@ -114,3 +114,10 @@ test('workspace reads do not request job execution or Data Agent execution scope
   assert.match(source, /const DATA_AGENT_SCOPES = \[\.\.\.FABRIC_SCOPES, 'https:\/\/api\.fabric\.microsoft\.com\/DataAgent\.Execute\.All'\]/)
   assert.match(source, /const token = await fabricToken\(true, FABRIC_JOB_SCOPES\)/)
 })
+
+test('hosted Rayfin exchange requests Power BI Item Execute with GraphQL access', () => {
+  const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+  assert.match(source,
+    /const POWER_BI_ITEM_EXECUTE_SCOPE = 'https:\/\/analysis\.windows\.net\/powerbi\/api\/Item\.Execute\.All'/)
+  assert.match(source, /silentToken\(\[GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\]\)/)
+})
