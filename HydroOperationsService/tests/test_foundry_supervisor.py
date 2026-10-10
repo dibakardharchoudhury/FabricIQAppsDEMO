@@ -222,11 +222,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
         projected = self.owner.model_evidence("work-order")
         specialists = self.owner.model_specialists("work-order")
+        verification_evidence = self.owner.model_evidence("qa", targeted=True)
+        verification_specialists = self.owner.model_specialists("qa", compact=True)
 
         self.assertEqual(projected[0]["result"]["rows"], [rows[0]])
         self.assertEqual(projected[0]["result"]["projected_row_count"], 1)
+        self.assertEqual(verification_evidence, projected)
         self.assertEqual(self.owner.evidence["fleet-1"].result["rows"], rows)
         self.assertNotIn("text", specialists[0])
+        self.assertEqual(verification_specialists, specialists)
         self.assertEqual(specialists[0]["report"]["observations"][0]["path"], "/rows/0")
 
     async def asyncSetUp(self):
@@ -1051,6 +1055,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(request)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
+        verification_payload = next(
+            payload for payload in reversed(self.payloads)
+            if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
+        )
+        verification_context = json.loads(verification_payload["input"][0]["content"][0]["text"])
+        self.assertIn("bounded independent verification", verification_context["evidence_scope"])
+        self.assertNotIn("text", verification_context["completed_specialists"][0])
         self.assertFalse(result.proposals)
         audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
         self.assertEqual(audit["supervisor"]["model_round_count"], 1)

@@ -463,8 +463,8 @@ class FoundrySupervisor:
         if request.deadline <= utc_now():
             raise SourceFailure("The persisted run deadline has elapsed; start a new source-grounded run.")
 
-    def model_evidence(self, role: Role) -> list[dict[str, object]]:
-        if role != "work-order":
+    def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
+        if role != "work-order" and not targeted:
             return [item.receipt() for item in self.evidence.values()]
 
         referenced_rows: dict[str, set[str]] = {}
@@ -541,8 +541,8 @@ class FoundrySupervisor:
             })
         return projected
 
-    def model_specialists(self, role: Role) -> list[dict[str, object]]:
-        if role != "work-order":
+    def model_specialists(self, role: Role, compact: bool = False) -> list[dict[str, object]]:
+        if role != "work-order" and not compact:
             return [item.model_dump(mode="json") for item in self.specialists]
         return [{
             "role": item.role,
@@ -603,6 +603,7 @@ class FoundrySupervisor:
 
     async def handoff(
         self, delegation: Delegation, request: ChatRequest, journal: RunJournal, versions: dict[Role, AgentVersion],
+        targeted_context: bool = False,
     ) -> dict[str, object]:
         selected, selected_native = delegation.specialist, delegation.native_source
         if (selected == "fabric-iq" and selected_native not in request.native_sources
@@ -639,6 +640,7 @@ class FoundrySupervisor:
             key = "delegate:" + _encoded({
                 "role": selected, "question": delegation.question, "native": selected_native,
                 "context_digest": sha256(_encoded(handoff_context)).hexdigest(),
+                "targeted_context": targeted_context,
             }).decode()
             saved = journal.read(key)
             try:
@@ -660,6 +662,7 @@ class FoundrySupervisor:
                 else:
                     response, assessment, elapsed = await self.invoke(
                         selected, delegation.question, request, journal, versions, selected_native,
+                        targeted_context=targeted_context,
                     )
                     if not response.response_id:
                         raise SourceFailure("Specialist invocation has no service response identity.")
@@ -711,6 +714,7 @@ class FoundrySupervisor:
     async def invoke(
         self, role: Role, question: str, request: ChatRequest, journal: RunJournal,
         versions: dict[Role, AgentVersion], native_source: NativeSource | None = None,
+        targeted_context: bool = False,
     ) -> tuple[AgentResponse, dict[str, object] | None, float]:
         self.healthy(request)
         version = versions[role]
@@ -958,10 +962,10 @@ class FoundrySupervisor:
                                          "Execute fresh reads for all current facts and work proposals. "
                                          "Never reuse a prior approval or infer human consent from conversation.",
             "source": request.source.model_dump(mode="json"),
-            "evidence": self.model_evidence(role),
+            "evidence": self.model_evidence(role, targeted=targeted_context),
             "allowed_evidence_ids": list(self.evidence),
             "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
-            "completed_specialists": self.model_specialists(role),
+            "completed_specialists": self.model_specialists(role, compact=targeted_context),
             "output_policy": "Tables by default. Values must be source references, never authored cells. "
                              "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
                              "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
@@ -979,6 +983,11 @@ class FoundrySupervisor:
             },
             "trusted_operation_skills": operation_skill_guidance(role),
         }
+        if targeted_context:
+            context["evidence_scope"] = (
+                "Role-relevant projection for bounded independent verification. Complete immutable receipts remain "
+                "in the audit; verify only supplied source rows and structured specialist reports without rereading."
+            )
         if role == "work-order":
             verified_gate: dict[str, object] | None = None
             for specialist in reversed(self.specialists):
@@ -1630,7 +1639,7 @@ class FoundrySupervisor:
                                      "values, units, quality, timestamps, missing sources and unsupported conclusions. "
                                      "Reuse the receipts; do not reread unchanged data, stage work or claim delivery.",
                             reason="Final source verification is required after investigation or maintenance review.",
-                        ), request, journal, versions)
+                        ), request, journal, versions, targeted_context=True)
                     verified = turn.model_copy(update={
                         "verified": True, "evidence": tuple(owner.evidence.values()),
                         "specialists": tuple(owner.specialists),
