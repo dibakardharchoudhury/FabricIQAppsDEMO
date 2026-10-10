@@ -8,9 +8,9 @@ as passes after a later code change.
 
 ## Current state: bounded Foundry-owned planner/executor
 
-Hosted Agent v48 is active on immutable image
-`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
-(`validated-20261010202251`, ACR run `dt1k`, source commit `b37691e`). It runs the Microsoft Agent Framework
+Hosted Agent v50 is active on immutable image
+`sha256:25dc9db7d7e26519439243175c5cd43b6a87007db92c26fac03fec580b6c7bb8`
+(`validated-20261010221658`, ACR run `dt1n`, source commit `fe55567`). It runs the Microsoft Agent Framework
 workflow that coordinates Chief, Gauge, Sleuth, Fixer and Sparky. The SPA uses
 one authenticated Invocations endpoint for normal Foundry chat and for both
 Battle comparison routes. Real backend events drive the crew animation; the
@@ -30,6 +30,15 @@ fails. No prompt
 regex, BAD/UNCERTAIN shortcut, direct T010 route or post-draft routing bypass remains.
 Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
 projection runtime use `gpt-5.6-sol`.
+
+Live v49 acceptance established that the reported physical-fault prompt now
+renders a direct evidence interpretation before its source tables, while the
+one-hour BAD/UNCERTAIN prompt completes without the former HTTP 409. The 409 was
+caused by an automatically attached previous display exceeding the 16,000-character
+history bound. v49/v50 replace that rejection with a bounded historical conclusion
+and limitations plus an explicit fresh-read requirement. v50 further bounds the
+operator narrative to complete concise sentences; that final contract is covered
+by automated tests because the temporary signed-browser session expired on reload.
 
 ### Shared server-side domain contract and capabilities
 

@@ -12,10 +12,10 @@ Consolidated change history and architecture:
 
 ## October 10 final planner/executor status
 
-**Current Hosted Agent: v48 from source commit `b37691e`. Current Fabric deployment:
+**Current Hosted Agent: v50 from source commit `fe55567`. Current Fabric deployment:
 `deploy-20261010175853-fc340945` from commit `67e142e`.** The active Hosted image is
-`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
-(`validated-20261010202251`, ACR run `dt1k`). The runtime uses `gpt-5.6-sol`,
+`sha256:25dc9db7d7e26519439243175c5cd43b6a87007db92c26fac03fec580b6c7bb8`
+(`validated-20261010221658`, ACR run `dt1n`). The runtime uses `gpt-5.6-sol`,
 numeric ontology generation 2 and production writes disabled.
 
 The final backend regression passed 143 tests on Node 24 plus Pyright with zero
@@ -24,13 +24,17 @@ production build. Canonical deployment preserved 39 SPA redirects and passed
 AppBackend/CORS, GraphQL and token endpoint checks. Tenant-wide consent remains
 an administrator prerequisite; current-user consent supports this operator.
 
-v48 restores operator-facing grounded narratives before the supporting tables.
+v49 restored operator-facing grounded narratives before the supporting tables.
 The typed projection is tool-free and bounded, table cells remain receipt-pointer
 validated, certified empty results remain deterministic, and projection failure
-still fails safely to literal source tables. Deployment readback verified v48
-active on the exact immutable digest above. A new browser acceptance was not run:
-the protected hosted page presented its sign-in gate, and no interactive
-authentication was initiated while the operator was away.
+still fails safely to literal source tables. Live browser acceptance verified the
+physical-fault narrative, source limitations, Chief/Sleuth completion and no write.
+It also verified that the exact one-hour BAD/UNCERTAIN prompt completed with
+Chief/Gauge and a certified empty result instead of the previous HTTP 409.
+v50 bounds narrative length to complete concise sentences and is active on the
+exact digest above. Its final length-only delta passed automated regression; the
+temporary signed-browser session expired on reload and no interactive
+authentication was initiated.
 
 The October 10 live matrix on the final architecture produced these outcomes:
 

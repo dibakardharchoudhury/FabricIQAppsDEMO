@@ -7,15 +7,15 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v48 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v50 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v48 image is
-`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
-(`validated-20261010202251`, ACR run `dt1k`, source commit `b37691e`). The source configuration digest is
+The active v50 image is
+`sha256:25dc9db7d7e26519439243175c5cd43b6a87007db92c26fac03fec580b6c7bb8`
+(`validated-20261010221658`, ACR run `dt1n`, source commit `fe55567`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
@@ -30,6 +30,10 @@ direct conclusion, evidence meaning and material uncertainty ahead of supporting
 source-annotated tables. The immutable-receipt validator still resolves every
 table cell, deterministic certified-empty results avoid a model call, and a
 projection failure falls back to literal source tables rather than ungrounded prose.
+Oversized previous displays now retain a bounded grounded conclusion and source
+limitations instead of returning HTTP 409; every factual follow-up still requires
+fresh source reads. Narrative summaries are limited to three to five complete
+sentences and 600 instructed characters.
 
 Chief now exposes one strict `plan_orchestration` tool. It returns one complete
 ordered plan of one to eight specialist steps; the backend validates and executes
