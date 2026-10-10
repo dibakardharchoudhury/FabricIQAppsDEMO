@@ -622,6 +622,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         projection_payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
         self.assertEqual(len(projection_payloads), 1)
         self.assertNotIn("tools", projection_payloads[0])
+        self.assertEqual(
+            projection_payloads[0]["text"]["format"]["schema"]["properties"]["summary"]["maxLength"],
+            800,
+        )
         before = dict(self.calls)
         restarted = await self.make_owner().run(self.request)
         self.assertEqual(restarted, result)
