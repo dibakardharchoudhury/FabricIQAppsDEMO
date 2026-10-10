@@ -922,7 +922,7 @@ class FoundrySupervisor:
 
         agent = FoundryAgent(
             project_endpoint=self.endpoint, agent_name=version.name, agent_version=version.version,
-            credential=self.credential, tools=functions, timeout=45,
+            credential=self.credential, tools=functions, timeout=120 if role == "fabric-iq" else 45,
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 2 if role == "supervisor" else 12,
