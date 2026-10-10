@@ -21,7 +21,7 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   const sparky = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq', 'ontology-iq')
   assert.equal(chief.reasoning.effort, 'medium')
   assert.equal(gauge.reasoning.effort, 'low')
-  assert.equal(sleuth.reasoning.effort, 'medium')
+  assert.equal(sleuth.reasoning.effort, 'low')
   assert.equal(fixer.reasoning.effort, 'low')
   assert.equal(sparky.reasoning.effort, 'low')
   assert.match(fixer.instructions, /Before a no_draft decision, call query_operations/)

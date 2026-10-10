@@ -252,7 +252,11 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         row = {"Station": "North", "average_power_MW": 2.5, "samples": 3, "bad_samples": 1}
         sources.bridge.call.return_value = {
             "source": request.source.model_dump(mode="json"), "completed_at": utc_now().isoformat(),
-            "result": {"rows": [row], "row_count": 1, "truncated": False},
+            "result": {
+                "rows": [row], "row_count": 1, "truncated": False,
+                "semantics": "Sample-weighted mean; not total station output or energy.",
+                "read_completed_at_utc": "2026-10-10T01:00:00Z",
+            },
         }
         tools = FabricBackendTools(sources)
         evidence = await tools.execute("query_station_power", {"lookback": "6h"}, request)
@@ -260,6 +264,8 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence.result["rows"], [row])
         self.assertEqual(evidence.work_coverage_equipment_ids, ())
         self.assertEqual(evidence.resolved_equipment_ids, ())
+        self.assertIn("not total station output or energy", evidence.limitations[0])
+        self.assertIn("2026-10-10T01:00:00Z", evidence.limitations[1])
         self.assertEqual(sources.credential.get_token.await_count, 2)
         self.assertNotIn("graphql", sources.bridge.call.call_args.args[0]["tokens"])
         for patch in ({"average_power_MW": True}, {"average_power_MW": float("inf")},
@@ -267,10 +273,16 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             sources.bridge.call.return_value["result"]["rows"] = [{**row, **patch}]
             with self.assertRaises(SourceFailure):
                 await tools.execute("query_station_power", {}, request)
-        sources.bridge.call.return_value["result"] = {"rows": [row, row], "row_count": 2, "truncated": False}
+        sources.bridge.call.return_value["result"] = {
+            "rows": [row, row], "row_count": 2, "truncated": False,
+            "semantics": "Sample-weighted mean.", "read_completed_at_utc": "2026-10-10T01:00:00Z",
+        }
         with self.assertRaises(SourceFailure):
             await tools.execute("query_station_power", {}, request)
-        sources.bridge.call.return_value["result"] = {"rows": [], "row_count": 0, "truncated": False}
+        sources.bridge.call.return_value["result"] = {
+            "rows": [], "row_count": 0, "truncated": False,
+            "semantics": "Sample-weighted mean.", "read_completed_at_utc": "2026-10-10T01:00:00Z",
+        }
         empty = await tools.execute("query_station_power", {}, request)
         self.assertEqual(empty.column_units, {})
         sources.bridge.call.return_value["result"]["row_count"] = False

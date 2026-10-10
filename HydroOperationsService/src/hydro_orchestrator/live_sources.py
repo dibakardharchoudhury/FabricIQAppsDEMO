@@ -270,6 +270,17 @@ class FabricBackendTools:
             column_units, resolved, work_coverage, limitations = self._snapshot_attestation(result.result)
         elif name == "query_station_power":
             column_units = self._station_power_attestation(result.result)
+            semantics = result.result.get("semantics")
+            completed_at = result.result.get("read_completed_at_utc")
+            if not isinstance(semantics, str) or not semantics.strip() or len(semantics) > 1000:
+                raise SourceFailure("Station power aggregation semantics are missing or invalid.")
+            if not isinstance(completed_at, str) or not completed_at.strip() or len(completed_at) > 100:
+                raise SourceFailure("Station power read-completion time is missing or invalid.")
+            limitations = (
+                f"Station power semantics: {semantics.strip()}",
+                f"Station power source read completed at {completed_at.strip()}; compare each latest_event_time "
+                "with this clock to assess freshness.",
+            )
         public_result = dict(result.result)
         if name == "query_operations" and arguments.get("entity") == "work_orders":
             where = arguments.get("where")

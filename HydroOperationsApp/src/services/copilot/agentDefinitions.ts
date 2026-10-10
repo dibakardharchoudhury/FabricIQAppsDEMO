@@ -13,7 +13,7 @@ export const AGENT_NAMES: Record<AgentRole, string> = {
 const REASONING_EFFORT: Record<AgentRole, 'low' | 'medium'> = {
   supervisor: 'medium',
   qa: 'low',
-  rca: 'medium',
+  rca: 'low',
   'work-order': 'low',
   'fabric-iq': 'low',
 }
