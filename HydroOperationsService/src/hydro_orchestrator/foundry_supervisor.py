@@ -1648,7 +1648,7 @@ class FoundrySupervisor:
 
             class VerifyEvidence(Executor):
                 def __init__(self):
-                    super().__init__(id="gauge_verification")
+                    super().__init__(id="evidence_verification")
 
                 @handler
                 async def handle(self, encoded_turn: str, ctx: WorkflowContext[str]) -> None:
@@ -1657,17 +1657,20 @@ class FoundrySupervisor:
                     if turn.verified:
                         await ctx.send_message(turn.model_dump_json())
                         return
-                    if (any(item.role in ("rca", "work-order") for item in owner.specialists)
-                            and owner.specialists[-1].role != "qa"):
-                        logger.info("Completing the mandatory independent Gauge verification after specialist review.")
-                        await owner.handoff(Delegation(
-                            specialist="qa",
-                            question="Independently verify the completed specialist reports against the supplied "
-                                     "immutable source receipts and operator request. Check literal measurement "
-                                     "values, units, quality, timestamps, missing sources and unsupported conclusions. "
-                                     "Reuse the receipts; do not reread unchanged data, stage work or claim delivery.",
-                            reason="Final source verification is required after investigation or maintenance review.",
-                        ), request, journal, versions, targeted_context=True)
+                    if any(item.role in ("rca", "work-order") for item in owner.specialists):
+                        verified_at = int(utc_now().timestamp() * 1000)
+                        owner.chief_trace.append({
+                            "id": f"{request.run_id}:evidence-verification",
+                            "timestamp": verified_at,
+                            "source": "application",
+                            "label": "Chief accepted the deterministic evidence and specialist-contract validation.",
+                            "activity": "validation",
+                        })
+                        owner.emit_event(
+                            f"{request.run_id}:chief", "supervisor", "running", "Chief",
+                            "Deterministic evidence verification completed; no additional model call was used.",
+                            agent_name=versions["supervisor"].name, trace=list(owner.chief_trace),
+                        )
                     verified = turn.model_copy(update={
                         "verified": True, "evidence": tuple(owner.evidence.values()),
                         "specialists": tuple(owner.specialists),

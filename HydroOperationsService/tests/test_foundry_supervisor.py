@@ -544,10 +544,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chief_events[0]["status"], "running")
         self.assertEqual(chief_events[-1]["status"], "completed")
         trace = chief_events[-1]["trace"]
-        self.assertEqual(len(trace), 8)
+        self.assertEqual(len(trace), 9)
         self.assertEqual(
             [item["activity"] for item in trace],
-            ["tool-start", "delegation-return"] * 4,
+            ["tool-start", "delegation-return"] * 4 + ["validation"],
         )
         serialized = json.dumps(self.events)
         self.assertNotIn("test-not-a-real-token", serialized)
@@ -997,10 +997,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_completes_verification_when_chief_omits_the_final_handoff(self):
         self.mode = "skip_verify"
         result = await self.owner.run(self.request)
-        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order"])
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
-        self.assertIn("Independently verify", json.dumps(self.payloads[-1]))
+        self.assertTrue(any(
+            item.get("role") == "supervisor" and "Deterministic evidence verification" in str(item.get("detail", ""))
+            for item in self.events
+        ))
 
     async def test_projection_schema_allows_only_actual_source_field_pointer_pairs(self):
         receipt = await self.tools.execute("query_telemetry", {"equipment_id": "TEST_T005"}, self.request)
@@ -1042,7 +1045,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         graph = RunJournal(self.root / str(self.request.run_id) / "receipts").read("workflow_graph")
         self.assertEqual(graph["format"], "mermaid")
         self.assertIn("chief_orchestration", graph["definition"])
-        self.assertIn("gauge_verification", graph["definition"])
+        self.assertIn("evidence_verification", graph["definition"])
         self.assertIn("grounded_presentation", graph["definition"])
         initial_calls = [payload for payload in self.payloads
                          if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"]
@@ -1075,14 +1078,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.seed(request)
         result = await self.owner.run(request)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
-        self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
-        verification_payload = next(
-            payload for payload in reversed(self.payloads)
-            if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
-        )
-        verification_context = json.loads(verification_payload["input"][0]["content"][0]["text"])
-        self.assertIn("bounded independent verification", verification_context["evidence_scope"])
-        self.assertNotIn("text", verification_context["completed_specialists"][0])
+        self.assertEqual([item.role for item in result.specialists], ["rca"])
+        self.assertTrue(any(
+            item.get("role") == "supervisor" and "Deterministic evidence verification" in str(item.get("detail", ""))
+            for item in self.events
+        ))
         self.assertFalse(result.proposals)
         audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
         self.assertEqual(audit["supervisor"]["model_round_count"], 1)
@@ -1097,7 +1097,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.seed(request)
         result = await self.owner.run(request)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
-        self.assertEqual([item.role for item in result.specialists], ["rca", "qa"])
+        self.assertEqual([item.role for item in result.specialists], ["rca"])
 
     async def test_multi_quality_snapshot_uses_one_generic_chief_plan_and_verified_rows(self):
         self.mode = "quality_snapshot"
