@@ -486,11 +486,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "decision": "needs_clarification", "reason": "Complete work coverage is still required.",
                 })]
         elif name == "hydro-fabric-iq-agent":
+            native_output = (
+                {"value": [{
+                    "id": "connection-1", "content": "", "title": "hydro-fabric-ontology",
+                    "url": "https://example.test/ontology",
+                }]}
+                if self.mode == "native_connection_only"
+                else {"rows": [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C"}]}
+            )
             output = [{
                 "type": "mcp_call", "id": "native-call-1", "name": "query",
                 "server_label": "fabriciq-ontology" if self.mode == "native_wrong_source" else "fabriciq-data-agent",
                 "arguments": "{}", "status": "completed", "error": None,
-                "output": json.dumps({"rows": [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C"}]}),
+                "output": json.dumps(native_output),
             }, self.message("Native result.")]
         else:
             raise AssertionError(name)
@@ -852,6 +860,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
             with self.assertRaisesRegex(SourceFailure, "validation failed"):
                 await owner.run(request)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):
+        self.mode = "native_connection_only"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        with self.assertLogs("agent_framework", level="ERROR") as logs:
+            with self.assertRaisesRegex(SourceFailure, "no successful answer is permitted"):
+                await owner.run(request)
+        self.assertTrue(any("connection metadata without domain evidence" in item for item in logs.output))
         self.assertEqual(self.tools.calls, 0)
 
     async def test_partial_receipt_after_process_stop_is_discarded_not_used_as_evidence(self):

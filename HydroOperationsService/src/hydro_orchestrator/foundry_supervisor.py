@@ -43,6 +43,16 @@ ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
 }
 
 
+def _has_native_domain_evidence(value: object) -> bool:
+    if isinstance(value, dict):
+        if value and set(value).issubset({"id", "content", "title", "url"}):
+            return bool(str(value.get("content", "")).strip())
+        return any(_has_native_domain_evidence(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_native_domain_evidence(item) for item in value)
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1123,6 +1133,10 @@ class FoundrySupervisor:
                             dict(native_payload) if isinstance(native_payload, dict)
                             else {"native_output": native_payload}
                         )
+                        if not _has_native_domain_evidence(native_result):
+                            raise SourceFailure(
+                                "Native execution returned only connection metadata without domain evidence."
+                            )
                         receipt = ToolEvidence(id=raw["id"], source=request.source, tool=f"fabriciq-{native_source}",
                                                arguments={"assignment": question}, completed_at=utc_now(),
                                                result=native_result,
