@@ -10,7 +10,9 @@ description: Prepare source-bound editable work-order proposals after fresh targ
 - Use propose_work_order for an actual editable card; prose is not a staged proposal.
 - Ask only for unresolved equipment identity, not optional title, description, priority or assignee.
 - Use factual editable wording without inventing a diagnosis. Preserve operator-supplied priority.
-- If no evidence-backed uncovered need exists, call complete_work_order_review with a specific reason.
+- Require the uncovered need to be relevant to the operator's assigned investigation domain. Do not pivot to an
+  unrelated inspection, notification, parts record, telemetry condition, or maintenance issue on the same equipment.
+- If no relevant evidence-backed uncovered need exists, call complete_work_order_review with a specific reason.
 - No-save instructions permit staging for review, not SQL creation.
 - A draft is never a created SQL work order. Approval/rejection belongs to the human.
 - Submission identity, reviewed fields, source/run binding and expiration are immutable approval safeguards.

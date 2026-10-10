@@ -39,6 +39,7 @@ class SourceTools:
         self.quality_snapshot = False
         self.empty_quality_snapshot = False
         self.include_identity = False
+        self.presentation = False
 
     async def catalog(self, request):
         tools = [{"name": "query_telemetry", "parameters": {
@@ -118,10 +119,16 @@ class SourceTools:
         rows = [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD"}]
         if self.extra_row:
             rows.append({"equipment_id": "TEST_T005", "value": 99.0, "unit": "MW", "quality": "GOOD"})
+        result = {"rows": rows}
+        if self.presentation:
+            result["presentation"] = {
+                "table_field": "rows",
+                "chart": {"kind": "bar", "x_key": "unit", "y_keys": ["value"]},
+            }
         return ToolEvidence(
             id="reading-1", source=SOURCE.model_copy(update={"workspace_id": uuid4()}) if self.changed_source else SOURCE,
             tool=name, arguments=arguments, completed_at=utc_now(),
-            result={"rows": rows},
+            result=result,
             row_identities={
                 f"/rows/{index}": {"equipment_id": row["equipment_id"]}
                 for index, row in enumerate(rows)
@@ -257,6 +264,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.calls = {}
         self.payloads = []
         self.mode = "valid"
+        self.projection_chart_indexes = None
         self.network = httpx.AsyncClient(transport=httpx.MockTransport(self.respond))
         self.openai = AsyncOpenAI(api_key="test-not-a-real-key", base_url=f"{ENDPOINT}/openai/v1/",
                                  http_client=self.network, max_retries=0)
@@ -350,11 +358,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "source": {"evidence_id": "reading-1", "path": "/rows/0/quality"},
                 },
             ]
-            projection_output = (
-                {"summary": projection_plan["summary"]}
-                if payload["text"]["format"]["name"] == "GroundedNarrative"
-                else projection_plan
-            )
+            projection_output = {
+                "summary": projection_plan["summary"],
+                "chart_indexes": (
+                    self.projection_chart_indexes
+                    if self.projection_chart_indexes is not None
+                    else [0]
+                    if json.loads(payload["input"][0]["content"][0]["text"])["charts_requested"]
+                    else []
+                ),
+            }
             return httpx.Response(200, json={
                 "id": "resp_projection", "object": "response", "created_at": 1,
                 "model": "test", "status": "incomplete" if incomplete else "completed",
@@ -656,6 +669,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_chart_is_typed_and_unrelated_chart_is_not_added(self):
         self.mode = "chart"
+        self.tools.presentation = True
         request = self.request.model_copy(update={"charts_requested": True})
         result = await self.owner.run(request)
         self.assertEqual(len(result.charts), 1)
@@ -738,6 +752,40 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.charts[0].x_key, "equipment_id")
         self.assertEqual(plan.charts[0].y_keys, ("open_work_order_count",))
         self.assertEqual(result.charts, plan.charts)
+
+    async def test_projection_selects_requested_facility_chart_without_available_equipment_chart(self):
+        def receipt(receipt_id, group_key):
+            return ToolEvidence(
+                id=receipt_id, source=self.request.source, tool="query_work_backlog",
+                arguments={"group_by": group_key}, completed_at=utc_now(),
+                result={
+                    "rows": [{group_key: f"TEST_{group_key.upper()}", "open_work_order_count": 2}],
+                    "presentation": {
+                        "table_field": "rows",
+                        "chart": {
+                            "kind": "bar", "x_key": group_key, "y_keys": ["open_work_order_count"],
+                        },
+                    },
+                },
+                column_units={"open_work_order_count": "work orders"},
+            )
+
+        self.owner.evidence = {
+            "facility-backlog": receipt("facility-backlog", "facility_id"),
+            "equipment-backlog": receipt("equipment-backlog", "equipment_id"),
+        }
+        self.projection_chart_indexes = [0]
+        request = self.request.model_copy(update={
+            "question": "Chart open work by facility.",
+            "charts_requested": True,
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        plan, _ = await self.owner.project_answer(
+            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
+        )
+        self.assertEqual(len(plan.charts), 1)
+        self.assertEqual(plan.charts[0].x_key, "facility_id")
+        self.assertNotIn("equipment_id", {chart.x_key for chart in plan.charts})
 
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1116,6 +1164,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             for item in self.events
         ))
         self.assertFalse(result.proposals)
+        self.assertEqual(
+            result.specialists[0].report["maintenance_follow_up"],
+            {
+                "decision": "not_supported",
+                "reason": "missing_issue_evidence",
+                "equipment_ids": [],
+                "evidence": [],
+            },
+        )
         audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
         self.assertEqual(audit["supervisor"]["model_round_count"], 1)
         self.assertEqual(audit["supervisor"]["response_id"], "resp_hydro-supervisor-agent_0")
@@ -1210,6 +1267,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("conditional_maintenance_gate", json.dumps(work_order_payload))
         self.assertIn("Immediately call propose_work_order once", json.dumps(work_order_payload))
+        rca = next(item for item in result.specialists if item.role == "rca")
+        self.assertEqual(rca.report["maintenance_follow_up"]["decision"], "verified_uncovered_issue")
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"
@@ -1220,6 +1279,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chart_projection_preserves_sources_and_does_not_repeat_specialists(self):
         self.mode = "chart"
+        self.tools.presentation = True
         self.request = self.request.model_copy(update={"charts_requested": True})
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
             result = await self.owner.run(self.request)
