@@ -1106,6 +1106,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(self.request)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
         self.assertIn("hydro-work-order-agent", self.calls)
+        work_order_payload = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-work-order-agent"
+        )
+        self.assertIn("conditional_maintenance_gate", json.dumps(work_order_payload))
+        self.assertIn("Immediately call propose_work_order once", json.dumps(work_order_payload))
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"

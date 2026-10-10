@@ -979,6 +979,24 @@ class FoundrySupervisor:
             },
             "trusted_operation_skills": operation_skill_guidance(role),
         }
+        if role == "work-order":
+            verified_gate: dict[str, object] | None = None
+            for specialist in reversed(self.specialists):
+                report_value = specialist.report
+                if specialist.role != "rca" or not isinstance(report_value, dict):
+                    continue
+                gate_value = report_value.get("maintenance_follow_up")
+                if isinstance(gate_value, dict) and gate_value.get("decision") == "verified_uncovered_issue":
+                    verified_gate = gate_value
+                    break
+            if verified_gate is not None:
+                context["conditional_maintenance_gate"] = verified_gate
+                context["work_order_execution"] = (
+                    "The backend has already validated this source-referenced uncovered-issue gate and complete "
+                    "work coverage is present in the supplied evidence. Do not repeat the investigation or reread "
+                    "unchanged sources. Immediately call propose_work_order once for the verified equipment and "
+                    "uncovered purpose, using a factual editable title and description with no invented diagnosis."
+                )
         if role == "supervisor":
             context["handoff_execution"] = (
                 "Call plan_orchestration exactly once with the complete minimal ordered specialist plan. The backend "
