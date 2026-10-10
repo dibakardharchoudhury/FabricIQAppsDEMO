@@ -449,12 +449,14 @@ test('a draft from an incomplete workflow is withdrawn, not treated as human rej
 })
 
 test('Supervisor requests visible routing and conditional-selection contracts', () => {
-  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason","native_source","requires_selection"\]/)
-  const delegation = parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data","requires_selection":false}')
+  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason","native_source","requires_selection","requires_verified_issue"\]/)
+  const delegation = parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data","requires_selection":false,"requires_verified_issue":false}')
   assert.equal(delegation.reason, 'Ontology-native instance data')
   assert.equal(delegation.requiresSelection, false)
+  assert.equal(delegation.requiresVerifiedIssue, false)
   assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","reason":"Direct read"}'), /selection dependency/)
-  assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","reason":false}'), /reason/)
+  assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","reason":false,"requires_selection":false,"requires_verified_issue":false}'), /reason/)
+  assert.throws(() => parseDelegation('{"specialist":"qa","question":"Read work","requires_selection":false,"requires_verified_issue":true}'), /verified-issue/)
 })
 
 test('explicit chart CSV excludes unrelated table measures without dropping table evidence', () => {
@@ -514,8 +516,8 @@ test('native specialists do not depend on Fabric; only IQ has the IQ tool', () =
   assert.match(JSON.stringify(iq.tools[0]), /data-agent-iq/)
   assert.match(JSON.stringify(iq.tools[1]), /ontology-iq/)
   assert.throws(() => agentDefinition('fabric-iq', 'test-model', 'data-agent-only'), /connection/)
-  assert.equal(parseDelegation('{"specialist":"fabric-iq","question":"query ontology","requires_selection":false}').specialist, 'fabric-iq')
-  assert.throws(() => parseDelegation('{"specialist":"arbitrary-agent","question":"query","requires_selection":false}'), /Unknown/)
+  assert.equal(parseDelegation('{"specialist":"fabric-iq","question":"query ontology","requires_selection":false,"requires_verified_issue":false}').specialist, 'fabric-iq')
+  assert.throws(() => parseDelegation('{"specialist":"arbitrary-agent","question":"query","requires_selection":false,"requires_verified_issue":false}'), /Unknown/)
 })
 
 const proposal = () => createWorkOrderProposal({ equipmentId: 'E1', title: 'Inspect bearing', description: 'Observed vibration', priority: 'High' })

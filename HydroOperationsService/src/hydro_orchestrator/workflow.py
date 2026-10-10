@@ -15,7 +15,7 @@ from agent_framework import (
 )
 
 from .contracts import (
-    AgentReceipt, Approval, Assessment, Evidence, EvidenceReference, Observation, Outcome,
+    AgentReceipt, Approval, Assessment, Evidence, EvidenceReference, MaintenanceFollowUp, Observation, Outcome,
     Proposal, RcaHypothesis, RcaReport, ReviewRequest, SourceIdentity, WorkReview, utc_now,
 )
 
@@ -42,6 +42,7 @@ class RequiredCheckpointStorage(FileCheckpointStorage):
     def __init__(self, path: Path):
         contracts = (ReviewRequest, SourceIdentity, Observation, Evidence, Assessment, Proposal, Approval, Outcome,
                      EvidenceReference, RcaHypothesis, RcaReport, AgentReceipt, WorkReview)
+        contracts += (MaintenanceFollowUp,)
         super().__init__(
             path, allowed_checkpoint_types=[f"{item.__module__}:{item.__qualname__}" for item in contracts],
         )

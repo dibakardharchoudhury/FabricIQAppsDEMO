@@ -68,7 +68,12 @@ class FoundryRcaTests(unittest.IsolatedAsyncioTestCase):
              "missing": ["independent_measurement"]},
             {"category": "equipment_condition", "supporting": [], "contradicting": [],
              "missing": ["inspection_evidence"]},
-        ]}
+        ], "maintenance_follow_up": {
+            "decision": "not_supported",
+            "reason": "missing_issue_evidence",
+            "equipment_ids": [],
+            "evidence": [],
+        }}
         if self.mode == "invented_reference":
             reference["evidence_id"] = "not-a-real-source"
         elif self.mode == "invented_path":

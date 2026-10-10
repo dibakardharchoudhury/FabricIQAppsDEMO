@@ -277,6 +277,13 @@ class Delegation(Contract):
     reason: str | None = None
     native_source: NativeSource | None = Field(default=None, alias="nativeSource")
     requires_selection: bool = Field(default=False, alias="requiresSelection")
+    requires_verified_issue: bool = Field(default=False, alias="requiresVerifiedIssue")
+
+    @model_validator(mode="after")
+    def verified_issue_only_gates_work(self) -> "Delegation":
+        if self.requires_verified_issue and self.specialist != "work-order":
+            raise ValueError("Only a work-order delegation can require a verified issue.")
+        return self
 
 
 class OrchestrationPlan(Contract):
@@ -849,6 +856,7 @@ class FoundrySupervisor:
                 value = dict(step)
                 value["nativeSource"] = value.pop("native_source", None)
                 value["requiresSelection"] = value.pop("requires_selection", False)
+                value["requiresVerifiedIssue"] = value.pop("requires_verified_issue", False)
                 normalized.append(value)
             plan = OrchestrationPlan.model_validate({"steps": normalized})
             delegations = []
@@ -861,25 +869,36 @@ class FoundrySupervisor:
                         "reason": step.reason,
                         "native_source": step.native_source,
                         "requires_selection": step.requires_selection,
+                        "requires_verified_issue": step.requires_verified_issue,
                     }),
                 })
                 delegations.append(Delegation.model_validate(parsed))
             selected_equipment_ids: set[str] = set()
+            verified_issue_equipment_ids: set[str] = set()
             skipped_steps = 0
             for delegation in delegations:
-                if delegation.requires_selection and not selected_equipment_ids:
+                missing_selection = delegation.requires_selection and not selected_equipment_ids
+                missing_verified_issue = (
+                    delegation.requires_verified_issue
+                    and not verified_issue_equipment_ids.intersection(selected_equipment_ids)
+                )
+                if missing_selection or missing_verified_issue:
                     skipped_steps += 1
                     assert self.run_id is not None
+                    reason = (
+                        "no prior equipment selection was grounded"
+                        if missing_selection else "RCA did not verify an uncovered equipment issue"
+                    )
                     self.chief_trace.append({
                         "id": f"{self.run_id}:skip:{skipped_steps}",
                         "timestamp": int(utc_now().timestamp() * 1000),
                         "source": "application",
-                        "label": f"Chief skipped {delegation.specialist}: no prior equipment selection was grounded.",
+                        "label": f"Chief skipped {delegation.specialist}: {reason}.",
                         "activity": "delegation-return",
                     })
                     self.emit_event(
                         f"{self.run_id}:chief", "supervisor", "running", "Chief",
-                        "A conditional specialist step was skipped because no equipment was selected.",
+                        f"A conditional specialist step was skipped because {reason}.",
                         agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
                     )
                     continue
@@ -890,6 +909,17 @@ class FoundrySupervisor:
                     if evidence_id not in prior_evidence_ids
                 ]
                 grounded_ids = evidence_equipment_ids(new_receipts)
+                if delegation.specialist == "rca":
+                    verified_issue_equipment_ids.clear()
+                    report = self.specialists[-1].report if self.specialists else None
+                    follow_up = report.get("maintenance_follow_up") if isinstance(report, dict) else None
+                    if (isinstance(follow_up, dict)
+                            and follow_up.get("decision") == "verified_uncovered_issue"):
+                        values = follow_up.get("equipment_ids")
+                        if isinstance(values, list):
+                            verified_issue_equipment_ids.update(
+                                value for value in values if isinstance(value, str) and value
+                            )
                 if delegation.requires_selection:
                     selected_equipment_ids.update(grounded_ids)
                 else:

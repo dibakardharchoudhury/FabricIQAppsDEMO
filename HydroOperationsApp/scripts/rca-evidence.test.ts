@@ -16,6 +16,12 @@ const assessment = {
     { category: 'sensor_or_ingestion', supporting: [ref], contradicting: [], missing: ['fresh_measurements', 'independent_measurement'] },
     { category: 'operating_conditions', supporting: [], contradicting: [ref], missing: ['matched_baseline', 'approved_limits'] },
   ],
+  maintenance_follow_up: {
+    decision: 'not_supported',
+    reason: 'missing_issue_evidence',
+    equipment_ids: [],
+    evidence: [],
+  },
 }
 
 test('RCA renders actual measurements and limitations, never an invented threshold or baseline claim', () => {

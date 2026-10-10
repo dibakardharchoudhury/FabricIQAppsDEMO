@@ -38,6 +38,7 @@ class SourceTools:
         self.stage = False
         self.quality_snapshot = False
         self.empty_quality_snapshot = False
+        self.include_identity = False
 
     async def catalog(self, request):
         tools = [{"name": "query_telemetry", "parameters": {
@@ -121,6 +122,10 @@ class SourceTools:
             id="reading-1", source=SOURCE.model_copy(update={"workspace_id": uuid4()}) if self.changed_source else SOURCE,
             tool=name, arguments=arguments, completed_at=utc_now(),
             result={"rows": rows},
+            row_identities={
+                f"/rows/{index}": {"equipment_id": row["equipment_id"]}
+                for index, row in enumerate(rows)
+            } if self.include_identity else {},
             column_units={"value": "C"},
             limitations=("No approved diagnostic limits supplied.",),
         )
@@ -364,6 +369,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     {"specialist": "qa", "question": "Verify the empty result.", "reason": "Verify.",
                      "native_source": None, "requires_selection": False},
                 ]
+            elif self.mode in ("conditional_no_issue", "conditional_verified_issue"):
+                steps = [
+                    {"specialist": "qa", "question": "Read the selected equipment.", "reason": "Find matches.",
+                     "native_source": None, "requires_selection": False, "requires_verified_issue": False},
+                    {"specialist": "rca", "question": "Investigate the selected equipment.", "reason": "Investigate.",
+                     "native_source": None, "requires_selection": True, "requires_verified_issue": False},
+                    {"specialist": "work-order", "question": "Conditionally draft uncovered work.",
+                     "reason": "Review verified gaps.", "native_source": None, "requires_selection": True,
+                     "requires_verified_issue": True},
+                    {"specialist": "qa", "question": "Verify the result.", "reason": "Verify.",
+                     "native_source": None, "requires_selection": False, "requires_verified_issue": False},
+                ]
             else:
                 roles = ["qa", "rca", "work-order"] if self.mode == "skip_verify" else [
                     "qa", "rca", "work-order", "qa",
@@ -406,7 +423,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                  "missing": ["independent_measurement"]},
                 {"category": "equipment_condition", "supporting": [], "contradicting": [],
                  "missing": ["inspection_evidence"]},
-            ]}
+            ], "maintenance_follow_up": {
+                "decision": "verified_uncovered_issue"
+                if self.mode == "conditional_verified_issue" else "not_supported",
+                "reason": "uncovered_equipment_issue"
+                if self.mode == "conditional_verified_issue" else "missing_issue_evidence",
+                "equipment_ids": ["TEST_T005"] if self.mode == "conditional_verified_issue" else [],
+                "evidence": [ref],
+            }}
             output = [self.function("complete_rca_assessment", report)] if round_number == 0 else [
                 self.message("Structured source-referenced investigation completed.")]
             if self.mode == "rca_prose_once":
@@ -1047,6 +1071,23 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         chief_events = [event for event in self.events if event["role"] == "supervisor"]
         self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
                             for event in chief_events))
+
+    async def test_conditional_work_skips_without_verified_uncovered_issue(self):
+        self.mode = "conditional_no_issue"
+        self.tools.include_identity = True
+        result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "qa"])
+        self.assertNotIn("hydro-work-order-agent", self.calls)
+        chief_events = [event for event in self.events if event["role"] == "supervisor"]
+        self.assertTrue(any("rca did not verify an uncovered equipment issue" in event["detail"].lower()
+                            for event in chief_events))
+
+    async def test_conditional_work_runs_for_source_referenced_uncovered_issue(self):
+        self.mode = "conditional_verified_issue"
+        self.tools.include_identity = True
+        result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertIn("hydro-work-order-agent", self.calls)
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"

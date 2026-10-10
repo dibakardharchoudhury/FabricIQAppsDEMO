@@ -111,9 +111,31 @@ class RcaHypothesis(Contract):
     ], ...] = Field(min_length=1, max_length=8)
 
 
+class MaintenanceFollowUp(Contract):
+    decision: Literal["verified_uncovered_issue", "not_supported"]
+    reason: Literal[
+        "uncovered_equipment_issue", "missing_issue_evidence", "missing_equipment_relation",
+        "existing_work_covers_issue",
+    ]
+    equipment_ids: tuple[str, ...] = Field(max_length=20)
+    evidence: tuple[EvidenceReference, ...] = Field(max_length=12)
+
+    @model_validator(mode="after")
+    def consistent_gate(self) -> "MaintenanceFollowUp":
+        verified = self.decision == "verified_uncovered_issue"
+        if verified != (self.reason == "uncovered_equipment_issue"):
+            raise ValueError("Only an uncovered equipment issue may enable maintenance follow-up.")
+        if verified and (not self.equipment_ids or not self.evidence):
+            raise ValueError("Verified maintenance follow-up requires equipment and evidence.")
+        if len(set(self.equipment_ids)) != len(self.equipment_ids):
+            raise ValueError("Maintenance follow-up equipment identities must be unique.")
+        return self
+
+
 class RcaReport(Contract):
     observations: tuple[EvidenceReference, ...] = Field(min_length=1, max_length=12)
     hypotheses: tuple[RcaHypothesis, ...] = Field(min_length=2, max_length=4)
+    maintenance_follow_up: MaintenanceFollowUp
 
 
 class AgentReceipt(Contract):

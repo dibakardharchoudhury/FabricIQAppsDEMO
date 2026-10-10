@@ -30,7 +30,17 @@ type Hypothesis = {
   contradicting: EvidenceReference[]
   missing: Array<keyof typeof GAPS>
 }
-export type RcaAssessment = { observations: EvidenceReference[]; hypotheses: Hypothesis[] }
+type MaintenanceFollowUp = {
+  decision: 'verified_uncovered_issue' | 'not_supported'
+  reason: 'uncovered_equipment_issue' | 'missing_issue_evidence' | 'missing_equipment_relation' | 'existing_work_covers_issue'
+  equipment_ids: string[]
+  evidence: EvidenceReference[]
+}
+export type RcaAssessment = {
+  observations: EvidenceReference[]
+  hypotheses: Hypothesis[]
+  maintenance_follow_up: MaintenanceFollowUp
+}
 
 const referenceSchema = {
   type: 'object', properties: {
@@ -53,7 +63,18 @@ export const RCA_REPORT_TOOL = {
           missing: { type: 'array', minItems: 1, items: { type: 'string', enum: Object.keys(GAPS) } },
         }, required: ['category', 'supporting', 'contradicting', 'missing'], additionalProperties: false,
       } },
-    }, required: ['observations', 'hypotheses'], additionalProperties: false,
+      maintenance_follow_up: {
+        type: 'object',
+        description: 'Gate a later conditional maintenance handoff. Use verified_uncovered_issue only when the cited rows ground both the equipment issue and the absence of matching open work.',
+        properties: {
+          decision: { type: 'string', enum: ['verified_uncovered_issue', 'not_supported'] },
+          reason: { type: 'string', enum: ['uncovered_equipment_issue', 'missing_issue_evidence', 'missing_equipment_relation', 'existing_work_covers_issue'] },
+          equipment_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1 } },
+          evidence: { type: 'array', maxItems: 12, items: referenceSchema },
+        },
+        required: ['decision', 'reason', 'equipment_ids', 'evidence'], additionalProperties: false,
+      },
+    }, required: ['observations', 'hypotheses', 'maintenance_follow_up'], additionalProperties: false,
   }, strict: true,
 }
 
@@ -116,7 +137,7 @@ export function parseRcaAssessment(raw: string, receipts: readonly EvidenceRecei
     throw new RcaEvidenceError(`Invalid RCA JSON: ${error.message}`)
   }
   if (!record(value)) throw new RcaEvidenceError('An RCA assessment must be an object.')
-  exactKeys(value, ['observations', 'hypotheses'])
+  exactKeys(value, ['observations', 'hypotheses', 'maintenance_follow_up'])
   const observations = references(value.observations, receipts)
   if (!observations.length) throw new RcaEvidenceError('At least one real source observation is required.')
   if (!Array.isArray(value.hypotheses) || value.hypotheses.length < 2 || value.hypotheses.length > 4) {
@@ -138,7 +159,40 @@ export function parseRcaAssessment(raw: string, receipts: readonly EvidenceRecei
     }
   })
   if (new Set(hypotheses.map(item => item.category)).size !== hypotheses.length) throw new RcaEvidenceError('Hypothesis categories must be distinct.')
-  return { observations, hypotheses }
+  const followUp = value.maintenance_follow_up
+  if (!record(followUp)) throw new RcaEvidenceError('Maintenance follow-up must be a structured decision.')
+  exactKeys(followUp, ['decision', 'reason', 'equipment_ids', 'evidence'])
+  const decisions = ['verified_uncovered_issue', 'not_supported'] as const
+  const reasons = ['uncovered_equipment_issue', 'missing_issue_evidence', 'missing_equipment_relation', 'existing_work_covers_issue'] as const
+  if (typeof followUp.decision !== 'string' || !decisions.includes(followUp.decision as typeof decisions[number])
+    || typeof followUp.reason !== 'string' || !reasons.includes(followUp.reason as typeof reasons[number])) {
+    throw new RcaEvidenceError('Maintenance follow-up decision or reason is unsupported.')
+  }
+  if (!Array.isArray(followUp.equipment_ids) || followUp.equipment_ids.length > 20
+    || followUp.equipment_ids.some(id => typeof id !== 'string' || !id)
+    || new Set(followUp.equipment_ids).size !== followUp.equipment_ids.length) {
+    throw new RcaEvidenceError('Maintenance follow-up equipment IDs must be unique non-empty strings.')
+  }
+  const followUpEvidence = references(followUp.evidence, receipts)
+  const decision = followUp.decision as MaintenanceFollowUp['decision']
+  const reason = followUp.reason as MaintenanceFollowUp['reason']
+  if ((decision === 'verified_uncovered_issue') !== (reason === 'uncovered_equipment_issue')
+    || (decision === 'verified_uncovered_issue' && (!followUp.equipment_ids.length || !followUpEvidence.length))) {
+    throw new RcaEvidenceError('Only a verified uncovered equipment issue may enable conditional maintenance work.')
+  }
+  const grounded = JSON.stringify(followUpEvidence.map(reference => evidenceValue(reference, receipts)))
+  if (followUp.equipment_ids.some(id => !grounded.includes(JSON.stringify(id)))) {
+    throw new RcaEvidenceError('Maintenance follow-up equipment IDs must occur in the cited source evidence.')
+  }
+  return {
+    observations,
+    hypotheses,
+    maintenance_follow_up: {
+      decision, reason,
+      equipment_ids: followUp.equipment_ids as string[],
+      evidence: followUpEvidence,
+    },
+  }
 }
 
 export function cell(value: unknown): string {
@@ -156,7 +210,8 @@ function evidenceFields(value: unknown, path: string): Array<{ path: string; val
 }
 
 export function renderRcaAssessment(report: RcaAssessment, receipts: readonly EvidenceReceipt[]): string {
-  const all = [...report.observations, ...report.hypotheses.flatMap(item => [...item.supporting, ...item.contradicting])]
+  const all = [...report.observations, ...report.hypotheses.flatMap(item => [...item.supporting, ...item.contradicting]),
+    ...report.maintenance_follow_up.evidence]
   const unique = [...new Map(all.map(ref => [`${ref.evidence_id}:${ref.path}`, ref])).values()]
   const label = (ref: EvidenceReference) => `E${unique.findIndex(item => item.evidence_id === ref.evidence_id && item.path === ref.path) + 1}`
   const sourceRows = unique.flatMap(ref => {
@@ -181,6 +236,9 @@ export function renderRcaAssessment(report: RcaAssessment, receipts: readonly Ev
     ['| Candidate | Selected supporting observations | Selected contradictory observations | Evidence still required |',
       '|---|---|---|---|', ...hypothesisRows].join('\n'),
     'The references are inspectable observations, not validated causal links. Missing contradictory observations do not confirm a hypothesis.',
+    `**Conditional maintenance follow-up:** ${report.maintenance_follow_up.decision === 'verified_uncovered_issue'
+      ? `enabled for ${report.maintenance_follow_up.equipment_ids.join(', ')} by source-referenced uncovered-issue evidence`
+      : `not supported (${report.maintenance_follow_up.reason.replaceAll('_', ' ')})`}.`,
     '### Next checks',
     'Obtain the missing records above, establish measurement quality/freshness and a matched operating baseline, and have qualified engineering personnel review the evidence before selecting physical inspections or changing operations. No equipment controls, notifications or SQL writes were performed by this assessment.',
     '### Sources',
