@@ -143,7 +143,13 @@ def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID
         raise HTTPException(409, "The preceding conversation expired; start a new chat with an explicit target.")
     text = client_presentation(answer).text
     if len(text) > 16000:
-        raise HTTPException(409, "The preceding display exceeds the conversation bound; restate the target explicitly.")
+        limitations = "\n".join(f"- {item}" for item in answer.limitations)
+        text = (
+            f"Previous grounded conclusion:\n{answer.summary}\n\n"
+            f"Previous source limitations:\n{limitations or '- None reported.'}\n\n"
+            "The previous supporting tables exceeded the bounded conversation context and are intentionally omitted. "
+            "Historical content is context only; re-read current sources for any factual follow-up."
+        )
     return HistoricalContext(run_id=previous_run_id, source=source, question=request.question,
                              rendered_answer=text, requested_at=answer.requested_at,
                              proposal_ids=tuple(item.id for item in answer.proposals))

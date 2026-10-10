@@ -350,11 +350,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "source": {"evidence_id": "reading-1", "path": "/rows/0/quality"},
                 },
             ]
+            projection_output = (
+                {"summary": projection_plan["summary"]}
+                if payload["text"]["format"]["name"] == "GroundedNarrative"
+                else projection_plan
+            )
             return httpx.Response(200, json={
                 "id": "resp_projection", "object": "response", "created_at": 1,
                 "model": "test", "status": "incomplete" if incomplete else "completed",
                 "incomplete_details": {"reason": "max_output_tokens"} if incomplete else None,
-                "output": [self.message(json.dumps(projection_plan))],
+                "output": [self.message(json.dumps(projection_output))],
                 "parallel_tool_calls": False,
                 "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
             })

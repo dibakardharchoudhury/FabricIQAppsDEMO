@@ -200,6 +200,26 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         for lease in leases:
             await lease.close()
 
+    async def test_oversized_preceding_display_uses_bounded_summary_and_reread_notice(self):
+        with TemporaryDirectory() as folder:
+            app, _, namespaces, _ = self.ingress(Path(folder))
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                first = self.invocation()
+                initial = await client.post("/invocations", json=first)
+                run_id = initial.json()["run_id"]
+                followup = {**first, "chat": {"question": "Which signals are affected now?", "previous_run_id": run_id}}
+                with patch(
+                    "hydro_orchestrator.service.client_presentation",
+                    return_value=SimpleNamespace(text="x" * 16001),
+                ):
+                    response = await client.post("/invocations", json=followup)
+                self.assertEqual(response.status_code, 200, response.text)
+                saved = RunJournal(namespaces[-1] / response.json()["run_id"] / "receipts").read("request")
+                rendered = saved["historical_context"]["rendered_answer"]
+                self.assertIn("Previous grounded conclusion", rendered)
+                self.assertIn("supporting tables exceeded", rendered)
+                self.assertIn("re-read current sources", rendered)
+
     async def test_unknown_signing_keys_cannot_force_unbounded_jwks_refreshes(self):
         lease = await self.verifier.verify(self.body(), self.deadline)
         await lease.close()
