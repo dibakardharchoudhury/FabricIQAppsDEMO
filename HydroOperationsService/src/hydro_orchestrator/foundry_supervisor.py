@@ -934,8 +934,11 @@ class FoundrySupervisor:
         )
         started = perf_counter()
         remaining = (request.deadline - utc_now()).total_seconds()
+        specialist_timeout = 150 if role == "fabric-iq" else 90
         async with agent:
-            async with asyncio.timeout(remaining if role == "supervisor" else min(90, remaining)):
+            async with asyncio.timeout(
+                remaining if role == "supervisor" else min(specialist_timeout, remaining)
+            ):
                 options: ChatOptions = {
                     "store": False,
                     "max_tokens": 8192 if role == "supervisor" else 4096,
