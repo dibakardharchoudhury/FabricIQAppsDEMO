@@ -429,6 +429,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 output = [self.function("complete_work_order_review", {
                     "decision": "needs_clarification", "reason": "Missing scope.",
                 })]
+            elif self.mode == "premature_no_draft" and round_number == 0:
+                output = [self.function("complete_work_order_review", {
+                    "decision": "no_draft", "reason": "No additional work is justified.",
+                })]
+            elif self.mode == "premature_no_draft" and round_number == 1:
+                output = [self.function("complete_work_order_review", {
+                    "decision": "needs_clarification", "reason": "Complete work coverage is still required.",
+                })]
         elif name == "hydro-fabric-iq-agent":
             output = [{
                 "type": "mcp_call", "id": "native-call-1", "name": "query",
@@ -847,6 +855,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         review = next(item for item in result.specialists if item.role == "work-order")
         self.assertEqual(review.report["reason"], "Missing scope.")
         self.assertEqual(self.tools.calls, 1)
+
+    async def test_premature_no_draft_uses_bounded_correction_without_poisoning_the_run(self):
+        self.mode = "premature_no_draft"
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
+            result = await self.owner.run(self.request)
+        review = next(item for item in result.specialists if item.role == "work-order")
+        self.assertEqual(review.report["decision"], "needs_clarification")
+        self.assertFalse(self.owner.failures)
 
     async def test_backend_completes_verification_when_chief_omits_the_final_handoff(self):
         self.mode = "skip_verify"

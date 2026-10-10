@@ -818,13 +818,16 @@ class FoundrySupervisor:
                                      f"Use one of these exact evidence IDs: {allowed_evidence_ids}. "
                                      f"Use exact result-relative ID/path pairs such as: {allowed_references}. "
                                      "Never reference receipt metadata such as /limitations.") from error
-            completed_report = validated_report
-            if role == "work-order" and completed_report.get("decision") == "no_draft" and not any(
+            if role == "work-order" and validated_report.get("decision") == "no_draft" and not any(
                 item.work_coverage_equipment_ids for item in self.evidence.values()
             ):
-                raise SourceFailure("A no-draft coverage decision requires actual complete work-source coverage.")
+                raise ToolInputError(
+                    "A no-draft decision requires actual complete work-source coverage. "
+                    "Read the selected equipment's full open-work inventory, then retry the completion."
+                )
             if role == "work-order" and any(item.tool == "propose_work_order" for item in self.evidence.values()):
                 raise SourceFailure("Fixer cannot both stage a proposal and complete a no-draft review.")
+            completed_report = validated_report
             return completed_report
 
         async def plan_orchestration(steps: list[dict[str, object]]) -> dict[str, object]:
