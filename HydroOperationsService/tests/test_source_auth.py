@@ -82,15 +82,20 @@ class RuntimeUserTests(unittest.TestCase):
 
 class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_intent_fills_only_omitted_options_and_cannot_change_the_question(self):
-        intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High"}
+        intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High",
+                  "required_specialists": ["qa"]}
         chat = ChatInput(question="Show a chart.")
         normalized = normalized_chat_input(chat, intent)
         self.assertEqual(normalized.question, chat.question)
         self.assertTrue(normalized.charts_requested)
         self.assertEqual(normalized.native_sources, ("ontology",))
+        self.assertEqual(normalized.required_specialists, ("qa",))
         explicit = ChatInput(question=chat.question, charts_requested=False,
                              native_sources=("data-agent",), proposal_priority="Low")
-        self.assertEqual(normalized_chat_input(explicit, intent), explicit)
+        self.assertEqual(
+            normalized_chat_input(explicit, intent),
+            explicit.model_copy(update={"required_specialists": ("qa",)}),
+        )
         for invalid in ({**intent, "question": "Changed"}, {**intent, "charts_requested": "true"}, {}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 normalized_chat_input(chat, invalid)
@@ -654,7 +659,8 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 actual = source.model_copy(update={"workspace_id": SPA}) if changed else source
                 bridge = AsyncMock()
                 bridge.call.side_effect = [
-                    {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium"},
+                    {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
+                     "required_specialists": ["qa"]},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
                     {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},
                 ]

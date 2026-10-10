@@ -120,6 +120,17 @@ export function isNotificationDraftRequest(question: string): boolean {
   return /\b(?:draft|prepare|compose|write)\b[^.!?;\n]{0,100}\b(?:notification|email|message)\b|\b(?:notification|email|message)\s+draft\b/i.test(positiveActionClauses(question))
 }
 
+export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
+  const positive = positiveActionClauses(question)
+  const factualRead = /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
+  const downstreamRead = requiresDirectSourceVerification(question)
+    || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
+    || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
+  const required = missingRequestedSpecialists(question, [])
+  if (factualRead && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
+  return (['qa', 'rca', 'work-order'] as const).filter(role => required.includes(role))
+}
+
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
   const missing: AgentRole[] = []
   const positive = positiveActionClauses(question)

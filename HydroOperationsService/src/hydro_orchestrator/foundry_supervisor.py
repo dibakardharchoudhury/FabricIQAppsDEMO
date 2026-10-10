@@ -132,6 +132,7 @@ class ChatRequest(Contract):
     charts_requested: bool = Field(default=False, strict=True)
     native_sources: tuple[NativeSource, ...] = ()
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
+    required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     previous_run_id: UUID | None = None
     historical_context: HistoricalContext | None = None
 
@@ -141,6 +142,8 @@ class ChatRequest(Contract):
             raise ValueError("Credential lease must be within five minutes of its persisted request clock.")
         if len(self.native_sources) != len(set(self.native_sources)):
             raise ValueError("Requested native sources must be distinct.")
+        if len(self.required_specialists) != len(set(self.required_specialists)):
+            raise ValueError("Required specialists must be distinct.")
         if self.historical_context is not None and (
             self.historical_context.run_id != self.previous_run_id
             or self.historical_context.source != self.source
@@ -755,6 +758,7 @@ class FoundrySupervisor:
             if len(selected) != 1 or selected[0].get("project_connection_id") != self.native_binding.connections[native_source]:
                 raise SourceFailure("Native agent connection does not match the verified selected source binding.")
         completed_report: dict[str, object] | None = None
+        plan_completed = False
         input_repairs: dict[str, int] = {}
 
         async def guarded(name: str, callback, **kwargs):
@@ -893,6 +897,7 @@ class FoundrySupervisor:
             return completed_report
 
         async def plan_orchestration(steps: list[dict[str, object]]) -> dict[str, object]:
+            nonlocal plan_completed
             normalized = []
             for step in steps:
                 value = dict(step)
@@ -915,6 +920,29 @@ class FoundrySupervisor:
                     }),
                 })
                 delegations.append(Delegation.model_validate(parsed))
+            requirements = await self.bridge.call({
+                "action": "validate_plan_requirements",
+                "required_specialists": list(request.required_specialists),
+                "steps": [{
+                    "specialist": item.specialist,
+                    "native_source": item.native_source,
+                } for item in delegations],
+                "native_sources": list(request.native_sources),
+            })
+            missing_specialists = requirements.get("missing_specialists")
+            missing_native_sources = requirements.get("missing_native_sources")
+            if missing_specialists or missing_native_sources:
+                missing = [
+                    *(missing_specialists if isinstance(missing_specialists, list) else []),
+                    *(f"fabric-iq:{source}" for source in (
+                        missing_native_sources if isinstance(missing_native_sources, list) else []
+                    )),
+                ]
+                raise ToolInputError(
+                    "The plan omitted explicitly requested capabilities: "
+                    f"{', '.join(str(item) for item in missing)}. "
+                    "Retry plan_orchestration with one complete ordered plan; no specialist has run yet."
+                )
             selected_equipment_ids: set[str] = set()
             verified_issue_equipment_ids: set[str] = set()
             skipped_steps = 0
@@ -976,6 +1004,7 @@ class FoundrySupervisor:
                     selected_equipment_ids.update(grounded_ids)
                 else:
                     selected_equipment_ids = grounded_ids
+            plan_completed = True
             return {
                 "status": "handoffs_complete",
                 "completed_specialist_count": len(self.specialists),
@@ -1018,6 +1047,7 @@ class FoundrySupervisor:
                              "BAD is signal quality, not a physical diagnosis. Cause remains undetermined. "
                              "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
             "charts_requested": request.charts_requested, "native_source": native_source,
+            "required_specialists": request.required_specialists,
             "conditional_maintenance_gate_requested": maintenance_gate_required,
             "permitted_source_catalog": journal.read("tool_catalog"),
             "completion_constraints": {
@@ -1080,7 +1110,8 @@ class FoundrySupervisor:
             self.healthy(request)
             if ((completed_report is not None and invocation.function.name in (
                     "complete_rca_assessment", "complete_work_order_review"))
-                    or invocation.function.name in ("plan_orchestration", "propose_work_order")):
+                    or (invocation.function.name == "plan_orchestration" and plan_completed)
+                    or invocation.function.name == "propose_work_order"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
         agent = FoundryAgent(
@@ -1088,9 +1119,9 @@ class FoundrySupervisor:
             credential=self.credential, tools=functions, timeout=None,
             middleware=[finish_assessment],
             function_invocation_configuration={
-                "max_iterations": 2 if role == "supervisor" else 12,
-                "max_function_calls": 1 if role == "supervisor" else 40,
-                "max_consecutive_errors_per_request": 1 if role == "supervisor" else 2,
+                "max_iterations": 3 if role == "supervisor" else 12,
+                "max_function_calls": 2 if role == "supervisor" else 40,
+                "max_consecutive_errors_per_request": 2,
                 "terminate_on_unknown_calls": True, "include_detailed_errors": False,
                 "allow_concurrent_invocation": role != "supervisor",
             },

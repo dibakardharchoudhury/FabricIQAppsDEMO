@@ -388,7 +388,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if name == "hydro-supervisor-agent":
-            if self.mode.startswith("native"):
+            if self.mode == "plan_repair":
+                roles = ["qa"] if round_number == 0 else ["qa", "rca", "work-order"]
+                steps = [{
+                    "specialist": specialist,
+                    "question": f"Execute the requested {specialist} capability.",
+                    "reason": "Cover the explicit operator capability.",
+                    "native_source": None,
+                    "requires_selection": False,
+                    "requires_verified_issue": False,
+                } for specialist in roles]
+            elif self.mode.startswith("native"):
                 steps = [{
                     "specialist": "fabric-iq", "question": "Use the Data Agent to return the requested rows as JSON.",
                     "reason": "Use the explicitly selected native source.", "native_source": "data-agent",
@@ -1083,6 +1093,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             item.get("role") == "supervisor" and "Deterministic evidence verification" in str(item.get("detail", ""))
             for item in self.events
         ))
+
+    async def test_incomplete_plan_is_repaired_before_any_specialist_executes(self):
+        self.mode = "plan_repair"
+        request = self.request.model_copy(update={
+            "question": "Read telemetry, investigate concerns, and prepare an editable work-order draft.",
+            "required_specialists": ("qa", "rca", "work-order"),
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order"])
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual(self.calls["hydro-qa-agent"], 2)
 
     async def test_projection_schema_allows_only_actual_source_field_pointer_pairs(self):
         receipt = await self.tools.execute("query_telemetry", {"equipment_id": "TEST_T005"}, self.request)

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder } from './local-fabric-sources.mjs'
+import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -29,12 +29,25 @@ const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url
 
 test('backend intent reuses canonical chart, native and human-priority semantics without source access', () => {
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
-    { charts_requested: false, native_sources: [], proposal_priority: 'Medium' })
+    { charts_requested: false, native_sources: [], proposal_priority: 'Medium', required_specialists: ['qa'] })
   assert.equal(chatIntent('Show a chart of power.').charts_requested, true)
   assert.equal(chatIntent('Do not show a chart. Return the rows.').charts_requested, false)
   assert.equal(chatIntent('Draft a high-priority work order.').proposal_priority, 'High')
   assert.throws(() => chatIntent('Draft a high-priority work order and draft a low-priority work order.'), /conflicting/)
   assert.throws(() => chatIntent(' '), /nonempty/)
+  const compound = "Use the selected ontology to resolve T005's identity. Using those verified IDs, inspect telemetry and open work. Investigate concerns and prepare an editable inspection draft only if warranted."
+  assert.deepEqual(chatIntent(compound).required_specialists, ['qa', 'rca', 'work-order'])
+  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'], [
+    { specialist: 'fabric-iq', native_source: 'ontology' },
+  ], ['ontology']), {
+    missing_specialists: ['qa', 'rca', 'work-order'], missing_native_sources: [],
+  })
+  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'], [
+    { specialist: 'fabric-iq', native_source: 'ontology' },
+    { specialist: 'qa', native_source: null },
+    { specialist: 'rca', native_source: null },
+    { specialist: 'work-order', native_source: null },
+  ], ['ontology']), { missing_specialists: [], missing_native_sources: [] })
 })
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {
   const yaml = await readFile(new URL('../rayfin/rayfin.yml', import.meta.url), 'utf8')

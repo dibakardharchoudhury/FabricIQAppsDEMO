@@ -9,7 +9,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/
 import { DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -20,8 +20,26 @@ export function chatIntent(question) {
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
     throw new Error('Chat intent requires a bounded nonempty operator question.')
   }
-  return { charts_requested: requiresChartOutput(question), native_sources: requestedNativeSources(question),
-    proposal_priority: workOrderPriorityForRequest(question) }
+  const nativeSources = requestedNativeSources(question)
+  return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
+    proposal_priority: workOrderPriorityForRequest(question),
+    required_specialists: requiredSpecialists(question, nativeSources.length > 0) }
+}
+
+export function validatePlanRequirements(required, steps, nativeSources) {
+  if (!Array.isArray(required) || !Array.isArray(steps) || !Array.isArray(nativeSources)
+      || required.some(role => !['qa', 'rca', 'work-order'].includes(role))) {
+    throw new Error('Plan requirements need verified required specialists, steps and native sources.')
+  }
+  const roles = steps.map(step => step?.specialist).filter(role => typeof role === 'string')
+  const plannedNative = new Set(steps
+    .filter(step => step?.specialist === 'fabric-iq')
+    .map(step => step?.native_source)
+    .filter(source => source === 'data-agent' || source === 'ontology'))
+  return {
+    missing_specialists: required.filter(role => !roles.includes(role)),
+    missing_native_sources: nativeSources.filter(source => !plannedNative.has(source)),
+  }
 }
 
 class WorkOrderSubmissionError extends Error {
@@ -563,6 +581,9 @@ async function main() {
   }
   const request = JSON.parse(input)
   if (request.action === 'chat_intent') return chatIntent(request.question)
+  if (request.action === 'validate_plan_requirements') {
+    return validatePlanRequirements(request.required_specialists, request.steps, request.native_sources)
+  }
   if (request.action === 'source_contracts') return sourceToolContracts()
   if (request.action === 'rca_contract') return { tool: RCA_REPORT_TOOL }
   if (request.action === 'validate_rca') return parseRcaAssessment(request.report, request.receipts)
