@@ -136,9 +136,9 @@ class ChatRequest(Contract):
     historical_context: HistoricalContext | None = None
 
     @model_validator(mode="after")
-    def bounded_deadline(self) -> "ChatRequest":
+    def bounded_credential_lease(self) -> "ChatRequest":
         if not self.requested_at < self.deadline <= self.requested_at + timedelta(minutes=5):
-            raise ValueError("Run deadline must be within five minutes of its persisted request clock.")
+            raise ValueError("Credential lease must be within five minutes of its persisted request clock.")
         if len(self.native_sources) != len(set(self.native_sources)):
             raise ValueError("Requested native sources must be distinct.")
         if self.historical_context is not None and (
@@ -480,8 +480,6 @@ class FoundrySupervisor:
     def healthy(self, request: ChatRequest) -> None:
         if self.failures:
             raise SourceFailure("A source, handoff or validation failed; no successful answer is permitted.") from self.failures[0]
-        if request.deadline <= utc_now():
-            raise SourceFailure("The persisted run deadline has elapsed; start a new source-grounded run.")
 
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
@@ -806,7 +804,7 @@ class FoundrySupervisor:
                 self.healthy(request)
                 if result.source != request.source or result.tool != tool_name or result.arguments != arguments:
                     raise SourceFailure("Tool receipt changed its authoritative source or arguments.")
-                if result.completed_at > utc_now() or result.completed_at > request.deadline:
+                if result.completed_at > utc_now():
                     raise SourceFailure("Source receipt timestamp exceeds the run clock.")
                 if result.completed_at < request.requested_at:
                     raise SourceFailure("Prior-run analytical values cannot be reused as a new source read.")
@@ -844,7 +842,7 @@ class FoundrySupervisor:
             async with self.tool_lock:
                 if result.source != request.source or result.tool != tool_name or result.arguments != arguments:
                     raise SourceFailure("Tool receipt changed its authoritative source or arguments.")
-                if result.completed_at > utc_now() or result.completed_at > request.deadline:
+                if result.completed_at > utc_now():
                     raise SourceFailure("Source receipt timestamp exceeds the run clock.")
                 if result.completed_at < request.requested_at:
                     raise SourceFailure("Prior-run analytical values cannot be reused as a new source read.")
@@ -1087,7 +1085,7 @@ class FoundrySupervisor:
 
         agent = FoundryAgent(
             project_endpoint=self.endpoint, agent_name=version.name, agent_version=version.version,
-            credential=self.credential, tools=functions, timeout=120 if role == "fabric-iq" else 45,
+            credential=self.credential, tools=functions, timeout=None,
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 2 if role == "supervisor" else 12,
@@ -1098,58 +1096,53 @@ class FoundrySupervisor:
             },
         )
         started = perf_counter()
-        remaining = (request.deadline - utc_now()).total_seconds()
-        specialist_timeout = 150 if role == "fabric-iq" else 90
         async with agent:
-            async with asyncio.timeout(
-                remaining if role == "supervisor" else min(specialist_timeout, remaining)
-            ):
-                options: ChatOptions = {
-                    "store": False,
-                    "max_tokens": 8192 if role == "supervisor" else 4096,
-                }
-                active_context = context
-                response: AgentResponse | None = None
-                for completion_attempt in range(2):
-                    try:
-                        response = await agent.run(json.dumps(active_context), options=options)
-                    except AgentFrameworkException as error:
-                        logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
-                        self.healthy(request)
-                        raise
-                    except APIStatusError as error:
-                        raise SourceFailure(f"Foundry {role} invocation failed (HTTP {error.status_code}).") from error
-                    except APITimeoutError as error:
-                        raise SourceFailure(f"Foundry {role} invocation exceeded its service deadline.") from error
+            options: ChatOptions = {
+                "store": False,
+                "max_tokens": 8192 if role == "supervisor" else 4096,
+            }
+            active_context = context
+            response: AgentResponse | None = None
+            for completion_attempt in range(2):
+                try:
+                    response = await agent.run(json.dumps(active_context), options=options)
+                except AgentFrameworkException as error:
+                    logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
                     self.healthy(request)
-                    if not response.response_id or response.finish_reason in ("length", "content_filter"):
-                        raise SourceFailure("Foundry response has no completed, inspectable service identity.")
-                    for message in response.messages:
-                        if any(content.type in ("error", "function_approval_request") for content in message.contents):
-                            raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
-                    self.invocation_inputs[response.response_id] = sha256(_encoded(active_context)).hexdigest()
-                    proposal_staged = role == "work-order" and any(
-                        item.tool == "propose_work_order" for item in self.evidence.values()
-                    )
-                    if role not in ("rca", "work-order") or completed_report is not None or proposal_staged:
-                        break
-                    if completion_attempt == 1:
-                        break
-                    logger.warning("Foundry %s omitted its structured completion; requesting one bounded repair.", role)
-                    active_context = {
-                        **context,
-                        "evidence": self.model_evidence(role),
-                        "allowed_evidence_ids": list(self.evidence),
-                        "allowed_evidence_references": (
-                            rca_reference_examples(self.evidence) if role == "rca" else ()
-                        ),
-                        "completed_specialists": self.model_specialists(role),
-                        "completion_repair": (
-                            "The prior response was not accepted because it omitted the required structured completion. "
-                            "Use the captured evidence and call the role's completion function now. Do not return prose, "
-                            "repeat the investigation, or claim a result without the function call."
-                        ),
-                    }
+                    raise
+                except APIStatusError as error:
+                    raise SourceFailure(f"Foundry {role} invocation failed (HTTP {error.status_code}).") from error
+                except APITimeoutError as error:
+                    raise SourceFailure(f"Foundry {role} invocation exceeded an upstream service deadline.") from error
+                self.healthy(request)
+                if not response.response_id or response.finish_reason in ("length", "content_filter"):
+                    raise SourceFailure("Foundry response has no completed, inspectable service identity.")
+                for message in response.messages:
+                    if any(content.type in ("error", "function_approval_request") for content in message.contents):
+                        raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
+                self.invocation_inputs[response.response_id] = sha256(_encoded(active_context)).hexdigest()
+                proposal_staged = role == "work-order" and any(
+                    item.tool == "propose_work_order" for item in self.evidence.values()
+                )
+                if role not in ("rca", "work-order") or completed_report is not None or proposal_staged:
+                    break
+                if completion_attempt == 1:
+                    break
+                logger.warning("Foundry %s omitted its structured completion; requesting one bounded repair.", role)
+                active_context = {
+                    **context,
+                    "evidence": self.model_evidence(role),
+                    "allowed_evidence_ids": list(self.evidence),
+                    "allowed_evidence_references": (
+                        rca_reference_examples(self.evidence) if role == "rca" else ()
+                    ),
+                    "completed_specialists": self.model_specialists(role),
+                    "completion_repair": (
+                        "The prior response was not accepted because it omitted the required structured completion. "
+                        "Use the captured evidence and call the role's completion function now. Do not return prose, "
+                        "repeat the investigation, or claim a result without the function call."
+                    ),
+                }
             self.healthy(request)
             if response is None:
                 raise RuntimeError("Foundry invocation did not produce a response.")
@@ -1379,16 +1372,15 @@ class FoundrySupervisor:
             raise SourceFailure("Answer-projection evidence exceeds the bounded model context.")
         started = perf_counter()
         async with agent:
-            async with asyncio.timeout(min(90, (request.deadline - utc_now()).total_seconds())):
-                options: ChatOptions = {
-                    "response_format": {"type": "json_schema", "json_schema": {
-                        "name": "GroundedNarrative",
-                        "strict": True,
-                        "schema": NarrativeProjection.model_json_schema(),
-                    }},
-                    "store": False, "max_tokens": 1200,
-                }
-                response = await agent.run(json.dumps(context), options=options)
+            options: ChatOptions = {
+                "response_format": {"type": "json_schema", "json_schema": {
+                    "name": "GroundedNarrative",
+                    "strict": True,
+                    "schema": NarrativeProjection.model_json_schema(),
+                }},
+                "store": False, "max_tokens": 1200,
+            }
+            response = await agent.run(json.dumps(context), options=options)
         self.healthy(request)
         if (not response.response_id or response.finish_reason in ("length", "content_filter")
                 or any(content.type in ("function_call", "mcp_server_tool_call", "error", "function_approval_request")

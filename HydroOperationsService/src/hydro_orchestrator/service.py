@@ -333,7 +333,7 @@ def create_delegated_app(
     if source.tenant_id != verifier.policy.tenant_id:
         raise ValueError("Source and delegated authorization tenants must match.")
     if not 0 < run_timeout <= 300 or max_concurrent_runs < 1:
-        raise ValueError("Invocation deadlines and concurrency must be bounded.")
+        raise ValueError("Credential admission leases and concurrency must be bounded.")
     capacity = asyncio.Semaphore(max_concurrent_runs)
     app = FastAPI()
 
@@ -356,6 +356,7 @@ def create_delegated_app(
         chat: ChatRequest | None = None
         state: Path | None = None
         requested_at = utc_now()
+        # This only proves that submitted delegated tokens cover admission. It is not an execution deadline.
         deadline = requested_at + timedelta(seconds=run_timeout)
 
         def failed(status: int, category: str, message: str) -> HTTPException:
@@ -394,8 +395,7 @@ def create_delegated_app(
                     raise HTTPException(429, "Orchestration capacity is busy; retry later.")
                 assert body.run_id is not None and body.decision is not None
                 async with capacity:
-                    async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
-                        return await handler(state, credential, body.run_id, body.decision)
+                    return await handler(state, credential, body.run_id, body.decision)
             if body.operation == "evidence":
                 assert body.run_id is not None
                 journal = RunJournal(state / str(body.run_id) / "receipts")
@@ -416,8 +416,6 @@ def create_delegated_app(
                 } for draft in answer.proposals]}
             if capacity.locked():
                 raise HTTPException(429, "Orchestration capacity is busy; retry later.")
-            if utc_now() >= deadline:
-                raise TimeoutError("Delegated authorization exceeded the invocation deadline.")
             assert body.chat is not None
             input_chat = await normalize_chat(body.chat) if normalize_chat else body.chat
             if input_chat.question != body.chat.question:
@@ -451,12 +449,11 @@ def create_delegated_app(
 
                     async def execute() -> ChatAnswer:
                         async with capacity:
-                            async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
-                                async with factory(state, stream_credential) as owner:
-                                    if owner.root != state or owner.source != source or owner.credential is not stream_credential:
-                                        raise ValueError("Supervisor factory changed its user, source or delegated credential.")
-                                    owner.set_event_sink(events.put_nowait)
-                                    return await owner.run(chat)
+                            async with factory(state, stream_credential) as owner:
+                                if owner.root != state or owner.source != source or owner.credential is not stream_credential:
+                                    raise ValueError("Supervisor factory changed its user, source or delegated credential.")
+                                owner.set_event_sink(events.put_nowait)
+                                return await owner.run(chat)
 
                     task = asyncio.create_task(execute())
                     try:
@@ -493,9 +490,9 @@ def create_delegated_app(
                                        "An authorized source request failed; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except TimeoutError:
-                        yield line(terminal_event("The orchestration deadline elapsed; no answer was certified."))
-                        error = failed(504, "deadline",
-                                       "Orchestration exceeded its deadline; no answer is certified.")
+                        yield line(terminal_event("An upstream source operation timed out; no answer was certified."))
+                        error = failed(504, "source_timeout",
+                                       "An upstream source operation timed out; inspect the execution audit.")
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     except Exception as failure:
                         if isinstance(failure, SourceFailure):
@@ -517,17 +514,16 @@ def create_delegated_app(
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
                 )
             async with capacity:
-                async with asyncio.timeout(max(0, (deadline - utc_now()).total_seconds())):
-                    async with factory(state, credential) as owner:
-                        if owner.root != state or owner.source != source or owner.credential is not credential:
-                            raise ValueError("Supervisor factory changed its user, source or delegated credential.")
-                        answer = await owner.run(chat)
-                        if (answer.run_id != chat.run_id or answer.source != source
-                                or answer.requested_at != chat.requested_at):
-                            raise ValueError("Supervisor returned an answer for a different invocation.")
-                        return answer.model_copy(update={
-                            "audit_url": "/invocations", "presentation": client_presentation(answer),
-                        })
+                async with factory(state, credential) as owner:
+                    if owner.root != state or owner.source != source or owner.credential is not credential:
+                        raise ValueError("Supervisor factory changed its user, source or delegated credential.")
+                    answer = await owner.run(chat)
+                    if (answer.run_id != chat.run_id or answer.source != source
+                            or answer.requested_at != chat.requested_at):
+                        raise ValueError("Supervisor returned an answer for a different invocation.")
+                    return answer.model_copy(update={
+                        "audit_url": "/invocations", "presentation": client_presentation(answer),
+                    })
         except SourceAuthorizationError:
             logger.warning("Rejected delegated invocation authorization.")
             raise failed(401, "authorization", "Renew source access through the existing sign-in session.") from None
@@ -535,8 +531,9 @@ def create_delegated_app(
             logger.error("Delegated invocation source request failed (%s).", type(error).__name__)
             raise failed(502, "source_request", "An authorized source request failed; inspect the execution audit.") from None
         except TimeoutError:
-            logger.warning("Delegated invocation exceeded its bounded deadline.")
-            raise failed(504, "deadline", "Orchestration exceeded its deadline; no answer is certified.") from None
+            logger.warning("Delegated invocation upstream operation timed out.")
+            raise failed(504, "source_timeout",
+                         "An upstream source operation timed out; inspect the execution audit.") from None
         except HTTPException:
             raise
         except Exception as error:

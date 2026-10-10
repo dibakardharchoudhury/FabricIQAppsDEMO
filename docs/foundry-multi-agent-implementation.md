@@ -317,14 +317,20 @@ the tested delegated opening path does not instantiate CLI authentication.
 
 The `create_delegated_app` HTTP boundary verifies credentials before execution,
 isolates receipt namespaces by user and source, enforces the supplied credential
-and request identity, bounds concurrency/deadlines, sanitizes validation errors
+and request identity, bounds concurrency and credential admission leases, sanitizes validation errors
 and clears leases on exit. Its raw POST protocol supports run invocation and
 same-user completed/failed-run evidence retrieval. Fifteen signed-token/HTTP tests cover
 these boundaries, including expiry, cross-user audit denial, credential/namespace
-substitution, oversized input, saturation, timeout, source failures and failure
+substitution, oversized input, saturation, source failures and failure
 audit storage errors. Authorized failures include a server-assigned run ID and
 sanitized category/source/clock audit, never raw exception bodies or tokens.
 Audit storage errors explicitly report that the audit is unavailable.
+Hosted orchestration, specialist handoffs, native-source execution and final
+narrative projection have no application wall-clock timeout. The browser keeps
+the streaming request open until a certified answer or explicit failure; disconnect
+cancellation still releases capacity. Finite source/network timeouts and external
+Foundry or delegated-token limits are surfaced as upstream failures, not recast as
+successful empty evidence.
 The earlier complete 100-test backend run took 176.939 seconds; these are transport/SDK
 tests, not production source, hosted or latency acceptance.
 

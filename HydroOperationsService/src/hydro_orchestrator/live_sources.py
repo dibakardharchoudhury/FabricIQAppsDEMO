@@ -195,8 +195,8 @@ class FabricBackendTools:
         self.sources = sources
 
     def require_request(self, request: "ChatRequest") -> None:
-        if request.source != self.sources.discovery.source or utc_now() >= request.deadline:
-            raise SourceFailure("Source identity changed or the source request deadline expired.")
+        if request.source != self.sources.discovery.source:
+            raise SourceFailure("Source identity changed.")
 
     async def approve(
         self, draft: WorkOrderDraft, edits: WorkOrderEdits, principal_id: UUID, creation_id: UUID,

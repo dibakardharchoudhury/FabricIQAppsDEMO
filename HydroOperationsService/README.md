@@ -270,15 +270,22 @@ token with `Item.Execute.All` and item Execute access is also required. See
   not browser-storage extraction, CLI exchange or a new registration.
 - RS256 signatures, selected tenant, configured resource audiences, SPA client,
   delegated identity, same user across resources and expiry covering the bounded
-  run are verified before constructing a supervisor. Actual source permissions
+  admission lease are verified before constructing a supervisor. The lease proves
+  that credentials are valid when work starts; it is not an execution deadline.
+  Actual source permissions
   are still enforced by the source services; this does not certify the new
   hosted delegated SQL path. The embedded app's working SQL/WO path is separate.
 - State is namespaced by signed-in principal and complete configured source
   identity. The factory cannot substitute another state namespace, source or
   CLI/managed-identity credential. Returned answers must match the invocation.
-- Raw tokens are not passed into `ChatRequest`, model context or receipts.
-  Validation responses never include raw Pydantic inputs. Leases are cleared
-  after success, source failure, timeout or cancellation.
+- Raw tokens are not passed into model context or receipts. Validation responses
+  never include raw Pydantic inputs. Leases are cleared after success, source
+  failure, upstream network timeout or cancellation.
+- The Hosted supervisor, every specialist handoff and the final narrative
+  projection have no application wall-clock timeout. Streaming continues until a
+  certified answer or explicit failure, and browser disconnect cancels abandoned
+  work. Individual network/source operations remain finite and external Foundry
+  or token-expiry limits still propagate explicitly.
 - The boundary rejects oversized bodies and full execution capacity explicitly.
   Signing-key reads are coalesced and cached; unknown key IDs cannot force an
   immediate refresh on every request.
@@ -436,8 +443,8 @@ Authenticated local request + idempotency key
 - Work starts independently of the HTTP request. Closing the connection does not
   cancel a run. Restart recovers queued/running work; waiting approvals remain
   waiting. Completed source reads are not repeated on checkpoint recovery.
-- Model/source steps have deadlines. Failures are logged and recorded explicitly,
-  not converted to empty evidence. Explicit retry is limited to two attempts;
+- Failures are logged and recorded explicitly, not converted to empty evidence.
+  Explicit retry is limited to two attempts;
   automatic source retry/circuit-breaker policy is not implemented.
 - Approval is bound to the exact proposal digest and expiry. Decisions cannot be
   changed after recording. Concurrent duplicate approvals and replay after a
@@ -554,8 +561,8 @@ and checks its completion-tool schema against the app's shared `RCA_REPORT_TOOL`
 Foundry rejects a request-level `tools` override when an agent reference is supplied;
 the adapter uses the verified persisted tool and a forced completion choice instead.
 It makes one model invocation, with no automatic retry or model-directed query loop.
-HTTP errors, deadlines, incomplete output, narrative answers and unexpected/duplicate
-calls fail explicitly.
+HTTP errors, upstream service limits, incomplete output, narrative answers and
+unexpected/duplicate calls fail explicitly.
 
 The returned report passes the same `parseRcaAssessment` implementation used by the
 SPA. References must point into actual supplied source receipts; invented paths,

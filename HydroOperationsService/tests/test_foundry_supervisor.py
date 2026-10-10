@@ -876,10 +876,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(SourceFailure, "identit"):
                 self.owner.answer(self.request, AnswerPlan.model_validate(plan))
 
-    async def test_deadline_and_changed_source_stop_before_model_calls(self):
+    async def test_credential_lease_does_not_limit_execution_and_changed_source_stops(self):
         expired = self.request.model_copy(update={"deadline": utc_now() - timedelta(seconds=1)})
-        with self.assertRaisesRegex(SourceFailure, "deadline"):
-            await self.owner.run(expired)
+        self.owner.healthy(expired)
         self.assertEqual(self.calls, {})
         changed = self.request.model_copy(update={"source": SOURCE.model_copy(update={"workspace_id": uuid4()})})
         with self.assertRaisesRegex(SourceFailure, "deployment identity"):

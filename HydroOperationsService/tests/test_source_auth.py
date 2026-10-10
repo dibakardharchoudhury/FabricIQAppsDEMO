@@ -532,16 +532,24 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 413)
             self.assertEqual(leases, [])
 
-    async def test_ingress_timeout_closes_context_and_credentials(self):
-        async def never_finishes(request):
-            await asyncio.Event().wait()
+    async def test_ingress_admission_lease_does_not_limit_execution(self):
+        async def finishes_after_admission_lease(request):
+            await asyncio.sleep(0.1)
+            return ChatAnswer(
+                run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+                source_read_times=(), summary="Completed after the admission lease.",
+                tables=(), charts=(), limitations=(), cell_sources=(), specialists=(),
+                audit_url=f"/chat/runs/{request.run_id}/evidence", proposals=(), proposal_digests={},
+            )
 
         with TemporaryDirectory() as directory:
-            app, leases, _, contexts = self.ingress(Path(directory), run=never_finishes, timeout=0.05)
+            app, leases, _, contexts = self.ingress(
+                Path(directory), run=finishes_after_admission_lease, timeout=0.05,
+            )
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                          base_url="http://test") as client:
                 response = await client.post("/invocations", json=self.invocation())
-            self.assertEqual(response.status_code, 504, response.text)
+            self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(contexts, ["closed"])
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])

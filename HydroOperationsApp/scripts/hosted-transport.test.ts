@@ -41,6 +41,7 @@ test('thin transport preserves backend output, renews leases and keeps session a
     calls.push({ url: new URL(String(input)), body: JSON.parse(String(init?.body)) })
     assert.equal(init?.cache, 'no-store')
     assert.equal(init?.redirect, 'error')
+    assert.equal(init?.signal, undefined)
     return response(calls.at(-1)?.body.operation === 'decide'
       ? { run_id: 'run-1', proposal_id: 'draft-1', status: 'rejected', production_write_executed: false }
       : reply())
