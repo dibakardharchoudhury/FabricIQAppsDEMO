@@ -47,7 +47,12 @@ def _has_native_domain_evidence(value: object) -> bool:
     if isinstance(value, dict):
         if value and set(value).issubset({"id", "content", "title", "url"}):
             return bool(str(value.get("content", "")).strip())
-        return any(_has_native_domain_evidence(item) for item in value.values())
+        metadata_keys = {"id", "title", "url", "type", "status", "name", "server_label"}
+        return any(
+            _has_native_domain_evidence(item)
+            for key, item in value.items()
+            if key not in metadata_keys and not key.startswith("@")
+        )
     if isinstance(value, list):
         return any(_has_native_domain_evidence(item) for item in value)
     return value is not None and (not isinstance(value, str) or bool(value.strip()))

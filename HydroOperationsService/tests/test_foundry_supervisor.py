@@ -487,7 +487,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 })]
         elif name == "hydro-fabric-iq-agent":
             native_output = (
-                {"value": [{
+                {"@odata.context": "https://example.test/$metadata#items", "value": [{
                     "id": "connection-1", "content": "", "title": "hydro-fabric-ontology",
                     "url": "https://example.test/ontology",
                 }]}
