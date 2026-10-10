@@ -10,7 +10,42 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## October 9 planner/executor deployment status
+## October 10 final planner/executor status
+
+**Current Hosted Agent: v47. Current Fabric deployment: `deploy-20261010175853-fc340945`
+from commit `67e142e`.** The active Hosted image is
+`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
+(`validated-20261010174213`, ACR run `dt1j`). The runtime uses `gpt-5.6-sol`,
+numeric ontology generation 2 and production writes disabled.
+
+The final backend regression passed 143 tests on Node 24 plus Pyright with zero
+diagnostics. The SPA passed typecheck, lint, environment validation and the
+production build. Canonical deployment preserved 39 SPA redirects and passed
+AppBackend/CORS, GraphQL and token endpoint checks. Tenant-wide consent remains
+an administrator prerequisite; current-user consent supports this operator.
+
+The October 10 live matrix on the final architecture produced these outcomes:
+
+- Prompt 1 exercised Chief, Gauge and Sleuth with visible handoffs. The redundant
+  probabilistic second-Gauge certification was replaced in v47 by an explicit
+  deterministic application validation event over immutable, already-attested
+  receipts and validated RCA/work-review contracts.
+- Prompt 2 failed closed because Fabric IQ returned ontology connection metadata
+  rather than T005 instance evidence. No downstream identity was invented and no
+  answer or write was certified.
+- Prompts 3-9 completed with grounded HTML tables, requested charts where applicable,
+  visible specialist handoffs and no production writes. Prompt 8 staged one
+  evidence-backed draft, which was rejected.
+- Prompt 10 staged exactly one editable Low-priority card with the requested title;
+  rejection disabled it and confirmed no creation. Its follow-up retained
+  `cause remains undetermined`.
+
+Native connection IDs, titles, URLs, status/type wrappers and OData metadata are
+not accepted as domain evidence. This rule is source-generic and does not route on
+acceptance-prompt text. The complete typed relationship and operational-semantic
+contract remains server-owned; the browser only renders backend events and results.
+
+## October 9 planner/executor deployment status (historical)
 
 **Current deployed Fabric app: 1.0.803 (`5a47c24`). Current Hosted Agent: v23.**
 The active image is

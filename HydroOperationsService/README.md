@@ -7,28 +7,30 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v23 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v47 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v23 image is
-`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`
-(`validated-20261009223856`, ACR run `dtt`). The source configuration digest is
+The active v47 image is
+`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
+(`validated-20261010174213`, ACR run `dt1j`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
 acceptance test created production work.
 
-The supported-runtime regression on October 9 passed all 135 backend tests under
+The supported-runtime regression on October 10 passed all 143 backend tests under
 Node 24 and Pyright with zero errors or warnings. The companion SPA passed 208
 frontend tests, typecheck, lint, environment validation and production build.
 
 Chief now exposes one strict `plan_orchestration` tool. It returns one complete
 ordered plan of one to eight specialist steps; the backend validates and executes
-those steps serially, propagates immutable evidence and completed reports, and adds
-independent Gauge verification after RCA/work review when required. Prompt-specific
+those steps serially and propagates immutable evidence and completed reports. Final certification
+after RCA/work review is deterministic application validation over attested receipts
+and validated specialist contracts; it does not add a latency-prone duplicate model
+call or claim that another agent ran. Prompt-specific
 runtime routing shortcuts and the open-ended Chief function loop are removed.
 Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
 projection runtime use `gpt-5.6-sol`.

@@ -1,6 +1,6 @@
 # Foundry and multi-agent implementation record
 
-Work period: **October 7-9, 2026**. This is the end-to-end record of the
+Work period: **October 7-10, 2026**. This is the end-to-end record of the
 implementation, corrections, measured results and unfinished migration, grounded
 in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
@@ -8,9 +8,9 @@ as passes after a later code change.
 
 ## Current state: bounded Foundry-owned planner/executor
 
-Hosted Agent v23 is active on immutable image
-`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`
-(`validated-20261009223856`, ACR run `dtt`). It runs the Microsoft Agent Framework
+Hosted Agent v47 is active on immutable image
+`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
+(`validated-20261010174213`, ACR run `dt1j`). It runs the Microsoft Agent Framework
 workflow that coordinates Chief, Gauge, Sleuth, Fixer and Sparky. The SPA uses
 one authenticated Invocations endpoint for normal Foundry chat and for both
 Battle comparison routes. Real backend events drive the crew animation; the
@@ -20,8 +20,11 @@ The architecture now uses a true bounded planner/executor rather than an open-en
 Chief function loop. Chief v17 exposes only `plan_orchestration` and returns one
 complete ordered plan of one to eight steps. The backend validates each delegation
 through the shared contract, executes specialists serially, injects prior reports
-and immutable evidence into later steps, adds independent Gauge verification where
-required, and renders non-chart answers from literal source receipts. No prompt
+and immutable evidence into later steps, then deterministically certifies attested
+receipts and validated specialist contracts without a redundant model verifier.
+This certification is emitted as an application validation event, not represented
+as a fabricated agent handoff. The runtime renders non-chart answers from literal
+source receipts. No prompt
 regex, BAD/UNCERTAIN shortcut, direct T010 route or post-draft routing bypass remains.
 Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
 projection runtime use `gpt-5.6-sol`.
