@@ -93,7 +93,8 @@ function streamedExecutionEvent(value: unknown): OrchestrationEvent {
         || (entry.callId !== undefined && typeof entry.callId !== 'string')
         || (entry.failed !== undefined && typeof entry.failed !== 'boolean')
         || (entry.activity !== undefined && entry.activity !== 'tool-start' && entry.activity !== 'tool-end'
-          && entry.activity !== 'delegation-return' && entry.activity !== 'checked-presentation')) {
+          && entry.activity !== 'delegation-return' && entry.activity !== 'checked-presentation'
+          && entry.activity !== 'validation')) {
         throw new Error('Hosted streaming execution trace entry is invalid.')
       }
       return entry as AgentTraceEntry

@@ -12,7 +12,7 @@ export type AgentTraceEntry = {
   responseId?: string
   callId?: string
   failed?: boolean
-  activity?: 'tool-start' | 'tool-end' | 'delegation-return' | 'checked-presentation'
+  activity?: 'tool-start' | 'tool-end' | 'delegation-return' | 'checked-presentation' | 'validation'
 }
 
 export type OrchestrationEvent = {
