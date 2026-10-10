@@ -1216,6 +1216,15 @@ class FoundrySupervisor:
             limitations=(),
         )
 
+    def source_bound_answer(self, request: ChatRequest) -> tuple[AnswerPlan, ChatAnswer] | None:
+        plan = self.source_answer_plan()
+        if plan is None:
+            return None
+        try:
+            return plan, self.answer(request, plan)
+        except SourceFailure:
+            return None
+
     async def project_answer(
         self, request: ChatRequest, journal: RunJournal, version: AgentVersion, rejected: str, error: Exception,
     ) -> tuple[AnswerPlan, ProjectionReceipt]:
@@ -1604,16 +1613,23 @@ class FoundrySupervisor:
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     projection: ProjectionReceipt | None = None
-                    source_plan = owner.source_answer_plan() if not request.charts_requested else None
+                    source_answer = owner.source_bound_answer(request)
                     try:
-                        plan = source_plan or AnswerPlan.model_validate_json(turn.text)
-                        result = owner.answer(request, plan)
+                        if source_answer is not None and not request.charts_requested:
+                            plan, result = source_answer
+                        else:
+                            plan = AnswerPlan.model_validate_json(turn.text)
+                            result = owner.answer(request, plan)
                     except (ValidationError, SourceFailure) as error:
-                        logger.warning("Supervisor presentation rejected; applying one tool-free typed answer projection.")
-                        plan, projection = await owner.project_answer(
-                            request, journal, versions["supervisor"], turn.text, error,
-                        )
-                        result = owner.answer(request, plan)
+                        if source_answer is not None:
+                            logger.warning("Supervisor presentation rejected; using verified source-bound tables.")
+                            plan, result = source_answer
+                        else:
+                            logger.warning("Supervisor presentation rejected; applying one tool-free typed answer projection.")
+                            plan, projection = await owner.project_answer(
+                                request, journal, versions["supervisor"], turn.text, error,
+                            )
+                            result = owner.answer(request, plan)
                     journal.save("prepared_answer", PreparedAnswer(
                         answer=result, evidence=tuple(owner.evidence.values()),
                         supervisor_response_id=turn.response_id, supervisor_version=turn.version,

@@ -643,6 +643,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                         self.owner.answer(request, AnswerPlan.model_validate(self.plan()))
                     self.mode = "valid"
 
+    async def test_rejected_chart_answer_can_fall_back_to_source_rows_without_chartable_units(self):
+        receipt = ToolEvidence(
+            id="work-1", source=self.request.source, tool="query_operations", arguments={},
+            completed_at=utc_now(), result={
+                "rows": [{"equipmentId": "TEST_T005", "workOrderNumber": "WO-1", "status": "Ready"}],
+            },
+        )
+        self.owner.evidence[receipt.id] = receipt
+        request = self.request.model_copy(update={"charts_requested": True})
+        fallback = self.owner.source_bound_answer(request)
+        self.assertIsNotNone(fallback)
+        if fallback is None:
+            self.fail("Expected a verified source-bound fallback.")
+        plan, result = fallback
+        self.assertEqual(result.charts, ())
+        self.assertEqual(plan.tables[0].rows[0].cells[0].source.evidence_id, receipt.id)
+        self.assertIn("no numeric measure with verified units", result.limitations[-1])
+
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
         second = first.model_copy(update={
