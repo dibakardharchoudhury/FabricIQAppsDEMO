@@ -559,14 +559,23 @@ class FoundrySupervisor:
     def model_specialists(self, role: Role, compact: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not compact:
             return [item.model_dump(mode="json") for item in self.specialists]
-        return [{
-            "role": item.role,
-            "agent_name": item.agent_name,
-            "version": item.version,
-            "response_id": item.response_id,
-            "duration_ms": item.duration_ms,
-            "report": item.report,
-        } for item in self.specialists]
+        values: list[dict[str, object]] = []
+        for item in self.specialists:
+            report = item.report
+            if compact and role == "qa" and isinstance(report, dict):
+                report = {
+                    key: report[key] for key in ("observations", "maintenance_follow_up")
+                    if key in report
+                }
+            values.append({
+                "role": item.role,
+                "agent_name": item.agent_name,
+                "version": item.version,
+                "response_id": item.response_id,
+                "duration_ms": item.duration_ms,
+                "report": report,
+            })
+        return values
 
     async def versions(self, journal: RunJournal) -> dict[Role, AgentVersion]:
         contracts = await self.bridge.call({"action": "agent_contracts"})

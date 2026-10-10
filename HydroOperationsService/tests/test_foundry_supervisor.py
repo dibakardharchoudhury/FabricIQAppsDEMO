@@ -230,8 +230,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verification_evidence, projected)
         self.assertEqual(self.owner.evidence["fleet-1"].result["rows"], rows)
         self.assertNotIn("text", specialists[0])
-        self.assertEqual(verification_specialists, specialists)
         self.assertEqual(specialists[0]["report"]["observations"][0]["path"], "/rows/0")
+        self.assertEqual(
+            verification_specialists[0]["report"],
+            {"observations": [{"evidence_id": "fleet-1", "path": "/rows/0"}]},
+        )
 
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
