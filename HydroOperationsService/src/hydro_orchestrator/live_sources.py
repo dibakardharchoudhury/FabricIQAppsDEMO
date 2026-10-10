@@ -271,6 +271,13 @@ class FabricBackendTools:
         elif name == "query_station_power":
             column_units = self._station_power_attestation(result.result)
         public_result = dict(result.result)
+        if name == "query_operations" and arguments.get("entity") == "work_orders":
+            where = arguments.get("where")
+            if (isinstance(where, list) and len(where) == 1 and isinstance(where[0], dict)
+                    and where[0].get("column") == "equipmentId" and where[0].get("op") == "eq"
+                    and isinstance(where[0].get("value"), str) and where[0]["value"]
+                    and "limit" not in arguments and public_result.get("truncated") is False):
+                work_coverage = (where[0]["value"],)
         if name == "propose_work_order":
             draft = self._work_draft(public_result, request, arguments, result.completed_at)
             public_result["proposal"] = draft.model_dump(mode="json")

@@ -213,6 +213,32 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("synthetic-token", evidence.model_dump_json())
 
+    async def test_complete_equipment_work_read_attests_coverage_without_claiming_filtered_reads(self):
+        sources = reader()
+        request = self.chat(sources)
+        sources.bridge.call.return_value = {
+            "source": request.source.model_dump(mode="json"), "completed_at": utc_now().isoformat(),
+            "result": {"rows": [], "row_count": 0, "truncated": False},
+        }
+        tools = FabricBackendTools(sources)
+        complete = {
+            "entity": "work_orders",
+            "where": [{"column": "equipmentId", "op": "eq", "value": "T1"}],
+        }
+        evidence = await tools.execute("query_operations", complete, request)
+        self.assertEqual(evidence.work_coverage_equipment_ids, ("T1",))
+
+        for arguments in (
+            {**complete, "limit": 10},
+            {"entity": "work_orders", "where": [
+                {"column": "equipmentId", "op": "eq", "value": "T1"},
+                {"column": "status", "op": "eq", "value": "Approved"},
+            ]},
+        ):
+            with self.subTest(arguments=arguments):
+                evidence = await tools.execute("query_operations", arguments, request)
+                self.assertEqual(evidence.work_coverage_equipment_ids, ())
+
     async def test_station_power_uses_kusto_and_attests_only_converted_mean_units(self):
         sources = reader()
         request = self.chat(sources)
