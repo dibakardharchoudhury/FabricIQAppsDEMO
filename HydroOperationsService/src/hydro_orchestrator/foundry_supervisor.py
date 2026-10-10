@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from hashlib import sha256
 from datetime import timedelta
 from pathlib import Path
@@ -276,6 +276,7 @@ class Delegation(Contract):
     question: str
     reason: str | None = None
     native_source: NativeSource | None = Field(default=None, alias="nativeSource")
+    requires_selection: bool = Field(default=False, alias="requiresSelection")
 
 
 class OrchestrationPlan(Contract):
@@ -289,6 +290,18 @@ class CachedHandoff(Contract):
 
 def _encoded(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def evidence_equipment_ids(receipts: Iterable[ToolEvidence]) -> set[str]:
+    selected: set[str] = set()
+    for receipt in receipts:
+        selected.update(value for value in receipt.resolved_equipment_ids if value)
+        for identity in receipt.row_identities.values():
+            for key in ("equipment_id", "equipmentId"):
+                value = identity.get(key)
+                if isinstance(value, str) and value:
+                    selected.add(value)
+    return selected
 
 
 def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -> tuple[str, ...]:
@@ -835,6 +848,7 @@ class FoundrySupervisor:
             for step in steps:
                 value = dict(step)
                 value["nativeSource"] = value.pop("native_source", None)
+                value["requiresSelection"] = value.pop("requires_selection", False)
                 normalized.append(value)
             plan = OrchestrationPlan.model_validate({"steps": normalized})
             delegations = []
@@ -846,12 +860,45 @@ class FoundrySupervisor:
                         "question": step.question,
                         "reason": step.reason,
                         "native_source": step.native_source,
+                        "requires_selection": step.requires_selection,
                     }),
                 })
                 delegations.append(Delegation.model_validate(parsed))
+            selected_equipment_ids: set[str] = set()
+            skipped_steps = 0
             for delegation in delegations:
+                if delegation.requires_selection and not selected_equipment_ids:
+                    skipped_steps += 1
+                    assert self.run_id is not None
+                    self.chief_trace.append({
+                        "id": f"{self.run_id}:skip:{skipped_steps}",
+                        "timestamp": int(utc_now().timestamp() * 1000),
+                        "source": "application",
+                        "label": f"Chief skipped {delegation.specialist}: no prior equipment selection was grounded.",
+                        "activity": "delegation-return",
+                    })
+                    self.emit_event(
+                        f"{self.run_id}:chief", "supervisor", "running", "Chief",
+                        "A conditional specialist step was skipped because no equipment was selected.",
+                        agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                    )
+                    continue
+                prior_evidence_ids = set(self.evidence)
                 await self.handoff(delegation, request, journal, versions)
-            return {"status": "handoffs_complete", "completed_specialist_count": len(self.specialists)}
+                new_receipts = [
+                    receipt for evidence_id, receipt in self.evidence.items()
+                    if evidence_id not in prior_evidence_ids
+                ]
+                grounded_ids = evidence_equipment_ids(new_receipts)
+                if delegation.requires_selection:
+                    selected_equipment_ids.update(grounded_ids)
+                else:
+                    selected_equipment_ids = grounded_ids
+            return {
+                "status": "handoffs_complete",
+                "completed_specialist_count": len(self.specialists),
+                "skipped_specialist_count": skipped_steps,
+            }
 
         callbacks = {"hydro_query": query, "plan_orchestration": plan_orchestration,
                      "complete_rca_assessment": report, "complete_work_order_review": report}

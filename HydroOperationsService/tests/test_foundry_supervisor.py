@@ -348,6 +348,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "question": "Read BAD and UNCERTAIN turbine quality snapshots for the requested six-hour window.",
                     "reason": "Retrieve the requested factual fleet state.", "native_source": None,
                 }]
+            elif self.mode == "conditional_empty":
+                steps = [
+                    {"specialist": "qa", "question": "Read the qualifying fleet.", "reason": "Find matches.",
+                     "native_source": None, "requires_selection": False},
+                    {"specialist": "rca", "question": "Investigate the selected equipment.", "reason": "Investigate.",
+                     "native_source": None, "requires_selection": True},
+                    {"specialist": "work-order", "question": "Review work for the selected equipment.",
+                     "reason": "Review work.", "native_source": None, "requires_selection": True},
+                    {"specialist": "qa", "question": "Verify the empty result.", "reason": "Verify.",
+                     "native_source": None, "requires_selection": False},
+                ]
             else:
                 roles = ["qa", "rca", "work-order"] if self.mode == "skip_verify" else [
                     "qa", "rca", "work-order", "qa",
@@ -360,7 +371,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 } for index, role in enumerate(roles)]
             output = [self.function("plan_orchestration", {"steps": steps})]
         elif name == "hydro-qa-agent":
-            if self.mode in ("quality_snapshot", "empty_quality_snapshot"):
+            if self.mode in ("quality_snapshot", "empty_quality_snapshot", "conditional_empty"):
                 output = [
                     self.function("hydro_query", {
                         "tool_name": "query_signal_quality_snapshot",
@@ -1013,6 +1024,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tables, ())
         self.assertEqual(result.summary, "Returned 0 source rows in 0 tables. No production writes executed.")
         self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
+
+    async def test_conditional_steps_skip_when_prior_source_selects_no_equipment(self):
+        self.mode = "conditional_empty"
+        self.tools.quality_snapshot = True
+        self.tools.empty_quality_snapshot = True
+        result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "qa"])
+        self.assertNotIn("hydro-rca-agent", self.calls)
+        self.assertNotIn("hydro-work-order-agent", self.calls)
+        self.assertEqual(result.summary, "Returned 0 source rows in 0 tables. No production writes executed.")
+        chief_events = [event for event in self.events if event["role"] == "supervisor"]
+        self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
+                            for event in chief_events))
 
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"
