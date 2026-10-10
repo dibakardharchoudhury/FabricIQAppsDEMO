@@ -7,15 +7,15 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v47 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v48 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v47 image is
-`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
-(`validated-20261010174213`, ACR run `dt1j`). The source configuration digest is
+The active v48 image is
+`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
+(`validated-20261010202251`, ACR run `dt1k`, source commit `b37691e`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
@@ -24,6 +24,12 @@ acceptance test created production work.
 The supported-runtime regression on October 10 passed all 143 backend tests under
 Node 24 and Pyright with zero errors or warnings. The companion SPA passed 208
 frontend tests, typecheck, lint, environment validation and production build.
+
+Grounded presentation now uses a bounded tool-free typed projection to put a
+direct conclusion, evidence meaning and material uncertainty ahead of supporting
+source-annotated tables. The immutable-receipt validator still resolves every
+table cell, deterministic certified-empty results avoid a model call, and a
+projection failure falls back to literal source tables rather than ungrounded prose.
 
 Chief now exposes one strict `plan_orchestration` tool. It returns one complete
 ordered plan of one to eight specialist steps; the backend validates and executes

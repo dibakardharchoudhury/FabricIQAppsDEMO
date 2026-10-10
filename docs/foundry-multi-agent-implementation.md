@@ -8,9 +8,9 @@ as passes after a later code change.
 
 ## Current state: bounded Foundry-owned planner/executor
 
-Hosted Agent v47 is active on immutable image
-`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
-(`validated-20261010174213`, ACR run `dt1j`). It runs the Microsoft Agent Framework
+Hosted Agent v48 is active on immutable image
+`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
+(`validated-20261010202251`, ACR run `dt1k`, source commit `b37691e`). It runs the Microsoft Agent Framework
 workflow that coordinates Chief, Gauge, Sleuth, Fixer and Sparky. The SPA uses
 one authenticated Invocations endpoint for normal Foundry chat and for both
 Battle comparison routes. Real backend events drive the crew animation; the
@@ -23,8 +23,10 @@ through the shared contract, executes specialists serially, injects prior report
 and immutable evidence into later steps, then deterministically certifies attested
 receipts and validated specialist contracts without a redundant model verifier.
 This certification is emitted as an application validation event, not represented
-as a fabricated agent handoff. The runtime renders non-chart answers from literal
-source receipts. No prompt
+as a fabricated agent handoff. The runtime projects a concise grounded conclusion
+and evidence interpretation into a strict typed answer, validates supporting table
+cells against literal receipts, and falls back to source tables if projection
+fails. No prompt
 regex, BAD/UNCERTAIN shortcut, direct T010 route or post-draft routing bypass remains.
 Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
 projection runtime use `gpt-5.6-sol`.

@@ -12,10 +12,10 @@ Consolidated change history and architecture:
 
 ## October 10 final planner/executor status
 
-**Current Hosted Agent: v47. Current Fabric deployment: `deploy-20261010175853-fc340945`
-from commit `67e142e`.** The active Hosted image is
-`sha256:430135f90de14dabc39530f59a6da4124831a92a5d090508d2b1cde6bfcec8bf`
-(`validated-20261010174213`, ACR run `dt1j`). The runtime uses `gpt-5.6-sol`,
+**Current Hosted Agent: v48 from source commit `b37691e`. Current Fabric deployment:
+`deploy-20261010175853-fc340945` from commit `67e142e`.** The active Hosted image is
+`sha256:6bf9752f3e6eb76845430b761310a8e81aea13421a6d69e0c650cbdd4b6e309c`
+(`validated-20261010202251`, ACR run `dt1k`). The runtime uses `gpt-5.6-sol`,
 numeric ontology generation 2 and production writes disabled.
 
 The final backend regression passed 143 tests on Node 24 plus Pyright with zero
@@ -23,6 +23,14 @@ diagnostics. The SPA passed typecheck, lint, environment validation and the
 production build. Canonical deployment preserved 39 SPA redirects and passed
 AppBackend/CORS, GraphQL and token endpoint checks. Tenant-wide consent remains
 an administrator prerequisite; current-user consent supports this operator.
+
+v48 restores operator-facing grounded narratives before the supporting tables.
+The typed projection is tool-free and bounded, table cells remain receipt-pointer
+validated, certified empty results remain deterministic, and projection failure
+still fails safely to literal source tables. Deployment readback verified v48
+active on the exact immutable digest above. A new browser acceptance was not run:
+the protected hosted page presented its sign-in gate, and no interactive
+authentication was initiated while the operator was away.
 
 The October 10 live matrix on the final architecture produced these outcomes:
 
