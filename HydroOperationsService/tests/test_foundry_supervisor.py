@@ -84,6 +84,11 @@ class SourceTools:
                         "inventory_complete": True,
                         "work_inventory_complete": True,
                         "work_coverage_equipment_ids": [row["equipment_id"] for row in rows],
+                        "expected_signal_count": 90,
+                        "signals_without_readings": (
+                            [f"ns=2;s=T{index:03d}.signal" for index in range(1, 91)]
+                            if self.empty_quality_snapshot else []
+                        ),
                     },
                     "unresolved_nodes": [], "truncated": False,
                 },
@@ -1022,7 +1027,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual(self.tools.calls, 2)
         self.assertEqual(result.tables, ())
-        self.assertEqual(result.summary, "Returned 0 source rows in 0 tables. No production writes executed.")
+        self.assertEqual(
+            result.summary,
+            "No matching signal-quality rows were returned; no equipment was selected and no production writes "
+            "executed.",
+        )
+        self.assertTrue(any("90 expected signals; 90 had no reading" in item for item in result.limitations))
         self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
 
     async def test_conditional_steps_skip_when_prior_source_selects_no_equipment(self):
@@ -1033,7 +1043,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.role for item in result.specialists], ["qa", "qa"])
         self.assertNotIn("hydro-rca-agent", self.calls)
         self.assertNotIn("hydro-work-order-agent", self.calls)
-        self.assertEqual(result.summary, "Returned 0 source rows in 0 tables. No production writes executed.")
+        self.assertIn("no equipment was selected", result.summary)
         chief_events = [event for event in self.events if event["role"] == "supervisor"]
         self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
                             for event in chief_events))

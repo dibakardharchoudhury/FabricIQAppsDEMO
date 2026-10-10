@@ -1366,11 +1366,36 @@ class FoundrySupervisor:
             units = [measure_units[table.id].get(key, set()) for key in chart.y_keys]
             if any(len(unit) != 1 or not all(value.strip() for value in unit) for unit in units) or len(set.union(*units)) != 1:
                 raise SourceFailure("Chart measures require explicit, consistent source units; incompatible units cannot share an axis.")
+        zero_result_limitations: list[str] = []
+        empty_quality_snapshots = [
+            item for item in self.evidence.values()
+            if item.tool == "query_signal_quality_snapshot"
+            and item.result.get("row_count") == 0
+        ]
+        for receipt in empty_quality_snapshots:
+            population = receipt.result.get("population")
+            if not isinstance(population, dict):
+                continue
+            expected = population.get("expected_signal_count")
+            missing = population.get("signals_without_readings")
+            if type(expected) is int and isinstance(missing, list):
+                zero_result_limitations.append(
+                    f"Telemetry population: {expected} expected signals; {len(missing)} had no reading "
+                    "in the requested window, so no current/stale reading classification was possible."
+                )
         limitations = tuple(dict.fromkeys([
-            *(gap for item in self.evidence.values() for gap in item.limitations), *chart_limitations,
+            *(gap for item in self.evidence.values() for gap in item.limitations),
+            *zero_result_limitations,
+            *chart_limitations,
             *rca_answer_limitations(self.specialists),
         ]))
-        summary = f"Returned {sum(len(table.rows) for table in tables)} source rows in {len(tables)} tables. No production writes executed."
+        row_count = sum(len(table.rows) for table in tables)
+        summary = (
+            "No matching signal-quality rows were returned; no equipment was selected and no production writes "
+            "executed."
+            if not tables and empty_quality_snapshots
+            else f"Returned {row_count} source rows in {len(tables)} tables. No production writes executed."
+        )
         proposals_by_id: dict[UUID, WorkOrderDraft] = {}
         for item in self.evidence.values():
             if item.tool != "propose_work_order":
