@@ -14,7 +14,7 @@ const REASONING_EFFORT: Record<AgentRole, 'low' | 'medium'> = {
   supervisor: 'medium',
   qa: 'low',
   rca: 'medium',
-  'work-order': 'medium',
+  'work-order': 'low',
   'fabric-iq': 'low',
 }
 

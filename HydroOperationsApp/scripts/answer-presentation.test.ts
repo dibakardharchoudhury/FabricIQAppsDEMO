@@ -22,7 +22,7 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   assert.equal(chief.reasoning.effort, 'medium')
   assert.equal(gauge.reasoning.effort, 'low')
   assert.equal(sleuth.reasoning.effort, 'medium')
-  assert.equal(fixer.reasoning.effort, 'medium')
+  assert.equal(fixer.reasoning.effort, 'low')
   assert.equal(sparky.reasoning.effort, 'low')
   assert.deepEqual(chief.tools.map(tool => tool.name), ['plan_orchestration'])
   assert.deepEqual(gauge.tools.map(tool => tool.name), ['hydro_query'])
