@@ -1323,7 +1323,11 @@ class FoundrySupervisor:
                          "Tables by default; charts only if explicitly requested, "
                          "with source units. An explicit chart request requires a chart when verified numeric "
                          "source measures have units; do not silently omit it. "
-                         "Keep the summary concise; no claims of execution or delivery.",
+                         "The summary must directly answer the operator in concise plain language: state the main "
+                         "conclusion, explain what the strongest evidence means, and identify the material uncertainty "
+                         "or next safe action. Do not merely report row/table counts. Do not include a factual detail "
+                         "unless it is present in a supplied receipt or validated specialist report. No claims of "
+                         "execution or delivery.",
         )
         context = {
             "operator_question": request.question, "source": request.source.model_dump(mode="json"),
@@ -1358,7 +1362,7 @@ class FoundrySupervisor:
         })
         return AnswerPlan.model_validate_json(response.text), receipt
 
-    def answer(self, request: ChatRequest, plan: AnswerPlan) -> ChatAnswer:
+    def answer(self, request: ChatRequest, plan: AnswerPlan, *, use_projected_summary: bool = False) -> ChatAnswer:
         if not self.evidence:
             raise SourceFailure("No executed source receipts exist; agent prose is not grounded data.")
         if plan.charts and not request.charts_requested:
@@ -1511,7 +1515,11 @@ class FoundrySupervisor:
             "No matching signal-quality rows were returned; no equipment was selected and no production writes "
             "executed."
             if not tables and empty_quality_snapshots
-            else f"Returned {row_count} source rows in {len(tables)} tables. No production writes executed."
+            else (
+                f"{plan.summary.strip()} No production writes executed."
+                if use_projected_summary
+                else f"Returned {row_count} source rows in {len(tables)} tables. No production writes executed."
+            )
         )
         proposals_by_id: dict[UUID, WorkOrderDraft] = {}
         for item in self.evidence.values():
@@ -1607,7 +1615,10 @@ class FoundrySupervisor:
                         if any(item.source != request.source for item in owner.evidence.values()):
                             raise SourceFailure("Prepared answer contains a different source identity.")
                         owner.specialists = list(prepared.answer.specialists)
-                        if owner.answer(request, prepared.supervisor_output) != prepared.answer:
+                        if owner.answer(
+                            request, prepared.supervisor_output,
+                            use_projected_summary=prepared.answer_projection is not None,
+                        ) != prepared.answer:
                             raise SourceFailure("Prepared answer differs from its immutable source projections.")
                         await ctx.send_message(SupervisorTurn(
                             text=prepared.supervisor_output.model_dump_json(),
@@ -1689,28 +1700,40 @@ class FoundrySupervisor:
                     if not turn.verified:
                         raise SourceFailure("Presentation requires completed independent-evidence verification.")
                     if turn.prepared is not None:
-                        if owner.answer(request, turn.prepared.supervisor_output) != turn.prepared.answer:
+                        if owner.answer(
+                            request, turn.prepared.supervisor_output,
+                            use_projected_summary=turn.prepared.answer_projection is not None,
+                        ) != turn.prepared.answer:
                             raise SourceFailure("Recovered presentation differs from immutable source projections.")
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     projection: ProjectionReceipt | None = None
                     source_answer = owner.source_bound_answer(request)
-                    try:
-                        if source_answer is not None and not request.charts_requested:
-                            plan, result = source_answer
-                        else:
+                    if source_answer is not None and not source_answer[1].tables and not source_answer[1].proposals:
+                        plan, result = source_answer
+                    else:
+                        try:
                             plan = AnswerPlan.model_validate_json(turn.text)
                             result = owner.answer(request, plan)
-                    except (ValidationError, SourceFailure) as error:
-                        if source_answer is not None:
-                            logger.warning("Supervisor presentation rejected; using verified source-bound tables.")
-                            plan, result = source_answer
-                        else:
-                            logger.warning("Supervisor presentation rejected; applying one tool-free typed answer projection.")
-                            plan, projection = await owner.project_answer(
-                                request, journal, versions["supervisor"], turn.text, error,
+                        except (ValidationError, SourceFailure) as error:
+                            logger.warning(
+                                "Supervisor presentation rejected; applying one tool-free typed answer projection.",
                             )
-                            result = owner.answer(request, plan)
+                            try:
+                                plan, projection = await owner.project_answer(
+                                    request, journal, versions["supervisor"], turn.text, error,
+                                )
+                                result = owner.answer(request, plan, use_projected_summary=True)
+                            except (
+                                ValidationError, SourceFailure, TimeoutError, AgentFrameworkException,
+                            ) as projection_error:
+                                if source_answer is None:
+                                    raise
+                                logger.warning(
+                                    "Typed answer projection failed (%s); using verified source-bound tables.",
+                                    safe_exception_signature(projection_error),
+                                )
+                                plan, result = source_answer
                     journal.save("prepared_answer", PreparedAnswer(
                         answer=result, evidence=tuple(owner.evidence.values()),
                         supervisor_response_id=turn.response_id, supervisor_version=turn.version,

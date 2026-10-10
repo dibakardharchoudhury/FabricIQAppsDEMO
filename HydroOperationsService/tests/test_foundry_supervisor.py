@@ -329,11 +329,32 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             incomplete = self.mode == "projection_incomplete"
             if self.mode in ("alias_once", "projection_incomplete"):
                 self.mode = "valid"
+            projection_plan = self.plan()
+            projection_plan["summary"] = (
+                "The evidence does not establish a physical fault. The returned measurements require engineering "
+                "limits and corroborating evidence before a condition conclusion."
+            )
+            projection_plan["tables"][0]["columns"] = [
+                {"key": "equipment_id", "label": "Equipment", "kind": "text"},
+                *projection_plan["tables"][0]["columns"],
+                {"key": "quality", "label": "Quality", "kind": "text"},
+            ]
+            projection_plan["tables"][0]["rows"][0]["cells"] = [
+                {
+                    "key": "equipment_id",
+                    "source": {"evidence_id": "reading-1", "path": "/rows/0/equipment_id"},
+                },
+                *projection_plan["tables"][0]["rows"][0]["cells"],
+                {
+                    "key": "quality",
+                    "source": {"evidence_id": "reading-1", "path": "/rows/0/quality"},
+                },
+            ]
             return httpx.Response(200, json={
                 "id": "resp_projection", "object": "response", "created_at": 1,
                 "model": "test", "status": "incomplete" if incomplete else "completed",
                 "incomplete_details": {"reason": "max_output_tokens"} if incomplete else None,
-                "output": [self.message(json.dumps(self.plan()))],
+                "output": [self.message(json.dumps(projection_plan))],
                 "parallel_tool_calls": False,
                 "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
             })
@@ -593,7 +614,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         with self.assertRaisesRegex(SourceFailure, "Conflicting source receipts"):
             self.owner.answer(self.request, AnswerPlan.model_validate(self.plan()))
-        self.assertTrue(all("text" not in payload for payload in self.payloads))
+        projection_payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
+        self.assertEqual(len(projection_payloads), 1)
+        self.assertNotIn("tools", projection_payloads[0])
         before = dict(self.calls)
         restarted = await self.make_owner().run(self.request)
         self.assertEqual(restarted, result)
@@ -1037,7 +1060,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual(len(result.tables), 1)
-        self.assertFalse(any("agent_reference" not in payload for payload in self.payloads))
+        self.assertEqual(sum("agent_reference" not in payload for payload in self.payloads), 1)
         self.assertEqual(result.specialists[1].model_round_count, 1)
         self.assertEqual(result.specialists[2].model_round_count, 1)
         audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
@@ -1117,7 +1140,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             {row.values["quality"] for table in result.tables for row in table.rows},
             {"BAD", "UNCERTAIN"},
         )
-        self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
+        self.assertEqual(
+            sum("model" in payload and "agent_reference" not in payload for payload in self.payloads),
+            1,
+        )
 
     async def test_empty_multi_quality_snapshot_returns_certified_zero_rows(self):
         self.mode = "empty_quality_snapshot"
@@ -1191,6 +1217,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
         self.assertEqual(len(result.charts), 1)
         self.assertEqual(self.tools.calls, 1)
+        self.assertIn("does not establish a physical fault", result.summary)
+        self.assertIn("corroborating evidence", result.summary)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertNotIn("agent_reference", self.payloads[-1])
