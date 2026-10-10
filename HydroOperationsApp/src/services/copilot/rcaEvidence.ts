@@ -69,7 +69,7 @@ export const RCA_REPORT_TOOL = {
         properties: {
           decision: { type: 'string', enum: ['verified_uncovered_issue', 'not_supported'] },
           reason: { type: 'string', enum: ['uncovered_equipment_issue', 'missing_issue_evidence', 'missing_equipment_relation', 'existing_work_covers_issue'] },
-          equipment_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1 } },
+          equipment_ids: { type: 'array', maxItems: 20, items: { type: 'string', minLength: 1 } },
           evidence: { type: 'array', maxItems: 12, items: referenceSchema },
         },
         required: ['decision', 'reason', 'equipment_ids', 'evidence'], additionalProperties: false,

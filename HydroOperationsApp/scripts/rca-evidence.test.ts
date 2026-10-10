@@ -98,6 +98,7 @@ test('reproduced slashless pointers receive exact repair guidance and are constr
   const schema = JSON.stringify(agentDefinition('rca', 'test').tools)
   assert.match(schema, /"pattern":"\^\/"/)
   assert.match(schema, /"maxLength":200/)
+  assert.doesNotMatch(schema, /"uniqueItems"/)
   assert.equal(requiresInspectionEvidence('Investigate it using available telemetry, inspections and existing work.'), true)
   assert.equal(requiresInspectionEvidence('Investigate whether recent telemetry and inspections justify additional work.'), true)
   assert.equal(requiresInspectionEvidence('Investigate telemetry and prepare an inspection draft.'), false)
