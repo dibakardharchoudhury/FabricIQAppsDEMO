@@ -285,26 +285,35 @@ class FabricBackendTools:
         if name == "query_operations" and arguments.get("entity") == "work_orders":
             where = arguments.get("where")
             if isinstance(where, list):
-                equipment_filters = [
-                    item for item in where if isinstance(item, dict)
-                    and item.get("column") == "equipmentId" and item.get("op") == "eq"
-                    and isinstance(item.get("value"), str) and item["value"]
-                ]
-                other_filters = [item for item in where if item not in equipment_filters]
-                open_status_filters = {
+                equipment_filters = []
+                for item in where:
+                    if not isinstance(item, dict) or item.get("column") != "equipmentId":
+                        continue
+                    value = item.get("value")
+                    if item.get("op") == "eq" and isinstance(value, str) and value:
+                        equipment_filters.append((item, (value,)))
+                    elif (item.get("op") == "in" and isinstance(value, list) and value
+                          and all(isinstance(candidate, str) and candidate for candidate in value)
+                          and len(set(value)) == len(value)):
+                        equipment_filters.append((item, tuple(value)))
+                equipment_filter_items = [item for item, _equipment_ids in equipment_filters]
+                other_filters = [item for item in where if item not in equipment_filter_items]
+                open_status_filters = [
                     (item.get("column"), item.get("op"), item.get("value"))
                     for item in other_filters if isinstance(item, dict)
-                }
+                ]
+                required_open_status_filters = (
+                    ("status", "neq", "Completed"),
+                    ("status", "neq", "Cancelled"),
+                )
                 complete_scope = (
                     not other_filters
-                    or open_status_filters == {
-                        ("status", "neq", "Completed"),
-                        ("status", "neq", "Cancelled"),
-                    }
+                    or (len(open_status_filters) == len(required_open_status_filters)
+                        and all(item in open_status_filters for item in required_open_status_filters))
                 )
                 if (len(equipment_filters) == 1 and complete_scope and "limit" not in arguments
                         and public_result.get("truncated") is False):
-                    work_coverage = (equipment_filters[0]["value"],)
+                    work_coverage = equipment_filters[0][1]
         if name == "propose_work_order":
             draft = self._work_draft(public_result, request, arguments, result.completed_at)
             public_result["proposal"] = draft.model_dump(mode="json")

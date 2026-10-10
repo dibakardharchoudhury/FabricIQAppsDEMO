@@ -235,11 +235,26 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         evidence = await tools.execute("query_operations", open_work, request)
         self.assertEqual(evidence.work_coverage_equipment_ids, ("T1",))
 
+        complete_population = {
+            "entity": "work_orders",
+            "where": [
+                {"column": "equipmentId", "op": "in", "value": ["T1", "T2"]},
+                {"column": "status", "op": "neq", "value": "Completed"},
+                {"column": "status", "op": "neq", "value": "Cancelled"},
+            ],
+        }
+        evidence = await tools.execute("query_operations", complete_population, request)
+        self.assertEqual(evidence.work_coverage_equipment_ids, ("T1", "T2"))
+
         for arguments in (
             {**complete, "limit": 10},
             {"entity": "work_orders", "where": [
                 {"column": "equipmentId", "op": "eq", "value": "T1"},
                 {"column": "status", "op": "eq", "value": "Approved"},
+            ]},
+            {"entity": "work_orders", "where": [
+                {"column": "equipmentId", "op": "in", "value": ["T1", "T2"]},
+                {"column": "status", "op": "in", "value": ["Draft", "Approved"]},
             ]},
         ):
             with self.subTest(arguments=arguments):
