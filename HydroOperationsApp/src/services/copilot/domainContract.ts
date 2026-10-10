@@ -163,8 +163,10 @@ export function shapeFacilityWorkBacklog(
   const open = [...uniqueIndex(workOrders, 'workOrderNumber').values()].filter(order =>
     !DOMAIN_SEMANTICS.open_work.excluded_statuses_case_insensitive
       .includes(requiredString(order, 'status').toLowerCase() as 'completed' | 'cancelled'))
-  const counts = new Map([...facilityIndex.keys()].map(facilityId =>
-    [facilityId, { equipment: new Set<string>(), orders: 0 }] as const))
+  const counts = new Map<string, { equipment: Set<string>; orders: number }>(
+    [...facilityIndex.keys()].map(facilityId =>
+      [facilityId, { equipment: new Set<string>(), orders: 0 }]),
+  )
   const unmatched: FacilityWorkBacklog['unmatched'] = []
   for (const order of open) {
     const equipmentId = requiredString(order, 'equipmentId')
@@ -261,7 +263,7 @@ export function shapeWorkBacklog(
 }
 
 export function validateDomainContract(): void {
-  const entities = new Map([
+  const entities = new Map<string, { columns: readonly { name: string }[] }>([
     ...ASSET_ENTITIES.map(entity => [`lakehouse:${entity.key}`, entity] as const),
     ...OPERATIONS_ENTITIES.map(entity => [`sql:${entity.key}`, entity] as const),
     ...KUSTO_SOURCES.map(source => [`eventhouse:${source.name}`, {
