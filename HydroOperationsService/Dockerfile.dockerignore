@@ -22,6 +22,7 @@
 !HydroOperationsApp/src/services/copilot/
 !HydroOperationsApp/src/services/copilot/query.ts
 !HydroOperationsApp/src/services/copilot/catalog.ts
+!HydroOperationsApp/src/services/copilot/domainContract.ts
 !HydroOperationsApp/src/services/copilot/rcaEvidence.ts
 !HydroOperationsApp/src/services/copilot/agentDefinitions.ts
 !HydroOperationsApp/src/services/copilot/answerPresentation.ts

@@ -1176,8 +1176,9 @@ class FoundrySupervisor:
             raise SourceFailure("Verified reference schema exceeds the bounded model-contract size.")
         return schema
 
-    def source_answer_plan(self) -> AnswerPlan | None:
+    def source_answer_plan(self, request: ChatRequest) -> AnswerPlan | None:
         tables = []
+        table_ids: dict[tuple[str, str], str] = {}
         for evidence_index, receipt in enumerate(self.evidence.values()):
             for field, records in receipt.result.items():
                 if (not isinstance(records, list) or not records or len(records) > 500
@@ -1210,12 +1211,14 @@ class FoundrySupervisor:
                         ),
                     ) for column in columns
                 )) for row_index in range(len(typed_records)))
+                table_id = f"source-{evidence_index + 1}-{len(tables) + 1}"
                 tables.append(PlannedTable(
-                    id=f"source-{evidence_index + 1}-{len(tables) + 1}",
+                    id=table_id,
                     title=f"{receipt.tool} {field}",
                     columns=tuple(columns),
                     rows=rows,
                 ))
+                table_ids[(receipt.id, field)] = table_id
                 if len(tables) == 12:
                     break
             if len(tables) == 12:
@@ -1227,15 +1230,35 @@ class FoundrySupervisor:
                 charts=(),
                 limitations=(),
             )
+        charts: list[PlannedChart] = []
+        if request.charts_requested:
+            for receipt in self.evidence.values():
+                presentation = receipt.result.get("presentation")
+                if not isinstance(presentation, dict):
+                    continue
+                table_field, chart = presentation.get("table_field"), presentation.get("chart")
+                if not isinstance(table_field, str) or not isinstance(chart, dict):
+                    continue
+                table_id = table_ids.get((receipt.id, table_field))
+                chart_kind, x_key, y_keys = chart.get("kind"), chart.get("x_key"), chart.get("y_keys")
+                if (table_id is None or chart_kind not in ("line", "bar", "scatter")
+                        or not isinstance(x_key, str) or not isinstance(y_keys, list)
+                        or not 1 <= len(y_keys) <= 4 or any(not isinstance(key, str) for key in y_keys)):
+                    continue
+                charts.append(PlannedChart.model_validate({
+                    "table_id": table_id, "kind": chart_kind, "x_key": x_key, "y_keys": y_keys,
+                }))
+                if len(charts) == 4:
+                    break
         return AnswerPlan(
             summary="Verified source rows.",
             tables=tuple(tables),
-            charts=(),
+            charts=tuple(charts),
             limitations=(),
         )
 
     def source_bound_answer(self, request: ChatRequest) -> tuple[AnswerPlan, ChatAnswer] | None:
-        plan = self.source_answer_plan()
+        plan = self.source_answer_plan(request)
         if plan is None:
             return None
         try:

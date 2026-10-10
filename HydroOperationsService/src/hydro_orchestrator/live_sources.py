@@ -188,7 +188,8 @@ class FabricBackendTools:
 
     snapshot_tools = frozenset(("query_signal_quality_snapshot", "query_turbine_temperature_snapshot"))
     supported_tools = frozenset(("query_assets", "query_operations", "query_telemetry",
-                                "query_station_power", "run_kql", "propose_work_order")) | snapshot_tools
+                                "query_work_backlog", "query_station_power",
+                                "run_kql", "propose_work_order")) | snapshot_tools
 
     def __init__(self, sources: LiveSources):
         self.sources = sources
@@ -248,7 +249,8 @@ class FabricBackendTools:
             raise SourceFailure("This source tool has no configured backend implementation.")
         credential, discovery = self.sources.credential, self.sources.discovery
         tokens = {"fabric": (await credential.get_token("https://api.fabric.microsoft.com/.default")).token}
-        if name in ("query_assets", "query_operations", "propose_work_order") or name in self.snapshot_tools:
+        if name in ("query_assets", "query_operations", "query_work_backlog",
+                    "propose_work_order") or name in self.snapshot_tools:
             tokens["graphql"] = (await credential.get_token("https://analysis.windows.net/powerbi/api/.default")).token
         if name in ("query_telemetry", "query_station_power", "run_kql") or name in self.snapshot_tools:
             tokens["kusto"] = (await credential.get_token(f"{discovery.cluster}/.default")).token
@@ -268,6 +270,8 @@ class FabricBackendTools:
         limitations: tuple[str, ...] = ()
         if name in self.snapshot_tools:
             column_units, resolved, work_coverage, limitations = self._snapshot_attestation(result.result)
+        elif name == "query_work_backlog":
+            column_units, resolved, work_coverage, limitations = self._work_backlog_attestation(result.result)
         elif name == "query_station_power":
             column_units = self._station_power_attestation(result.result)
             semantics = result.result.get("semantics")
@@ -385,6 +389,79 @@ class FabricBackendTools:
             stations.add(station)
         # The shared source calculation converts authoritative W/kW/MW/GW metadata to MW.
         return {"average_power_MW": "MW"} if rows else {}
+
+    @staticmethod
+    def _work_backlog_attestation(
+        result: dict[str, object],
+    ) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        rows, orders, unmatched = result.get("rows"), result.get("open_work_orders"), result.get("unmatched")
+        grouping = result.get("group_by")
+        presentation = result.get("presentation")
+        semantics, completed_at = result.get("semantics"), result.get("read_completed_at_utc")
+        if (not isinstance(rows, list) or not isinstance(orders, list) or not isinstance(unmatched, list)
+                or grouping not in {"equipment", "facility"}
+                or presentation != {
+                    "table_field": "rows",
+                    "chart": {
+                        "kind": "bar",
+                        "x_key": "facility_id" if grouping == "facility" else "equipment_id",
+                        "y_keys": ["open_work_order_count"],
+                    },
+                }
+                or not isinstance(semantics, str) or not semantics.strip()
+                or not isinstance(completed_at, str) or not completed_at.strip()):
+            raise SourceFailure("Work backlog omitted grouping, rows, coverage, semantics or completion time.")
+        group_ids: set[str] = set()
+        total_orders = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                raise SourceFailure("Work backlog returned an invalid grouped row.")
+            group_id = row.get("facility_id" if grouping == "facility" else "equipment_id")
+            order_count = row.get("open_work_order_count")
+            equipment_count = row.get("equipment_with_open_work") if grouping == "facility" else None
+            if (not isinstance(group_id, str) or not group_id.strip() or group_id in group_ids
+                    or isinstance(order_count, bool) or not isinstance(order_count, int)
+                    or order_count < 0
+                    or (grouping == "facility" and (
+                        isinstance(equipment_count, bool) or not isinstance(equipment_count, int)
+                        or equipment_count < 0 or equipment_count > order_count
+                    ))):
+                raise SourceFailure("Work backlog requires unique groups and valid nonnegative counts.")
+            group_ids.add(group_id)
+            total_orders += order_count
+        equipment_ids: list[str] = []
+        work_numbers: set[str] = set()
+        for order in orders:
+            if not isinstance(order, dict):
+                raise SourceFailure("Work backlog returned an invalid work-order row.")
+            equipment_id, work_number, status = (
+                order.get("equipmentId"), order.get("workOrderNumber"), order.get("status"),
+            )
+            if (not isinstance(equipment_id, str) or not equipment_id.strip()
+                    or not isinstance(work_number, str) or not work_number.strip() or work_number in work_numbers
+                    or not isinstance(status, str) or status.lower() in {"completed", "cancelled"}):
+                raise SourceFailure("Work backlog coverage contains invalid or closed work.")
+            work_numbers.add(work_number)
+            if equipment_id not in equipment_ids:
+                equipment_ids.append(equipment_id)
+        if total_orders != len(orders):
+            raise SourceFailure("Work backlog grouped counts do not conserve the open-work inventory.")
+        limitations = (
+            f"Work backlog semantics: {semantics.strip()}",
+            f"Work backlog source reads completed at {completed_at.strip()}; cross-source reads are not atomic.",
+        )
+        if unmatched:
+            limitations += ("Some work orders could not be mapped to a returned facility and remain in UNMAPPED.",)
+        identities = tuple(equipment_ids)
+        units = {"open_work_order_count": "work orders"}
+        if grouping == "facility":
+            units["equipment_with_open_work"] = "equipment"
+        return (
+            units,
+            identities,
+            identities,
+            limitations,
+        )
 
     @staticmethod
     def _snapshot_attestation(

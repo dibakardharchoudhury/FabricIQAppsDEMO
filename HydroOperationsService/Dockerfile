@@ -65,7 +65,7 @@ COPY --from=source-dependencies /opt/bridge-dependencies/node_modules ./HydroOpe
 COPY HydroOperationsApp/package.json ./HydroOperationsApp/
 COPY HydroOperationsApp/scripts/local-fabric-sources.mjs ./HydroOperationsApp/scripts/
 COPY HydroOperationsApp/src/services/kustoResult.ts ./HydroOperationsApp/src/services/
-COPY HydroOperationsApp/src/services/copilot/query.ts HydroOperationsApp/src/services/copilot/catalog.ts HydroOperationsApp/src/services/copilot/rcaEvidence.ts HydroOperationsApp/src/services/copilot/agentDefinitions.ts HydroOperationsApp/src/services/copilot/answerPresentation.ts HydroOperationsApp/src/services/copilot/orchestration.ts ./HydroOperationsApp/src/services/copilot/
+COPY HydroOperationsApp/src/services/copilot/query.ts HydroOperationsApp/src/services/copilot/catalog.ts HydroOperationsApp/src/services/copilot/domainContract.ts HydroOperationsApp/src/services/copilot/rcaEvidence.ts HydroOperationsApp/src/services/copilot/agentDefinitions.ts HydroOperationsApp/src/services/copilot/answerPresentation.ts HydroOperationsApp/src/services/copilot/orchestration.ts ./HydroOperationsApp/src/services/copilot/
 RUN groupadd --gid 10001 hydro \
     && useradd --uid 10001 --gid hydro --no-create-home hydro \
     && mkdir -p /var/lib/hydro /home/session/hydro \

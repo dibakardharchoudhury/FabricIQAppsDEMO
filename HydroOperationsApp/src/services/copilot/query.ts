@@ -237,6 +237,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'query_work_backlog',
+      description: 'Return complete open-work counts grouped by equipment or facility with authoritative SQL work-order to Lakehouse equipment/facility joins. Excludes Completed and Cancelled work, retains unmapped IDs, and supplies verified record-count units for tables and charts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          group_by: { type: 'string', enum: ['equipment', 'facility'], description: 'Required grouping dimension.' },
+        },
+        required: ['group_by'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'query_station_power',
       description: 'Return and chart mean power-output readings per station over a window (default 24h). Uses exact power_output node suffix, authoritative station/unit metadata, sample-weighted means converted to MW. Includes all qualities and reports BAD sample counts. Not total station generation or energy.',
       parameters: { type: 'object', properties: { lookback: { type: 'string', description: 'Positive duration, e.g. 24h or 7d, or today (since midnight UTC).' } } },

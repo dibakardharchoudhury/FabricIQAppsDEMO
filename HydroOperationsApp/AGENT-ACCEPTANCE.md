@@ -794,6 +794,12 @@ verification rather than inferring speed from reduced input construction.
    `query_telemetry` supports `aggregation: "latest"`: one latest value, quality and
    measurement timestamp per node, without binning. `TelemetryEnriched` has no node-ID
    column; a direct node filter on it is locally rejected before the source request.
+   For open-work rankings or reconciliation by equipment/facility, Gauge uses
+   `query_work_backlog`. It performs the complete SQL work-order to Lakehouse
+   equipment/facility joins, excludes Completed and Cancelled work, retains
+   unmapped IDs, conserves every open order and returns verified count units.
+   Requested backlog charts use the capability's attested rows rather than a
+   model-authored recount.
 7. **Investigate/diagnose/RCA:** Sleuth, normally after Gauge supplies the factual scope.
    Chief must not treat a factual retrieval as completed RCA.
    Explicit reassessment/review/continuation of an investigation uses the same gate.

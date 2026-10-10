@@ -64,6 +64,16 @@ characters. Historical text is context, never fresh evidence or approval.
 Failed runs/new chats clear the client's preceding run ID. Old cards cannot
 submit after their conversation resets.
 
+The packaged source runtime also owns a typed domain contract for authoritative
+cross-source relationships and operational semantics. Specialists receive that
+contract with the tool catalog instead of reconstructing joins from prompt prose.
+`query_work_backlog` is the reusable open-work capability for equipment or facility
+grouping: it reads complete SQL/Lakehouse inventories, excludes Completed and
+Cancelled work, retains unmatched identities, conserves source rows, and returns
+attested count units plus a source-defined chart projection. The Python boundary
+validates those claims before recording evidence. This capability does not add a
+browser-side planner or replace the generic catalog tools used for other questions.
+
 Human decisions verify run/card identity. Explicit disabled/blocked no-write
 receipts differ from uncertain outcomes. The separate `reconcile` operation
 requires an existing identical approval intent and can only check the original

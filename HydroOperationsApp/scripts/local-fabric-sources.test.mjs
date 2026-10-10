@@ -5,6 +5,7 @@ import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config
 import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
+import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 
 const id = '11111111-1111-1111-1111-111111111111'
 const config = { workspace_id: id, ontology_id: id, database_id: id, eventhouse_id: id, appbackend_id: id,
@@ -401,6 +402,56 @@ test('backend contracts reuse the canonical tool schemas without browser initial
   contracts.context.operations_entities[0].columns.length = 0
   assert.equal(sourceToolContracts().tools.find(tool => tool.name === 'propose_work_order').parameters.properties.title.maxLength, 200)
   assert.ok(sourceToolContracts().context.operations_entities[0].columns.length > 0)
+  assert.deepEqual(contracts.context.relationships, DOMAIN_RELATIONSHIPS)
+  contracts.context.relationships.length = 0
+  assert.ok(sourceToolContracts().context.relationships.length > 0)
+})
+
+test('shared facility backlog conserves open work across authoritative relationships', () => {
+  const facilities = [
+    { facility_id: 'F1', facility_name: 'North' },
+    { facility_id: 'F2', facility_name: 'South' },
+  ]
+  const equipment = [
+    { equipment_id: 'E1', facility_id: 'F1', tag: 'T1' },
+    { equipment_id: 'E2', facility_id: 'F1', tag: 'T2' },
+    { equipment_id: 'E3', facility_id: 'F2', tag: 'T3' },
+  ]
+  const work = [
+    { workOrderNumber: 'WO-1', equipmentId: 'E1', status: 'Draft' },
+    { workOrderNumber: 'WO-2', equipmentId: 'E2', status: 'Planned' },
+    { workOrderNumber: 'WO-3', equipmentId: 'E1', status: 'Completed' },
+    { workOrderNumber: 'WO-4', equipmentId: 'UNKNOWN', status: 'Approved' },
+  ]
+  const result = shapeWorkBacklog('facility',
+    facilities,
+    equipment,
+    work,
+  )
+  assert.equal(result.group_by, 'facility')
+  assert.deepEqual(result.rows, [
+    { facility_id: 'F1', facility_name: 'North', equipment_with_open_work: 2, open_work_order_count: 2 },
+    { facility_id: 'F2', facility_name: 'South', equipment_with_open_work: 0, open_work_order_count: 0 },
+    { facility_id: 'UNMAPPED', facility_name: null, equipment_with_open_work: 1, open_work_order_count: 1 },
+  ])
+  assert.deepEqual(result.open_work_orders.map(order => order.workOrderNumber), ['WO-1', 'WO-2', 'WO-4'])
+  assert.equal(result.unmatched[0].workOrderNumber, 'WO-4')
+
+  const byEquipment = shapeWorkBacklog('equipment',
+    [
+      { facility_id: 'F1', facility_name: 'North' },
+      { facility_id: 'F2', facility_name: 'South' },
+    ],
+    equipment,
+    work,
+  )
+  assert.equal(byEquipment.group_by, 'equipment')
+  assert.deepEqual(byEquipment.rows, [
+    { equipment_id: 'E1', tag: 'T1', facility_id: 'F1', facility_name: 'North', open_work_order_count: 1 },
+    { equipment_id: 'E2', tag: 'T2', facility_id: 'F1', facility_name: 'North', open_work_order_count: 1 },
+    { equipment_id: 'E3', tag: 'T3', facility_id: 'F2', facility_name: 'South', open_work_order_count: 0 },
+    { equipment_id: 'UNKNOWN', tag: null, facility_id: null, facility_name: null, open_work_order_count: 1 },
+  ])
 })
 
 test('shared row shaping preserves typed cells and filters while excluding undeclared source fields', () => {

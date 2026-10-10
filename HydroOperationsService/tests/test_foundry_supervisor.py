@@ -661,6 +661,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.tables[0].rows[0].cells[0].source.evidence_id, receipt.id)
         self.assertIn("no numeric measure with verified units", result.limitations[-1])
 
+    async def test_source_capability_presentation_renders_verified_requested_chart_without_another_model(self):
+        receipt = ToolEvidence(
+            id="backlog-1", source=self.request.source, tool="query_work_backlog",
+            arguments={"group_by": "equipment"}, completed_at=utc_now(),
+            result={
+                "group_by": "equipment",
+                "rows": [
+                    {"equipment_id": "TEST_T005", "open_work_order_count": 2},
+                    {"equipment_id": "TEST_T006", "open_work_order_count": 1},
+                ],
+                "presentation": {
+                    "table_field": "rows",
+                    "chart": {
+                        "kind": "bar", "x_key": "equipment_id", "y_keys": ["open_work_order_count"],
+                    },
+                },
+            },
+            column_units={"open_work_order_count": "work orders"},
+        )
+        self.owner.evidence[receipt.id] = receipt
+        request = self.request.model_copy(update={"charts_requested": True})
+        fallback = self.owner.source_bound_answer(request)
+        self.assertIsNotNone(fallback)
+        if fallback is None:
+            self.fail("Expected a source-defined chart fallback.")
+        plan, result = fallback
+        self.assertEqual(len(plan.charts), 1)
+        self.assertEqual(plan.charts[0].x_key, "equipment_id")
+        self.assertEqual(plan.charts[0].y_keys, ("open_work_order_count",))
+        self.assertEqual(result.charts, plan.charts)
+
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
         second = first.model_copy(update={

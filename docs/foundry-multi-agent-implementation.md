@@ -26,6 +26,35 @@ regex, BAD/UNCERTAIN shortcut, direct T010 route or post-draft routing bypass re
 Chief v17, Gauge v16, Sleuth v18, Fixer v16, Sparky v13 and the Hosted Agent
 projection runtime use `gpt-5.6-sol`.
 
+### Shared server-side domain contract and capabilities
+
+The Hosted Agent no longer relies on specialist prose to rediscover the core data
+model. `domainContract.ts` defines the authoritative cross-source identities,
+cardinality and limitations for facility, equipment, instrument, telemetry,
+work-order, inspection, notification, model and spare-part relationships. The
+packaged Node bridge publishes that typed contract with the source schemas, and
+the Python Agent Framework passes the same immutable contract to specialists.
+This is server-owned runtime context; it does not restore browser orchestration.
+
+Reusable domain capabilities sit above the bounded low-level tools. The first
+general capability, `query_work_backlog`, accepts an equipment or facility
+grouping and:
+
+- reads the complete SQL work-order, Lakehouse equipment and facility inventories;
+- excludes Completed and Cancelled work while retaining Draft and Planned work;
+- joins only on declared identity keys and retains unmatched records;
+- conserves every open work order exactly once;
+- returns the literal open-work inventory with grouped counts and verified units;
+- supplies an attested table/chart projection that the backend can render without
+  another model-authored recount or CSV transformation.
+
+Gauge chooses this capability from its tool schema; there is no question-text
+route. Arbitrary reads remain available through the generic catalog/KQL tools,
+while fleet quality, turbine temperature, station power and work backlog use
+deterministic capabilities where their semantics are already known. Backend
+attestation rejects closed work, duplicate identities, invalid grouping,
+non-conserved counts and presentation drift before evidence reaches an agent.
+
 The legacy `browserFoundry.ts` coordinator and its dedicated runtime suite were
 removed after hosted parity dependency analysis. Administration now retains only
 the editable Foundry project endpoint, optional Battle preference and read-only

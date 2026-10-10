@@ -6,6 +6,7 @@ import { RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
+import { DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
 import { createWorkOrderProposal, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
@@ -59,6 +60,8 @@ export function sourceToolContracts() {
       asset_entities: structuredClone(ASSET_ENTITIES),
       operations_entities: structuredClone(OPERATIONS_ENTITIES),
       kusto_source_names: [...KUSTO_SOURCE_NAMES],
+      relationships: structuredClone(DOMAIN_RELATIONSHIPS),
+      semantics: structuredClone(DOMAIN_SEMANTICS),
     },
   }
 }
@@ -389,6 +392,39 @@ export async function readOperationEntity(config, entityKey, args, token) {
   return operationalRead(config, token, entityKey, client => collectOperationRows(client, entityKey, args))
 }
 
+export async function readWorkBacklog(config, args, token, fetcher = fetch,
+  readWorkInventory = () => operationalRead(config, token, 'work backlog',
+    client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
+  const readStartedAt = new Date().toISOString()
+  const reads = await Promise.allSettled([
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'facilities'), token, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), token, fetcher),
+    readWorkInventory(),
+  ])
+  const labels = ['facility inventory', 'equipment inventory', 'work-order inventory']
+  const failures = reads.flatMap((read, index) => {
+    if (read.status === 'fulfilled') return []
+    const code = typeof read.reason?.code === 'string' && /^[A-Z_0-9]+$/.test(read.reason.code)
+      ? read.reason.code : 'READ_FAILED'
+    return [`${labels[index]} failed (${code})`]
+  })
+  if (failures.length) throw new Error(`${failures.join('; ')}. No partial facility backlog is permitted.`)
+  const [facilities, equipment, workOrders] = reads.map(read => read.value)
+  return {
+    ...shapeWorkBacklog(args.group_by, facilities, equipment, workOrders),
+    presentation: {
+      table_field: 'rows',
+      chart: {
+        kind: 'bar',
+        x_key: args.group_by === 'facility' ? 'facility_id' : 'equipment_id',
+        y_keys: ['open_work_order_count'],
+      },
+    },
+    read_started_at_utc: readStartedAt,
+    read_completed_at_utc: new Date().toISOString(),
+  }
+}
+
 export async function readFleetSnapshot(config, metadata, temperature, args, tokens, fetcher = fetch,
   readWorkInventory = () => operationalRead(config, tokens.graphql, 'work-order snapshot',
     client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
@@ -572,6 +608,9 @@ async function main() {
     }
     let result
     switch (request.tool) {
+      case 'query_work_backlog':
+        result = await readWorkBacklog(config, args, request.tokens.graphql)
+        break
       case 'query_assets':
         result = await readAssetEntity(config, args.entity, args, request.tokens.graphql)
         break

@@ -261,6 +261,72 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
                 evidence = await tools.execute("query_operations", arguments, request)
                 self.assertEqual(evidence.work_coverage_equipment_ids, ())
 
+    async def test_facility_backlog_attests_complete_open_work_and_derived_count_units(self):
+        sources = reader()
+        request = self.chat(sources)
+        result = {
+            "group_by": "facility",
+            "rows": [
+                {"facility_id": "F1", "facility_name": "North",
+                 "equipment_with_open_work": 1, "open_work_order_count": 2},
+                {"facility_id": "F2", "facility_name": "South",
+                 "equipment_with_open_work": 0, "open_work_order_count": 0},
+            ],
+            "open_work_orders": [
+                {"workOrderNumber": "WO-1", "equipmentId": "E1", "status": "Draft"},
+                {"workOrderNumber": "WO-2", "equipmentId": "E1", "status": "Approved"},
+            ],
+            "unmatched": [],
+            "presentation": {
+                "table_field": "rows",
+                "chart": {"kind": "bar", "x_key": "facility_id", "y_keys": ["open_work_order_count"]},
+            },
+            "semantics": "Complete open work joined through authoritative identities.",
+            "read_started_at_utc": "2026-10-10T00:59:59Z",
+            "read_completed_at_utc": "2026-10-10T01:00:00Z",
+        }
+        sources.bridge.call.return_value = {
+            "source": request.source.model_dump(mode="json"), "completed_at": utc_now().isoformat(),
+            "result": result,
+        }
+        tools = FabricBackendTools(sources)
+        evidence = await tools.execute("query_work_backlog", {"group_by": "facility"}, request)
+        self.assertEqual(evidence.column_units, {
+            "equipment_with_open_work": "equipment",
+            "open_work_order_count": "work orders",
+        })
+        self.assertEqual(evidence.resolved_equipment_ids, ("E1",))
+        self.assertEqual(evidence.work_coverage_equipment_ids, ("E1",))
+        self.assertIn("authoritative identities", evidence.limitations[0])
+        self.assertEqual(sources.credential.get_token.await_count, 2)
+        self.assertIn("graphql", sources.bridge.call.call_args.args[0]["tokens"])
+        equipment_result = {
+            **result,
+            "group_by": "equipment",
+            "presentation": {
+                "table_field": "rows",
+                "chart": {"kind": "bar", "x_key": "equipment_id", "y_keys": ["open_work_order_count"]},
+            },
+            "rows": [
+                {"equipment_id": "E1", "tag": "T1", "facility_id": "F1",
+                 "facility_name": "North", "open_work_order_count": 2},
+            ],
+        }
+        sources.bridge.call.return_value["result"] = equipment_result
+        evidence = await tools.execute("query_work_backlog", {"group_by": "equipment"}, request)
+        self.assertEqual(evidence.column_units, {"open_work_order_count": "work orders"})
+
+        for invalid in (
+            {**result, "rows": [{**result["rows"][0], "open_work_order_count": 1}]},
+            {**result, "open_work_orders": [*result["open_work_orders"],
+                                            {"workOrderNumber": "WO-3", "equipmentId": "E2",
+                                             "status": "Completed"}]},
+            {**result, "rows": [result["rows"][0], result["rows"][0]]},
+        ):
+            sources.bridge.call.return_value["result"] = invalid
+            with self.assertRaises(SourceFailure):
+                await tools.execute("query_work_backlog", {"group_by": "facility"}, request)
+
     async def test_station_power_uses_kusto_and_attests_only_converted_mean_units(self):
         sources = reader()
         request = self.chat(sources)
@@ -534,7 +600,8 @@ class ContainerPackagingTests(unittest.TestCase):
         "HydroOperationsApp/scripts/local-fabric-sources.mjs",
         "HydroOperationsApp/src/services/kustoResult.ts",
         *(f"HydroOperationsApp/src/services/copilot/{name}.ts" for name in (
-            "query", "catalog", "rcaEvidence", "agentDefinitions", "answerPresentation", "orchestration",
+            "query", "catalog", "domainContract", "rcaEvidence", "agentDefinitions", "answerPresentation",
+            "orchestration",
         )),
     )
 
