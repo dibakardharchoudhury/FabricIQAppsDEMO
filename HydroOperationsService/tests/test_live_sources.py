@@ -227,6 +227,13 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         }
         evidence = await tools.execute("query_operations", complete, request)
         self.assertEqual(evidence.work_coverage_equipment_ids, ("T1",))
+        open_work = {**complete, "where": [
+            *complete["where"],
+            {"column": "status", "op": "neq", "value": "Completed"},
+            {"column": "status", "op": "neq", "value": "Cancelled"},
+        ]}
+        evidence = await tools.execute("query_operations", open_work, request)
+        self.assertEqual(evidence.work_coverage_equipment_ids, ("T1",))
 
         for arguments in (
             {**complete, "limit": 10},
