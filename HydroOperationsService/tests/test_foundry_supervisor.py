@@ -393,6 +393,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ]}
             output = [self.function("complete_rca_assessment", report)] if round_number == 0 else [
                 self.message("Structured source-referenced investigation completed.")]
+            if self.mode == "rca_prose_once":
+                output = [self.message("The investigation is complete.")] if round_number == 0 else [
+                    self.function("complete_rca_assessment", report)
+                ]
             if self.mode == "direct_rca":
                 output = [self.function("hydro_query", {
                     "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
@@ -493,6 +497,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         serialized = json.dumps(self.events)
         self.assertNotIn("test-not-a-real-token", serialized)
         self.assertNotIn("rows", serialized)
+
+    async def test_rca_prose_gets_one_bounded_structured_completion_repair(self):
+        self.mode = "rca_prose_once"
+        result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertEqual(self.calls["hydro-rca-agent"], 2)
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-rca-agent"
+            and "completion_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("required structured completion", json.dumps(repair["input"]))
 
     async def test_actual_framework_fixer_stages_source_bound_human_approval_card_without_sql(self):
         self.mode = "proposal"

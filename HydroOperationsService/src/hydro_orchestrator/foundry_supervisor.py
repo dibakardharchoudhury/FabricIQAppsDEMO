@@ -946,23 +946,51 @@ class FoundrySupervisor:
                     "store": False,
                     "max_tokens": 8192 if role == "supervisor" else 4096,
                 }
-                try:
-                    response = await agent.run(json.dumps(context), options=options)
-                except AgentFrameworkException as error:
-                    logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
+                active_context = context
+                response: AgentResponse | None = None
+                for completion_attempt in range(2):
+                    try:
+                        response = await agent.run(json.dumps(active_context), options=options)
+                    except AgentFrameworkException as error:
+                        logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
+                        self.healthy(request)
+                        raise
+                    except APIStatusError as error:
+                        raise SourceFailure(f"Foundry {role} invocation failed (HTTP {error.status_code}).") from error
+                    except APITimeoutError as error:
+                        raise SourceFailure(f"Foundry {role} invocation exceeded its service deadline.") from error
                     self.healthy(request)
-                    raise
-                except APIStatusError as error:
-                    raise SourceFailure(f"Foundry {role} invocation failed (HTTP {error.status_code}).") from error
-                except APITimeoutError as error:
-                    raise SourceFailure(f"Foundry {role} invocation exceeded its service deadline.") from error
+                    if not response.response_id or response.finish_reason in ("length", "content_filter"):
+                        raise SourceFailure("Foundry response has no completed, inspectable service identity.")
+                    for message in response.messages:
+                        if any(content.type in ("error", "function_approval_request") for content in message.contents):
+                            raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
+                    self.invocation_inputs[response.response_id] = sha256(_encoded(active_context)).hexdigest()
+                    proposal_staged = role == "work-order" and any(
+                        item.tool == "propose_work_order" for item in self.evidence.values()
+                    )
+                    if role not in ("rca", "work-order") or completed_report is not None or proposal_staged:
+                        break
+                    if completion_attempt == 1:
+                        break
+                    logger.warning("Foundry %s omitted its structured completion; requesting one bounded repair.", role)
+                    active_context = {
+                        **context,
+                        "evidence": self.model_evidence(role),
+                        "allowed_evidence_ids": list(self.evidence),
+                        "allowed_evidence_references": (
+                            rca_reference_examples(self.evidence) if role == "rca" else ()
+                        ),
+                        "completed_specialists": self.model_specialists(role),
+                        "completion_repair": (
+                            "The prior response was not accepted because it omitted the required structured completion. "
+                            "Use the captured evidence and call the role's completion function now. Do not return prose, "
+                            "repeat the investigation, or claim a result without the function call."
+                        ),
+                    }
             self.healthy(request)
-            if not response.response_id or response.finish_reason in ("length", "content_filter"):
-                raise SourceFailure("Foundry response has no completed, inspectable service identity.")
-            for message in response.messages:
-                if any(content.type in ("error", "function_approval_request") for content in message.contents):
-                    raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
-            self.invocation_inputs[response.response_id] = sha256(_encoded(context)).hexdigest()
+            if response is None:
+                raise RuntimeError("Foundry invocation did not produce a response.")
             if role == "rca" and completed_report is None:
                 raise SourceFailure("Sleuth returned prose without its required grounded assessment.")
             if role == "fabric-iq":
