@@ -180,14 +180,19 @@ Python executes the existing function callbacks; no browser routing was added.
     Missing or contradictory identities do not prove a join. Missing-source
     warnings survive presentation.
 
-**Live evidence, October 11:** Hosted Agent v58 on immutable image
-`sha256:ddad1ef863493ec8af7e60dd59c7a09dc0ebdbe67859019e1ecbf4d0ebe2b466`
-uses `gpt-5.6-sol`, ontology generation 2 and disabled production writes. The
-backend-owned capability manifest prevented incomplete compound plans. Native
+**Live evidence, October 11:** Hosted Agent v59 on immutable image
+`sha256:60972cfa8d2bc0f03236804b0409798ecc2bce0cc3ab7a419338b6ee517bb7a7`
+uses Chief v20, `gpt-5.6-sol`, ontology generation 2 and disabled production writes.
+The backend-owned capability and minimum-step manifests prevented incomplete
+compound plans and required separate Gauge handoffs for explicitly quantified
+independent populations. Native
 T005 identity propagated from exact Ontology fields into direct Gauge and Sleuth
 handoffs; a conditional Fixer branch was skipped only after RCA found no supported
 uncovered issue. The station-power prompt rendered one source-certified MW chart,
 and same-chat verification reported exact values, sample/BAD counts and freshness.
+The ten-prompt v59 matrix returned HTTP 200 for every primary prompt. Prompt 4
+completed Sparky -> Gauge -> Gauge -> Sleuth even when both direct populations
+were empty; the earlier v58 omission remains recorded as a failure.
 Application execution has no wall-clock deadline; source/network/external limits
 still fail explicitly.
 

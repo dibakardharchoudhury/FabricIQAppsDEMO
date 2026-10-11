@@ -12,10 +12,10 @@ Consolidated change history and architecture:
 
 ## October 11 planner/executor acceptance
 
-**Current Hosted Agent: v58 from source commit `6627cf3`. Current Fabric app:
+**Current Hosted Agent: v59 from source commit `594a308`. Current Fabric app:
 `1.0.842` from commit `b561593`.** The active Hosted image is
-`sha256:ddad1ef863493ec8af7e60dd59c7a09dc0ebdbe67859019e1ecbf4d0ebe2b466`
-(`validated-20261011025343`, ACR run `dt1w`). The runtime uses `gpt-5.6-sol`,
+`sha256:60972cfa8d2bc0f03236804b0409798ecc2bce0cc3ab7a419338b6ee517bb7a7`
+(`validated-20261011053403`, ACR run `dt1x`). Chief v20 and the Hosted runtime use `gpt-5.6-sol`,
 numeric ontology generation 2 and production writes disabled.
 
 The release removed application wall-clock deadlines for Chief, specialists,
@@ -25,34 +25,41 @@ and fail explicitly. A backend-owned capability manifest now validates complete
 plans before any handoff. Native Ontology identity is carried into later direct
 handoffs only from bounded `equipment_id` fields or exact identity properties,
 never from free prose. Station-power receipts now own their table/chart contract,
-and a sole requested source-certified chart cannot be dropped by projection.
+and a sole requested source-certified chart cannot be dropped by projection. v59
+adds a backend-owned minimum-step manifest for explicitly quantified independent
+factual populations. Chief cannot collapse "verify both sets" into one Gauge
+handoff; each population is non-conditional, so an empty sibling cannot suppress it.
 
-Validation passed 148 backend tests before the final formatting-only identity
-normalization, 54 supervisor tests after all runtime changes, 32 packaged source
-tests, 380 application contract tests, Pyright with zero diagnostics, TypeScript,
-ESLint, environment validation and production build. The live signed-browser
-matrix produced:
+Validation passed 150 backend tests under Node 24, 32 packaged source tests, 380
+application contract tests, Pyright with zero diagnostics, TypeScript and ESLint.
+The production build and deployment-environment validation also passed. A
+historical-trace evaluation suite for Hosted Agent v59 was submitted asynchronously
+(`datagen-7134e2f3e5bd42d5b979d7272ee45479`,
+`evaluatorgen-smoke-core-v2-31bcac53`) and remains a pending evaluation workflow,
+not evidence of a passed evaluation.
+The v59 live matrix used fresh authenticated browser-origin token leases and
+independent Hosted sessions. It produced:
 
 | Prompt | Live result |
 |---|---|
 | 1 | Gauge certified an explicit empty current BAD population: all 90 mapped signals lacked a reading in today's window. Downstream conditional branches were skipped; no write. |
 | 2 | Sparky -> Gauge -> Sleuth completed in 1m51s. Ontology resolved T005; direct reads established no six-hour telemetry and no open SQL work. Conditional Fixer was correctly skipped; no write. |
-| 3 | Sparky -> Gauge -> Sleuth completed. Native and direct SQL reconciled all 11 open orders; T002 won the deterministic tie-break; one orders-per-equipment chart rendered; no draft or write. |
-| 4 | Sparky -> Gauge -> Sleuth completed. Both current populations were explicitly empty because all 90 signals lacked today's readings; the result did not fabricate a ranking, disagreement or work proposal. |
+| 3 | Sparky -> Gauge -> Sleuth -> Fixer completed. Native and direct SQL reconciled all 11 open orders; T002 won the deterministic tie-break; one chart rendered. A demonstrated vibration-coverage gap produced one editable proposal, which was rejected; no write. |
+| 4 | Sparky -> Gauge -> Gauge -> Sleuth completed. The Data Agent's Eventhouse read failed explicitly. Separate direct BAD and hottest snapshots both ran; all 90 signals, including all 15 temperature signals, lacked today's readings. The empty union was reconciled without a ranking, proposal or write. |
 | 5 | Both native sources and Gauge completed. Three ontology facilities and all 11 open orders reconciled to direct records; facility counts were 4/4/3, with one facility chart and no unmatched IDs. |
 | 6 | Gauge -> Sleuth completed. Four at/below-reorder parts and related work were shown; missing compatibility/reservation evidence blocked a draft. |
 | 7 | Gauge -> Sleuth completed. Stale positive power/speed and UNCERTAIN temperature did not establish downtime. |
 | 8 | Gauge -> Sleuth completed. Complete notification/open-work reads were empty; no unrelated inspection issue or draft was substituted. |
 | 9 | Gauge -> Sleuth rendered one station-MW chart. Same-chat Gauge verification reported exact values, sample/BAD counts and freshness, and separated mean turbine readings from station totals and energy. |
-| 10 | Gauge -> Fixer produced the exact Low-priority editable card. Backend rejection disabled it and confirmed no creation. Same-chat Sleuth found no established physical fault and listed evidence gaps. |
+| 10 | Gauge -> Fixer -> Gauge produced the exact Low-priority editable card. Backend rejection confirmed no creation. Same-chat Sleuth found no established physical fault and listed evidence gaps. |
 
-The first Prompt 3 and Prompt 5 attempts returned explicit native-source
-unavailability and remain failures in the audit; fresh reruns succeeded without a
-code or configuration change. This is retained as transient native-source
-reliability evidence, not silently relabelled. HTTP `ERR_ABORTED` entries observed
-after successful streamed answers are browser cancellation of the completed
-request, not application timeouts; immutable answer receipts and UI completion
-were present.
+The earlier v58 Prompt 4 run remains a failure: one Gauge handoff stopped after
+the empty BAD population and omitted the independently requested hottest
+population. v59 corrected that exact failure class without BAD/hottest-specific
+routing. Earlier Prompt 3 and Prompt 5 native-source-unavailable attempts also
+remain failures in the audit. HTTP `ERR_ABORTED` entries observed after successful
+streamed answers are browser cancellation of completed requests, not application
+timeouts; immutable answer receipts and UI completion were present.
 
 ## October 10 final planner/executor status
 
