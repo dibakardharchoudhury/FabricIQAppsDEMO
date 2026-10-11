@@ -1,12 +1,54 @@
 # Foundry and multi-agent implementation record
 
-Work period: **October 7-10, 2026**. This is the end-to-end record of the
+Work period: **October 7-11, 2026**. This is the end-to-end record of the
 implementation, corrections, measured results and unfinished migration, grounded
 in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## October 11 current release
+## October 11 v65 current release
+
+Hosted Agent v65 is active on immutable image
+`sha256:62fef1a2d69aaabe50832d4c1b688ad5f85c3b09e767322fcd3125d9a2f6afba`
+(`validated-20261011185000`, ACR run `dt24`, source commit `fffca87`). Chief v20
+and the runtime use `gpt-5.6-sol`, verified ontology generation 2 and disabled
+production writes. The Fabric app remains `1.0.842` from `b561593`.
+
+Acceptance exposed and corrected four generic failure classes rather than adding
+exact-prompt routes:
+
+1. Visualization imperatives now require factual source verification.
+2. Long-running specialists re-emit the same running event every 15 seconds,
+   preserving the live stream without an application timeout.
+3. A schema-invalid tool-free narrative gets one bounded repair over the same
+   immutable receipts; invalid attempts remain in the audit.
+4. Native identity survives field/value, bullet and named Markdown table formats.
+   Required Gauge execution can resolve scope directly and is not silently skipped
+   because a native response lacks an extractable identity.
+
+The final v65 Prompt 2 run completed in 170.3 seconds through Sparky -> Gauge ->
+Sleuth, explained T005's ontology context, disclosed empty six-hour telemetry and
+open-work reads, created no proposal and executed no write. The Prompt 8
+same-session follow-up now clearly labels itself `Unsent draft` and makes no
+recipient or delivery claim. Validation passed 155 backend tests and Pyright;
+the unchanged application boundary previously passed 380 application contracts,
+32 packaged-source tests, TypeScript, ESLint, environment validation and build.
+
+The ten business workflows passed across v61-v65 with affected workflows rerun
+after their changes; this is not represented as a same-build ten-run matrix.
+Prompt 4's native Data Agent call still took 790.6 seconds and Prompt 10's Sleuth
+follow-up stalled upstream for about ten minutes. Heartbeats preserved both
+streams, but no latency SLA is claimed. The integrated browser could not complete
+Fabric private hosting's popup/PKCE cookie handshake: a cached shell rendered,
+while an uncached battle-page chunk returned `401 Authentication required`.
+Hosted browser-origin contracts are accepted; rendered battle-page certification
+requires a normal private-hosting sign-in.
+
+Cleanup found no temporary image-tag file, untracked browser coordinator or
+repository-owned local server. The packaged `local-fabric-sources.mjs` bridge is
+retained because it runs inside the Hosted image and owns source contracts.
+
+## October 11 v60 release
 
 Hosted Agent v60 is active on immutable image
 `sha256:4f24fa5f3b306bffce334ccc516673d266ea3434769c4645b96c0786c1d125d5`

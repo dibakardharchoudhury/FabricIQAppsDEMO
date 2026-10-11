@@ -7,24 +7,48 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v60 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v65 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v60 image is
-`sha256:4f24fa5f3b306bffce334ccc516673d266ea3434769c4645b96c0786c1d125d5`
-(`validated-20261011063055`, ACR run `dt1y`, source commit `ea2a8a2`). The source configuration digest is
+The active v65 image is
+`sha256:62fef1a2d69aaabe50832d4c1b688ad5f85c3b09e767322fcd3125d9a2f6afba`
+(`validated-20261011185000`, ACR run `dt24`, source commit `fffca87`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
 acceptance test created production work.
 
-The v60 supported-runtime regression passed all 151 backend tests under Node 24,
-380 application contracts including 32 packaged source tests, Pyright with zero
-errors or warnings, TypeScript, ESLint, environment validation and the production
-build.
+The v65 supported-runtime regression passed all 155 backend tests and Pyright
+with zero errors or warnings. The unchanged application boundary had already
+passed 380 application contracts including 32 packaged source tests, TypeScript,
+ESLint, environment validation and production build.
+
+Long agent/provider calls have no application wall-clock timeout. When no new
+output arrives for 15 seconds, the runtime re-emits the same active running event
+ID and specialist identity; it does not create a fake handoff. Grounded narrative
+projection permits one schema-only repair using the same immutable receipts and
+stores rejected projection evidence. Native identity extraction accepts explicit
+identity fields, bullets and named Markdown equipment-ID columns. Gauge is a
+source-resolution capability and cannot be skipped merely because a preceding
+native response used an unrecognized prose shape.
+
+Final live Prompt 2 on v65 completed Sparky -> Gauge -> Sleuth in 170.3 seconds,
+explained the T005/Sloy/system/six-instrument identity, disclosed empty six-hour
+telemetry and open-work reads with timestamps, created no proposal and performed
+no write. The ten-workflow matrix and affected reruns are recorded in
+[AGENT-ACCEPTANCE.md](../HydroOperationsApp/AGENT-ACCEPTANCE.md). Native/provider
+latency remains outside an accepted SLA: one Data Agent call took 790.6 seconds
+and one Sleuth follow-up stalled for about ten minutes while heartbeats preserved
+the stream.
+
+Rendered battle-page certification is still separate from Hosted contract
+acceptance. The integrated automation browser could not complete Fabric private
+hosting's popup/PKCE cookie handshake; cached shell assets rendered, but an
+uncached lazy chunk correctly returned `401 Authentication required`. A normal
+private-hosting sign-in is still required before claiming production UI rendering.
 
 v60 corrects a capability-classification gap exposed by the standalone request
 `Chart average power output per station over the last 24 hours.` Visualization

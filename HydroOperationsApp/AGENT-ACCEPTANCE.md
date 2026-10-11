@@ -10,7 +10,65 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## October 11 planner/executor acceptance
+## October 11 v65 release acceptance
+
+**Current Hosted Agent: v65 from source commit `fffca87`. Current Fabric app:
+`1.0.842` from commit `b561593`.** The active Hosted image is
+`sha256:62fef1a2d69aaabe50832d4c1b688ad5f85c3b09e767322fcd3125d9a2f6afba`
+(`validated-20261011185000`, ACR run `dt24`). Chief v20 and the Hosted runtime use
+`gpt-5.6-sol`, numeric ontology generation 2 and production writes disabled.
+
+The authenticated browser-origin matrix completed all ten primary workflows and
+the Prompt 8, 9 and 10 same-session follow-ups without a production write. The
+last code-affecting reruns were Prompt 1 on v62, Prompt 8 plus its notification
+follow-up on v62, and Prompt 2 on v65. Prompts 3-10 had already completed against
+the heartbeat-equivalent v61 runtime; workflows affected by later presentation
+or native-identity changes were rerun. This is mixed-version business acceptance,
+not a claim that all ten were repeated unchanged on v65.
+
+v65 closes three generic failure classes exposed during acceptance:
+
+- Long specialist/provider calls now re-emit the same active execution event
+  every 15 seconds. The heartbeat preserves real agent identity and UI card
+  replacement semantics without adding an application timeout or a fake handoff.
+- Tool-free grounded narrative projection gets one bounded schema-repair attempt.
+  The rejected output is retained immutably; a second invalid output still fails
+  closed to literal source evidence.
+- Native equipment identity accepts field/value, bullet and named Markdown table
+  columns. Required Gauge source verification remains executable even when native
+  prose has no extractable canonical identity, so native formatting variation
+  cannot silently suppress direct verification.
+
+The final v65 Prompt 2 run
+(`12cb8c01-c434-47fa-8628-7302221144b9`, session
+`e2f295c7-1c25-414e-8976-be780218976e`) completed in 170.3 seconds through
+Sparky -> Gauge -> Sleuth. It explained the verified T005/Sloy/system/six-
+instrument ontology context, disclosed an empty six-hour telemetry window and
+empty open-work result with read timestamps, established no physical fault,
+created no proposal and executed no write. The final Prompt 8 follow-up explicitly
+started with `Unsent draft`, invented no recipient or delivery and executed no
+write. The release passed 155 backend tests and Pyright with zero diagnostics;
+the unchanged app had already passed 380 application contracts, 32 packaged
+source tests, TypeScript, ESLint, environment validation and production build.
+
+Two limitations remain explicit. Prompt 4's native Data Agent call took 790.6
+seconds and Prompt 10's Sleuth follow-up stalled upstream for about 10 minutes;
+heartbeats preserved both streams, but no latency SLA is claimed. The integrated
+automation browser could render a cached SPA shell but could not complete Fabric
+private-hosting's popup/PKCE cookie handshake, so an uncached lazy battle chunk
+returned `401 Authentication required`. A delegated Fabric bearer token was
+correctly rejected for that static asset. Raw Hosted browser-origin contracts are
+accepted; current rendered battle-page certification remains blocked on a normal
+private-hosting browser sign-in and is not relabelled as an application pass.
+
+Repository cleanup found no tracked/untracked temporary image-tag file, no
+untracked manual/browser coordinator, and no repository-owned local server.
+`scripts/local-fabric-sources.mjs` is retained because it is the packaged,
+backend-owned source-contract bridge used inside the Hosted image, not browser
+orchestration. Existing Node processes belonged to shared WorkIQ/MSX MCP services
+and were not terminated.
+
+## October 11 v60 planner/executor incident and acceptance
 
 **Current Hosted Agent: v60 from source commit `ea2a8a2`. Current Fabric app:
 `1.0.842` from commit `b561593`.** The active Hosted image is
