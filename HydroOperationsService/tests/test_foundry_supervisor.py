@@ -357,6 +357,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["model"], "test")
             self.assertNotIn("tools", payload)
             incomplete = self.mode == "projection_incomplete"
+            invalid_once = self.mode == "projection_invalid_once"
             if self.mode in ("alias_once", "projection_incomplete"):
                 self.mode = "valid"
             projection_plan = self.plan()
@@ -390,6 +391,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     else []
                 ),
             }
+            if invalid_once:
+                self.mode = "valid"
+                projection_output.pop("chart_indexes")
             return httpx.Response(200, json={
                 "id": "resp_projection", "object": "response", "created_at": 1,
                 "model": "test", "status": "incomplete" if incomplete else "completed",
@@ -929,6 +933,22 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         payload = self.payloads[-1]
         self.assertIn("clearly label the summary as an unsent draft", json.dumps(payload))
         self.assertIn("without inventing a recipient", json.dumps(payload))
+
+    async def test_projection_repairs_one_incomplete_structured_response(self):
+        receipt = await self.tools.execute("query_telemetry", {}, self.request)
+        self.owner.evidence = {receipt.id: receipt}
+        self.mode = "projection_invalid_once"
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        plan, projection = await self.owner.project_answer(
+            self.request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
+        )
+        payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
+        self.assertEqual(len(payloads), 2)
+        repair = json.loads(payloads[-1]["input"][0]["content"][0]["text"])["projection_repair"]
+        self.assertIn("complete NarrativeProjection contract", repair["reason"])
+        self.assertEqual(plan.summary, "The evidence does not establish a physical fault. The returned measurements "
+                         "require engineering limits and corroborating evidence before a condition conclusion.")
+        self.assertEqual(projection.response_id, "resp_projection")
 
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)

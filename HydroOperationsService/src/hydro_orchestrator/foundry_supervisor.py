@@ -1453,36 +1453,65 @@ class FoundrySupervisor:
         }
         if len(_encoded(context)) > 524288:
             raise SourceFailure("Answer-projection evidence exceeds the bounded model context.")
-        started = perf_counter()
+        narrative: NarrativeProjection | None = None
+        receipt: ProjectionReceipt | None = None
+        invalid_output = ""
         async with agent:
-            options: ChatOptions = {
-                "response_format": {"type": "json_schema", "json_schema": {
-                    "name": "GroundedNarrative",
-                    "strict": True,
-                    "schema": NarrativeProjection.model_json_schema(),
-                }},
-                "store": False, "max_tokens": 1200,
-            }
-            response = await agent.run(json.dumps(context), options=options)
-        self.healthy(request)
-        if (not response.response_id or response.finish_reason in ("length", "content_filter")
-                or any(content.type in ("function_call", "mcp_server_tool_call", "error", "function_approval_request")
-                       for message in response.messages for content in message.contents)):
-            raise SourceFailure("Tool-free answer projection returned an unverified execution result.")
-        receipt = ProjectionReceipt(
-            response_id=response.response_id, model=version.model,
-            input_digest=sha256(_encoded(context)).hexdigest(), duration_ms=(perf_counter() - started) * 1000,
-        )
-        journal.save(f"answer_projection:{response.response_id}", {
-            "text": response.text, **receipt.model_dump(mode="json"),
-        })
-        narrative = NarrativeProjection.model_validate_json(response.text)
-        if len(set(narrative.chart_indexes)) != len(narrative.chart_indexes):
-            raise SourceFailure("Narrative projection selected a chart more than once.")
-        if any(index < 0 or index >= len(source_plan.charts) for index in narrative.chart_indexes):
-            raise SourceFailure("Narrative projection selected an unavailable source-certified chart.")
-        if narrative.chart_indexes and not request.charts_requested:
-            raise SourceFailure("Narrative projection selected an unrequested chart.")
+            for attempt in range(2):
+                attempt_context = context if attempt == 0 else {
+                    **context,
+                    "projection_repair": {
+                        "reason": "The previous projection did not satisfy the complete NarrativeProjection contract.",
+                        "invalid_output": invalid_output,
+                        "required_action": "Return one complete schema-valid object without omitting required fields.",
+                    },
+                }
+                if len(_encoded(attempt_context)) > 524288:
+                    raise SourceFailure("Answer-projection repair exceeds the bounded model context.")
+                options: ChatOptions = {
+                    "response_format": {"type": "json_schema", "json_schema": {
+                        "name": "GroundedNarrative",
+                        "strict": True,
+                        "schema": NarrativeProjection.model_json_schema(),
+                    }},
+                    "store": False, "max_tokens": 1200,
+                }
+                started = perf_counter()
+                response = await agent.run(json.dumps(attempt_context), options=options)
+                invalid_output = response.text[:4000]
+                self.healthy(request)
+                if (not response.response_id or response.finish_reason in ("length", "content_filter")
+                        or any(content.type in (
+                            "function_call", "mcp_server_tool_call", "error", "function_approval_request",
+                        ) for message in response.messages for content in message.contents)):
+                    raise SourceFailure("Tool-free answer projection returned an unverified execution result.")
+                receipt = ProjectionReceipt(
+                    response_id=response.response_id, model=version.model,
+                    input_digest=sha256(_encoded(attempt_context)).hexdigest(),
+                    duration_ms=(perf_counter() - started) * 1000,
+                )
+                try:
+                    narrative = NarrativeProjection.model_validate_json(response.text)
+                    if len(set(narrative.chart_indexes)) != len(narrative.chart_indexes):
+                        raise SourceFailure("Narrative projection selected a chart more than once.")
+                    if any(index < 0 or index >= len(source_plan.charts) for index in narrative.chart_indexes):
+                        raise SourceFailure("Narrative projection selected an unavailable source-certified chart.")
+                    if narrative.chart_indexes and not request.charts_requested:
+                        raise SourceFailure("Narrative projection selected an unrequested chart.")
+                    journal.save(f"answer_projection:{response.response_id}", {
+                        "text": response.text, **receipt.model_dump(mode="json"),
+                    })
+                    break
+                except (ValidationError, SourceFailure):
+                    journal.save(f"answer_projection_rejected:{attempt + 1}:{response.response_id}", {
+                        "text": response.text, **receipt.model_dump(mode="json"),
+                    })
+                    if attempt:
+                        raise SourceFailure(
+                            "Tool-free answer projection remained invalid after one bounded repair."
+                        ) from None
+        if narrative is None or receipt is None:
+            raise SourceFailure("Tool-free answer projection did not produce a validated narrative.")
         selected_charts = (
             source_plan.charts
             if request.charts_requested and len(source_plan.charts) == 1
