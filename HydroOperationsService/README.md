@@ -7,23 +7,33 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v50 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v60 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v50 image is
-`sha256:25dc9db7d7e26519439243175c5cd43b6a87007db92c26fac03fec580b6c7bb8`
-(`validated-20261010221658`, ACR run `dt1n`, source commit `fe55567`). The source configuration digest is
+The active v60 image is
+`sha256:4f24fa5f3b306bffce334ccc516673d266ea3434769c4645b96c0786c1d125d5`
+(`validated-20261011063055`, ACR run `dt1y`, source commit `ea2a8a2`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
 acceptance test created production work.
 
-The supported-runtime regression on October 10 passed all 143 backend tests under
-Node 24 and Pyright with zero errors or warnings. The companion SPA passed 208
-frontend tests, typecheck, lint, environment validation and production build.
+The v60 supported-runtime regression passed all 151 backend tests under Node 24,
+380 application contracts including 32 packaged source tests, Pyright with zero
+errors or warnings, TypeScript, ESLint, environment validation and the production
+build.
+
+v60 corrects a capability-classification gap exposed by the standalone request
+`Chart average power output per station over the last 24 hours.` Visualization
+imperatives now require Gauge source verification when they target the declared
+Hydro domain. The rule is generic for `chart`, `plot` and `visualize`; it does not
+route on station power or exact prompt text. Live v60 acceptance completed
+Chief -> Gauge with HTTP 200, three source rows, one station/MW chart, source-owned
+aggregation/freshness semantics and no write. The longer investigation workflow
+and its same-session exact-value verification also passed.
 
 Grounded presentation now uses a bounded tool-free typed projection to put a
 direct conclusion, evidence meaning and material uncertainty ahead of supporting

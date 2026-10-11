@@ -8,12 +8,24 @@ as passes after a later code change.
 
 ## October 11 current release
 
-Hosted Agent v59 is active on immutable image
-`sha256:60972cfa8d2bc0f03236804b0409798ecc2bce0cc3ab7a419338b6ee517bb7a7`
-(`validated-20261011053403`, ACR run `dt1x`, source commit `594a308`). Chief v20
+Hosted Agent v60 is active on immutable image
+`sha256:4f24fa5f3b306bffce334ccc516673d266ea3434769c4645b96c0786c1d125d5`
+(`validated-20261011063055`, ACR run `dt1y`, source commit `ea2a8a2`). Chief v20
 and the runtime use `gpt-5.6-sol`, verified ontology generation 2 and disabled
-production writes. The Fabric app remains `1.0.842` from `b561593`; the v59 delta is packaged
+production writes. The Fabric app remains `1.0.842` from `b561593`; the v60 delta is packaged
 Hosted source/presentation code and does not require a static-app redeployment.
+
+The shorter chart-only request exposed a v59 gap after the ten compound prompts
+had passed: chart intent was detected, but `chart`, `plot` and `visualize` were
+not factual-read verbs, so a zero-specialist Chief plan could reach presentation
+without evidence and fail with HTTP 500. v60 fixes the generic capability
+classifier and requires Gauge for Hydro-domain visualization reads. Automated
+validation passed 151 backend and 380 application contract tests plus Pyright,
+TypeScript, ESLint, environment validation and production build. Live browser-
+origin acceptance completed the exact short request through Chief -> Gauge with
+three station rows and one MW chart. The longer Prompt 9 form and its same-session
+verification follow-up also passed with exact values, units, sample/BAD counts,
+freshness and no write.
 
 The current executor has no application wall-clock timeout. A backend-owned
 capability manifest rejects incomplete Chief plans before any specialist runs and

@@ -12,11 +12,34 @@ Consolidated change history and architecture:
 
 ## October 11 planner/executor acceptance
 
-**Current Hosted Agent: v59 from source commit `594a308`. Current Fabric app:
+**Current Hosted Agent: v60 from source commit `ea2a8a2`. Current Fabric app:
 `1.0.842` from commit `b561593`.** The active Hosted image is
-`sha256:60972cfa8d2bc0f03236804b0409798ecc2bce0cc3ab7a419338b6ee517bb7a7`
-(`validated-20261011053403`, ACR run `dt1x`). Chief v20 and the Hosted runtime use `gpt-5.6-sol`,
+`sha256:4f24fa5f3b306bffce334ccc516673d266ea3434769c4645b96c0786c1d125d5`
+(`validated-20261011063055`, ACR run `dt1y`). Chief v20 and the Hosted runtime use `gpt-5.6-sol`,
 numeric ontology generation 2 and production writes disabled.
+
+After the v59 ten-prompt matrix, the shorter standalone request
+`Chart average power output per station over the last 24 hours.` returned HTTP
+500. The chart classifier set `charts_requested`, but the factual-capability
+classifier did not treat the imperative verbs `chart`, `plot` or `visualize` as
+source reads. Chief could therefore return a zero-specialist plan, leaving
+presentation with no executed evidence. v60 adds those generic visualization
+verbs to factual capability detection; it does not match station power or the
+acceptance prompt.
+
+The v60 regression passed 151 backend tests under Node 24, 380 application
+contract tests including all 32 packaged source tests, Pyright, TypeScript,
+ESLint, environment validation and the production build. Live run
+`b184a62d-3877-4095-8561-13732c06e04e` used a fresh Hosted session and completed
+Chief -> Gauge with HTTP 200, three literal station rows, one station/MW bar
+chart, explicit sample-weighted/freshness semantics and no write. The longer
+investigation form also passed in run
+`1aa6bc0a-3a0f-47d2-851a-c9d5eb63a090`; same-session verification run
+`716ccac4-8530-4ede-816c-8213e1eb7515` reproduced exact MW values, units,
+sample counts, BAD counts and freshness. A later optional extra smoke request
+received HTTP 401 after the cached browser token expired; no orchestration ran,
+and this is retained as an authentication-boundary result rather than relabelled
+as a v60 application pass.
 
 The release removed application wall-clock deadlines for Chief, specialists,
 native execution, narrative projection and browser streaming. Credential
