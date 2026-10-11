@@ -1314,6 +1314,7 @@ class FoundrySupervisor:
             active_context = context
             response: AgentResponse | None = None
             for completion_attempt in range(2):
+                input_repairs.clear()
                 try:
                     response = await agent.run(json.dumps(active_context), options=options)
                 except AgentFrameworkException as error:

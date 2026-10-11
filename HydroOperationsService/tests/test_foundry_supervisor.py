@@ -598,6 +598,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 output = [self.message("The investigation is complete.")] if round_number == 0 else [
                     self.function("complete_rca_assessment", report)
                 ]
+            if self.mode == "rca_schema_then_omission_then_schema":
+                if round_number in (0, 2):
+                    invalid_report = {
+                        **report,
+                        "hypotheses": [report["hypotheses"][0], report["hypotheses"][0]],
+                    }
+                    output = [self.function("complete_rca_assessment", invalid_report)]
+                elif round_number == 1:
+                    output = [self.message("The investigation is complete.")]
+                else:
+                    output = [self.function("complete_rca_assessment", report)]
             if self.mode == "direct_rca":
                 output = [self.function("hydro_query", {
                     "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
@@ -725,6 +736,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             and "completion_repair" in json.dumps(payload["input"])
         )
         self.assertIn("required structured completion", json.dumps(repair["input"]))
+
+    async def test_each_bounded_rca_completion_attempt_gets_one_schema_correction(self):
+        self.mode = "rca_schema_then_omission_then_schema"
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING") as logs:
+            result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertEqual(self.calls["hydro-rca-agent"], 4)
+        self.assertEqual(
+            sum("complete_rca_assessment arguments rejected" in line for line in logs.output),
+            2,
+        )
+        self.assertTrue(all("correction 1/1" in line for line in logs.output
+                            if "complete_rca_assessment arguments rejected" in line))
 
     async def test_actual_framework_fixer_stages_source_bound_human_approval_card_without_sql(self):
         self.mode = "proposal"
