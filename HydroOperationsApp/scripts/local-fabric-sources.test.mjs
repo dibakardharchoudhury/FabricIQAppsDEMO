@@ -168,6 +168,10 @@ test('backend station power reuses metadata conversions and weighted samples wit
   assert.equal(result.row_count, 2)
   assert.equal(result.truncated, false)
   assert.match(result.semantics, /not total station output/)
+  assert.deepEqual(result.presentation, {
+    table_field: 'rows',
+    chart: { kind: 'bar', x_key: 'Station', y_keys: ['average_power_MW'] },
+  })
   assert.equal('chart' in result, false)
   assert.equal('grounded_summary' in result, false)
   for (const badRows of [

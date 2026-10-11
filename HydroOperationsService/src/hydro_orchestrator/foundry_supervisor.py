@@ -1470,7 +1470,11 @@ class FoundrySupervisor:
             raise SourceFailure("Narrative projection selected an unavailable source-certified chart.")
         if narrative.chart_indexes and not request.charts_requested:
             raise SourceFailure("Narrative projection selected an unrequested chart.")
-        selected_charts = tuple(source_plan.charts[index] for index in narrative.chart_indexes)
+        selected_charts = (
+            source_plan.charts
+            if request.charts_requested and len(source_plan.charts) == 1
+            else tuple(source_plan.charts[index] for index in narrative.chart_indexes)
+        )
         return source_plan.model_copy(update={
             "summary": narrative.summary,
             "charts": selected_charts,

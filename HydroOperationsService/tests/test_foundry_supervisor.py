@@ -810,6 +810,31 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.charts[0].x_key, "facility_id")
         self.assertNotIn("equipment_id", {chart.x_key for chart in plan.charts})
 
+    async def test_projection_retains_a_sole_requested_source_chart_when_model_omits_its_index(self):
+        receipt = ToolEvidence(
+            id="station-power", source=self.request.source, tool="query_station_power",
+            arguments={"lookback": "24h"}, completed_at=utc_now(),
+            result={
+                "rows": [{"Station": "North", "average_power_MW": 8 / 3}],
+                "presentation": {
+                    "table_field": "rows",
+                    "chart": {"kind": "bar", "x_key": "Station", "y_keys": ["average_power_MW"]},
+                },
+            },
+            column_units={"average_power_MW": "MW"},
+        )
+        self.owner.evidence = {receipt.id: receipt}
+        self.projection_chart_indexes = []
+        request = self.request.model_copy(update={
+            "question": "Chart average power output per station.",
+            "charts_requested": True,
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        plan, _ = await self.owner.project_answer(
+            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
+        )
+        self.assertEqual(plan.charts, self.owner.source_answer_plan(request).charts)
+
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
         second = first.model_copy(update={

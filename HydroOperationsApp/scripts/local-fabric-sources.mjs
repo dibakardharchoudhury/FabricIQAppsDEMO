@@ -193,6 +193,8 @@ export async function readStationPower(metadata, args, token, fetcher = fetch) {
   const reading = await readTelemetryQuery(metadata, buildStationPowerQuery(lookback), token, fetcher)
   const evidence = stationPowerEvidence(reading.rows, lookback)
   return { rows: evidence.rows, row_count: evidence.rows.length, truncated: false, lookback,
+    presentation: { table_field: 'rows',
+      chart: { kind: 'bar', x_key: 'Station', y_keys: ['average_power_MW'] } },
     semantics: STATION_POWER_SEMANTICS, read_completed_at_utc: reading.read_completed_at_utc }
 }
 
