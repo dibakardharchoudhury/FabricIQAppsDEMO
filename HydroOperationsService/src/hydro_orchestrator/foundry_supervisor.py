@@ -77,14 +77,20 @@ def _native_equipment_ids(value: object) -> set[str]:
             for child in item:
                 visit(child)
         elif isinstance(item, str):
-            patterns = (
+            for match in re.finditer(
                 r"(?im)^\|\s*equipment[\s_-]*id\s*\|\s*`?([^`|\s]+)`?\s*\|",
-                r"(?im)^\s*[-*]\s*`?equipment[\s_-]*id`?\s*:\s*`?([^`\s]+)`?\s*$",
-                r"(?im)^\s*[-*]\s*\*\*resolved equipment identity:\*\*\s*`?([^`\s]+)`?\s*$",
-            )
-            for pattern in patterns:
-                for match in re.finditer(pattern, item):
-                    add(match.group(1))
+                item,
+            ):
+                add(match.group(1))
+            for line in item.splitlines():
+                field = re.match(r"^\s*[-*]\s*(.+?):\s*(.+?)\s*$", line)
+                if field is None:
+                    continue
+                label = re.sub(r"[^a-z]", "", field.group(1).lower())
+                if label not in {"equipmentid", "resolvedequipmentidentity"}:
+                    continue
+                code_value = re.search(r"`([^`]+)`", field.group(2))
+                add(code_value.group(1) if code_value else field.group(2).strip("* "))
 
     visit(value)
     return resolved
