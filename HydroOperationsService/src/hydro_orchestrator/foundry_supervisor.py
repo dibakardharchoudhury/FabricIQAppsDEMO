@@ -58,6 +58,35 @@ def _has_native_domain_evidence(value: object) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
+def _native_equipment_ids(value: object) -> set[str]:
+    resolved: set[str] = set()
+
+    def add(candidate: object) -> None:
+        if isinstance(candidate, str):
+            identifier = candidate.strip().strip("`")
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", identifier):
+                resolved.add(identifier)
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if re.sub(r"[^a-z]", "", key.lower()) == "equipmentid":
+                    add(child)
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+        elif isinstance(item, str):
+            for match in re.finditer(
+                r"(?im)^\|\s*equipment[\s_-]*id\s*\|\s*`?([^`|\s]+)`?\s*\|",
+                item,
+            ):
+                add(match.group(1))
+
+    visit(value)
+    return resolved
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1212,6 +1241,7 @@ class FoundrySupervisor:
                         receipt = ToolEvidence(id=raw["id"], source=request.source, tool=f"fabriciq-{native_source}",
                                                arguments={"assignment": question}, completed_at=utc_now(),
                                                result=native_result,
+                                               resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
                                                limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
                         self.evidence[receipt.id] = receipt
                 if not found:

@@ -20,7 +20,7 @@ from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
-    safe_exception_signature,
+    safe_exception_signature, _native_equipment_ids,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -398,6 +398,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "requires_selection": False,
                     "requires_verified_issue": False,
                 } for specialist in roles]
+            elif self.mode == "native_handoff":
+                steps = [
+                    {
+                        "specialist": "fabric-iq", "question": "Use the Data Agent to resolve the equipment.",
+                        "reason": "Use the explicitly selected native source.", "native_source": "data-agent",
+                        "requires_selection": False, "requires_verified_issue": False,
+                    },
+                    {
+                        "specialist": "qa", "question": "Read the selected equipment.",
+                        "reason": "Verify the selected equipment directly.", "native_source": None,
+                        "requires_selection": True, "requires_verified_issue": False,
+                    },
+                ]
             elif self.mode.startswith("native"):
                 steps = [{
                     "specialist": "fabric-iq", "question": "Use the Data Agent to return the requested rows as JSON.",
@@ -944,6 +957,29 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(self.tools.calls, 0)
         self.assertIn("does not attest", result.limitations[0])
+        self.assertEqual(next(iter(owner.evidence.values())).resolved_equipment_ids, ("TEST_T005",))
+
+    async def test_native_identity_enables_a_required_downstream_handoff(self):
+        self.mode = "native_handoff"
+        request = self.request.model_copy(update={
+            "question": "Use the Data Agent to resolve T005, then inspect it directly.",
+            "native_sources": ("data-agent",),
+            "required_specialists": ("qa",),
+        })
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa"])
+        self.assertEqual(self.calls["hydro-qa-agent"], 2)
+
+    def test_native_markdown_identity_projection_is_field_bounded(self):
+        self.assertEqual(
+            _native_equipment_ids({
+                "response": "| Field | Value |\n|---|---|\n| EquipmentId | `EQUIP_RTI_T005` |\n"
+                            "| FacilityId | `FACILITY_RTI_001` |",
+            }),
+            {"EQUIP_RTI_T005"},
+        )
+        self.assertEqual(_native_equipment_ids({"response": "Investigate EQUIP_RTI_T006 next."}), set())
 
     async def test_native_source_mismatch_does_not_fall_back_to_direct_tools(self):
         self.mode = "native_wrong_source"
