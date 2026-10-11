@@ -40,6 +40,7 @@ class SourceTools:
         self.empty_quality_snapshot = False
         self.include_identity = False
         self.presentation = False
+        self.station_power = False
 
     async def catalog(self, request):
         tools = [{"name": "query_telemetry", "parameters": {
@@ -53,6 +54,11 @@ class SourceTools:
                     "lookback": {"type": "string"},
                     "equipment_type": {"type": "string"},
                 }, "required": ["quality", "lookback", "equipment_type"], "additionalProperties": False,
+            }})
+        if self.station_power:
+            tools.append({"name": "query_station_power", "parameters": {
+                "type": "object", "properties": {"lookback": {"type": "string"}},
+                "required": ["lookback"], "additionalProperties": False,
             }})
         if self.stage:
             tools.append({"name": "propose_work_order", "parameters": {
@@ -115,6 +121,22 @@ class SourceTools:
                 result={"proposal": draft.model_dump(mode="json"), "proposal_digest": draft.digest(),
                         "confirmation_required": True, "production_write_executed": False},
                 resolved_equipment_ids=(draft.equipment_id,), work_coverage_equipment_ids=(draft.equipment_id,),
+            )
+        if name == "query_station_power":
+            return ToolEvidence(
+                id="station-power", source=request.source, tool=name, arguments=arguments, completed_at=utc_now(),
+                result={
+                    "rows": [
+                        {"Station": "Foyers", "average_power_MW": 1271.1575, "samples": 1510,
+                         "bad_samples": 73, "latest_event_time": "2026-10-11T04:00:00Z"},
+                    ],
+                    "row_count": 1, "truncated": False, "lookback": arguments["lookback"],
+                    "presentation": {
+                        "table_field": "rows",
+                        "chart": {"kind": "bar", "x_key": "Station", "y_keys": ["average_power_MW"]},
+                    },
+                },
+                column_units={"average_power_MW": "MW"},
             )
         rows = [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD"}]
         if self.extra_row:
@@ -439,6 +461,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "question": "Read BAD and UNCERTAIN turbine quality snapshots for the requested six-hour window.",
                     "reason": "Retrieve the requested factual fleet state.", "native_source": None,
                 }]
+            elif self.mode == "standalone_station_chart":
+                steps = [{
+                    "specialist": "qa",
+                    "question": "Read average station power for the requested 24-hour window.",
+                    "reason": "Retrieve the factual dataset required by the requested chart.",
+                    "native_source": None,
+                    "requires_selection": False,
+                    "requires_verified_issue": False,
+                }]
             elif self.mode == "conditional_empty":
                 steps = [
                     {"specialist": "qa", "question": "Read the qualifying fleet.", "reason": "Find matches.",
@@ -474,7 +505,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 } for index, role in enumerate(roles)]
             output = [self.function("plan_orchestration", {"steps": steps})]
         elif name == "hydro-qa-agent":
-            if self.mode == "independent_empty":
+            if self.mode == "standalone_station_chart":
+                output = [self.function("hydro_query", {
+                    "tool_name": "query_station_power", "arguments": {"lookback": "24h"},
+                })] if round_number == 0 else [self.message("The station-power read is complete.")]
+            elif self.mode == "independent_empty":
                 if round_number < 2:
                     output = [self.function("hydro_query", {
                         "tool_name": "query_signal_quality_snapshot",
@@ -720,6 +755,29 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(request)
         self.assertEqual(len(result.charts), 1)
         self.assertEqual(result.charts[0].y_keys, ("value",))
+
+    async def test_standalone_station_chart_executes_qa_and_returns_source_owned_chart(self):
+        intent = await self.bridge.call({
+            "action": "chat_intent",
+            "question": "Chart average power output per station over the last 24 hours.",
+        })
+        self.mode = "standalone_station_chart"
+        self.tools.station_power = True
+        request = ChatRequest.model_validate({
+            **self.request.model_dump(mode="python"),
+            "run_id": uuid4(),
+            "question": "Chart average power output per station over the last 24 hours.",
+            **intent,
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["qa"])
+        self.assertEqual(self.tools.calls, 1)
+        self.assertEqual(result.tables[0].rows[0].values["Station"], "Foyers")
+        self.assertEqual(result.tables[0].rows[0].values["average_power_MW"], 1271.1575)
+        self.assertEqual(len(result.charts), 1)
+        self.assertEqual(result.charts[0].x_key, "Station")
+        self.assertEqual(result.charts[0].y_keys, ("average_power_MW",))
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)

@@ -31,7 +31,11 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
     { charts_requested: false, native_sources: [], proposal_priority: 'Medium',
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
-  assert.equal(chatIntent('Show a chart of power.').charts_requested, true)
+  assert.deepEqual(chatIntent('Chart average power output per station over the last 24 hours.'),
+    { charts_requested: true, native_sources: [], proposal_priority: 'Medium',
+      required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
+  assert.deepEqual(chatIntent('Plot open work orders by equipment.').required_specialists, ['qa'])
+  assert.deepEqual(chatIntent('Visualize turbine temperature by equipment.').required_specialists, ['qa'])
   assert.equal(chatIntent('Do not show a chart. Return the rows.').charts_requested, false)
   assert.equal(chatIntent('Draft a high-priority work order.').proposal_priority, 'High')
   assert.throws(() => chatIntent('Draft a high-priority work order and draft a low-priority work order.'), /conflicting/)
