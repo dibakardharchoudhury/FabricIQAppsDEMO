@@ -21,6 +21,9 @@ export type HostedDecision = {
   approved: boolean
   edits?: { title: string; description: string; priority: 'Low' | 'Medium' | 'High' | 'Critical' }
 }
+export function hostedDecisionEdits(value: Pick<WorkOrderProposal, 'title' | 'description' | 'priority'>): NonNullable<HostedDecision['edits']> {
+  return { title: value.title, description: value.description, priority: value.priority }
+}
 export type HostedAnswer = {
   runId: string
   text: string

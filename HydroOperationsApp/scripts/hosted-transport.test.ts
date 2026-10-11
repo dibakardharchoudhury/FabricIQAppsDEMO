@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { HostedTransport, HostedInvocationError, type SourceTokens } from '../src/services/copilot/hostedTransport.ts'
+import {
+  hostedDecisionEdits, HostedTransport, HostedInvocationError, type SourceTokens,
+} from '../src/services/copilot/hostedTransport.ts'
 
 const project = 'https://test.services.ai.azure.com/api/projects/test'
 const endpoint = `${project}/agents/coordinator/endpoint/protocols/invocations`
@@ -133,6 +135,16 @@ const card = () => ({ id: 'draft-1', run_id: 'run-1', source, equipment_id: 'equ
   instrument_id: null, opcua_node_id: 'node-1', title: 'Inspect signal', description: 'Human-reviewed scope.',
   priority: 'Medium', work_read_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60000).toISOString() })
 const cardReply = () => ({ ...reply(), proposals: [card()], proposal_digests: { 'draft-1': 'b'.repeat(64) } })
+
+test('hosted approval serialization strips proposal identity and backend controls', () => {
+  const proposal = {
+    id: 'draft-1', equipmentId: 'equipment-1', title: 'Inspect signal',
+    description: 'Human-reviewed scope.', priority: 'Medium' as const, createdAt: Date.now(), backend: {},
+  }
+  assert.deepEqual(hostedDecisionEdits(proposal), {
+    title: 'Inspect signal', description: 'Human-reviewed scope.', priority: 'Medium',
+  })
+})
 
 test('backend cards preserve targets and send only reviewed edits or explicit rejection', async () => {
   const bodies: Record<string, unknown>[] = []

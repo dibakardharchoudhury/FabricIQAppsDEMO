@@ -4,20 +4,20 @@ import type { WorkOrderProposal } from '../services/copilot/orchestration'
 import { approveWorkOrder, workOrderApprovals } from '../services/copilot/workOrderApproval'
 import type { ProposalEdits } from '../services/copilot/approvalStore'
 import { AgentElapsedTime } from './AgentElapsedTime'
-import { HostedInvocationError } from '../services/copilot/hostedTransport'
+import { hostedDecisionEdits, HostedInvocationError } from '../services/copilot/hostedTransport'
 
 export function WorkOrderApprovalCard({ proposal }: { proposal: WorkOrderProposal }) {
   return proposal.backend ? <HostedApprovalCard proposal={proposal} /> : <BrowserApprovalCard proposal={proposal} />
 }
 
 function HostedApprovalCard({ proposal }: { proposal: WorkOrderProposal }) {
-  const [draft, setDraft] = useState<ProposalEdits>(proposal)
+  const [draft, setDraft] = useState<ProposalEdits>(() => hostedDecisionEdits(proposal))
   const [state, setState] = useState<'pending' | 'saving' | 'created' | 'rejected' | 'blocked' | 'disabled' | 'uncertain'>('pending')
   const [message, setMessage] = useState('')
   const submitted = useRef<{ approved: boolean; edits?: ProposalEdits } | undefined>(undefined)
   const decide = async (approved: boolean, reconcile = false) => {
     if ((reconcile ? state !== 'uncertain' : state !== 'pending') || !proposal.backend) return
-    if (!reconcile) submitted.current = { approved, ...(approved ? { edits: { ...draft } } : {}) }
+    if (!reconcile) submitted.current = { approved, ...(approved ? { edits: hostedDecisionEdits(draft) } : {}) }
     const decision = submitted.current
     if (!decision) return
     setState('saving')
