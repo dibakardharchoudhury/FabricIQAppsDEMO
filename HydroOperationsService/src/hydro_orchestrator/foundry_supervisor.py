@@ -470,6 +470,26 @@ def evidence_equipment_ids(receipts: Iterable[ToolEvidence]) -> set[str]:
     return selected
 
 
+def _bounded_citation_fragments(text: str, limit: int = 1800, maximum: int = 40) -> tuple[str, ...]:
+    fragments: list[str] = []
+    remaining = text.strip()
+    while remaining and len(fragments) < maximum:
+        if len(remaining) <= limit:
+            fragments.append(remaining)
+            break
+        boundary = max(
+            remaining.rfind("\n\n", 0, limit + 1),
+            remaining.rfind("\n", 0, limit + 1),
+            remaining.rfind(" ", limit // 2, limit + 1),
+        )
+        if boundary < limit // 2:
+            boundary = limit
+        fragment, remaining = remaining[:boundary].strip(), remaining[boundary:].strip()
+        if fragment:
+            fragments.append(fragment)
+    return tuple(fragments)
+
+
 def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -> tuple[str, ...]:
     examples: list[str] = []
     for evidence_id, receipt in evidence.items():
@@ -478,8 +498,13 @@ def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -
             for index, row in enumerate(rows[:4]):
                 if len(_encoded(row)) <= 2400:
                     examples.append(f"{evidence_id}:/rows/{index}")
+        fragments = receipt.result.get("citation_fragments")
+        if isinstance(fragments, list):
+            for index, fragment in enumerate(fragments[:8]):
+                if isinstance(fragment, str) and len(_encoded(fragment)) <= 2400:
+                    examples.append(f"{evidence_id}:/citation_fragments/{index}")
         for key, value in receipt.result.items():
-            if key == "rows" or isinstance(value, (dict, list)) or type(value) not in (str, int, float):
+            if key in ("rows", "citation_fragments") or isinstance(value, (dict, list)) or type(value) not in (str, int, float):
                 continue
             path = "/" + key.replace("~", "~0").replace("/", "~1")
             if len(_encoded(value)) <= 2400:
@@ -1359,6 +1384,12 @@ class FoundrySupervisor:
                             dict(native_payload) if isinstance(native_payload, dict)
                             else {"native_output": native_payload}
                         )
+                        native_text = next((
+                            value for key in ("response", "native_text")
+                            if isinstance((value := native_result.get(key)), str) and len(value) > 2400
+                        ), None)
+                        if native_text is not None:
+                            native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
                         if not _has_native_domain_evidence(native_result):
                             raise SourceFailure(
                                 "Native execution returned only connection metadata without domain evidence."

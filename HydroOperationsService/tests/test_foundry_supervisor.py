@@ -20,7 +20,7 @@ from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOr
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
-    safe_exception_signature, canonical_source_arguments, _native_equipment_ids,
+    safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -188,6 +188,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ("reading-1:/rows/0", "reading-1:/row_count"),
         )
         self.assertNotIn("limitations", " ".join(rca_reference_examples({"reading-1": receipt})))
+
+    def test_large_native_response_provides_bounded_source_preserving_rca_paths(self):
+        response = "\n\n".join(f"Ontology fact {index}: " + "x" * 500 for index in range(12))
+        fragments = _bounded_citation_fragments(response)
+        self.assertEqual("".join(response.split()), "".join(fragments).replace(" ", "").replace("\n", ""))
+        self.assertTrue(fragments)
+        self.assertTrue(all(len(fragment) <= 1800 for fragment in fragments))
+        receipt = ToolEvidence(
+            id="native-1", source=SOURCE, tool="fabriciq-ontology", arguments={},
+            completed_at=utc_now(),
+            result={"response": response, "citation_fragments": list(fragments)},
+        )
+        examples = rca_reference_examples({"native-1": receipt})
+        self.assertEqual(
+            examples,
+            tuple(f"native-1:/citation_fragments/{index}" for index in range(len(fragments))),
+        )
+        self.assertNotIn("native-1:/response", examples)
 
     def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
         specialist = SpecialistResult(
