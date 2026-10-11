@@ -1098,13 +1098,17 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "plan_repair"
         request = self.request.model_copy(update={
             "question": "Read telemetry, investigate concerns, and prepare an editable work-order draft.",
-            "required_specialists": ("qa", "rca", "work-order"),
+            "required_specialists": (),
         })
         self.seed(request)
         result = await self.owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order"])
         self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
+        self.assertEqual(
+            RunJournal(self.root / str(request.run_id) / "receipts").read("executor_intent")["required_specialists"],
+            ["qa", "rca", "work-order"],
+        )
 
     async def test_projection_schema_allows_only_actual_source_field_pointer_pairs(self):
         receipt = await self.tools.execute("query_telemetry", {"equipment_id": "TEST_T005"}, self.request)

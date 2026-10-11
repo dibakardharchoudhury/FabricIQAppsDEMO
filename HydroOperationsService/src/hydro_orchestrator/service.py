@@ -424,6 +424,10 @@ def create_delegated_app(
             chat = ChatRequest(run_id=uuid4(), source=source, requested_at=requested_at, deadline=deadline,
                                historical_context=preceding_context(state, source, input_chat.previous_run_id),
                                **input_chat.model_dump())
+            logger.info(
+                "Delegated run %s normalized intent: specialists=%s native_sources=%s charts=%s.",
+                chat.run_id, list(chat.required_specialists), list(chat.native_sources), chat.charts_requested,
+            )
             if body.stream:
                 assert credential is not None and state is not None
                 stream_credential = credential

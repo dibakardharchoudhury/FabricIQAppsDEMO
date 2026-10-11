@@ -1642,6 +1642,30 @@ class FoundrySupervisor:
             if existing is not None and existing != encoded:
                 raise SourceFailure("Run identity already belongs to a different immutable request.")
             journal.save("request", encoded)
+            if not request.required_specialists:
+                intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
+                if set(intent) != {
+                    "charts_requested", "native_sources", "proposal_priority", "required_specialists",
+                }:
+                    raise SourceFailure("Executor intent recovery returned an unsupported contract.")
+                parsed_intent = ChatRequest.model_validate({
+                    **request.model_dump(),
+                    **intent,
+                })
+                if (parsed_intent.required_specialists
+                        and parsed_intent.native_sources == request.native_sources):
+                    recovered = request.model_copy(update={
+                        "required_specialists": parsed_intent.required_specialists,
+                    })
+                    logger.warning(
+                        "Recovered a missing backend specialist manifest at the executor boundary: %s.",
+                        list(recovered.required_specialists),
+                    )
+                    request = recovered
+                    journal.save("executor_intent", {
+                        "required_specialists": list(request.required_specialists),
+                        "native_sources": list(request.native_sources),
+                    })
             committed = journal.read("answer")
             if committed is not None:
                 return ChatAnswer.model_validate(committed)
