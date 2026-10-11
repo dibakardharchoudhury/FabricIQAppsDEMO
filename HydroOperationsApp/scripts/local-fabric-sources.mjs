@@ -146,6 +146,81 @@ export async function readAssetEntity(config, entityKey, args, token, fetcher = 
   return { ...shaped.result, _row_identities: shaped.rowIdentities, read_completed_at_utc: new Date().toISOString() }
 }
 
+const identityText = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const identityNumber = value => {
+  const match = identityText(value).match(/(\d+)$/)
+  return match ? Number(match[1]) : null
+}
+const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const facilityRoot = value => String(value ?? '').toLowerCase()
+  .replace(/\b(?:hydro(?:electric)?|power|station|plant|facility)\b/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim()
+
+export function resolveIdentityScope(question, equipmentRows, facilityRows, source, readCompletedAt) {
+  if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
+    throw new Error('Semantic identity resolution requires one bounded operator question.')
+  }
+  const mentions = []
+  const addMention = (kind, mention, numeric = null) => {
+    const key = `${kind}:${identityText(mention)}`
+    if (!mentions.some(item => item.key === key)) mentions.push({ key, kind, mention, numeric })
+  }
+  for (const match of question.matchAll(/\bEQUIP_RTI_T0*(\d+)\b/gi)) addMention('equipment', match[0], Number(match[1]))
+  for (const match of question.matchAll(/\bT0*(\d+)\b/gi)) addMention('equipment', match[0], Number(match[1]))
+  for (const match of question.matchAll(/\b(?:turbine|equipment|asset)\s*(?:number|no\.?|#)?\s*0*(\d+)\b/gi)) {
+    addMention('equipment', match[0], Number(match[1]))
+  }
+  for (const match of question.matchAll(/\bFACILITY_RTI_0*(\d+)\b/gi)) addMention('facility', match[0], Number(match[1]))
+  for (const match of question.matchAll(/\b(?:facility|station|power\s+plant)\s*(?:number|no\.?|#)?\s*0*(\d+)\b/gi)) {
+    addMention('facility', match[0], Number(match[1]))
+  }
+  for (const row of facilityRows) {
+    const root = facilityRoot(row.facility_name)
+    const pattern = root && `\\b${escapePattern(root).replace(/\\ /g, '\\s+')}\\b`
+    if (pattern && new RegExp(pattern, 'i').test(question)) addMention('facility', row.facility_name)
+  }
+  if (!mentions.length) return { matched: false }
+
+  const matches = mentions.map(item => {
+    const rows = item.kind === 'equipment' ? equipmentRows : facilityRows
+    const candidates = rows.filter(row => {
+      if (item.numeric !== null) {
+        return item.kind === 'equipment'
+          ? [row.equipment_id, row.tag].some(value => identityNumber(value) === item.numeric)
+          : identityNumber(row.facility_id) === item.numeric
+      }
+      const root = facilityRoot(item.mention)
+      return item.kind === 'facility' && root && facilityRoot(row.facility_name) === root
+    })
+    const canonical = new Map(candidates.map(row => [
+      item.kind === 'equipment' ? row.equipment_id : row.facility_id, row,
+    ]))
+    if (canonical.size !== 1) {
+      const ids = [...canonical.keys()].slice(0, 10)
+      throw new Error(canonical.size
+        ? `Identity '${item.mention}' is ambiguous across ${ids.join(', ')}. Use one canonical ID.`
+        : `Identity '${item.mention}' does not match the authoritative asset or facility inventory.`)
+    }
+    const [canonicalId, row] = [...canonical.entries()][0]
+    const canonicalMention = identityText(item.mention) === identityText(canonicalId)
+    return {
+      kind: item.kind,
+      mention: item.mention,
+      canonical_id: canonicalId,
+      label: item.kind === 'equipment' ? String(row.tag || canonicalId) : String(row.facility_name || canonicalId),
+      facility_id: item.kind === 'equipment' ? row.facility_id : canonicalId,
+      matched_by: canonicalMention ? 'canonical_id'
+        : item.numeric !== null && identityText(item.mention).startsWith('t') ? 'tag'
+          : item.numeric !== null ? 'number' : 'name',
+    }
+  })
+  return {
+    source,
+    matches: [...new Map(matches.map(match => [`${match.kind}:${match.canonical_id}`, match])).values()],
+    read_completed_at: readCompletedAt,
+  }
+}
+
 async function readAssetInventory(config, entity, token, fetcher) {
   const fields = entity.columns.map(column => column.name).join(' ')
   return collectCatalogRows(entity, async cursor => {
@@ -627,6 +702,19 @@ async function main() {
   if (request.configuration_digest !== config.configuration_digest) throw new Error('Source configuration changed; restart the local source adapter.')
   const metadata = await discover(config, request.tokens.fabric)
   if (request.action === 'discover') return metadata
+  if (request.action === 'resolve_identity_scope') {
+    const equipmentEntity = ASSET_ENTITIES.find(entity => entity.key === 'equipment')
+    const facilityEntity = ASSET_ENTITIES.find(entity => entity.key === 'facilities')
+    if (!equipmentEntity || !facilityEntity || typeof request.question !== 'string'
+      || typeof request.tokens.graphql !== 'string' || !request.tokens.graphql) {
+      throw new Error('Semantic identity resolver configuration is incomplete.')
+    }
+    const [equipment, facilities] = await Promise.all([
+      readAssetInventory(config, equipmentEntity, request.tokens.graphql),
+      readAssetInventory(config, facilityEntity, request.tokens.graphql),
+    ])
+    return resolveIdentityScope(request.question, equipment, facilities, metadata.source, new Date().toISOString())
+  }
   if (request.action === 'approve_work_order') {
     if (request.human_approved !== true) throw new Error('A human approval is required outside agent tool execution.')
     const result = await submitApprovedWorkOrder(config, request.draft, request.edits, request.principal_id,

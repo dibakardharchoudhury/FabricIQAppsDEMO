@@ -73,6 +73,30 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(set(sources.bridge.call.call_args.args[0]["tokens"]), {"fabric", "graphql"})
 
+    async def test_semantic_scope_resolution_is_source_bound_and_uses_delegated_tokens(self):
+        sources = reader()
+        sources.bridge.call.return_value = {
+            "source": sources.discovery.source.model_dump(mode="json"),
+            "matches": [{
+                "kind": "equipment",
+                "mention": "t09",
+                "canonical_id": "EQUIP_RTI_T009",
+                "label": "T009",
+                "facility_id": "FACILITY_RTI_002",
+                "matched_by": "tag",
+            }],
+            "read_completed_at": utc_now().isoformat(),
+        }
+        scope = await sources.resolve_scope("Create a work order for t09.")
+        self.assertEqual(scope["matches"][0]["canonical_id"], "EQUIP_RTI_T009")
+        self.assertEqual(
+            {call.args[0] for call in sources.credential.get_token.await_args_list},
+            {
+                "https://api.fabric.microsoft.com/.default",
+                "https://analysis.windows.net/powerbi/api/.default",
+            },
+        )
+
     async def test_backend_snapshots_use_only_required_resources_and_attest_returned_source_identities(self):
         sources = reader()
         request = self.chat(sources)

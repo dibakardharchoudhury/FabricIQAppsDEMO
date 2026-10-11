@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 from openai import APIStatusError, APITimeoutError
 from pydantic import AwareDatetime, Field, ValidationError, model_validator
 
-from .contracts import Contract, EvidenceReference, SourceIdentity, WorkOrderDraft, utc_now
+from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, SourceFailure
 from .foundry_rca import verified_project_endpoint
 from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentation
@@ -193,6 +193,7 @@ class ChatRequest(Contract):
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
+    resolved_scope: ResolvedScope | None = None
     previous_run_id: UUID | None = None
     historical_context: HistoricalContext | None = None
 
@@ -207,6 +208,11 @@ class ChatRequest(Contract):
         if (any(role not in self.required_specialists for role in self.required_specialist_steps)
                 or any(count < 1 or count > 8 for count in self.required_specialist_steps.values())):
             raise ValueError("Required specialist step counts must be bounded and match required specialists.")
+        if self.resolved_scope is not None and (
+            self.resolved_scope.source != self.source
+            or not self.requested_at <= self.resolved_scope.read_completed_at <= self.deadline
+        ):
+            raise ValueError("Resolved semantic scope must match this source and invocation clock.")
         if self.historical_context is not None and (
             self.historical_context.run_id != self.previous_run_id
             or self.historical_context.source != self.source
@@ -215,6 +221,73 @@ class ChatRequest(Contract):
         ):
             raise ValueError("Historical context must match the same-source preceding run.")
         return self
+
+
+def canonical_source_arguments(request: ChatRequest, arguments: dict[str, object]) -> dict[str, object]:
+    if request.resolved_scope is None:
+        return arguments
+
+    def normalized(value: object) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+    indexes: dict[str, dict[str, str]] = {
+        "equipment_id": {},
+        "tag": {},
+        "facility_id": {},
+        "facility_name": {},
+    }
+
+    def register(index: str, alias: str | None, canonical: str) -> None:
+        if not alias:
+            return
+        key = normalized(alias)
+        previous = indexes[index].get(key)
+        if previous is not None and previous != canonical:
+            raise SourceFailure("Resolved semantic scope contains an ambiguous canonical alias.")
+        indexes[index][key] = canonical
+
+    for match in request.resolved_scope.matches:
+        if match.kind == "equipment":
+            for alias in (match.mention, match.label, match.canonical_id):
+                register("equipment_id", alias, match.canonical_id)
+                register("tag", alias, match.label)
+        else:
+            for alias in (match.mention, match.label, match.canonical_id):
+                register("facility_id", alias, match.canonical_id)
+                register("facility_name", alias, match.label)
+
+    field_indexes = {
+        "equipment_id": "equipment_id",
+        "equipmentId": "equipment_id",
+        "equipment_ids": "equipment_id",
+        "facility_id": "facility_id",
+        "facilityId": "facility_id",
+        "facility_ids": "facility_id",
+        "facility_name": "facility_name",
+        "tag": "tag",
+    }
+
+    def resolve(index: str, value: object) -> object:
+        if isinstance(value, list):
+            return [resolve(index, item) for item in value]
+        if not isinstance(value, str):
+            return value
+        return indexes[index].get(normalized(value), value)
+
+    canonical = json.loads(_encoded(arguments))
+    for field, index in field_indexes.items():
+        if field in canonical:
+            canonical[field] = resolve(index, canonical[field])
+    where = canonical.get("where")
+    if isinstance(where, list):
+        for condition in where:
+            if not isinstance(condition, dict) or condition.get("op") not in ("eq", "in"):
+                continue
+            column = condition.get("column")
+            index = field_indexes.get(column) if isinstance(column, str) else None
+            if index is not None and "value" in condition:
+                condition["value"] = resolve(index, condition["value"])
+    return canonical
 
 
 class NativeBinding(Contract):
@@ -845,6 +918,7 @@ class FoundrySupervisor:
                 raise
 
         async def query(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+            arguments = canonical_source_arguments(request, arguments)
             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
             specification = next((tool for tool in catalog.tools if tool.name == tool_name), None)
             if specification is None:
@@ -1112,6 +1186,12 @@ class FoundrySupervisor:
                                          "Execute fresh reads for all current facts and work proposals. "
                                          "Never reuse a prior approval or infer human consent from conversation.",
             "source": request.source.model_dump(mode="json"),
+            "resolved_scope": request.resolved_scope.model_dump(mode="json") if request.resolved_scope else None,
+            "resolved_scope_policy": (
+                "The backend resolved these operator mentions against the complete authoritative asset/facility "
+                "inventories. Use only these canonical IDs for source filters, handoffs and draft targets. Do not "
+                "reinterpret the original alias. Empty means the operator supplied no explicit identity mention."
+            ),
             "evidence": self.model_evidence(role, targeted=targeted_context),
             "allowed_evidence_ids": list(self.evidence),
             "allowed_evidence_references": rca_reference_examples(self.evidence) if role == "rca" else (),
@@ -1435,6 +1515,88 @@ class FoundrySupervisor:
             return plan, self.answer(request, plan)
         except SourceFailure:
             return None
+
+    def deterministic_explanatory_plan(self, request: ChatRequest) -> AnswerPlan:
+        source_plan = self.source_answer_plan(request)
+        if source_plan is None:
+            raise SourceFailure("Deterministic explanation requires verified source receipts.")
+        sentences: list[str] = []
+        if request.resolved_scope is not None:
+            labels = [
+                f"{match.label} ({match.canonical_id})"
+                for match in request.resolved_scope.matches
+            ]
+            sentences.append("The requested identity was resolved to " + ", ".join(labels) + ".")
+
+        telemetry = [item for item in self.evidence.values() if item.tool in (
+            "query_telemetry", "query_signal_quality_snapshot", "query_turbine_temperature_snapshot",
+            "query_station_power", "run_kql",
+        )]
+        operations = [item for item in self.evidence.values() if item.tool in (
+            "query_operations", "query_work_backlog",
+        )]
+        asset_reads = [item for item in self.evidence.values() if item.tool == "query_assets"]
+
+        def row_count(receipts: list[ToolEvidence]) -> int:
+            total = 0
+            for item in receipts:
+                count = item.result.get("row_count")
+                rows = item.result.get("rows")
+                if type(count) is int:
+                    total += count
+                elif isinstance(rows, list):
+                    total += len(rows)
+            return total
+
+        if telemetry:
+            if row_count(telemetry):
+                sentences.append(
+                    "Telemetry evidence was returned for the requested scope and is preserved in the "
+                    "source-annotated tables with its measurement times."
+                )
+            else:
+                sentences.append(
+                    "No telemetry records were returned for the requested window; that is an evidence gap, "
+                    "not proof that the equipment is healthy or faulty."
+                )
+        if operations:
+            if row_count(operations):
+                sentences.append(
+                    "Matching operational records were returned and are shown with their current status and "
+                    "source identity."
+                )
+            else:
+                sentences.append("No matching operational records were returned by the scoped source read.")
+        if asset_reads and not sentences:
+            sentences.append(
+                "The requested asset and facility records were returned from the authoritative inventory and "
+                "are shown with their canonical identities."
+            )
+        if any(item.role == "rca" for item in self.specialists):
+            sentences.append(
+                "The returned evidence does not establish a physical fault or root cause; the listed evidence "
+                "gaps must be closed before diagnosis or operational action."
+            )
+        if any(item.tool == "propose_work_order" for item in self.evidence.values()):
+            sentences.append(
+                "An editable work-order draft was staged for human review only; no production write was executed."
+            )
+        elif any(item.role == "work-order" for item in self.specialists):
+            sentences.append(
+                "No editable work-order draft was staged unless a source-verified uncovered issue appears in "
+                "the supporting findings."
+            )
+        if request.charts_requested and source_plan.charts:
+            sentences.append("The requested chart is derived from the same verified rows shown in its source table.")
+        if not sentences:
+            sentences.append(
+                "The requested source checks completed, and their verified records, timestamps and limitations "
+                "are preserved below for review."
+            )
+        summary = " ".join(sentences[:5])
+        if len(summary) > 800:
+            summary = summary[:796].rsplit(" ", 1)[0] + "..."
+        return source_plan.model_copy(update={"summary": summary})
 
     async def project_answer(
         self, request: ChatRequest, journal: RunJournal, version: AgentVersion, rejected: str, error: Exception,
@@ -1947,9 +2109,28 @@ class FoundrySupervisor:
                         except (
                             ValidationError, SourceFailure, TimeoutError, AgentFrameworkException,
                         ) as projection_error:
-                            raise SourceFailure(
-                                "Grounded explanatory summary generation failed; no incomplete result was certified."
-                            ) from projection_error
+                            logger.error(
+                                "Grounded explanatory projection failed (%s); applying deterministic "
+                                "source-bound explanation.",
+                                type(projection_error).__name__,
+                            )
+                            plan = owner.deterministic_explanatory_plan(request)
+                            projection = ProjectionReceipt(
+                                response_id="deterministic-source-bound-fallback",
+                                model="application",
+                                duration_ms=0,
+                                input_digest=sha256(_encoded({
+                                    "request": request.model_dump(mode="json"),
+                                    "evidence": [item.receipt() for item in owner.evidence.values()],
+                                    "specialists": [item.model_dump(mode="json") for item in owner.specialists],
+                                })).hexdigest(),
+                            )
+                            journal.save("answer_projection:deterministic-source-bound-fallback", {
+                                "text": plan.summary,
+                                "fallback_reason": type(projection_error).__name__,
+                                **projection.model_dump(mode="json"),
+                            })
+                            result = owner.answer(request, plan, use_projected_summary=True)
                     journal.save("prepared_answer", PreparedAnswer(
                         answer=result, evidence=tuple(owner.evidence.values()),
                         supervisor_response_id=turn.response_id, supervisor_version=turn.version,

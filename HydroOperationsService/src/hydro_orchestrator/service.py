@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import secrets
 import sqlite3
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -18,7 +19,10 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from filelock import FileLock, Timeout as LockTimeout
 
-from .contracts import Approval, Contract, Outcome, Proposal, ReviewInput, ReviewRequest, SourceIdentity, WorkOrderDecision, utc_now
+from .contracts import (
+    Approval, Contract, Outcome, Proposal, ResolvedScope, ReviewInput, ReviewRequest, SourceIdentity,
+    WorkOrderDecision, utc_now,
+)
 from .foundry_supervisor import ChatAnswer, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource, RunJournal
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import StreamingResponse
@@ -119,6 +123,7 @@ class ChatInput(Contract):
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
+    resolved_scope: ResolvedScope | None = None
     previous_run_id: UUID | None = None
 
 
@@ -337,7 +342,7 @@ def create_delegated_app(
     *, run_timeout: float = 300, max_concurrent_runs: int = 4,
     decision_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
     reconciliation_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
-    normalize_chat: Callable[[ChatInput], Awaitable[ChatInput]] | None = None,
+    normalize_chat: Callable[[ChatInput, DelegatedCredential], Awaitable[ChatInput]] | None = None,
 ) -> FastAPI:
     """Raw invocations boundary; the deployment must supply an authorized source factory."""
     if source.tenant_id != verifier.policy.tenant_id:
@@ -427,7 +432,7 @@ def create_delegated_app(
             if capacity.locked():
                 raise HTTPException(429, "Orchestration capacity is busy; retry later.")
             assert body.chat is not None
-            input_chat = await normalize_chat(body.chat) if normalize_chat else body.chat
+            input_chat = await normalize_chat(body.chat, credential) if normalize_chat else body.chat
             if input_chat.question != body.chat.question:
                 raise ValueError("Intent normalization changed the operator question.")
             chat = ChatRequest(run_id=uuid4(), source=source, requested_at=requested_at, deadline=deadline,
@@ -618,9 +623,29 @@ def create_fabric_delegated_app(
         finally:
             await sources.close()
 
-    async def normalize_chat(chat: ChatInput) -> ChatInput:
+    async def normalize_chat(chat: ChatInput, credential: DelegatedCredential) -> ChatInput:
         intent = await bridge.call({"action": "chat_intent", "question": chat.question})
-        return normalized_chat_input(chat, intent)
+        normalized = normalized_chat_input(chat, intent)
+        if not re.search(
+            r"\b(?:EQUIP_RTI_T0*\d+|FACILITY_RTI_0*\d+|T0*\d+|"
+            r"(?:turbine|equipment|asset|facility|station|power\s+plant)\s*"
+            r"(?:number|no\.?|#)?\s*0*\d+|"
+            r"[A-Za-z][A-Za-z'-]*\s+(?:power\s+)?(?:station|plant))\b",
+            chat.question,
+            re.IGNORECASE,
+        ):
+            return normalized
+        sources = await LiveSources.open_delegated(credential, bridge)
+        try:
+            resolved = await sources.resolve_scope(chat.question)
+        except SourceFailure as error:
+            message = str(error)
+            if message.startswith("Identity '"):
+                raise HTTPException(422, message) from None
+            raise
+        return normalized.model_copy(update={
+            "resolved_scope": ResolvedScope.model_validate(resolved) if resolved is not None else None,
+        })
 
     async def reconcile(state: Path, credential: DelegatedCredential, run_id: UUID, decision: WorkOrderDecision):
         return await decide(state, credential, run_id, decision, require_previous=True)

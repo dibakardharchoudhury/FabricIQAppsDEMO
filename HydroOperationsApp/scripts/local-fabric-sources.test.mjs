@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -527,6 +527,57 @@ test('asset catalog reads every page before filtering and preserves exact column
   assert.equal(typeof result.rows[0].criticality, 'number')
   assert.equal(result.total_matched, 1)
   assert.equal(result.truncated, false)
+})
+
+test('central identity resolution canonicalizes equipment and facility aliases from authoritative inventories', () => {
+  const equipment = [
+    { equipment_id: 'EQUIP_RTI_T009', tag: 'T009', facility_id: 'FACILITY_RTI_002' },
+    { equipment_id: 'EQUIP_RTI_T010', tag: 'T010', facility_id: 'FACILITY_RTI_002' },
+  ]
+  const facilities = [
+    { facility_id: 'FACILITY_RTI_001', facility_name: 'Sloy Power Station' },
+    { facility_id: 'FACILITY_RTI_002', facility_name: 'Foyers Power Station' },
+  ]
+  const source = {
+    tenant_id: 'ad340c84-1886-4202-a483-2da2cb9168eb',
+    workspace_id: '9c73201e-b2e5-48eb-81b9-3526d320faca',
+    ontology_id: 'b5895dbe-84ef-439f-aaae-5a5a193db897',
+    generation: 2,
+    configuration_digest: 'a'.repeat(64),
+  }
+  const resolved = resolveIdentityScope(
+    'Create a work order for t09 at facility 01 and compare Foyers power plant.',
+    equipment, facilities, source, '2026-10-11T10:00:00.000Z',
+  )
+  assert.deepEqual(resolved.matches, [
+    {
+      kind: 'equipment', mention: 't09', canonical_id: 'EQUIP_RTI_T009', label: 'T009',
+      facility_id: 'FACILITY_RTI_002', matched_by: 'tag',
+    },
+    {
+      kind: 'facility', mention: 'facility 01', canonical_id: 'FACILITY_RTI_001',
+      label: 'Sloy Power Station', facility_id: 'FACILITY_RTI_001', matched_by: 'number',
+    },
+    {
+      kind: 'facility', mention: 'Foyers Power Station', canonical_id: 'FACILITY_RTI_002',
+      label: 'Foyers Power Station', facility_id: 'FACILITY_RTI_002', matched_by: 'name',
+    },
+  ])
+})
+
+test('central identity resolution ignores unrelated numbers and rejects ambiguous aliases', () => {
+  const source = { tenant_id: 't', workspace_id: 'w', ontology_id: 'o', generation: 2 }
+  assert.deepEqual(resolveIdentityScope(
+    'Show the five hottest turbines in the last 6 hours.', [], [], source, '2026-10-11T10:00:00Z',
+  ), { matched: false })
+  assert.throws(() => resolveIdentityScope(
+    'Inspect turbine 9.',
+    [
+      { equipment_id: 'EQUIP_A_T009', tag: 'T009', facility_id: 'F1' },
+      { equipment_id: 'EQUIP_B_T009', tag: 'T009', facility_id: 'F2' },
+    ],
+    [], source, '2026-10-11T10:00:00Z',
+  ), /ambiguous/)
 })
 
 test('catalog input and upstream errors fail before returning source-shaped defaults', async () => {

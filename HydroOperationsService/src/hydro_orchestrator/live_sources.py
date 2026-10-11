@@ -12,7 +12,9 @@ from azure.identity.aio import AzureCliCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import AwareDatetime, Field
 
-from .contracts import Contract, Evidence, ReviewRequest, SourceIdentity, WorkOrderDraft, WorkOrderEdits, utc_now
+from .contracts import (
+    Contract, Evidence, ResolvedScope, ReviewRequest, SourceIdentity, WorkOrderDraft, WorkOrderEdits, utc_now,
+)
 
 if TYPE_CHECKING:
     from .foundry_supervisor import ChatRequest, ToolEvidence
@@ -166,6 +168,24 @@ class LiveSources:
         if result.ready != (not result.failures and all(check.status == "passed" for check in result.checks)):
             raise SourceFailure("Probe readiness contradicts its source checks.")
         return result
+
+    async def resolve_scope(self, question: str) -> dict[str, object] | None:
+        fabric, graphql = await asyncio.gather(
+            self.credential.get_token("https://api.fabric.microsoft.com/.default"),
+            self.credential.get_token("https://analysis.windows.net/powerbi/api/.default"),
+        )
+        result = await self.bridge.call({
+            "action": "resolve_identity_scope",
+            "question": question,
+            "configuration_digest": self.discovery.source.configuration_digest,
+            "tokens": {"fabric": fabric.token, "graphql": graphql.token},
+        })
+        if result.get("matched") is False:
+            return None
+        scope = ResolvedScope.model_validate(result)
+        if scope.source != self.discovery.source:
+            raise SourceFailure("Semantic identity resolution changed the verified source identity.")
+        return scope.model_dump(mode="json")
 
     async def read(self, request: ReviewRequest) -> Evidence:
         if request.source != self.discovery.source:

@@ -36,6 +36,28 @@ class SourceIdentity(Contract):
         return value
 
 
+class ResolvedIdentity(Contract):
+    kind: Literal["equipment", "facility"]
+    mention: str = Field(min_length=1, max_length=200)
+    canonical_id: str = Field(min_length=1, max_length=200)
+    label: str = Field(min_length=1, max_length=300)
+    facility_id: str | None = Field(default=None, max_length=200)
+    matched_by: Literal["canonical_id", "tag", "number", "name"]
+
+
+class ResolvedScope(Contract):
+    source: SourceIdentity
+    matches: tuple[ResolvedIdentity, ...] = Field(min_length=1, max_length=20)
+    read_completed_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def distinct_matches(self) -> "ResolvedScope":
+        identities = [(match.kind, match.canonical_id) for match in self.matches]
+        if len(identities) != len(set(identities)):
+            raise ValueError("Resolved semantic identities must be distinct.")
+        return self
+
+
 class ReviewInput(Contract):
     equipment_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=200)

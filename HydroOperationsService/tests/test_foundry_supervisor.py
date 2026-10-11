@@ -16,11 +16,11 @@ from agent_framework import FileCheckpointStorage
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from hydro_orchestrator.contracts import WorkOrderDraft, utc_now
+from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
-    safe_exception_signature, _native_equipment_ids,
+    safe_exception_signature, canonical_source_arguments, _native_equipment_ids,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -1165,6 +1165,41 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(_native_equipment_ids({"response": "Investigate EQUIP_RTI_T006 next."}), set())
 
+    def test_resolved_scope_canonicalizes_every_specialist_source_filter(self):
+        scope = ResolvedScope(
+            source=SOURCE,
+            read_completed_at=self.request.requested_at + timedelta(seconds=1),
+            matches=(
+                ResolvedIdentity(
+                    kind="equipment", mention="t09", canonical_id="EQUIP_RTI_T009",
+                    label="T009", facility_id="FACILITY_RTI_002", matched_by="tag",
+                ),
+                ResolvedIdentity(
+                    kind="facility", mention="facility 01", canonical_id="FACILITY_RTI_001",
+                    label="Sloy Power Station", facility_id="FACILITY_RTI_001", matched_by="number",
+                ),
+            ),
+        )
+        request = self.request.model_copy(update={"resolved_scope": scope})
+        self.assertEqual(
+            canonical_source_arguments(request, {
+                "entity": "equipment",
+                "where": [
+                    {"column": "tag", "op": "eq", "value": "t09"},
+                    {"column": "facility_id", "op": "in", "value": ["facility 01"]},
+                ],
+                "equipment_id": "t09",
+            }),
+            {
+                "entity": "equipment",
+                "where": [
+                    {"column": "tag", "op": "eq", "value": "T009"},
+                    {"column": "facility_id", "op": "in", "value": ["FACILITY_RTI_001"]},
+                ],
+                "equipment_id": "EQUIP_RTI_T009",
+            },
+        )
+
     async def test_native_source_mismatch_does_not_fall_back_to_direct_tools(self):
         self.mode = "native_wrong_source"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
@@ -1536,12 +1571,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         rca = next(item for item in result.specialists if item.role == "rca")
         self.assertEqual(rca.report["maintenance_follow_up"]["decision"], "verified_uncovered_issue")
 
-    async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
+    async def test_incomplete_projection_uses_grounded_deterministic_explanation(self):
         self.mode = "projection_incomplete"
+        self.tools.presentation = True
         self.request = self.request.model_copy(update={"charts_requested": True})
-        with self.assertRaisesRegex(SourceFailure, "no incomplete result was certified"):
-            await self.owner.run(self.request)
-        self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
+        result = await self.owner.run(self.request)
+        self.assertIn("Telemetry evidence was returned", result.summary)
+        self.assertIn("does not establish a physical fault", result.summary)
+        self.assertEqual(len(result.charts), 1)
+        audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
+        self.assertEqual(
+            audit["answer_projection"]["response_id"],
+            "deterministic-source-bound-fallback",
+        )
 
     async def test_chart_projection_preserves_sources_and_does_not_repeat_specialists(self):
         self.mode = "chart"
