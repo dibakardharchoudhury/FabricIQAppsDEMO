@@ -1375,6 +1375,51 @@ class FoundrySupervisor:
                 item.tool == "propose_work_order" for item in self.evidence.values()
             ):
                 raise SourceFailure("Fixer returned neither a staged approval card nor a structured review.")
+            if role == "supervisor" and not self.specialists and (
+                request.native_sources or request.required_specialists
+            ):
+                assignments = {
+                    "qa": "Execute the required direct factual reads and verification using the canonical scope.",
+                    "rca": "Complete the required source-referenced investigation and evidence-gap assessment.",
+                    "work-order": "Complete the requested work-order draft or coverage review using the canonical scope.",
+                }
+                steps: list[dict[str, object]] = [{
+                    "specialist": "fabric-iq",
+                    "question": f"Execute the explicitly requested {source} native-source operation.",
+                    "reason": "The backend manifest requires this selected native source.",
+                    "native_source": source,
+                    "requires_selection": False,
+                    "requires_verified_issue": False,
+                } for source in request.native_sources]
+                for required_role in request.required_specialists:
+                    for _index in range(request.required_specialist_steps.get(required_role, 1)):
+                        steps.append({
+                            "specialist": required_role,
+                            "question": assignments[required_role],
+                            "reason": "The backend capability manifest requires this specialist.",
+                            "native_source": None,
+                            "requires_selection": False,
+                            "requires_verified_issue": False,
+                        })
+                if not steps or len(steps) > 8:
+                    raise SourceFailure("Backend capability manifest cannot produce a bounded fallback plan.")
+                logger.warning(
+                    "Chief omitted plan_orchestration; executing the backend capability manifest with %s steps.",
+                    len(steps),
+                )
+                self.chief_trace.append({
+                    "id": f"{request.run_id}:manifest-plan",
+                    "timestamp": int(utc_now().timestamp() * 1000),
+                    "source": "application",
+                    "label": "Chief omitted its tool call; the backend executed the required capability manifest.",
+                    "activity": "validation",
+                })
+                self.emit_event(
+                    f"{request.run_id}:chief", "supervisor", "running", "Chief",
+                    "The backend recovered the required specialist plan from the validated capability manifest.",
+                    agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                )
+                await plan_orchestration(steps)
             return response, completed_report, (perf_counter() - started) * 1000
 
     def answer_schema(self) -> dict[str, object]:

@@ -418,6 +418,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if name == "hydro-supervisor-agent":
+            if self.mode == "supervisor_no_plan":
+                output = [self.message("I will coordinate the requested work.")]
+                return httpx.Response(200, json={
+                    "id": f"resp_{name}_{round_number}", "object": "response", "created_at": 1,
+                    "model": "test", "status": "completed", "output": output,
+                    "parallel_tool_calls": False,
+                    "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
+                })
             if self.mode == "plan_repair":
                 roles = ["qa"] if round_number == 0 else ["qa", "rca", "work-order"]
                 steps = [{
@@ -595,7 +603,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             output = [self.function("complete_work_order_review", {
                 "decision": "needs_clarification", "reason": "Inspection scope is not supplied by the source.",
             })] if round_number == 0 else [self.message("No SQL write executed.")]
-            if self.mode == "proposal" and round_number == 0:
+            if self.mode in ("proposal", "supervisor_no_plan") and round_number == 0:
                 output = [self.function("hydro_query", {"tool_name": "propose_work_order", "arguments": {
                     "equipment_id": "TEST_T005", "title": "Inspect BAD signal",
                     "description": "Inspect signal quality; no physical diagnosis is established.",
@@ -1144,6 +1152,44 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa"])
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
+
+    async def test_backend_manifest_executes_required_specialist_when_chief_omits_plan_tool(self):
+        self.mode = "supervisor_no_plan"
+        self.tools.stage = True
+        request = self.request.model_copy(update={
+            "question": "Create an editable work-order draft for the resolved equipment.",
+            "required_specialists": ("work-order",),
+            "required_specialist_steps": {"work-order": 1},
+        })
+        result = await self.owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["work-order"])
+        self.assertEqual(self.calls["hydro-work-order-agent"], 2)
+        self.assertTrue(any(
+            "capability manifest" in event["detail"].lower()
+            for event in self.events if event["role"] == "supervisor"
+        ))
+
+    async def test_backend_manifest_recovers_native_and_repeated_specialist_steps(self):
+        self.mode = "supervisor_no_plan"
+        self.owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"},
+        ))
+        self.owner.set_event_sink(self.events.append)
+        request = self.request.model_copy(update={
+            "native_sources": ("data-agent",),
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 2},
+        })
+        result = await self.owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa", "qa"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.calls["hydro-qa-agent"], 4)
+
+    async def test_chief_without_plan_and_without_backend_manifest_fails_closed(self):
+        self.mode = "supervisor_no_plan"
+        request = self.request.model_copy(update={"question": "Hello."})
+        with self.assertRaisesRegex(SourceFailure, "did not execute any existing specialist"):
+            await self.owner.run(request)
 
     def test_native_markdown_identity_projection_is_field_bounded(self):
         self.assertEqual(
