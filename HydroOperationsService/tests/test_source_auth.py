@@ -238,7 +238,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         return {"operation": "run", "chat": {"question": "Review actual source evidence."},
                 "tokens": {kind: self.token(kind, oid=str(user)) for kind in ("fabric", "foundry")}}
 
-    def ingress(self, root, *, run=None, timeout=300, capacity=4, alter_owner=None,
+    def ingress(self, root, *, run=None, timeout=300, capacity=4, alter_owner=None, delay=0,
                 draft_factory=None, approval_tools=None):
         source = SourceIdentity(
             tenant_id=TENANT, workspace_id=UUID("44444444-4444-4444-8444-444444444444"),
@@ -257,6 +257,8 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 if event_sink is not None:
                     event_sink({"id": f"{request.run_id}:chief", "role": "supervisor", "status": "running",
                                 "label": "Chief", "detail": "Coordinating.", "timestamp": 1})
+                if delay:
+                    await asyncio.sleep(delay)
                 if run is not None:
                     return await run(request)
                 draft = draft_factory(request) if draft_factory is not None else None
@@ -496,6 +498,23 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(contexts, ["closed"])
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
+
+    async def test_streaming_ingress_refreshes_the_active_event_during_long_specialist_work(self):
+        with TemporaryDirectory() as directory:
+            app, _, _, _ = self.ingress(Path(directory), delay=.55)
+            invocation = {**self.invocation(), "stream": True}
+            with patch("hydro_orchestrator.service.STREAM_HEARTBEAT_SECONDS", .01):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="http://test") as client:
+                    response = await client.post("/invocations", json=invocation)
+            messages = [json.loads(line) for line in response.text.splitlines()]
+            events = [message["event"] for message in messages if message["type"] == "event"]
+            running = [event for event in events if event["status"] == "running"]
+            self.assertGreaterEqual(len(running), 2)
+            self.assertEqual({event["id"] for event in running}, {events[-1]["id"]})
+            self.assertTrue(any(event["detail"].endswith("Execution is still in progress.") for event in running))
+            self.assertEqual(events[-1]["status"], "completed")
+            self.assertEqual(messages[-1]["type"], "answer")
 
     async def test_streaming_failure_terminates_chief_without_disclosing_exception_text(self):
         async def fail(_request):

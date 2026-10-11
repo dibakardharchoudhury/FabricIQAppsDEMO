@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic
 from typing import Annotated, Literal
 from uuid import UUID, uuid4, uuid5
 
@@ -29,6 +30,7 @@ from .live_sources import Bridge, FabricBackendTools, LiveSources, NodeSourceBri
 from .foundry_rca import verified_project_endpoint
 
 logger = logging.getLogger(__name__)
+STREAM_HEARTBEAT_SECONDS = 15.0
 
 
 class LocalRunner:
@@ -442,6 +444,7 @@ def create_delegated_app(
 
                 async def stream_run() -> AsyncIterator[bytes]:
                     events: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=64)
+                    latest_running_event: dict[str, object] | None = None
 
                     def line(value: dict[str, object]) -> bytes:
                         return (json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n").encode()
@@ -459,15 +462,24 @@ def create_delegated_app(
                             },
                         }
 
+                    def accept_event(event: dict[str, object]) -> None:
+                        nonlocal latest_running_event
+                        if event.get("status") == "running":
+                            latest_running_event = event
+                        elif latest_running_event is not None and event.get("id") == latest_running_event.get("id"):
+                            latest_running_event = None
+                        events.put_nowait(event)
+
                     async def execute() -> ChatAnswer:
                         async with capacity:
                             async with factory(state, stream_credential) as owner:
                                 if owner.root != state or owner.source != source or owner.credential is not stream_credential:
                                     raise ValueError("Supervisor factory changed its user, source or delegated credential.")
-                                owner.set_event_sink(events.put_nowait)
+                                owner.set_event_sink(accept_event)
                                 return await owner.run(chat)
 
                     task = asyncio.create_task(execute())
+                    last_output_at = monotonic()
                     try:
                         yield line({"type": "run", "run_id": str(chat.run_id),
                                     "source": source.model_dump(mode="json")})
@@ -475,8 +487,19 @@ def create_delegated_app(
                             try:
                                 event = await asyncio.wait_for(events.get(), timeout=.25)
                             except TimeoutError:
+                                if (latest_running_event is not None
+                                        and monotonic() - last_output_at >= STREAM_HEARTBEAT_SECONDS):
+                                    heartbeat = {
+                                        **latest_running_event,
+                                        "detail": f"{latest_running_event.get('detail', 'Specialist execution is running')} "
+                                                  "Execution is still in progress.",
+                                        "timestamp": int(utc_now().timestamp() * 1000),
+                                    }
+                                    yield line({"type": "event", "event": heartbeat})
+                                    last_output_at = monotonic()
                                 continue
                             yield line({"type": "event", "event": event})
+                            last_output_at = monotonic()
                         while not events.empty():
                             yield line({"type": "event", "event": events.get_nowait()})
                         answer = await task
