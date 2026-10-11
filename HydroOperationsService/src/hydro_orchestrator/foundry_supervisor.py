@@ -117,6 +117,54 @@ def _native_equipment_ids(value: object) -> set[str]:
     return resolved
 
 
+def _native_markdown_tables(text: str) -> dict[str, list[dict[str, str]]]:
+    lines = text.splitlines()
+    tables: dict[str, list[dict[str, str]]] = {}
+    index = 0
+    while index + 1 < len(lines) and len(tables) < 20:
+        header_line = lines[index].strip()
+        separator_line = lines[index + 1].strip()
+        if "|" not in header_line or "|" not in separator_line:
+            index += 1
+            continue
+        headers = [cell.strip() for cell in re.split(r"(?<!\\)\|", header_line.strip("|"))]
+        separators = [cell.strip() for cell in re.split(r"(?<!\\)\|", separator_line.strip("|"))]
+        if (not 1 <= len(headers) <= 40 or len(headers) != len(separators)
+                or any(not header for header in headers) or len(set(headers)) != len(headers)
+                or any(re.fullmatch(r":?-{3,}:?", cell) is None for cell in separators)):
+            index += 1
+            continue
+        rows: list[dict[str, str]] = []
+        row_index = index + 2
+        while row_index < len(lines) and len(rows) < 500:
+            row_line = lines[row_index].strip()
+            if "|" not in row_line:
+                break
+            cells = [
+                cell.strip().replace(r"\|", "|")
+                for cell in re.split(r"(?<!\\)\|", row_line.strip("|"))
+            ]
+            if len(cells) != len(headers):
+                break
+            rows.append(dict(zip(headers, cells, strict=True)))
+            row_index += 1
+        if rows:
+            title = next((
+                re.sub(r"^[#\s]+", "", candidate.strip())
+                for candidate in reversed(lines[:index])
+                if candidate.strip()
+            ), f"table_{len(tables) + 1}")
+            slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")[:60] or "table"
+            key = f"native_{slug}"
+            suffix = 2
+            while key in tables:
+                key = f"native_{slug}_{suffix}"
+                suffix += 1
+            tables[key] = rows
+        index = max(index + 1, row_index)
+    return tables
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1415,6 +1463,9 @@ class FoundrySupervisor:
                             dict(native_payload) if isinstance(native_payload, dict)
                             else {"native_output": native_payload}
                         )
+                        native_response = native_result.get("response")
+                        if isinstance(native_response, str):
+                            native_result.update(_native_markdown_tables(native_response))
                         native_text = next((
                             value for key in ("response", "native_text")
                             if isinstance((value := native_result.get(key)), str) and len(value) > 2400
@@ -1537,7 +1588,14 @@ class FoundrySupervisor:
         tables = []
         table_ids: dict[tuple[str, str], str] = {}
         for evidence_index, receipt in enumerate(self.evidence.values()):
+            native_table_fields = {
+                key for key, value in receipt.result.items()
+                if key.startswith("native_") and isinstance(value, list) and value
+                and all(isinstance(record, dict) for record in value)
+            }
             for field, records in receipt.result.items():
+                if native_table_fields and field not in native_table_fields:
+                    continue
                 if (not isinstance(records, list) or not records or len(records) > 500
                         or not all(isinstance(record, dict) for record in records)):
                     continue
@@ -1578,6 +1636,33 @@ class FoundrySupervisor:
                 table_ids[(receipt.id, field)] = table_id
                 if len(tables) == 12:
                     break
+            rows = receipt.result.get("rows")
+            explicit_empty_work = (
+                receipt.tool == "query_operations"
+                and receipt.arguments.get("entity") == "work_orders"
+            )
+            if explicit_empty_work and isinstance(rows, list) and not rows and len(tables) < 12:
+                keys = tuple(
+                    key for key in ("row_count", "total_matched", "read_completed_at_utc")
+                    if key in receipt.result and type(receipt.result[key]) in (str, int, float)
+                )
+                if keys:
+                    table_id = f"source-{evidence_index + 1}-{len(tables) + 1}"
+                    tables.append(PlannedTable(
+                        id=table_id,
+                        title=f"{receipt.tool} empty result",
+                        columns=tuple(AnswerColumn(
+                            key=key,
+                            label=key,
+                            kind="number" if type(receipt.result[key]) in (int, float) else "text",
+                        ) for key in keys),
+                        rows=(PlannedRow(cells=tuple(
+                            AnswerCell(
+                                key=key,
+                                source=EvidenceReference(evidence_id=receipt.id, path=f"/{key}"),
+                            ) for key in keys
+                        )),),
+                    ))
             if len(tables) == 12:
                 break
         if not tables:
@@ -1639,9 +1724,15 @@ class FoundrySupervisor:
             "query_telemetry", "query_signal_quality_snapshot", "query_turbine_temperature_snapshot",
             "query_station_power", "run_kql",
         )]
-        operations = [item for item in self.evidence.values() if item.tool in (
-            "query_operations", "query_work_backlog",
-        )]
+        work_reads = [
+            item for item in self.evidence.values()
+            if item.tool == "query_work_backlog"
+            or item.tool == "query_operations" and item.arguments.get("entity") == "work_orders"
+        ]
+        operations = [
+            item for item in self.evidence.values()
+            if item.tool == "query_operations" and item.arguments.get("entity") != "work_orders"
+        ]
         asset_reads = [item for item in self.evidence.values() if item.tool == "query_assets"]
 
         def row_count(receipts: list[ToolEvidence]) -> int:
@@ -1666,14 +1757,24 @@ class FoundrySupervisor:
                     "No telemetry records were returned for the requested window; that is an evidence gap, "
                     "not proof that the equipment is healthy or faulty."
                 )
+        if work_reads:
+            if row_count(work_reads):
+                sentences.append(
+                    "Open work orders were returned for the requested equipment and are shown with their current "
+                    "status and source identity."
+                )
+            else:
+                sentences.append(
+                    "The complete scoped open-work read returned zero work orders; its zero count and read timestamp "
+                    "are shown explicitly below."
+                )
         if operations:
             if row_count(operations):
                 sentences.append(
-                    "Matching operational records were returned and are shown with their current status and "
-                    "source identity."
+                    "Other matching operational records were returned and are shown with their source identity."
                 )
             else:
-                sentences.append("No matching operational records were returned by the scoped source read.")
+                sentences.append("No other matching operational records were returned by the scoped source read.")
         if asset_reads and not sentences:
             sentences.append(
                 "The requested asset and facility records were returned from the authoritative inventory and "
@@ -1922,7 +2023,7 @@ class FoundrySupervisor:
                                         "identities in every source row; projected-away identities cannot prove a join.")
                 rows.append(AnswerRow.model_validate({"values": values, "source": row.cells[0].source}))
             columns = tuple(AnswerColumn(key=column.key, label=column.key, kind=column.kind) for column in table.columns)
-            tables.append(AnswerTable(id=table.id, title=f"Returned source data {len(tables) + 1}",
+            tables.append(AnswerTable(id=table.id, title=table.title,
                                       columns=columns, rows=tuple(rows)))
             measure_units[table.id] = table_units
         ids = {table.id for table in tables}
@@ -1967,14 +2068,19 @@ class FoundrySupervisor:
             *rca_answer_limitations(self.specialists),
         ]))
         row_count = sum(len(table.rows) for table in tables)
+        write_reviewed = (
+            any(item.role == "work-order" for item in self.specialists)
+            or any(item.tool == "propose_work_order" for item in self.evidence.values())
+        )
+        write_suffix = " No production writes executed." if write_reviewed else ""
         summary = (
             "No matching signal-quality rows were returned; no equipment was selected and no production writes "
             "executed."
             if not tables and empty_quality_snapshots
             else (
-                f"{plan.summary.strip()} No production writes executed."
+                f"{plan.summary.strip()}{write_suffix}"
                 if use_projected_summary
-                else f"Returned {row_count} source rows in {len(tables)} tables. No production writes executed."
+                else f"Returned {row_count} source rows in {len(tables)} tables.{write_suffix}"
             )
         )
         proposals_by_id: dict[UUID, WorkOrderDraft] = {}

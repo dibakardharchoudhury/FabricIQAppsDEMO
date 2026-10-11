@@ -9,7 +9,7 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { answerSections, operatorNarrative } from '../services/copilot/answerPresentation'
+import { answerSections, draftAnswerParts, operatorNarrative } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
@@ -177,9 +177,19 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
   const draftReady = !streaming && Boolean(message.proposals?.length)
   const checkedText = message.orchestrationEvents?.some(event => event.trace?.some(entry =>
     entry.source === 'application' && entry.activity === 'checked-presentation' && !entry.failed)) ?? false
-  const answer = message.text && (message.backendOwned
-    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
-    : <AnswerText text={stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))} streaming={streaming} />)
+  const presentedText = message.text && (
+    message.backendOwned ? message.text : stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))
+  )
+  const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText) : undefined
+  const answer = presentedText && (message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{presentedText}</ReactMarkdown>
+    : <AnswerText text={presentedText} streaming={streaming} />)
+  const draftSummary = draftParts?.summary && (message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftParts.summary}</ReactMarkdown>
+    : <AnswerText text={draftParts.summary} streaming={false} />)
+  const draftDetails = draftParts?.details && (message.backendOwned
+    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftParts.details}</ReactMarkdown>
+    : <AnswerText text={draftParts.details} streaming={false} />)
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
@@ -188,7 +198,10 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {waitingOnModel && <p className="v2-agent-processing" role="status" aria-live="polite">
       <span className="v2-spinner" aria-hidden="true" />AI processing…
     </p>}
-    {draftReady ? <details className="v2-answer-support"><summary>Supporting findings and sources</summary>{answer}</details> : answer}
+    {draftReady && draftSummary}
+    {draftReady
+      ? draftDetails && <details className="v2-answer-support"><summary>Supporting findings and sources</summary>{draftDetails}</details>
+      : answer}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}

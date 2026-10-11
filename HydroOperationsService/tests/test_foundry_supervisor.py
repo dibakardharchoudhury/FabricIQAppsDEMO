@@ -21,6 +21,7 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
+    _native_markdown_tables,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -206,6 +207,74 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             tuple(f"native-1:/citation_fragments/{index}" for index in range(len(fragments))),
         )
         self.assertNotIn("native-1:/response", examples)
+
+    def test_native_markdown_tables_preserve_instance_rows_for_presentation(self):
+        response = """**Read timestamp (UTC):** `2026-10-11T13:19:20Z`
+
+### Equipment row
+
+| equipment_id | facility_id | tag |
+|---|---|---|
+| EQUIP_RTI_T005 | FACILITY_RTI_001 | T005 |
+
+### Instruments
+
+| instrument_id | equipment_id | unit |
+|---|---|---|
+| INST_T005_TEMP | EQUIP_RTI_T005 | C |
+"""
+        parsed = _native_markdown_tables(response)
+        self.assertEqual(parsed, {
+            "native_equipment_row": [{
+                "equipment_id": "EQUIP_RTI_T005",
+                "facility_id": "FACILITY_RTI_001",
+                "tag": "T005",
+            }],
+            "native_instruments": [{
+                "instrument_id": "INST_T005_TEMP",
+                "equipment_id": "EQUIP_RTI_T005",
+                "unit": "C",
+            }],
+        })
+        self.owner.evidence["native-1"] = ToolEvidence(
+            id="native-1", source=SOURCE, tool="fabriciq-ontology", arguments={},
+            completed_at=utc_now(),
+            result={
+                "documents": [{"id": "citation-1", "content": "", "title": "ontology", "url": "https://example"}],
+                "response": response,
+                **parsed,
+            },
+        )
+        plan = self.owner.source_answer_plan(self.request)
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertEqual(
+            [table.title for table in plan.tables],
+            ["fabriciq-ontology native_equipment_row", "fabriciq-ontology native_instruments"],
+        )
+
+    def test_empty_scoped_work_read_gets_explicit_zero_coverage_table_and_summary(self):
+        receipt = ToolEvidence(
+            id="work-0", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders", "where": [
+                {"column": "equipmentId", "op": "eq", "value": "TEST_T005"},
+            ]},
+            completed_at=utc_now(),
+            result={
+                "rows": [], "row_count": 0, "total_matched": 0,
+                "read_completed_at_utc": "2026-10-11T13:20:00Z", "truncated": False,
+            },
+            work_coverage_equipment_ids=("TEST_T005",),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        plan = self.owner.deterministic_explanatory_plan(self.request)
+        self.assertEqual(len(plan.tables), 1)
+        self.assertEqual(plan.tables[0].title, "query_operations empty result")
+        self.assertIn("zero work orders", plan.summary)
+        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
+        self.assertEqual(answer.tables[0].title, "query_operations empty result")
+        self.assertEqual(answer.tables[0].rows[0].values["row_count"], 0)
+        self.assertNotIn("No production writes executed", answer.summary)
 
     def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
         specialist = SpecialistResult(

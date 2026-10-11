@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, draftAnswerParts, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
@@ -41,6 +41,34 @@ test('operator narrative excludes technical inventories and pointer ledgers but 
   const result = operatorNarrative(text)
   assert.match(result, /Cause undetermined|Measurements are stale/)
   assert.doesNotMatch(result, /52 fields|call_123|Raw IDs|Source observations|Returned source/)
+})
+
+test('draft answers keep their explanation visible and collapse only detailed evidence', () => {
+  assert.deepEqual(
+    draftAnswerParts(`T005 has a BAD-quality speed reading, but no physical fault is established.
+
+## Open work
+
+No matching order.
+
+## Sources
+
+Receipt 1.`),
+    {
+      summary: 'T005 has a BAD-quality speed reading, but no physical fault is established.',
+      details: `## Open work
+
+No matching order.
+
+## Sources
+
+Receipt 1.`,
+    },
+  )
+  assert.deepEqual(draftAnswerParts('No matching work was returned.'), {
+    summary: 'No matching work was returned.',
+    details: '',
+  })
 })
 
 test('table-only requests override charts and routine numeric questions do not request them', () => {

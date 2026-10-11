@@ -11,6 +11,7 @@ export type CatalogEntity = {
   key: string
   source: 'lakehouse' | 'sql'
   physicalName: string
+  apiName?: string
   identityColumn: string
   description: string
   columns: CatalogColumn[]
@@ -31,7 +32,8 @@ export const ASSET_ENTITIES: CatalogEntity[] = [
   {
     key: 'equipment',
     source: 'lakehouse',
-    physicalName: 'silver_equipments',
+    physicalName: 'silver_equipment',
+    apiName: 'silver_equipments',
     identityColumn: 'equipment_id',
     description: 'Turbines and other equipment installed at a facility.',
     columns: [

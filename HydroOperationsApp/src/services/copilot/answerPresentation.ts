@@ -12,6 +12,16 @@ export function operatorNarrative(text: string): string {
     .join('\n\n')
 }
 
+export function draftAnswerParts(text: string): { summary: string; details: string } {
+  const trimmed = text.trim()
+  const heading = trimmed.search(/\n#{1,6}\s+/)
+  if (heading < 0) return { summary: trimmed, details: '' }
+  return {
+    summary: trimmed.slice(0, heading).trim(),
+    details: trimmed.slice(heading).trim(),
+  }
+}
+
 export function showRequestedCharts(question: string): boolean {
   return !/\b(?:table[- ]only|only (?:a |the )?table|no charts?|without charts?)\b/i.test(question)
     && requiresChartOutput(question)

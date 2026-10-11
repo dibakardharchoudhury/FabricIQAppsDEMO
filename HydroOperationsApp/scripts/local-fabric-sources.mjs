@@ -227,7 +227,7 @@ async function readAssetInventory(config, entity, token, fetcher) {
     const payload = await requestJson(`${fabric}/workspaces/${config.workspace_id}/graphqlapis/${config.graphql_id}/graphql`,
       token, {
         query: `query CatalogRead($cursor: String) {
-          records: ${entity.physicalName}(first: 100, after: $cursor) {
+          records: ${entity.apiName ?? entity.physicalName}(first: 100, after: $cursor) {
             hasNextPage endCursor items { ${fields} }
           }
         }`,
@@ -251,7 +251,7 @@ export async function collectOperationRows(client, entityKey, args) {
 
 async function collectOperationInventory(client, entity) {
   return collectCatalogRows(entity, async cursor => {
-    let query = client.data[entity.physicalName].select(entity.columns.map(column => column.name))
+    let query = client.data[entity.apiName ?? entity.physicalName].select(entity.columns.map(column => column.name))
       .orderBy({ [entity.identityColumn]: 'asc' }).first(100)
     if (cursor) query = query.after(cursor)
     return query.executePaginated()

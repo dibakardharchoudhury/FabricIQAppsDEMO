@@ -433,6 +433,9 @@ test('backend contracts reuse the canonical tool schemas without browser initial
   assert.equal(sourceToolContracts().tools.find(tool => tool.name === 'propose_work_order').parameters.properties.title.maxLength, 200)
   assert.ok(sourceToolContracts().context.operations_entities[0].columns.length > 0)
   assert.deepEqual(contracts.context.relationships, DOMAIN_RELATIONSHIPS)
+  assert.equal(contracts.context.asset_entities.find(entity => entity.key === 'equipment').physicalName, 'silver_equipment')
+  assert.equal(contracts.context.asset_entities.find(entity => entity.key === 'equipment').apiName, 'silver_equipments')
+  assert.match(contracts.context.semantics.empty_results.presentation, /zero count.*read_completed_at_utc/)
   contracts.context.relationships.length = 0
   assert.ok(sourceToolContracts().context.relationships.length > 0)
 })

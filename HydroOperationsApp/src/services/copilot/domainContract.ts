@@ -122,6 +122,11 @@ export const DOMAIN_SEMANTICS = {
   derived_measures: {
     record_count: 'Application-derived count of the complete, filtered source rows in the declared grouping scope.',
   },
+  empty_results: {
+    certified_zero: 'A successful complete scoped read with row_count 0 means zero matching records in that scope.',
+    unavailable_is_not_zero: 'A failed, unavailable or truncated source must never be presented as zero matching records.',
+    presentation: 'Show the zero count, exact scope and read_completed_at_utc instead of omitting the source result.',
+  },
 } as const
 
 type DomainRow = Record<string, unknown>
