@@ -658,7 +658,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             )
             output = [{
                 "type": "mcp_call", "id": "native-call-1", "name": "query",
-                "server_label": "fabriciq-ontology" if self.mode == "native_wrong_source" else "fabriciq-data-agent",
+                "server_label": "fabriciq-ontology"
+                if self.mode == "native_wrong_source" or self.mode == "native_wrong_once" and round_number == 0
+                else "fabriciq-data-agent",
                 "arguments": "{}", "status": "completed", "error": None,
                 "output": json.dumps(native_output),
             }, self.message("Native result.")]
@@ -1271,6 +1273,21 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
             with self.assertRaisesRegex(SourceFailure, "validation failed"):
                 await owner.run(request)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_source_mismatch_gets_one_bounded_same_agent_correction(self):
+        self.mode = "native_wrong_once"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "native_source_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("fabriciq-data-agent", json.dumps(repair["input"]))
         self.assertEqual(self.tools.calls, 0)
 
     async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):

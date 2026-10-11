@@ -1331,6 +1331,36 @@ class FoundrySupervisor:
                     if any(content.type in ("error", "function_approval_request") for content in message.contents):
                         raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
                 self.invocation_inputs[response.response_id] = sha256(_encoded(active_context)).hexdigest()
+                if role == "fabric-iq":
+                    try:
+                        native_receipts = [
+                            content.raw_representation.model_dump(mode="json")
+                            for message in response.messages for content in message.contents
+                            if content.type == "mcp_server_tool_call" and content.raw_representation is not None
+                        ]
+                        if not native_receipts:
+                            raise SourceFailure("Native execution has no inspectable service receipt.")
+                        for raw in native_receipts:
+                            await self.bridge.call({
+                                "action": "validate_native_receipt", "receipt": raw, "source": native_source,
+                            })
+                    except SourceFailure as error:
+                        if completion_attempt == 0 and str(error).startswith("Native source mismatch:"):
+                            logger.warning(
+                                "Foundry native agent selected the wrong connection; requesting one bounded correction."
+                            )
+                            active_context = {
+                                **context,
+                                "native_source_repair": (
+                                    f"The prior call used the wrong native connection. Call only "
+                                    f"fabriciq-{native_source}, which is the backend-selected source for this step. "
+                                    "Do not call the other native connection and do not return prose without a "
+                                    "successful selected-source receipt."
+                                ),
+                            }
+                            continue
+                        raise
+                    break
                 proposal_staged = role == "work-order" and any(
                     item.tool == "propose_work_order" for item in self.evidence.values()
                 )
