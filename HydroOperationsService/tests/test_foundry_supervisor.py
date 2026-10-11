@@ -975,9 +975,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _native_equipment_ids({
                 "response": "| Field | Value |\n|---|---|\n| EquipmentId | `EQUIP_RTI_T005` |\n"
-                            "| FacilityId | `FACILITY_RTI_001` |",
+                            "| FacilityId | `FACILITY_RTI_001` |\n"
+                            "- `equipment_id`: `EQUIP_RTI_T006`\n"
+                            "- **Resolved equipment identity:** `EQUIP_RTI_T007`",
             }),
-            {"EQUIP_RTI_T005"},
+            {"EQUIP_RTI_T005", "EQUIP_RTI_T006", "EQUIP_RTI_T007"},
         )
         self.assertEqual(_native_equipment_ids({"response": "Investigate EQUIP_RTI_T006 next."}), set())
 

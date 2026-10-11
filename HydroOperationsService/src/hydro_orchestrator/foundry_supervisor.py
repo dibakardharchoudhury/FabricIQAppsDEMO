@@ -77,11 +77,14 @@ def _native_equipment_ids(value: object) -> set[str]:
             for child in item:
                 visit(child)
         elif isinstance(item, str):
-            for match in re.finditer(
+            patterns = (
                 r"(?im)^\|\s*equipment[\s_-]*id\s*\|\s*`?([^`|\s]+)`?\s*\|",
-                item,
-            ):
-                add(match.group(1))
+                r"(?im)^\s*[-*]\s*`?equipment[\s_-]*id`?\s*:\s*`?([^`\s]+)`?\s*$",
+                r"(?im)^\s*[-*]\s*\*\*resolved equipment identity:\*\*\s*`?([^`\s]+)`?\s*$",
+            )
+            for pattern in patterns:
+                for match in re.finditer(pattern, item):
+                    add(match.group(1))
 
     visit(value)
     return resolved
