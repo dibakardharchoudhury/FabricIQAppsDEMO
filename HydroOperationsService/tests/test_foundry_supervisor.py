@@ -648,6 +648,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 output = [self.function("hydro_query", {"tool_name": "query_telemetry", "arguments": arguments})]
         elif name == "hydro-rca-agent":
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
+            if self.mode == "rca_duplicated_evidence_suffix":
+                ref["evidence_id"] = "reading-1ing-1"
             report = {"observations": [ref], "hypotheses": [
                 {"category": "sensor_or_ingestion", "supporting": [ref], "contradicting": [],
                  "missing": ["independent_measurement"]},
@@ -818,6 +820,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all("correction 1/1" in line for line in logs.output
                             if "complete_rca_assessment arguments rejected" in line))
+
+    async def test_rca_repairs_one_duplicated_terminal_evidence_id_suffix(self):
+        self.mode = "rca_duplicated_evidence_suffix"
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING") as logs:
+            result = await self.owner.run(self.request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertEqual(result.specialists[1].report["observations"], [{
+            "evidence_id": "reading-1", "path": "/rows/0",
+        }])
+        self.assertTrue(any("duplicated a terminal evidence-ID suffix" in line for line in logs.output))
 
     async def test_actual_framework_fixer_stages_source_bound_human_approval_card_without_sql(self):
         self.mode = "proposal"

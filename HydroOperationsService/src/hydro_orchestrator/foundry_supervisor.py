@@ -10,7 +10,7 @@ from hashlib import sha256
 from datetime import timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -562,6 +562,37 @@ def rca_reference_examples(evidence: dict[str, ToolEvidence], limit: int = 40) -
     return tuple(examples[:limit])
 
 
+def repair_duplicated_evidence_id_suffixes(
+    value: object, allowed_evidence_ids: set[str],
+) -> tuple[object, int]:
+    repairs = 0
+
+    def visit(item: object) -> object:
+        nonlocal repairs
+        if isinstance(item, dict):
+            repaired = {key: visit(child) for key, child in item.items()}
+            evidence_id = repaired.get("evidence_id")
+            if isinstance(evidence_id, str) and evidence_id not in allowed_evidence_ids:
+                matches = []
+                for candidate in allowed_evidence_ids:
+                    if not evidence_id.startswith(candidate):
+                        continue
+                    duplicated_suffix = evidence_id[len(candidate):]
+                    if len(duplicated_suffix) >= 4 and candidate.endswith(duplicated_suffix):
+                        matches.append(candidate)
+                if len(matches) == 1:
+                    repaired["evidence_id"] = matches[0]
+                    repairs += 1
+            return repaired
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        if isinstance(item, tuple):
+            return tuple(visit(child) for child in item)
+        return item
+
+    return visit(value), repairs
+
+
 RCA_GAP_LABELS = {
     "fresh_measurements": "fresh, timestamped measurements and ingestion-health evidence",
     "independent_measurement": "an independently obtained measurement",
@@ -1071,6 +1102,15 @@ class FoundrySupervisor:
             action = "validate_rca" if role == "rca" else "validate_work_review"
             if completed_report is not None:
                 raise SourceFailure("A specialist cannot replace its completed structured assessment.")
+            if role == "rca":
+                repaired, repair_count = repair_duplicated_evidence_id_suffixes(kwargs, set(self.evidence))
+                kwargs = cast(dict[str, object], repaired)
+                if repair_count:
+                    logger.warning(
+                        "Foundry rca completion duplicated a terminal evidence-ID suffix; "
+                        "repaired %s exact run-scoped reference(s) before validation.",
+                        repair_count,
+                    )
             if role == "rca" and not maintenance_gate_required:
                 kwargs = {
                     **kwargs,
