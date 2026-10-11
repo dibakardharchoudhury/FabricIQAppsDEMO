@@ -916,6 +916,20 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(plan.charts, self.owner.source_answer_plan(request).charts)
 
+    async def test_projection_instructions_require_explicit_unsent_message_format(self):
+        receipt = await self.tools.execute("query_telemetry", {}, self.request)
+        self.owner.evidence = {receipt.id: receipt}
+        request = self.request.model_copy(update={
+            "question": "Prepare a concise unsent notification from the verified assessment. Do not send it.",
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        await self.owner.project_answer(
+            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
+        )
+        payload = self.payloads[-1]
+        self.assertIn("clearly label the summary as an unsent draft", json.dumps(payload))
+        self.assertIn("without inventing a recipient", json.dumps(payload))
+
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
         second = first.model_copy(update={

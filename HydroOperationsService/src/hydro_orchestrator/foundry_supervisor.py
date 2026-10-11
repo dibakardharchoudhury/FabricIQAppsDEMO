@@ -1426,7 +1426,9 @@ class FoundrySupervisor:
             "identify the material uncertainty or next safe action. Use three to five complete sentences and no more "
             "than 600 characters; never end with a fragment. Do not merely report row/table counts. Do not include a "
             "factual detail unless it is present in a supplied receipt or validated specialist report. Make no claim "
-            "of execution or delivery. chart_indexes are zero-based indexes into available_charts. Return no indexes "
+            "of execution or delivery. If the operator asks for an unsent notification, email or message draft, "
+            "clearly label the summary as an unsent draft and write it in message form without inventing a recipient. "
+            "chart_indexes are zero-based indexes into available_charts. Return no indexes "
             "when no chart was requested. When a chart was requested, select only the candidate that exactly matches "
             "the operator's requested grouping and measure; never include merely available extra charts."
         )
