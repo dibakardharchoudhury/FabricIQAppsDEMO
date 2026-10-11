@@ -4,6 +4,28 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## Current v74 release
+
+Hosted Agent v74 is active from commit `258b2e5` on immutable image
+`sha256:507a364ff9f8c4516f9de4a47a6f81145476d4a42fec123b87be446e21594aae`
+(`validated-20261011154234`, ACR run `dt2c`). It retains live ontology
+generation 2 and the separately signed, human-approved production-write path.
+
+The release passed all 167 backend tests under Node 24.21.0 and Pyright with zero
+diagnostics. It repairs one model-output mutation observed in canonical Prompt 1:
+an RCA evidence ID with a duplicated terminal suffix. Repair is allowed only
+when exactly one current-run evidence ID is a prefix and the appended fragment
+is already that ID's terminal suffix. The repaired report still passes the
+existing strict evidence-ID, JSON-pointer and scalar-size validation.
+
+Authenticated v73 Prompt 2 had already verified the new centralized evidence
+presentation: real ontology equipment/facility/instrument instance tables,
+explicit zero open-work coverage with timestamp, a prominent explanatory
+summary, no physical-fault claim and no production write. The v74 Prompt 1 rerun
+is pending because the private Fabric SPA refresh session expired. Tokens issued
+to Azure CLI were correctly rejected by the SPA-client binding and were not used
+as a substitute.
+
 ## Current v72 release
 
 Hosted Agent v72 is active from commit `35f46cc` on immutable image

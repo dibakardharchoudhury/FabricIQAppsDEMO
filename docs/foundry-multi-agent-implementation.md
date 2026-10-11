@@ -6,6 +6,33 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
+## October 11 v74 current release
+
+Hosted Agent v74 is active from commit `258b2e5` on immutable image
+`sha256:507a364ff9f8c4516f9de4a47a6f81145476d4a42fec123b87be446e21594aae`
+(`validated-20261011154234`, ACR run `dt2c`). The Fabric app is `1.0.868`
+from `a9bdfc2`; its canonical deployment preserved 39 redirects and passed
+AppBackend GraphQL/token browser preflight and POST-readiness checks. The runtime
+retains verified ontology generation 2 and the signed human-approved write path.
+
+The v73 production Prompt 2 run verified centralized presentation using real
+ontology equipment, facility and six-instrument instance tables, direct
+telemetry, explicit timestamped zero-open-work coverage and a prominent
+explanation. Canonical Prompt 1 then failed closed when Sleuth duplicated the
+terminal fragment of an otherwise valid run-scoped evidence ID. This was an RCA
+structured-completion defect, not an Ontology v2 source failure.
+
+v74 adds a narrow deterministic repair: only one uniquely matching allowed
+evidence ID may be restored, and only when the extra fragment is already a
+terminal suffix of that ID. The unchanged strict report validator still resolves
+the evidence ID and result-relative JSON pointer. Validation passed 167 backend
+tests under Node 24.21.0 and Pyright with zero diagnostics.
+
+The normal private Fabric SPA refresh session expired before the v74 Prompt 1
+rerun. Azure CLI tokens were correctly rejected by the configured SPA-client
+binding. No token substitution or hosting bypass was used, so the v74
+ten-prompt matrix remains an explicit pending acceptance gate.
+
 ## October 11 v72 current release
 
 Hosted Agent v72 is active from commit `35f46cc` on immutable image

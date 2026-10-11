@@ -10,6 +10,40 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 11 v74 production regression release
+
+**Current Hosted Agent: v74 from source commit `258b2e5`, image
+`sha256:507a364ff9f8c4516f9de4a47a6f81145476d4a42fec123b87be446e21594aae`
+(`validated-20261011154234`, ACR run `dt2c`). Current Fabric app: `1.0.868`
+from `a9bdfc2`.** Both deployments retained verified ontology generation 2 and
+`production_writes_enabled=true`; agent tools still cannot write SQL.
+
+Validation passed 167 backend tests under Node 24.21.0, Pyright with zero
+diagnostics, 384 application/source-contract tests, TypeScript, ESLint,
+environment validation and production build. The canonical Fabric deployment
+printed `SUCCESS` and `DEPLOYED_APP_URL`, preserved 39 SPA redirects, and passed
+AppBackend GraphQL/token preflight and POST-readiness checks.
+
+An authenticated v73 Prompt 2 run completed in 176.7 seconds. It returned the
+actual T005 equipment instance, Sloy facility instance and all six instrument
+instances from the selected ontology, six direct telemetry rows, an explicit
+zero-open-work table with its read timestamp, and a prominent explanation that
+no physical fault was established. It created no proposal and performed no
+production write.
+
+The exact canonical Prompt 1 then exposed a generic RCA formatting failure:
+Sleuth appended a duplicate terminal fragment to an otherwise valid immutable
+evidence ID. The backend failed closed with HTTP 500. v74 now removes only a
+uniquely matched suffix already present at the end of an allowed run-scoped
+evidence ID, then applies the unchanged strict evidence/path validator. It does
+not substitute a source, relax citation validation or add prompt-specific logic.
+
+The private Fabric SPA refresh session expired after v74 deployment. Azure CLI
+tokens were correctly rejected because they were not issued to the configured
+SPA client, and no authentication boundary was bypassed. Therefore Prompt 1 and
+the remaining ten-prompt matrix are **not accepted on v74** until a normal Fabric
+sign-in permits signed-browser reruns.
+
 ## October 11 v72 targeted production acceptance
 
 **Current Hosted Agent: v72 from source commit `35f46cc`, image
