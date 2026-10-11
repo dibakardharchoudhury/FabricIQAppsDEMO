@@ -358,6 +358,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("tools", payload)
             incomplete = self.mode == "projection_incomplete"
             invalid_once = self.mode == "projection_invalid_once"
+            count_only_once = self.mode == "projection_count_only_once"
             if self.mode in ("alias_once", "projection_incomplete"):
                 self.mode = "valid"
             projection_plan = self.plan()
@@ -394,6 +395,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             if invalid_once:
                 self.mode = "valid"
                 projection_output.pop("chart_indexes")
+            elif count_only_once:
+                self.mode = "valid"
+                projection_output["summary"] = "Returned 1 source row in 1 table."
             return httpx.Response(200, json={
                 "id": "resp_projection", "object": "response", "created_at": 1,
                 "model": "test", "status": "incomplete" if incomplete else "completed",
@@ -954,6 +958,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.summary, "The evidence does not establish a physical fault. The returned measurements "
                          "require engineering limits and corroborating evidence before a condition conclusion.")
         self.assertEqual(projection.response_id, "resp_projection")
+
+    async def test_projection_repairs_a_row_count_only_summary(self):
+        receipt = await self.tools.execute("query_telemetry", {}, self.request)
+        self.owner.evidence = {receipt.id: receipt}
+        self.mode = "projection_count_only_once"
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        plan, _ = await self.owner.project_answer(
+            self.request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
+        )
+        payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
+        self.assertEqual(len(payloads), 2)
+        self.assertFalse(plan.summary.lower().startswith("returned "))
 
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1523,7 +1539,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_incomplete_projection_cannot_commit_even_if_its_json_parses(self):
         self.mode = "projection_incomplete"
         self.request = self.request.model_copy(update={"charts_requested": True})
-        with self.assertRaisesRegex(SourceFailure, "unverified execution"):
+        with self.assertRaisesRegex(SourceFailure, "no incomplete result was certified"):
             await self.owner.run(self.request)
         self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
 

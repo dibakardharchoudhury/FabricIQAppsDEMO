@@ -9,7 +9,7 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { hideRenderedData, answerSections, operatorNarrative } from '../services/copilot/answerPresentation'
+import { answerSections, operatorNarrative } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
@@ -194,9 +194,6 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
     {!streaming && !message.backendOwned && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
     {!streaming && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
-    {!streaming && !message.backendOwned && message.text && <details className="v2-answer-support"><summary>Assessment audit — full report and source references</summary>
-      <AnswerText text={hideRenderedData(message.text)} streaming={false} />
-    </details>}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>

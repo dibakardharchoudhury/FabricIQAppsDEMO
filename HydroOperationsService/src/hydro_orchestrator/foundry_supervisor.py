@@ -1523,6 +1523,8 @@ class FoundrySupervisor:
                         raise SourceFailure("Narrative projection selected an unavailable source-certified chart.")
                     if narrative.chart_indexes and not request.charts_requested:
                         raise SourceFailure("Narrative projection selected an unrequested chart.")
+                    if re.match(r"^(?:returned\s+\d+\s+source rows?|verified source)", narrative.summary, re.I):
+                        raise SourceFailure("Narrative projection merely reported source row counts.")
                     journal.save(f"answer_projection:{response.response_id}", {
                         "text": response.text, **receipt.model_dump(mode="json"),
                     })
@@ -1921,31 +1923,33 @@ class FoundrySupervisor:
                         return
                     projection: ProjectionReceipt | None = None
                     source_answer = owner.source_bound_answer(request)
-                    if source_answer is not None and not source_answer[1].tables and not source_answer[1].proposals:
+                    deterministic_empty_quality = any(
+                        item.tool == "query_signal_quality_snapshot" and item.result.get("row_count") == 0
+                        for item in owner.evidence.values()
+                    )
+                    if source_answer is not None and deterministic_empty_quality:
                         plan, result = source_answer
                     else:
                         try:
-                            plan = AnswerPlan.model_validate_json(turn.text)
-                            result = owner.answer(request, plan)
-                        except (ValidationError, SourceFailure) as error:
-                            logger.warning(
-                                "Supervisor presentation rejected; applying one tool-free typed answer projection.",
+                            parsed_plan = AnswerPlan.model_validate_json(turn.text)
+                            owner.answer(request, parsed_plan)
+                            rejected_reason = SourceFailure(
+                                "A grounded explanatory narrative is required for every completed answer."
                             )
-                            try:
-                                plan, projection = await owner.project_answer(
-                                    request, journal, versions["supervisor"], turn.text, error,
-                                )
-                                result = owner.answer(request, plan, use_projected_summary=True)
-                            except (
-                                ValidationError, SourceFailure, TimeoutError, AgentFrameworkException,
-                            ) as projection_error:
-                                if source_answer is None:
-                                    raise
-                                logger.warning(
-                                    "Typed answer projection failed (%s); using verified source-bound tables.",
-                                    safe_exception_signature(projection_error),
-                                )
-                                plan, result = source_answer
+                        except (ValidationError, SourceFailure) as error:
+                            rejected_reason = error
+                        logger.info("Applying tool-free typed answer projection for the certified operator summary.")
+                        try:
+                            plan, projection = await owner.project_answer(
+                                request, journal, versions["supervisor"], turn.text, rejected_reason,
+                            )
+                            result = owner.answer(request, plan, use_projected_summary=True)
+                        except (
+                            ValidationError, SourceFailure, TimeoutError, AgentFrameworkException,
+                        ) as projection_error:
+                            raise SourceFailure(
+                                "Grounded explanatory summary generation failed; no incomplete result was certified."
+                            ) from projection_error
                     journal.save("prepared_answer", PreparedAnswer(
                         answer=result, evidence=tuple(owner.evidence.values()),
                         supervisor_response_id=turn.response_id, supervisor_version=turn.version,
