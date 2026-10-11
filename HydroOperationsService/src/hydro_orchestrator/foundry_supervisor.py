@@ -518,6 +518,37 @@ def evidence_equipment_ids(receipts: Iterable[ToolEvidence]) -> set[str]:
     return selected
 
 
+def _native_markdown_tables_from_payload(value: object) -> dict[str, list[dict[str, str]]]:
+    tables: dict[str, list[dict[str, str]]] = {}
+    metadata_keys = {"id", "title", "url", "type", "status", "name", "server_label"}
+
+    def visit(item: object) -> None:
+        if len(tables) >= 20:
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key not in metadata_keys and not key.startswith("@"):
+                    visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+        elif isinstance(item, str):
+            for name, rows in _native_markdown_tables(item).items():
+                if name in tables and tables[name] == rows:
+                    continue
+                unique_name = name
+                suffix = 2
+                while unique_name in tables:
+                    unique_name = f"{name}_{suffix}"
+                    suffix += 1
+                tables[unique_name] = rows
+                if len(tables) >= 20:
+                    break
+
+    visit(value)
+    return tables
+
+
 def _bounded_citation_fragments(text: str, limit: int = 1800, maximum: int = 40) -> tuple[str, ...]:
     fragments: list[str] = []
     remaining = text.strip()
@@ -591,6 +622,13 @@ def repair_duplicated_evidence_id_suffixes(
         return item
 
     return visit(value), repairs
+
+
+def with_production_write_status(summary: str, write_reviewed: bool) -> str:
+    value = summary.strip()
+    if write_reviewed and "production write" not in value.lower():
+        return f"{value} No production writes executed."
+    return value
 
 
 RCA_GAP_LABELS = {
@@ -1503,9 +1541,7 @@ class FoundrySupervisor:
                             dict(native_payload) if isinstance(native_payload, dict)
                             else {"native_output": native_payload}
                         )
-                        native_response = native_result.get("response")
-                        if isinstance(native_response, str):
-                            native_result.update(_native_markdown_tables(native_response))
+                        native_result.update(_native_markdown_tables_from_payload(native_result))
                         native_text = next((
                             value for key in ("response", "native_text")
                             if isinstance((value := native_result.get(key)), str) and len(value) > 2400
@@ -2112,15 +2148,16 @@ class FoundrySupervisor:
             any(item.role == "work-order" for item in self.specialists)
             or any(item.tool == "propose_work_order" for item in self.evidence.values())
         )
-        write_suffix = " No production writes executed." if write_reviewed else ""
         summary = (
             "No matching signal-quality rows were returned; no equipment was selected and no production writes "
             "executed."
             if not tables and empty_quality_snapshots
             else (
-                f"{plan.summary.strip()}{write_suffix}"
+                with_production_write_status(plan.summary, write_reviewed)
                 if use_projected_summary
-                else f"Returned {row_count} source rows in {len(tables)} tables.{write_suffix}"
+                else with_production_write_status(
+                    f"Returned {row_count} source rows in {len(tables)} tables.", write_reviewed,
+                )
             )
         )
         proposals_by_id: dict[UUID, WorkOrderDraft] = {}

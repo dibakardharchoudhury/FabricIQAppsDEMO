@@ -21,7 +21,7 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
-    _native_markdown_tables,
+    _native_markdown_tables, _native_markdown_tables_from_payload, with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -252,6 +252,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             [table.title for table in plan.tables],
             ["fabriciq-ontology native_equipment_row", "fabriciq-ontology native_instruments"],
         )
+
+    def test_native_markdown_tables_are_extracted_from_document_content(self):
+        payload = {
+            "documents": [{
+                "id": "citation-1",
+                "title": "hydro-fabric-ontology",
+                "url": "https://example.test/ontology",
+                "content": """### Equipment
+
+| equipment_id | facility_id | tag |
+|---|---|---|
+| EQUIP_RTI_T005 | FACILITY_RTI_001 | T005 |
+""",
+            }],
+        }
+        self.assertEqual(_native_markdown_tables_from_payload(payload), {
+            "native_equipment": [{
+                "equipment_id": "EQUIP_RTI_T005",
+                "facility_id": "FACILITY_RTI_001",
+                "tag": "T005",
+            }],
+        })
+
+    def test_production_write_status_is_not_duplicated(self):
+        summary = "An editable draft was staged; no production write was executed."
+        self.assertEqual(with_production_write_status(summary, True), summary)
+        self.assertEqual(
+            with_production_write_status("An editable draft was staged.", True),
+            "An editable draft was staged. No production writes executed.",
+        )
+        self.assertEqual(with_production_write_status("Read-only result.", False), "Read-only result.")
 
     def test_empty_scoped_work_read_gets_explicit_zero_coverage_table_and_summary(self):
         receipt = ToolEvidence(
