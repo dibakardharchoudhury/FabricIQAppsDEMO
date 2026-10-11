@@ -1121,6 +1121,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             }),
             {"EQUIP_RTI_T005", "EQUIP_RTI_T006", "EQUIP_RTI_T007"},
         )
+        self.assertEqual(
+            _native_equipment_ids({
+                "response": "| Match field | Equipment canonical ID | Equipment tag | Status |\n"
+                            "|---|---|---|---|\n"
+                            "| tag | `EQUIP_RTI_T008` | T008 | ACTIVE |\n",
+            }),
+            {"EQUIP_RTI_T008"},
+        )
         self.assertEqual(_native_equipment_ids({"response": "Investigate EQUIP_RTI_T006 next."}), set())
 
     async def test_native_source_mismatch_does_not_fall_back_to_direct_tools(self):

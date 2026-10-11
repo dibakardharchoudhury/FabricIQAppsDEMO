@@ -77,6 +77,27 @@ def _native_equipment_ids(value: object) -> set[str]:
             for child in item:
                 visit(child)
         elif isinstance(item, str):
+            lines = item.splitlines()
+            for line_index, line in enumerate(lines[:-2]):
+                if not line.strip().startswith("|") or not line.strip().endswith("|"):
+                    continue
+                headers = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                equipment_columns = [
+                    index for index, header in enumerate(headers)
+                    if re.sub(r"[^a-z]", "", header.lower()) in {
+                        "equipmentid", "equipmentcanonicalid", "canonicalequipmentid",
+                    }
+                ]
+                separator = lines[line_index + 1].strip()
+                if not equipment_columns or not re.fullmatch(r"\|?[\s:|-]+\|?", separator):
+                    continue
+                for row in lines[line_index + 2:]:
+                    if not row.strip().startswith("|") or not row.strip().endswith("|"):
+                        break
+                    cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+                    for column in equipment_columns:
+                        if column < len(cells):
+                            add(cells[column].strip("* "))
             for match in re.finditer(
                 r"(?im)^\|\s*equipment[\s_-]*id\s*\|\s*`?([^`|\s]+)`?\s*\|",
                 item,
