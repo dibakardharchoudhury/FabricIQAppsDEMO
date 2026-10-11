@@ -4,6 +4,29 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## Current v72 release
+
+Hosted Agent v72 is active from commit `35f46cc` on immutable image
+`sha256:9acfa1fea4bd17ddf611c3418b48bd43ae67eb263d5bbc8760078a599f35345a`.
+It requires live ontology generation 2 and has the signed, human-approved
+production write path enabled. Agent tools still cannot write SQL: Fixer stages
+an in-memory proposal, and only the separately signed decision request can
+create and read back a record.
+
+The v72 release passed 164 backend tests under Node 24.21.0 and Pyright with zero
+diagnostics. A fresh authenticated Prompt 2 run completed Sparky, Gauge, Sleuth
+and Fixer in 3m43s, staged one editable T005 inspection draft, and created no SQL
+record; backend rejection disabled the card. v72 resets the single schema
+correction budget for each of the two bounded Foundry completion attempts. v71
+added one fail-closed same-agent retry when Sparky selected the wrong configured
+native connection. Neither change substitutes direct tools for native execution.
+
+The Fabric app remains `1.0.863` from `f91c20f`. Its work-order decision serializer
+sends only `title`, `description` and `priority`. Production acceptance created
+and independently read back `WO-92c4bdaa-a28f-5fd5-8142-682740eaa423` for
+`EQUIP_RTI_T009`; creator identity remains available in the signed decision
+response but not in the ordinary `work_orders` query schema.
+
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent

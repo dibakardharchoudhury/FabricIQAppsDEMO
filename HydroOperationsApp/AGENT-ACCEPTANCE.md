@@ -10,6 +10,35 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 11 v72 targeted production acceptance
+
+**Current Hosted Agent: v72 from source commit `35f46cc`, image
+`sha256:9acfa1fea4bd17ddf611c3418b48bd43ae67eb263d5bbc8760078a599f35345a`.
+Current Fabric app: `1.0.863` from `f91c20f`.** The runtime is active on
+generation 2 with `production_writes_enabled=true`; writes still require the
+separate signed human-decision path.
+
+Validation passed 164 backend tests under Node 24.21.0 and Pyright with zero
+diagnostics. The unchanged application boundary had already passed 383
+application/source-contract tests, TypeScript, ESLint, environment validation
+and production build.
+
+Fresh authenticated Prompt 2 completed Chief, Sparky, Gauge, Sleuth and Fixer in
+3m43s. The app showed a source-grounded explanation, ontology receipt, six latest
+raw T005 readings, inspection evidence, RCA limitations, and an editable
+turbine-speed inspection draft. The draft was rejected through the backend;
+the card became disabled and confirmed that no work order was created. This run
+verifies the one-time selected-native-connection correction (`29f9b4b`) and
+per-Foundry-attempt bounded schema correction (`35f46cc`). The displayed ontology
+table still projects citation metadata more clearly than relationship instance
+content, and empty/open-work coverage needs a more explicit visible section.
+Accordingly, this is targeted Prompt 2 acceptance, not a same-build claim that
+all ten workflows passed v72.
+
+Earlier v69 production acceptance created and independently read back
+`WO-92c4bdaa-a28f-5fd5-8142-682740eaa423` for `EQUIP_RTI_T009` after the approval
+transport was narrowed to exactly `title`, `description` and `priority`.
+
 ## October 11 v66 explanatory-summary release
 
 **Current Hosted Agent: v66 from source commit `a582502`. Current Fabric static

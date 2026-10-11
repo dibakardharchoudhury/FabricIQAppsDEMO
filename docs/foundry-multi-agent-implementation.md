@@ -6,6 +6,37 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
+## October 11 v72 current release
+
+Hosted Agent v72 is active from commit `35f46cc` on immutable image
+`sha256:9acfa1fea4bd17ddf611c3418b48bd43ae67eb263d5bbc8760078a599f35345a`.
+It uses verified ontology generation 2 and keeps the signed human-approved
+production-write boundary enabled. Validation passed 164 backend tests under
+Node 24.21.0 and Pyright with zero diagnostics; the unchanged application
+boundary had passed 383 application/source-contract tests and its build checks.
+
+The v69-v72 corrections are architectural, not prompt-specific:
+
+1. Chief omissions recover only from the backend capability manifest.
+2. Hosted decisions serialize only the three operator-editable fields.
+3. Oversized native prose exposes bounded source-preserving citation fragments.
+4. A wrong configured native connection receives one same-agent correction and
+   then fails closed without direct-source substitution.
+5. Each of the two bounded Foundry completion attempts receives its own single
+   schema correction, while repeated invalid calls within one attempt still fail.
+
+Authenticated Prompt 2 on v72 completed Sparky, Gauge, Sleuth and Fixer in 3m43s,
+staged an editable T005 inspection draft, and performed no write. The draft was
+rejected through the backend and disabled. The rendered answer explained that no
+physical fault or root cause was established and listed evidence gaps. Ontology
+relationship projection and explicit zero/open-work coverage remain presentation
+follow-ups, so this targeted run is not relabelled as full same-build ten-prompt
+acceptance.
+
+The Fabric app remains `1.0.863` from `f91c20f`. Earlier v69 production acceptance
+created and independently read back
+`WO-92c4bdaa-a28f-5fd5-8142-682740eaa423` for `EQUIP_RTI_T009`.
+
 ## October 11 v66 current release
 
 Hosted Agent v66 is active on immutable image
