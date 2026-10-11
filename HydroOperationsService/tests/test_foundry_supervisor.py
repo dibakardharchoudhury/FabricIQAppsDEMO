@@ -436,7 +436,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     ["Read population A."]
                     if round_number == 0 else ["Read population A.", "Read population B."]
                 )]
-            elif self.mode == "native_handoff":
+            elif self.mode in ("native_handoff", "native_handoff_no_identity"):
                 steps = [
                     {
                         "specialist": "fabric-iq", "question": "Use the Data Agent to resolve the equipment.",
@@ -619,6 +619,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "url": "https://example.test/ontology",
                 }]}
                 if self.mode == "native_connection_only"
+                else {"documents": [{
+                    "id": "connection-1", "content": "Verified domain evidence without a canonical equipment ID.",
+                    "title": "hydro-fabric-ontology", "url": "https://example.test/ontology",
+                }]}
+                if self.mode == "native_handoff_no_identity"
                 else {"rows": [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C"}]}
             )
             output = [{
@@ -1103,6 +1108,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "native_handoff"
         request = self.request.model_copy(update={
             "question": "Use the Data Agent to resolve T005, then inspect it directly.",
+            "native_sources": ("data-agent",),
+            "required_specialists": ("qa",),
+        })
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa"])
+        self.assertEqual(self.calls["hydro-qa-agent"], 2)
+
+    async def test_required_qa_resolves_scope_when_native_prose_has_no_extractable_identity(self):
+        self.mode = "native_handoff_no_identity"
+        self.tools.include_identity = True
+        request = self.request.model_copy(update={
+            "question": "Use the Data Agent to inspect the domain, then resolve and inspect the equipment directly.",
             "native_sources": ("data-agent",),
             "required_specialists": ("qa",),
         })

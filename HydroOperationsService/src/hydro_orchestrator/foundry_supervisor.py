@@ -1016,7 +1016,11 @@ class FoundrySupervisor:
             verified_issue_equipment_ids: set[str] = set()
             skipped_steps = 0
             for delegation_index, delegation in enumerate(delegations):
-                missing_selection = delegation.requires_selection and not selected_equipment_ids
+                missing_selection = (
+                    delegation.requires_selection
+                    and delegation.specialist != "qa"
+                    and not selected_equipment_ids
+                )
                 missing_verified_issue = (
                     delegation.requires_verified_issue
                     and not verified_issue_equipment_ids.intersection(selected_equipment_ids)
