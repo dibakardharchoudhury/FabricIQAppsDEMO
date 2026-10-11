@@ -29,7 +29,8 @@ const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url
 
 test('backend intent reuses canonical chart, native and human-priority semantics without source access', () => {
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
-    { charts_requested: false, native_sources: [], proposal_priority: 'Medium', required_specialists: ['qa'] })
+    { charts_requested: false, native_sources: [], proposal_priority: 'Medium',
+      required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.equal(chatIntent('Show a chart of power.').charts_requested, true)
   assert.equal(chatIntent('Do not show a chart. Return the rows.').charts_requested, false)
   assert.equal(chatIntent('Draft a high-priority work order.').proposal_priority, 'High')
@@ -37,17 +38,25 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.throws(() => chatIntent(' '), /nonempty/)
   const compound = "Use the selected ontology to resolve T005's identity. Using those verified IDs, inspect telemetry and open work. Investigate concerns and prepare an editable inspection draft only if warranted."
   assert.deepEqual(chatIntent(compound).required_specialists, ['qa', 'rca', 'work-order'])
-  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'], [
+  const independent = 'Ask a native source for two populations. Independently verify both sets using direct reads.'
+  assert.deepEqual(chatIntent(independent).required_specialist_steps, { qa: 2 })
+  const acceptance = 'Ask the published Fabric Data Agent which turbines have latest signal quality BAD today (UTC), the five hottest turbines from latest raw temperature readings today, and all open work on those turbines. Independently verify both sets using direct telemetry snapshots and SQL work records. Investigate any disagreement.'
+  assert.deepEqual(chatIntent(acceptance).required_specialist_steps, { qa: 2, rca: 1 })
+  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'],
+    { qa: 2, rca: 1, 'work-order': 1 }, [
     { specialist: 'fabric-iq', native_source: 'ontology' },
   ], ['ontology']), {
-    missing_specialists: ['qa', 'rca', 'work-order'], missing_native_sources: [],
+    missing_specialists: ['qa', 'rca', 'work-order'],
+    missing_specialist_steps: { qa: 2, rca: 1, 'work-order': 1 }, missing_native_sources: [],
   })
-  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'], [
+  assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'],
+    { qa: 2, rca: 1, 'work-order': 1 }, [
     { specialist: 'fabric-iq', native_source: 'ontology' },
+    { specialist: 'qa', native_source: null },
     { specialist: 'qa', native_source: null },
     { specialist: 'rca', native_source: null },
     { specialist: 'work-order', native_source: null },
-  ], ['ontology']), { missing_specialists: [], missing_native_sources: [] })
+  ], ['ontology']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [] })
 })
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {
   const yaml = await readFile(new URL('../rayfin/rayfin.yml', import.meta.url), 'utf8')

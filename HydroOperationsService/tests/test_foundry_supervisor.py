@@ -398,6 +398,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "requires_selection": False,
                     "requires_verified_issue": False,
                 } for specialist in roles]
+            elif self.mode == "independent_empty":
+                steps = [{
+                    "specialist": "qa",
+                    "question": question,
+                    "reason": "Verify one independently requested factual population.",
+                    "native_source": None,
+                    "requires_selection": False,
+                    "requires_verified_issue": False,
+                } for question in (
+                    ["Read population A."]
+                    if round_number == 0 else ["Read population A.", "Read population B."]
+                )]
             elif self.mode == "native_handoff":
                 steps = [
                     {
@@ -462,7 +474,18 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 } for index, role in enumerate(roles)]
             output = [self.function("plan_orchestration", {"steps": steps})]
         elif name == "hydro-qa-agent":
-            if self.mode in ("quality_snapshot", "empty_quality_snapshot", "conditional_empty"):
+            if self.mode == "independent_empty":
+                if round_number < 2:
+                    output = [self.function("hydro_query", {
+                        "tool_name": "query_signal_quality_snapshot",
+                        "arguments": {"quality": "BAD", "lookback": "6h", "equipment_type": "turbine"},
+                    })] if round_number == 0 else [self.message("Population A is empty.")]
+                else:
+                    output = [self.function("hydro_query", {
+                        "tool_name": "query_telemetry",
+                        "arguments": {"equipment_id": "TEST_T005"},
+                    })] if round_number % 2 == 0 else [self.message("Population B is complete.")]
+            elif self.mode in ("quality_snapshot", "empty_quality_snapshot", "conditional_empty"):
                 output = [
                     self.function("hydro_query", {
                         "tool_name": "query_signal_quality_snapshot",
@@ -1332,6 +1355,27 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         chief_events = [event for event in self.events if event["role"] == "supervisor"]
         self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
                             for event in chief_events))
+
+    async def test_empty_independent_population_does_not_skip_sibling_population(self):
+        self.mode = "independent_empty"
+        self.tools.quality_snapshot = True
+        self.tools.empty_quality_snapshot = True
+        self.tools.include_identity = True
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Independently verify both requested populations.",
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 2},
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "qa"])
+        self.assertEqual(self.tools.calls, 2)
+        self.assertEqual({item.tool for item in self.owner.evidence.values()}, {
+            "query_signal_quality_snapshot", "query_telemetry",
+        })
+        self.assertEqual(result.tables[0].rows[0].values["equipment_id"], "TEST_T005")
 
     async def test_conditional_work_skips_without_verified_uncovered_issue(self):
         self.mode = "conditional_no_issue"

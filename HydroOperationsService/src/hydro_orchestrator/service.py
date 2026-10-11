@@ -116,17 +116,24 @@ class ChatInput(Contract):
     native_sources: tuple[NativeSource, ...] = ()
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
+    required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     previous_run_id: UUID | None = None
 
 
 def normalized_chat_input(chat: ChatInput, intent: dict[str, object]) -> ChatInput:
-    fields = {"charts_requested", "native_sources", "proposal_priority", "required_specialists"}
+    fields = {
+        "charts_requested", "native_sources", "proposal_priority", "required_specialists",
+        "required_specialist_steps",
+    }
     if set(intent) != fields:
         raise ValueError("Intent normalization returned an unsupported contract.")
     normalized = ChatInput.model_validate({"question": chat.question, **intent})
     return ChatInput.model_validate({
         **normalized.model_dump(),
-        **{key: getattr(chat, key) for key in chat.model_fields_set if key != "required_specialists"},
+        **{
+            key: getattr(chat, key) for key in chat.model_fields_set
+            if key not in {"required_specialists", "required_specialist_steps"}
+        },
     })
 
 

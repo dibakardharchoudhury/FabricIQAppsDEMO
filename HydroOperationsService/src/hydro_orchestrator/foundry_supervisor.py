@@ -171,6 +171,7 @@ class ChatRequest(Contract):
     native_sources: tuple[NativeSource, ...] = ()
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
+    required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     previous_run_id: UUID | None = None
     historical_context: HistoricalContext | None = None
 
@@ -182,6 +183,9 @@ class ChatRequest(Contract):
             raise ValueError("Requested native sources must be distinct.")
         if len(self.required_specialists) != len(set(self.required_specialists)):
             raise ValueError("Required specialists must be distinct.")
+        if (any(role not in self.required_specialists for role in self.required_specialist_steps)
+                or any(count < 1 or count > 8 for count in self.required_specialist_steps.values())):
+            raise ValueError("Required specialist step counts must be bounded and match required specialists.")
         if self.historical_context is not None and (
             self.historical_context.run_id != self.previous_run_id
             or self.historical_context.source != self.source
@@ -961,6 +965,7 @@ class FoundrySupervisor:
             requirements = await self.bridge.call({
                 "action": "validate_plan_requirements",
                 "required_specialists": list(request.required_specialists),
+                "required_specialist_steps": request.required_specialist_steps,
                 "steps": [{
                     "specialist": item.specialist,
                     "native_source": item.native_source,
@@ -968,10 +973,15 @@ class FoundrySupervisor:
                 "native_sources": list(request.native_sources),
             })
             missing_specialists = requirements.get("missing_specialists")
+            missing_specialist_steps = requirements.get("missing_specialist_steps")
             missing_native_sources = requirements.get("missing_native_sources")
-            if missing_specialists or missing_native_sources:
+            if missing_specialists or missing_specialist_steps or missing_native_sources:
                 missing = [
                     *(missing_specialists if isinstance(missing_specialists, list) else []),
+                    *(f"{role}:{count} steps" for role, count in (
+                        missing_specialist_steps.items()
+                        if isinstance(missing_specialist_steps, dict) else []
+                    )),
                     *(f"fabric-iq:{source}" for source in (
                         missing_native_sources if isinstance(missing_native_sources, list) else []
                     )),
@@ -1086,6 +1096,7 @@ class FoundrySupervisor:
                              "Only an in-memory proposal is permitted; no SQL writes or dispatch.",
             "charts_requested": request.charts_requested, "native_source": native_source,
             "required_specialists": request.required_specialists,
+            "required_specialist_steps": request.required_specialist_steps,
             "conditional_maintenance_gate_requested": maintenance_gate_required,
             "permitted_source_catalog": journal.read("tool_catalog"),
             "completion_constraints": {
@@ -1689,6 +1700,7 @@ class FoundrySupervisor:
                 intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
                 if set(intent) != {
                     "charts_requested", "native_sources", "proposal_priority", "required_specialists",
+                    "required_specialist_steps",
                 }:
                     raise SourceFailure("Executor intent recovery returned an unsupported contract.")
                 parsed_intent = ChatRequest.model_validate({
@@ -1699,6 +1711,7 @@ class FoundrySupervisor:
                         and parsed_intent.native_sources == request.native_sources):
                     recovered = request.model_copy(update={
                         "required_specialists": parsed_intent.required_specialists,
+                        "required_specialist_steps": parsed_intent.required_specialist_steps,
                     })
                     logger.warning(
                         "Recovered a missing backend specialist manifest at the executor boundary: %s.",
@@ -1707,6 +1720,7 @@ class FoundrySupervisor:
                     request = recovered
                     journal.save("executor_intent", {
                         "required_specialists": list(request.required_specialists),
+                        "required_specialist_steps": request.required_specialist_steps,
                         "native_sources": list(request.native_sources),
                     })
             committed = journal.read("answer")
