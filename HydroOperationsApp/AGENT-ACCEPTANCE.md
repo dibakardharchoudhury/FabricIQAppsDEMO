@@ -10,6 +10,50 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 11 planner/executor acceptance
+
+**Current Hosted Agent: v58 from source commit `6627cf3`. Current Fabric app:
+`1.0.842` from commit `b561593`.** The active Hosted image is
+`sha256:ddad1ef863493ec8af7e60dd59c7a09dc0ebdbe67859019e1ecbf4d0ebe2b466`
+(`validated-20261011025343`, ACR run `dt1w`). The runtime uses `gpt-5.6-sol`,
+numeric ontology generation 2 and production writes disabled.
+
+The release removed application wall-clock deadlines for Chief, specialists,
+native execution, narrative projection and browser streaming. Credential
+admission, source/network operations and external Foundry limits remain bounded
+and fail explicitly. A backend-owned capability manifest now validates complete
+plans before any handoff. Native Ontology identity is carried into later direct
+handoffs only from bounded `equipment_id` fields or exact identity properties,
+never from free prose. Station-power receipts now own their table/chart contract,
+and a sole requested source-certified chart cannot be dropped by projection.
+
+Validation passed 148 backend tests before the final formatting-only identity
+normalization, 54 supervisor tests after all runtime changes, 32 packaged source
+tests, 380 application contract tests, Pyright with zero diagnostics, TypeScript,
+ESLint, environment validation and production build. The live signed-browser
+matrix produced:
+
+| Prompt | Live result |
+|---|---|
+| 1 | Gauge certified an explicit empty current BAD population: all 90 mapped signals lacked a reading in today's window. Downstream conditional branches were skipped; no write. |
+| 2 | Sparky -> Gauge -> Sleuth completed in 1m51s. Ontology resolved T005; direct reads established no six-hour telemetry and no open SQL work. Conditional Fixer was correctly skipped; no write. |
+| 3 | Sparky -> Gauge -> Sleuth completed. Native and direct SQL reconciled all 11 open orders; T002 won the deterministic tie-break; one orders-per-equipment chart rendered; no draft or write. |
+| 4 | Sparky -> Gauge -> Sleuth completed. Both current populations were explicitly empty because all 90 signals lacked today's readings; the result did not fabricate a ranking, disagreement or work proposal. |
+| 5 | Both native sources and Gauge completed. Three ontology facilities and all 11 open orders reconciled to direct records; facility counts were 4/4/3, with one facility chart and no unmatched IDs. |
+| 6 | Gauge -> Sleuth completed. Four at/below-reorder parts and related work were shown; missing compatibility/reservation evidence blocked a draft. |
+| 7 | Gauge -> Sleuth completed. Stale positive power/speed and UNCERTAIN temperature did not establish downtime. |
+| 8 | Gauge -> Sleuth completed. Complete notification/open-work reads were empty; no unrelated inspection issue or draft was substituted. |
+| 9 | Gauge -> Sleuth rendered one station-MW chart. Same-chat Gauge verification reported exact values, sample/BAD counts and freshness, and separated mean turbine readings from station totals and energy. |
+| 10 | Gauge -> Fixer produced the exact Low-priority editable card. Backend rejection disabled it and confirmed no creation. Same-chat Sleuth found no established physical fault and listed evidence gaps. |
+
+The first Prompt 3 and Prompt 5 attempts returned explicit native-source
+unavailability and remain failures in the audit; fresh reruns succeeded without a
+code or configuration change. This is retained as transient native-source
+reliability evidence, not silently relabelled. HTTP `ERR_ABORTED` entries observed
+after successful streamed answers are browser cancellation of the completed
+request, not application timeouts; immutable answer receipts and UI completion
+were present.
+
 ## October 10 final planner/executor status
 
 **Current Hosted Agent: v50 from source commit `fe55567`. Current Fabric deployment:

@@ -180,6 +180,17 @@ Python executes the existing function callbacks; no browser routing was added.
     Missing or contradictory identities do not prove a join. Missing-source
     warnings survive presentation.
 
+**Live evidence, October 11:** Hosted Agent v58 on immutable image
+`sha256:ddad1ef863493ec8af7e60dd59c7a09dc0ebdbe67859019e1ecbf4d0ebe2b466`
+uses `gpt-5.6-sol`, ontology generation 2 and disabled production writes. The
+backend-owned capability manifest prevented incomplete compound plans. Native
+T005 identity propagated from exact Ontology fields into direct Gauge and Sleuth
+handoffs; a conditional Fixer branch was skipped only after RCA found no supported
+uncovered issue. The station-power prompt rendered one source-certified MW chart,
+and same-chat verification reported exact values, sample/BAD counts and freshness.
+Application execution has no wall-clock deadline; source/network/external limits
+still fail explicitly.
+
 **Live evidence, October 8:** Chief v12 coordinated Gauge v14 -> Sleuth v16 ->
 Fixer v14 -> Gauge v14 against six real T005 measurements. Exact source cells,
 five requested columns, zero charts and zero writes passed in **133.67 seconds**.

@@ -6,6 +6,36 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
+## October 11 current release
+
+Hosted Agent v58 is active on immutable image
+`sha256:ddad1ef863493ec8af7e60dd59c7a09dc0ebdbe67859019e1ecbf4d0ebe2b466`
+(`validated-20261011025343`, ACR run `dt1w`, source commit `6627cf3`). It uses
+`gpt-5.6-sol`, verified ontology generation 2 and disabled production writes.
+The Fabric app remains `1.0.842` from `b561593`; the final v58 delta is packaged
+Hosted source/presentation code and does not require a static-app redeployment.
+
+The current executor has no application wall-clock timeout. A backend-owned
+capability manifest rejects incomplete Chief plans before any specialist runs and
+permits one bounded planning correction. Native identity handoffs preserve only
+exact field-bounded equipment identities from verified Fabric IQ receipts; this
+fixed the earlier case where a complete Sparky -> Gauge -> Sleuth -> conditional
+Fixer plan silently skipped every downstream step after Sparky. Requested
+station-power charts now use source-owned presentation metadata and deterministic
+selection when exactly one verified candidate exists.
+
+The signed-browser matrix passed all ten business outcomes, including the two
+same-chat follow-ups, with current empty-window results preserved rather than
+filled from stale data. Prompts 1 and 4 reported that all 90 mapped signals lacked
+today-window readings. Prompt 2 completed Sparky -> Gauge -> Sleuth and correctly
+skipped conditional Fixer. Prompt 3 reconciled 11 native/direct open orders and
+rendered one equipment chart. Prompt 5 reconciled three ontology facilities and
+facility counts 4/4/3 with one chart. Prompt 9 rendered one MW chart and verified
+values, units, sample/BAD counts and freshness. Prompt 10's exact Low-priority
+card was rejected by the backend; its RCA follow-up established no physical fault.
+Two earlier native-source-unavailable attempts remain recorded failures before
+fresh Prompt 3 and Prompt 5 reruns succeeded.
+
 ## Current state: bounded Foundry-owned planner/executor
 
 Hosted Agent v50 is active on immutable image
