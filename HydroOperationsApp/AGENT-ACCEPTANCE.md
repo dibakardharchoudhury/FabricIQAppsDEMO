@@ -10,6 +10,39 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## October 11 v66 explanatory-summary release
+
+**Current Hosted Agent: v66 from source commit `a582502`. Current Fabric static
+deployment: `deploy-20261011093808-7f2cf801` from the same commit.** The active
+Hosted image is
+`sha256:ee4088286b30d0f53c7f70a2b63cee0be0ec5616850bf17a2fba6ad7c08d8920`
+(`validated-20261011202000`, ACR run `dt25`). The runtime uses `gpt-5.6-sol`,
+verified numeric ontology generation 2 and disabled production writes.
+
+v66 requires a grounded explanatory narrative for every nontrivial certified
+answer. A row-count-only or `Verified source...` summary is invalid, receives one
+bounded repair over the same immutable receipts, and fails closed if the repair
+is still invalid. Deterministic certified-empty signal-quality results retain
+their evidence-derived explanation without an unnecessary model call. The Fabric
+response renderer no longer repeats the complete answer in the redundant
+`Assessment audit` section; execution receipts, source annotations, supporting
+findings, tables, charts, crew trace and approval cards remain available.
+
+Validation passed 156 backend tests, 172 application contract tests using the
+required `tsx` loader, Pyright with zero diagnostics, TypeScript, ESLint,
+environment validation and the production build. The canonical deployment
+orchestrator preserved all 39 SPA redirects, reapplied AppBackend runtime/CORS
+and database settings, and passed `/graphql` and `/api/auth/v1/token` browser
+preflights plus POST readiness before printing `SUCCESS` and `DEPLOYED_APP_URL`.
+The built and deployed source contains no `Assessment audit` label.
+
+The newly opened production host presented Fabric's protected `Sign in required`
+gate. The integrated automation browser did not have the private-hosting cookie,
+so authenticated rendered-page and delegated live-source acceptance were not
+performed on v66. No authentication bypass or bearer-token substitution was
+attempted. The source-backed ten-workflow evidence below remains the accepted
+mixed-version v61-v65 record; it is not relabelled as a v66 live rerun.
+
 ## October 11 v65 release acceptance
 
 **Current Hosted Agent: v65 from source commit `fffca87`. Current Fabric app:

@@ -7,24 +7,26 @@ distinction and production gates, see the
 ## Current production boundary
 
 This service is the implementation packaged in the Foundry Hosted Agent
-`hydro-orchestrator`. Hosted Agent v65 runs the Microsoft Agent Framework workflow
+`hydro-orchestrator`. Hosted Agent v66 runs the Microsoft Agent Framework workflow
 for Chief, Gauge, Sleuth, Fixer and Sparky. The Fabric app is a thin authenticated
 client: it submits bounded requests, renders backend-owned NDJSON execution events
 and certified answers, and collects explicit human work-order decisions. It does
 not run a browser-side supervisor or specialist tool loop.
 
-The active v65 image is
-`sha256:62fef1a2d69aaabe50832d4c1b688ad5f85c3b09e767322fcd3125d9a2f6afba`
-(`validated-20261011185000`, ACR run `dt24`, source commit `fffca87`). The source configuration digest is
+The active v66 image is
+`sha256:ee4088286b30d0f53c7f70a2b63cee0be0ec5616850bf17a2fba6ad7c08d8920`
+(`validated-20261011202000`, ACR run `dt25`, source commit `a582502`). The source configuration digest is
 `210d1ce53296ddb304613a7dcb87b22ee7a017073ef48b23e7fba7fcfa82644b`.
 Production writes remain disabled in the Hosted Agent. Work-order proposals are
 editable drafts until an explicit, separately validated human approval; no
 acceptance test created production work.
 
-The v65 supported-runtime regression passed all 155 backend tests and Pyright
-with zero errors or warnings. The unchanged application boundary had already
-passed 380 application contracts including 32 packaged source tests, TypeScript,
-ESLint, environment validation and production build.
+The v66 supported-runtime regression passed all 156 backend tests and Pyright
+with zero errors or warnings. The application boundary passed 172 application
+contract tests using the required `tsx` loader, TypeScript, ESLint, environment
+validation and production build. Fabric static deployment
+`deploy-20261011093808-7f2cf801` was published through the canonical orchestrator,
+which passed AppBackend CORS, browser preflight and POST-readiness checks.
 
 Long agent/provider calls have no application wall-clock timeout. When no new
 output arrives for 15 seconds, the runtime re-emits the same active running event
@@ -59,11 +61,13 @@ Chief -> Gauge with HTTP 200, three source rows, one station/MW chart, source-ow
 aggregation/freshness semantics and no write. The longer investigation workflow
 and its same-session exact-value verification also passed.
 
-Grounded presentation now uses a bounded tool-free typed projection to put a
-direct conclusion, evidence meaning and material uncertainty ahead of supporting
-source-annotated tables. The immutable-receipt validator still resolves every
-table cell, deterministic certified-empty results avoid a model call, and a
-projection failure falls back to literal source tables rather than ungrounded prose.
+Grounded presentation uses a bounded tool-free typed projection to put a direct
+conclusion, evidence meaning and material uncertainty ahead of supporting
+source-annotated tables. Every nontrivial certified answer requires that
+explanation. Row-count-only summaries are invalid and receive one bounded repair;
+a second invalid projection fails closed rather than certifying an incomplete
+table-only result. The immutable-receipt validator still resolves every table
+cell, and deterministic certified-empty signal-quality results avoid a model call.
 Oversized previous displays now retain a bounded grounded conclusion and source
 limitations instead of returning HTTP 409; every factual follow-up still requires
 fresh source reads. Narrative summaries are limited to three to five complete

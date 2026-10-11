@@ -6,7 +6,34 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## October 11 v65 current release
+## October 11 v66 current release
+
+Hosted Agent v66 is active on immutable image
+`sha256:ee4088286b30d0f53c7f70a2b63cee0be0ec5616850bf17a2fba6ad7c08d8920`
+(`validated-20261011202000`, ACR run `dt25`, source commit `a582502`). The runtime
+uses `gpt-5.6-sol`, verified ontology generation 2 and disabled production writes.
+Fabric static deployment `deploy-20261011093808-7f2cf801` was published from the
+same commit through the canonical deployment orchestrator.
+
+Every nontrivial certified answer now requires a grounded explanatory summary
+covering the conclusion, meaning of the strongest evidence, and material
+uncertainty or next safe action. Row-count-only summaries are rejected, receive
+one bounded repair over the same immutable receipts, and fail closed if repair
+remains invalid. Deterministic certified-empty signal-quality answers retain
+their evidence-derived explanation. The Fabric renderer no longer duplicates the
+answer in an `Assessment audit` block; source annotations, execution receipts,
+supporting findings, charts, tables, crew trace and approval cards remain.
+
+Validation passed 156 backend tests, 172 application contract tests with the
+required `tsx` loader, Pyright, TypeScript, ESLint, environment validation and
+production build. Deployment preserved 39 SPA redirects and passed AppBackend
+CORS, browser preflight and POST-readiness checks. The production host then
+presented Fabric's protected sign-in gate; the integrated automation browser had
+no private-hosting cookie, so rendered and delegated live-source acceptance were
+not performed on v66. The v61-v65 business matrix remains prior source-backed
+evidence and is not relabelled as a v66 rerun.
+
+## October 11 v65 acceptance record
 
 Hosted Agent v65 is active on immutable image
 `sha256:62fef1a2d69aaabe50832d4c1b688ad5f85c3b09e767322fcd3125d9a2f6afba`
