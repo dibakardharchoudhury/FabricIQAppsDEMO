@@ -212,6 +212,16 @@ def updated_equipment_selection(
     return set(grounded) if grounded else set(current)
 
 
+def initial_equipment_selection(request: "ChatRequest") -> set[str]:
+    if request.resolved_scope is None:
+        return set()
+    return {
+        match.canonical_id
+        for match in request.resolved_scope.matches
+        if match.kind == "equipment"
+    }
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1329,7 +1339,7 @@ class FoundrySupervisor:
                     f"{', '.join(str(item) for item in missing)}. "
                     "Retry plan_orchestration with one complete ordered plan; no specialist has run yet."
                 )
-            selected_equipment_ids: set[str] = set()
+            selected_equipment_ids = initial_equipment_selection(request)
             verified_issue_equipment_ids: set[str] = set()
             skipped_steps = 0
             for delegation_index, delegation in enumerate(delegations):

@@ -22,7 +22,8 @@ from hydro_orchestrator.foundry_supervisor import (
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
     _native_count_chart_metadata, _native_markdown_tables, _native_markdown_tables_from_payload,
-    normalize_filter_conjunctions, updated_equipment_selection, with_production_write_status,
+    initial_equipment_selection, normalize_filter_conjunctions, updated_equipment_selection,
+    with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -917,6 +918,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         repair_payload = json.dumps(self.payloads)
         self.assertIn("prior completion was incomplete", repair_payload)
         self.assertIn("Do not call another source tool", repair_payload)
+
+    def test_explicit_resolved_equipment_seeds_conditional_handoffs_when_reads_are_empty(self):
+        request = self.request.model_copy(update={
+            "question": "Read notifications and open work for turbine T005, then investigate.",
+            "resolved_scope": ResolvedScope(
+                source=SOURCE,
+                read_completed_at=utc_now(),
+                matches=(ResolvedIdentity(
+                    mention="T005",
+                    kind="equipment",
+                    canonical_id="TEST_T005",
+                    label="T005",
+                    matched_by="tag",
+                ),),
+            ),
+        })
+        self.assertEqual(initial_equipment_selection(request), {"TEST_T005"})
+        self.assertEqual(initial_equipment_selection(self.request), set())
 
     async def test_rca_prose_gets_one_bounded_structured_completion_repair(self):
         self.mode = "rca_prose_once"
