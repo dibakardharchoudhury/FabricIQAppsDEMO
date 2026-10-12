@@ -52,10 +52,22 @@ class BoundedAIProjectClient(AIProjectClient):
         return super().get_openai_client(agent_name=agent_name, **kwargs)
 
 
+def _is_native_refusal_text(value: str) -> bool:
+    normalized = " ".join(value.casefold().split())
+    return any(marker in normalized for marker in (
+        "cannot assist with that request",
+        "can't assist with that request",
+        "unable to assist with that request",
+        "request was blocked by content moderation",
+        "response was filtered due to the prompt triggering",
+    ))
+
+
 def _has_native_domain_evidence(value: object) -> bool:
     if isinstance(value, dict):
         if value and set(value).issubset({"id", "content", "title", "url"}):
-            return bool(str(value.get("content", "")).strip())
+            content = str(value.get("content", "")).strip()
+            return bool(content) and not _is_native_refusal_text(content)
         metadata_keys = {"id", "title", "url", "type", "status", "name", "server_label"}
         return any(
             _has_native_domain_evidence(item)
@@ -64,7 +76,41 @@ def _has_native_domain_evidence(value: object) -> bool:
         )
     if isinstance(value, list):
         return any(_has_native_domain_evidence(item) for item in value)
-    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+    return value is not None and (
+        not isinstance(value, str)
+        or bool(value.strip()) and not _is_native_refusal_text(value)
+    )
+
+
+def _validated_native_result(output: object) -> dict[str, object]:
+    if not isinstance(output, str) or not output.strip():
+        raise SourceFailure("Native execution returned no inspectable source output.")
+    try:
+        payload: object = json.loads(output)
+    except json.JSONDecodeError:
+        payload = output
+
+    def contains_refusal(value: object) -> bool:
+        if isinstance(value, str):
+            return _is_native_refusal_text(value)
+        if isinstance(value, dict):
+            return any(contains_refusal(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_refusal(item) for item in value)
+        return False
+
+    if contains_refusal(payload) and not _has_native_domain_evidence(payload):
+        raise SourceFailure(
+            "Native source refusal: the selected source returned moderation/refusal text instead of domain evidence."
+        )
+    native_result: dict[str, object] = (
+        dict(payload) if isinstance(payload, dict)
+        else {"native_output": payload}
+    )
+    native_result.update(_native_markdown_tables_from_payload(native_result))
+    if not _has_native_domain_evidence(native_result):
+        raise SourceFailure("Native execution returned only connection metadata without domain evidence.")
+    return native_result
 
 
 def _native_equipment_ids(value: object) -> set[str]:
@@ -253,6 +299,9 @@ def requests_new_work_order_proposal(question: str) -> bool:
             if not re.search(r"\b(?:do not|don't|never|no)\b(?:\W+\w+){0,3}\W*$", prefix):
                 return True
     return False
+
+
+
 
 
 def requested_work_backlog_group(question: str) -> Literal["facility", "equipment"] | None:
@@ -897,6 +946,7 @@ class FoundrySupervisor:
         self.source_tasks: dict[str, asyncio.Task[ToolEvidence]] = {}
         self.delegation_lock = asyncio.Lock()
         self.run_id: UUID | None = None
+        self.selected_equipment_ids: set[str] = set()
         self.invocation_inputs: dict[str, str] = {}
         self.event_sink: Callable[[dict[str, object]], None] | None = None
         self.chief_trace: list[dict[str, object]] = []
@@ -1426,6 +1476,7 @@ class FoundrySupervisor:
                     "Retry plan_orchestration with one complete ordered plan; no specialist has run yet."
                 )
             selected_equipment_ids = initial_equipment_selection(request)
+            self.selected_equipment_ids = set(selected_equipment_ids)
             verified_issue_equipment_ids: set[str] = set()
             skipped_steps = 0
             for delegation_index, delegation in enumerate(delegations):
@@ -1491,6 +1542,7 @@ class FoundrySupervisor:
                     grounded_ids,
                     requires_selection=delegation.requires_selection,
                 )
+                self.selected_equipment_ids = set(selected_equipment_ids)
             plan_completed = True
             return {
                 "status": "handoffs_complete",
@@ -1756,18 +1808,28 @@ class FoundrySupervisor:
                             await self.bridge.call({
                                 "action": "validate_native_receipt", "receipt": raw, "source": native_source,
                             })
+                            _validated_native_result(raw.get("output"))
                     except SourceFailure as error:
-                        if completion_attempt == 0 and str(error).startswith("Native source mismatch:"):
+                        source_mismatch = str(error).startswith("Native source mismatch:")
+                        source_refusal = str(error).startswith("Native source refusal:")
+                        if completion_attempt == 0 and (source_mismatch or source_refusal):
                             logger.warning(
-                                "Foundry native agent selected the wrong connection; requesting one bounded correction."
+                                "Foundry native agent returned %s; requesting one bounded same-source correction.",
+                                "the wrong connection" if source_mismatch else "a moderation/refusal payload",
                             )
                             active_context = {
                                 **context,
                                 "native_source_repair": (
-                                    f"The prior call used the wrong native connection. Call only "
-                                    f"fabriciq-{native_source}, which is the backend-selected source for this step. "
-                                    "Do not call the other native connection and do not return prose without a "
-                                    "successful selected-source receipt."
+                                    (
+                                        "The prior call used the wrong native connection. "
+                                        if source_mismatch
+                                        else "The prior selected-source call returned moderation/refusal text "
+                                             "instead of domain evidence. "
+                                    )
+                                    + f"Call only fabriciq-{native_source}, which is the backend-selected source for "
+                                      "this step. Retry the same bounded factual request without broadening scope or "
+                                      "substituting another connection. Do not return prose without a successful "
+                                      "selected-source receipt containing domain evidence."
                                 ),
                             }
                             continue
@@ -1815,18 +1877,7 @@ class FoundrySupervisor:
                         if raw["id"] in found:
                             continue
                         found.add(raw["id"])
-                        output = raw.get("output")
-                        if not isinstance(output, str) or not output.strip():
-                            raise SourceFailure("Native execution returned no inspectable source output.")
-                        try:
-                            native_payload: object = json.loads(output)
-                        except json.JSONDecodeError:
-                            native_payload = {"native_text": output}
-                        native_result: dict[str, object] = (
-                            dict(native_payload) if isinstance(native_payload, dict)
-                            else {"native_output": native_payload}
-                        )
-                        native_result.update(_native_markdown_tables_from_payload(native_result))
+                        native_result = _validated_native_result(raw.get("output"))
                         native_units, native_presentation = _native_count_chart_metadata(native_result)
                         if (
                             request.charts_requested
@@ -1840,10 +1891,6 @@ class FoundrySupervisor:
                         ), None)
                         if native_text is not None:
                             native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
-                        if not _has_native_domain_evidence(native_result):
-                            raise SourceFailure(
-                                "Native execution returned only connection metadata without domain evidence."
-                            )
                         receipt = ToolEvidence(id=raw["id"], source=request.source, tool=f"fabriciq-{native_source}",
                                                arguments={"assignment": question}, completed_at=utc_now(),
                                                result=native_result,
@@ -1956,7 +2003,117 @@ class FoundrySupervisor:
     def source_answer_plan(self, request: ChatRequest) -> AnswerPlan | None:
         tables = []
         table_ids: dict[tuple[str, str], str] = {}
+        seen_table_signatures: set[tuple[str, str, str]] = set()
+        consumed_evidence_ids: set[str] = set()
+        reconciliation_evidence_ids: set[str] = set()
+        quality_rows: dict[str, tuple[ToolEvidence, int, dict[str, object]]] = {}
+        work_rows: dict[str, tuple[ToolEvidence, int, dict[str, object]]] = {}
+        for receipt in self.evidence.values():
+            rows = receipt.result.get("rows")
+            if not isinstance(rows, list):
+                continue
+            for index, candidate in enumerate(rows):
+                if not isinstance(candidate, dict):
+                    continue
+                equipment = candidate.get("equipment_id") or candidate.get("equipmentId")
+                if (
+                    isinstance(equipment, str)
+                    and self.selected_equipment_ids
+                    and equipment not in self.selected_equipment_ids
+                ):
+                    continue
+                if receipt.tool == "query_signal_quality_snapshot":
+                    signal = candidate.get("opcua_node_id") or candidate.get("opcuaNodeId")
+                    quality = candidate.get("quality")
+                    if not isinstance(signal, str) or not isinstance(quality, str):
+                        continue
+                    identity = f"{signal}\0{quality}"
+                    current = quality_rows.get(identity)
+                    if current is None or str(candidate.get("event_time", "")) > str(
+                        current[2].get("event_time", "")
+                    ):
+                        quality_rows[identity] = (receipt, index, candidate)
+                    reconciliation_evidence_ids.add(receipt.id)
+                elif receipt.tool == "query_operations":
+                    order = candidate.get("workOrderNumber") or candidate.get("work_order_number")
+                    status = candidate.get("status")
+                    if (
+                        not isinstance(order, str)
+                        or isinstance(status, str) and status.casefold() in ("completed", "cancelled")
+                    ):
+                        continue
+                    current = work_rows.get(order)
+                    if current is None or len(candidate) > len(current[2]):
+                        work_rows[order] = (receipt, index, candidate)
+                    reconciliation_evidence_ids.add(receipt.id)
+        if quality_rows and work_rows:
+            joined: list[
+                tuple[tuple[ToolEvidence, int, dict[str, object]], tuple[ToolEvidence, int, dict[str, object]] | None]
+            ] = []
+            for quality in sorted(
+                quality_rows.values(),
+                key=lambda item: (
+                    str(item[2].get("equipment_id", item[2].get("equipmentId", ""))),
+                    str(item[2].get("opcua_node_id", item[2].get("opcuaNodeId", ""))),
+                ),
+            ):
+                equipment = quality[2].get("equipment_id") or quality[2].get("equipmentId")
+                matches = [
+                    work for work in work_rows.values()
+                    if work[2].get("equipmentId", work[2].get("equipment_id")) == equipment
+                ]
+                joined.extend((quality, work) for work in matches or [None])
+            preferred_keys = (
+                "turbine", "equipment_id", "signal", "opcua_node_id", "value", "unit", "quality", "event_time",
+                "workOrderNumber", "title", "priority", "status", "opcuaNodeId",
+            )
+            columns: list[AnswerColumn] = []
+            for key in preferred_keys:
+                values = [
+                    record.get(key)
+                    for quality, work in joined
+                    for record in (quality[2], *((work[2],) if work is not None else ()))
+                    if key in record
+                ]
+                if not values:
+                    continue
+                kind: Literal["text", "number", "timestamp"] = (
+                    "number" if all(type(value) in (int, float) for value in values)
+                    else "timestamp" if key.endswith("_time") or key.endswith("At")
+                    else "text"
+                )
+                columns.append(AnswerColumn(key=key, label=key, kind=kind))
+            planned_rows = []
+            for quality, work in joined:
+                cells = []
+                for column in columns:
+                    source = (
+                        quality if column.key in quality[2]
+                        else work if work is not None and column.key in work[2]
+                        else None
+                    )
+                    if source is None:
+                        continue
+                    receipt, index, _record = source
+                    cells.append(AnswerCell(
+                        key=column.key,
+                        source=EvidenceReference(
+                            evidence_id=receipt.id,
+                            path=f"/rows/{index}/{column.key.replace('~', '~0').replace('/', '~1')}",
+                        ),
+                    ))
+                    consumed_evidence_ids.add(receipt.id)
+                planned_rows.append(PlannedRow(cells=tuple(cells)))
+            tables.append(PlannedTable(
+                id="signal-work-reconciliation",
+                title="Signal quality and open work",
+                columns=tuple(columns),
+                rows=tuple(planned_rows),
+            ))
+            consumed_evidence_ids.update(reconciliation_evidence_ids)
         for evidence_index, receipt in enumerate(self.evidence.values()):
+            if receipt.id in consumed_evidence_ids:
+                continue
             native_table_fields = {
                 key for key, value in receipt.result.items()
                 if key.startswith("native_") and isinstance(value, list) and value
@@ -1968,7 +2125,32 @@ class FoundrySupervisor:
                 if (not isinstance(records, list) or not records or len(records) > 500
                         or not all(isinstance(record, dict) for record in records)):
                     continue
-                typed_records = [record for record in records if isinstance(record, dict)]
+                indexed_records = [
+                    (index, record)
+                    for index, record in enumerate(records)
+                    if isinstance(record, dict)
+                    and (
+                        not self.selected_equipment_ids
+                        or not isinstance(record.get("equipment_id", record.get("equipmentId")), str)
+                        or record.get("equipment_id", record.get("equipmentId")) in self.selected_equipment_ids
+                    )
+                ]
+                if not indexed_records:
+                    continue
+                signature = (
+                    receipt.tool,
+                    field,
+                    json.dumps(
+                        [record for _index, record in indexed_records],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ),
+                )
+                if signature in seen_table_signatures:
+                    continue
+                seen_table_signatures.add(signature)
+                typed_records = [record for _index, record in indexed_records]
                 columns = []
                 for key in typed_records[0]:
                     values = [record.get(key) for record in typed_records]
@@ -1994,7 +2176,7 @@ class FoundrySupervisor:
                                  f"{column.key.replace('~', '~0').replace('/', '~1')}",
                         ),
                     ) for column in columns
-                )) for row_index in range(len(typed_records)))
+                )) for row_index, _record in indexed_records)
                 table_id = f"source-{evidence_index + 1}-{len(tables) + 1}"
                 tables.append(PlannedTable(
                     id=table_id,
@@ -2125,16 +2307,28 @@ class FoundrySupervisor:
             item for item in telemetry
             if item.tool not in ("query_signal_quality_snapshot", "query_station_power")
         ]
-        work_reads = [
-            item for item in self.evidence.values()
-            if item.tool == "query_work_backlog"
-            or item.tool == "query_operations" and item.arguments.get("entity") == "work_orders"
-        ]
+        def is_work_read(item: ToolEvidence) -> bool:
+            rows = item.result.get("rows")
+            return item.tool == "query_work_backlog" or (
+                item.tool == "query_operations"
+                and (
+                    item.arguments.get("entity") == "work_orders"
+                    or isinstance(rows, list)
+                    and any(
+                        isinstance(row, dict)
+                        and ("workOrderNumber" in row or "work_order_number" in row)
+                        for row in rows
+                    )
+                )
+            )
+
+        work_reads = [item for item in self.evidence.values() if is_work_read(item)]
         operations = [
             item for item in self.evidence.values()
-            if item.tool == "query_operations" and item.arguments.get("entity") != "work_orders"
+            if item.tool == "query_operations" and not is_work_read(item)
         ]
         asset_reads = [item for item in self.evidence.values() if item.tool == "query_assets"]
+        quality_work_reconciliation = bool(quality_snapshots and work_reads)
 
         def row_count(receipts: list[ToolEvidence]) -> int:
             total = 0
@@ -2148,6 +2342,80 @@ class FoundrySupervisor:
             return total
 
         empty_quality_snapshot = bool(quality_snapshots) and not row_count(quality_snapshots)
+        if quality_work_reconciliation:
+            quality_by_signal: dict[str, dict[str, object]] = {}
+            open_work_by_equipment: dict[str, dict[str, dict[str, object]]] = {}
+            for item in self.evidence.values():
+                rows = item.result.get("rows")
+                if not isinstance(rows, list):
+                    continue
+                for candidate in rows:
+                    if not isinstance(candidate, dict):
+                        continue
+                    if item.tool == "query_signal_quality_snapshot":
+                        quality = candidate.get("quality")
+                        equipment = candidate.get("equipment_id") or candidate.get("equipmentId")
+                        if (
+                            not isinstance(quality, str)
+                            or self.selected_equipment_ids
+                            and equipment not in self.selected_equipment_ids
+                        ):
+                            continue
+                        signal = candidate.get("opcua_node_id") or candidate.get("opcuaNodeId")
+                        if isinstance(signal, str):
+                            current = quality_by_signal.get(signal)
+                            if current is None or str(candidate.get("event_time", "")) > str(
+                                current.get("event_time", "")
+                            ):
+                                quality_by_signal[signal] = candidate
+                    elif item.tool == "query_operations":
+                        status = candidate.get("status")
+                        if isinstance(status, str) and status.casefold() in ("completed", "cancelled"):
+                            continue
+                        equipment = candidate.get("equipmentId") or candidate.get("equipment_id")
+                        order = candidate.get("workOrderNumber") or candidate.get("work_order_number")
+                        if (
+                            isinstance(equipment, str)
+                            and isinstance(order, str)
+                            and (not self.selected_equipment_ids or equipment in self.selected_equipment_ids)
+                        ):
+                            open_work_by_equipment.setdefault(equipment, {})[order] = candidate
+            findings = []
+            for signal, row in sorted(
+                quality_by_signal.items(),
+                key=lambda item: str(item[1].get("equipment_id", item[1].get("equipmentId", ""))),
+            )[:5]:
+                equipment = row.get("equipment_id") or row.get("equipmentId")
+                turbine = row.get("turbine") or equipment
+                quality = row.get("quality")
+                event_time = row.get("event_time")
+                detail = f"{turbine} ({equipment}) has {quality} signal quality on {signal}"
+                if isinstance(event_time, str):
+                    detail += f" at {event_time}"
+                orders = open_work_by_equipment.get(str(equipment), {})
+                if orders:
+                    covered = [
+                        order for order, work in orders.items()
+                        if work.get("opcuaNodeId", work.get("opcua_node_id")) == signal
+                    ]
+                    detail += (
+                        f"; open work {', '.join(sorted(orders))}"
+                        + (f" covers this signal ({', '.join(sorted(covered))})" if covered
+                           else " does not cover this signal")
+                    )
+                else:
+                    detail += "; no open work was returned"
+                findings.append(detail)
+            if findings:
+                sentences.append("Current signal/work reconciliation: " + "; ".join(findings) + ".")
+                sentences.append(
+                    "Signal-quality labels describe telemetry trust, not the turbine's physical condition."
+                )
+            else:
+                sentences.append(
+                    "No selected signal-quality rows were returned for reconciliation; this does not establish "
+                    "that the equipment is healthy."
+                )
         if station_power:
             station_rows: list[dict[str, object]] = []
             for item in station_power:
@@ -2178,7 +2446,7 @@ class FoundrySupervisor:
                 sentences.append(
                     "The station-power source returned no usable station-average rows; this is an evidence gap."
                 )
-        if quality_snapshots or other_telemetry:
+        if (quality_snapshots or other_telemetry) and not quality_work_reconciliation:
             if empty_quality_snapshot:
                 sentences.append(
                     "No matching signal-quality records were returned for the requested window, so no equipment "
@@ -2199,7 +2467,7 @@ class FoundrySupervisor:
                     "No telemetry records were returned for the requested window; that is an evidence gap, "
                     "not proof that the equipment is healthy or faulty."
                 )
-        if work_reads:
+        if work_reads and not quality_work_reconciliation:
             if row_count(work_reads):
                 sentences.append(
                     "Open work orders were returned for the requested equipment and are shown with their current "
@@ -2229,12 +2497,13 @@ class FoundrySupervisor:
             )
         if any(item.tool == "propose_work_order" for item in self.evidence.values()):
             sentences.append(
-                "An editable work-order draft was staged for human review only; no production write was executed."
+                "A source-verified uncovered gap produced one editable work-order draft for human review; no "
+                "production write was executed."
             )
         elif any(item.role == "work-order" for item in self.specialists):
             sentences.append(
-                "No editable work-order draft was staged unless a source-verified uncovered issue appears in "
-                "the supporting findings."
+                "No new work order was proposed because the verified evidence did not establish an uncovered issue "
+                "that met the draft gate."
             )
         elif empty_quality_snapshot and "work-order" in request.required_specialists:
             sentences.append(
@@ -2477,10 +2746,18 @@ class FoundrySupervisor:
                         table_units.setdefault(cell.key, set()).add(source_unit)
                 if len(identities) > 1:
                     raise SourceFailure("Answer row mixed source fields from different equipment identities.")
-                if len(signal_identities) > 1 or any(len(scopes) > 1 for scopes in source_rows.values()):
+                same_equipment_join = (
+                    len(source_rows) > 1
+                    and len(equipment_sources) == len(source_rows)
+                    and len(identities) == 1
+                )
+                if (
+                    len(signal_identities) > 1 and not same_equipment_join
+                    or any(len(scopes) > 1 for scopes in source_rows.values())
+                ):
                     raise SourceFailure("Answer row mixed fields from different source rows or signal identities.")
                 if len(source_rows) > 1 and not (
-                    len(equipment_sources) == len(source_rows) and len(identities) == 1
+                    same_equipment_join
                     or len(signal_sources) == len(source_rows) and len(signal_identities) == 1
                 ):
                     raise SourceFailure("Cross-source answer rows require matching verified equipment or signal "
@@ -2770,8 +3047,26 @@ class FoundrySupervisor:
                         item.tool == "query_station_power"
                         for item in owner.evidence.values()
                     )
+                    deterministic_quality_work = any(
+                        item.tool == "query_signal_quality_snapshot"
+                        for item in owner.evidence.values()
+                    ) and any(
+                        item.tool == "query_operations"
+                        and isinstance((operation_rows := item.result.get("rows")), list)
+                        and any(
+                            isinstance(row, dict)
+                            and ("workOrderNumber" in row or "work_order_number" in row)
+                            for row in operation_rows
+                        )
+                        for item in owner.evidence.values()
+                    )
                     deterministic_unsent_message = requests_unsent_message(request.question)
-                    if deterministic_empty_quality or deterministic_station_power or deterministic_unsent_message:
+                    if (
+                        deterministic_empty_quality
+                        or deterministic_station_power
+                        or deterministic_quality_work
+                        or deterministic_unsent_message
+                    ):
                         plan = owner.deterministic_explanatory_plan(request)
                         projection_id = (
                             "deterministic-unsent-message"
@@ -2779,7 +3074,11 @@ class FoundrySupervisor:
                             else (
                                 "deterministic-station-power"
                                 if deterministic_station_power
-                                else "deterministic-empty-quality"
+                                else (
+                                    "deterministic-quality-work"
+                                    if deterministic_quality_work
+                                    else "deterministic-empty-quality"
+                                )
                             )
                         )
                         projection = ProjectionReceipt(

@@ -911,6 +911,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 })]
         elif name == "hydro-fabric-iq-agent":
             native_output = (
+                {"documents": [{
+                    "id": "connection-1", "content": "I'm sorry, but I cannot assist with that request.",
+                    "title": "hydro-fabric-ontology", "url": "https://example.test/ontology",
+                }]}
+                if self.mode in ("native_refusal_once", "native_refusal_always")
+                and (round_number == 0 or self.mode == "native_refusal_always")
+                else
                 {"@odata.context": "https://example.test/$metadata#items", "value": [{
                     "id": "connection-1", "content": "", "title": "hydro-fabric-ontology",
                     "url": "https://example.test/ontology",
@@ -1178,6 +1185,49 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             result.summary,
         )
         self.assertIn("not total station output", result.summary)
+
+    def test_selected_evidence_is_one_deduplicated_reconciliation_without_prompt_routing(self):
+        quality = ToolEvidence(
+            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
+            arguments={"quality": ["BAD", "UNCERTAIN"]}, completed_at=utc_now(),
+            result={"rows": [
+                {
+                    "turbine": "T010", "equipment_id": "EQUIP_RTI_T010", "signal": "temperature",
+                    "opcua_node_id": "ns=2;s=T010.turbine_temp", "value": 75.549, "unit": "C",
+                    "quality": "BAD", "event_time": "2026-10-12T12:11:56Z",
+                },
+                {
+                    "turbine": "T001", "equipment_id": "EQUIP_RTI_T001", "signal": "vibration",
+                    "opcua_node_id": "ns=2;s=T001.vibration_a", "value": 3.58, "unit": "mm_s",
+                    "quality": "UNCERTAIN", "event_time": "2026-10-12T12:11:50Z",
+                },
+            ]},
+        )
+        duplicate_quality = quality.model_copy(update={"id": "quality-duplicate"})
+        work = ToolEvidence(
+            id="work", source=self.request.source, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(),
+            result={"rows": [{
+                "id": "work-1", "workOrderNumber": "WO-2853", "equipmentId": "EQUIP_RTI_T010",
+                "opcuaNodeId": "ns=2;s=T010.turbine_speed", "title": "Overspeed trip test",
+                "priority": "Low", "status": "Scheduled",
+            }]},
+        )
+        self.owner.evidence = {item.id: item for item in (quality, duplicate_quality, work)}
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T010"}
+        request = self.request.model_copy(update={
+            "question": "Summarize the verified evidence.",
+        })
+        plan = self.owner.deterministic_explanatory_plan(request)
+        answer = self.owner.answer(request, plan, use_projected_summary=True)
+        self.assertEqual(len(answer.tables), 1)
+        self.assertEqual(answer.tables[0].title, "Signal quality and open work")
+        self.assertEqual(len(answer.tables[0].rows), 1)
+        self.assertEqual(answer.tables[0].rows[0].values["equipment_id"], "EQUIP_RTI_T010")
+        self.assertEqual(answer.tables[0].rows[0].values["workOrderNumber"], "WO-2853")
+        self.assertNotIn("UNCERTAIN", answer.summary)
+        self.assertIn("describe telemetry trust", answer.summary)
+        self.assertIn("does not cover this signal", answer.summary)
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1670,6 +1720,31 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_refusal_gets_one_bounded_same_source_correction(self):
+        self.mode = "native_refusal_once"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "native_source_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("moderation/refusal text", json.dumps(repair["input"]))
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_repeated_native_refusal_is_not_accepted_as_evidence(self):
+        self.mode = "native_refusal_always"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
+            with self.assertRaisesRegex(SourceFailure, "no successful answer is permitted"):
+                await owner.run(request)
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
 
