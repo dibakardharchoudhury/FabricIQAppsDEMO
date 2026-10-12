@@ -1229,6 +1229,50 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("describe telemetry trust", answer.summary)
         self.assertIn("does not cover this signal", answer.summary)
 
+    def test_reconciliation_rows_without_matching_work_are_complete_and_null_filled(self):
+        quality = ToolEvidence(
+            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
+            arguments={"quality": "BAD"}, completed_at=utc_now(),
+            result={"rows": [
+                {
+                    "turbine": "T009", "equipment_id": "EQUIP_RTI_T009", "signal": "temperature",
+                    "opcua_node_id": "ns=2;s=T009.turbine_temp", "value": 76.27325, "unit": "C",
+                    "quality": "BAD", "event_time": "2026-10-12T12:11:55Z",
+                },
+                {
+                    "turbine": "T010", "equipment_id": "EQUIP_RTI_T010", "signal": "temperature",
+                    "opcua_node_id": "ns=2;s=T010.turbine_temp", "value": 78.496, "unit": "C",
+                    "quality": "BAD", "event_time": "2026-10-12T12:11:56Z",
+                },
+            ]},
+        )
+        work = ToolEvidence(
+            id="work", source=self.request.source, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(),
+            result={"rows": [{
+                "id": "work-1", "workOrderNumber": "WO-2853", "equipmentId": "EQUIP_RTI_T010",
+                "opcuaNodeId": "ns=2;s=T010.turbine_speed", "title": "Overspeed trip test",
+                "priority": "Low", "status": "Scheduled",
+            }]},
+        )
+        self.owner.evidence = {item.id: item for item in (quality, work)}
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T009", "EQUIP_RTI_T010"}
+        request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
+
+        plan = self.owner.deterministic_explanatory_plan(request)
+        answer = self.owner.answer(request, plan, use_projected_summary=True)
+
+        self.assertEqual(len(answer.tables), 1)
+        table = answer.tables[0]
+        self.assertEqual(len(table.rows), 2)
+        self.assertTrue(all(set(row.values) == {column.key for column in table.columns} for row in table.rows))
+        unmatched = next(row for row in table.rows if row.values["equipment_id"] == "EQUIP_RTI_T009")
+        self.assertIsNone(unmatched.values["workOrderNumber"])
+        self.assertIsNone(unmatched.values["status"])
+        matched = next(row for row in table.rows if row.values["equipment_id"] == "EQUIP_RTI_T010")
+        self.assertEqual(matched.values["workOrderNumber"], "WO-2853")
+        self.assertEqual(matched.values["status"], "Scheduled")
+
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
         self.owner.evidence[receipt.id] = receipt

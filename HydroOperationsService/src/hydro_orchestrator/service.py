@@ -626,6 +626,20 @@ def create_delegated_app(
                         if isinstance(failure, SourceFailure):
                             detail = str(failure).replace("\r", " ").replace("\n", " ")[:512]
                             logger.error("Streamed orchestration failed (SourceFailure: %s).", detail)
+                        elif isinstance(failure, ValidationError):
+                            signature = [
+                                {
+                                    "location": ".".join(str(part) for part in item["loc"]),
+                                    "type": item["type"],
+                                    "message": item["msg"],
+                                }
+                                for item in failure.errors(
+                                    include_url=False,
+                                    include_context=False,
+                                    include_input=False,
+                                )
+                            ]
+                            logger.error("Streamed orchestration failed (ValidationError: %s).", signature)
                         else:
                             logger.error("Streamed orchestration failed (%s).", type(failure).__name__)
                         yield line(terminal_event("Orchestration failed; no answer was certified."))

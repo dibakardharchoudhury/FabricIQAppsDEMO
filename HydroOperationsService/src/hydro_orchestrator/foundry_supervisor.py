@@ -2683,10 +2683,13 @@ class FoundrySupervisor:
         for table in plan.tables:
             table_units: dict[str, set[str]] = {}
             rows = []
+            column_keys = {column.key for column in table.columns}
             for row in table.rows:
                 if not row.cells or len({cell.key for cell in row.cells}) != len(row.cells):
                     raise SourceFailure("Answer cells require distinct column keys.")
-                values = {}
+                if any(cell.key not in column_keys for cell in row.cells):
+                    raise SourceFailure("Answer cells must match declared table columns.")
+                values: dict[str, object] = {column.key: None for column in table.columns}
                 identities = set()
                 signal_identities = set()
                 equipment_sources = set()
