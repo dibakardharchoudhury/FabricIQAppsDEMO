@@ -16,6 +16,10 @@ export { parseKustoPayload } from '../src/services/kustoResult.ts'
 const fabric = 'https://api.fabric.microsoft.com/v1'
 const guid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
 
+export function governedToolResult(tool, args, result) {
+  return { ...result, _evidence_datasets: describeToolEvidence(tool, args, result) }
+}
+
 export function chatIntent(question) {
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
     throw new Error('Chat intent requires a bounded nonempty operator question.')
@@ -724,7 +728,7 @@ async function main() {
       request.creation_id, request.tokens, request.allow_create)
     return {
       source: metadata.source,
-      result: { ...result, _evidence_datasets: describeToolEvidence(request.tool, args, result) },
+      result: governedToolResult(request.tool, args, result),
       completed_at: result.read_completed_at_utc,
     }
   }
@@ -770,7 +774,11 @@ async function main() {
       default:
         throw new Error('This source tool has no configured backend implementation.')
     }
-    return { source: metadata.source, result, completed_at: result.read_completed_at_utc }
+    return {
+      source: metadata.source,
+      result: governedToolResult(request.tool, args, result),
+      completed_at: result.read_completed_at_utc,
+    }
   }
   if (!['read', 'probe', 'telemetry_only'].includes(request.action) || typeof request.equipment_id !== 'string'
     || !request.equipment_id.trim() || request.equipment_id.length > 200 || request.cluster !== metadata.cluster) {

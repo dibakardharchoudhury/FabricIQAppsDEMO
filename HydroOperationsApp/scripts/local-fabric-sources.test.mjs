@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, governedToolResult, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -26,6 +26,29 @@ const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url
   url.includes('/ontologies/') ? { id, properties: { generation } }
     : url.includes('/kqlDatabases/') ? { id, displayName: 'test', properties: { parentEventhouseItemId: id, queryServiceUri: cluster } }
       : { id, capacityId: id })
+
+test('every direct tool result carries governed evidence descriptors at the Node boundary', () => {
+  const result = governedToolResult('query_signal_quality_snapshot', {
+    quality: 'BAD', lookback: 'P1D', equipment_type: 'Turbine',
+  }, {
+    rows: [{
+      equipment_id: 'EQUIP_RTI_T005', opcua_node_id: node,
+      event_time: new Date().toISOString(), quality: 'BAD',
+    }],
+    read_completed_at_utc: new Date().toISOString(),
+  })
+  assert.deepEqual(result._evidence_datasets, [{
+    kind: 'signal_quality',
+    field: 'rows',
+    authority: 'direct',
+    scope: 'population',
+    complete: true,
+    identity_fields: ['opcua_node_id', 'event_time'],
+    group_by: null,
+    role: 'primary',
+    limitations: [],
+  }])
+})
 
 test('backend intent reuses canonical chart, native and human-priority semantics without source access', () => {
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
