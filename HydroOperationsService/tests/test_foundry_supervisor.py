@@ -21,8 +21,8 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
-    _native_markdown_tables, _native_markdown_tables_from_payload, normalize_filter_conjunctions,
-    with_production_write_status,
+    _native_count_chart_metadata, _native_markdown_tables, _native_markdown_tables_from_payload,
+    normalize_filter_conjunctions, updated_equipment_selection, with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -163,6 +163,37 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_empty_verification_does_not_erase_a_prior_grounded_selection(self):
+        selected = {"EQUIP_RTI_T002", "EQUIP_RTI_T008"}
+        self.assertEqual(
+            updated_equipment_selection(selected, set(), requires_selection=False),
+            selected,
+        )
+        self.assertEqual(
+            updated_equipment_selection(selected, {"EQUIP_RTI_T002"}, requires_selection=False),
+            {"EQUIP_RTI_T002"},
+        )
+        self.assertEqual(
+            updated_equipment_selection(selected, {"EQUIP_RTI_T010"}, requires_selection=True),
+            {"EQUIP_RTI_T002", "EQUIP_RTI_T008", "EQUIP_RTI_T010"},
+        )
+
+    def test_native_count_table_gets_bounded_chart_metadata(self):
+        units, presentation = _native_count_chart_metadata({
+            "native_backlog_by_equipment": [
+                {"equipmentId": "EQUIP_RTI_T002", "Open orders": "2"},
+                {"equipmentId": "EQUIP_RTI_T008", "Open orders": "2"},
+            ],
+        })
+        self.assertEqual(units, {"Open orders": "count"})
+        self.assertEqual(presentation, {
+            "table_field": "native_backlog_by_equipment",
+            "chart": {"kind": "bar", "x_key": "equipmentId", "y_keys": ["Open orders"]},
+        })
+        self.assertEqual(_native_count_chart_metadata({
+            "native_readings": [{"equipmentId": "EQUIP_RTI_T002", "temperature": "75.0"}],
+        }), ({}, None))
+
     def test_redundant_filter_conjunctions_are_normalized_without_changing_conditions(self):
         conditions = [
             {"column": "status", "op": "neq", "value": "Completed"},

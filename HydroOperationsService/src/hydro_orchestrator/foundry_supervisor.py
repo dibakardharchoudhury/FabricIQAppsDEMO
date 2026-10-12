@@ -165,6 +165,53 @@ def _native_markdown_tables(text: str) -> dict[str, list[dict[str, str]]]:
     return tables
 
 
+def _native_count_chart_metadata(
+    result: dict[str, object],
+) -> tuple[dict[str, str], dict[str, object] | None]:
+    identifier_keys = {
+        "equipment", "equipmentid", "facility", "facilityid", "facilityname", "station", "stationid",
+    }
+    count_keys = {
+        "count", "opencount", "openorders", "openworkorders", "ordercount", "orders",
+        "workordercount", "workorders",
+    }
+    for table_field, value in result.items():
+        if not table_field.startswith("native_") or not isinstance(value, list) or not value:
+            continue
+        rows = [row for row in value if isinstance(row, dict)]
+        if len(rows) != len(value) or not rows:
+            continue
+        keys = list(rows[0])
+        if any(list(row) != keys for row in rows):
+            continue
+        x_keys = [key for key in keys if re.sub(r"[^a-z]", "", key.lower()) in identifier_keys]
+        y_keys = [key for key in keys if re.sub(r"[^a-z]", "", key.lower()) in count_keys]
+        if len(x_keys) != 1 or len(y_keys) != 1:
+            continue
+        if not all(
+            isinstance(row[y_keys[0]], (int, float))
+            or isinstance(row[y_keys[0]], str) and re.fullmatch(r"\d+", row[y_keys[0]].strip())
+            for row in rows
+        ):
+            continue
+        return (
+            {y_keys[0]: "count"},
+            {
+                "table_field": table_field,
+                "chart": {"kind": "bar", "x_key": x_keys[0], "y_keys": [y_keys[0]]},
+            },
+        )
+    return {}, None
+
+
+def updated_equipment_selection(
+    current: set[str], grounded: set[str], *, requires_selection: bool,
+) -> set[str]:
+    if requires_selection:
+        return current.union(grounded)
+    return set(grounded) if grounded else set(current)
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1343,10 +1390,11 @@ class FoundrySupervisor:
                             verified_issue_equipment_ids.update(
                                 value for value in values if isinstance(value, str) and value
                             )
-                if delegation.requires_selection:
-                    selected_equipment_ids.update(grounded_ids)
-                else:
-                    selected_equipment_ids = grounded_ids
+                selected_equipment_ids = updated_equipment_selection(
+                    selected_equipment_ids,
+                    grounded_ids,
+                    requires_selection=delegation.requires_selection,
+                )
             plan_completed = True
             return {
                 "status": "handoffs_complete",
@@ -1587,6 +1635,13 @@ class FoundrySupervisor:
                             else {"native_output": native_payload}
                         )
                         native_result.update(_native_markdown_tables_from_payload(native_result))
+                        native_units, native_presentation = _native_count_chart_metadata(native_result)
+                        if (
+                            request.charts_requested
+                            and native_presentation is not None
+                            and not isinstance(native_result.get("presentation"), dict)
+                        ):
+                            native_result["presentation"] = native_presentation
                         native_text = next((
                             value for key in ("response", "native_text")
                             if isinstance((value := native_result.get(key)), str) and len(value) > 2400
@@ -1601,6 +1656,7 @@ class FoundrySupervisor:
                                                arguments={"assignment": question}, completed_at=utc_now(),
                                                result=native_result,
                                                resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
+                                               column_units=native_units,
                                                limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
                         self.evidence[receipt.id] = receipt
                 if not found:
