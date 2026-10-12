@@ -255,6 +255,19 @@ def requests_new_work_order_proposal(question: str) -> bool:
     return False
 
 
+def requested_work_backlog_group(question: str) -> Literal["facility", "equipment"] | None:
+    normalized = re.sub(r"[\s_-]+", " ", question.lower())
+    if not any(term in normalized for term in ("work", "order", "backlog")):
+        return None
+    if any(term in normalized for term in ("facility level", "facility backlog", "by facility", "per facility")):
+        return "facility"
+    if any(term in normalized for term in (
+        "orders per equipment", "work by equipment", "by equipment", "per equipment", "most open orders",
+    )):
+        return "equipment"
+    return None
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1483,6 +1496,7 @@ class FoundrySupervisor:
 
             functions.append(FunctionTool(name=name, func=bind(name, callback), input_model=parameters))
         proposal_authorized = requests_new_work_order_proposal(request.question)
+        required_backlog_group = requested_work_backlog_group(request.question)
         permitted_catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
         if not proposal_authorized:
             permitted_catalog = permitted_catalog.model_copy(update={
@@ -1514,6 +1528,18 @@ class FoundrySupervisor:
             "required_specialists": request.required_specialists,
             "required_specialist_steps": request.required_specialist_steps,
             "conditional_maintenance_gate_requested": maintenance_gate_required,
+            "required_source_capability": (
+                {
+                    "tool": "query_work_backlog",
+                    "arguments": {"group_by": required_backlog_group},
+                    "reason": (
+                        "The operator requested a complete grouped open-work reconciliation and chart. Use this "
+                        "authoritative capability instead of reconstructing joins or counts from separate reads."
+                    ),
+                }
+                if role == "qa" and required_backlog_group is not None
+                else None
+            ),
             "permitted_source_catalog": permitted_catalog.model_dump(mode="json"),
             "proposal_authorization": (
                 "This current turn explicitly requests a new editable proposal; propose_work_order may be called "
@@ -1663,6 +1689,35 @@ class FoundrySupervisor:
                     if any(content.type in ("error", "function_approval_request") for content in message.contents):
                         raise SourceFailure("Foundry execution returned an error or unresolved approval request.")
                 self.invocation_inputs[response.response_id] = sha256(_encoded(active_context)).hexdigest()
+                backlog_complete = required_backlog_group is None or any(
+                    item.tool == "query_work_backlog"
+                    and item.arguments.get("group_by") in (
+                        required_backlog_group,
+                        f"{required_backlog_group}_id",
+                    )
+                    for item in self.evidence.values()
+                )
+                if role == "qa" and not backlog_complete:
+                    if completion_attempt == 0:
+                        logger.warning(
+                            "Foundry QA omitted the required grouped work-backlog capability; requesting one bounded "
+                            "same-scope correction."
+                        )
+                        active_context = {
+                            **context,
+                            "evidence": self.model_evidence(role),
+                            "completed_specialists": self.model_specialists(role),
+                            "source_capability_repair": (
+                                f"The prior response omitted the required query_work_backlog call with "
+                                f"group_by={required_backlog_group}. Call that exact capability now and finish from "
+                                "its receipt. Do not reconstruct joins or counts from separate reads, broaden scope, "
+                                "or repeat already completed source calls."
+                            ),
+                        }
+                        continue
+                    raise SourceFailure(
+                        f"Required complete {required_backlog_group}-grouped work backlog was not returned."
+                    )
                 if role == "fabric-iq":
                     try:
                         native_receipts = [

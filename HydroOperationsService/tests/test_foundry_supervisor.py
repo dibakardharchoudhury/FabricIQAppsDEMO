@@ -21,7 +21,8 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
-    rca_answer_limitations, rca_reference_examples, safe_exception_signature, canonical_source_arguments,
+    rca_answer_limitations, rca_reference_examples, requested_work_backlog_group, safe_exception_signature,
+    canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
     requests_new_work_order_proposal, requests_unsent_message, updated_equipment_selection,
@@ -51,6 +52,9 @@ class SourceTools:
         tools = [{"name": "query_telemetry", "parameters": {
             "type": "object", "properties": {"equipment_id": {"type": "string"}},
             "required": ["equipment_id"], "additionalProperties": False,
+        }}, {"name": "query_work_backlog", "parameters": {
+            "type": "object", "properties": {"group_by": {"type": "string", "enum": ["facility", "equipment"]}},
+            "required": ["group_by"], "additionalProperties": False,
         }}]
         if self.quality_snapshot:
             tools.append({"name": "query_signal_quality_snapshot", "parameters": {
@@ -142,6 +146,21 @@ class SourceTools:
                     },
                 },
                 column_units={"average_power_MW": "MW"},
+            )
+        if name == "query_work_backlog":
+            group_key = "facility_id" if arguments["group_by"] == "facility" else "equipment_id"
+            return ToolEvidence(
+                id=f"{arguments['group_by']}-backlog", source=request.source, tool=name, arguments=arguments,
+                completed_at=utc_now(),
+                result={
+                    "rows": [{group_key: "TEST_GROUP", "open_work_order_count": 2}],
+                    "row_count": 1,
+                    "presentation": {
+                        "table_field": "rows",
+                        "chart": {"kind": "bar", "x_key": group_key, "y_keys": ["open_work_order_count"]},
+                    },
+                },
+                column_units={"open_work_order_count": "work orders"},
             )
         rows = [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD"}]
         if self.extra_row:
@@ -692,6 +711,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "requires_selection": False,
                     "requires_verified_issue": False,
                 }]
+            elif self.mode == "backlog_capability_omitted_once":
+                steps = [{
+                    "specialist": "qa",
+                    "question": "Return the complete facility-level work backlog and chart.",
+                    "reason": "Reconcile the requested complete grouped backlog.",
+                    "native_source": None,
+                    "requires_selection": False,
+                    "requires_verified_issue": False,
+                }]
             elif self.mode in ("conditional_empty", "conditional_empty_with_supporting_rows"):
                 steps = [
                     {"specialist": "qa", "question": "Read the qualifying fleet.", "reason": "Find matches.",
@@ -727,7 +755,20 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 } for index, role in enumerate(roles)]
             output = [self.function("plan_orchestration", {"steps": steps})]
         elif name == "hydro-qa-agent":
-            if self.mode == "standalone_station_chart":
+            if self.mode == "backlog_capability_omitted_once":
+                if round_number == 0:
+                    output = [self.function("hydro_query", {
+                        "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
+                    })]
+                elif round_number == 1:
+                    output = [self.message("The separate reads are complete.")]
+                elif round_number == 2:
+                    output = [self.function("hydro_query", {
+                        "tool_name": "query_work_backlog", "arguments": {"group_by": "facility"},
+                    })]
+                else:
+                    output = [self.message("The grouped backlog is complete.")]
+            elif self.mode == "standalone_station_chart":
                 output = [self.function("hydro_query", {
                     "tool_name": "query_station_power", "arguments": {"lookback": "24h"},
                 })] if round_number == 0 else [self.message("The station-power read is complete.")]
@@ -1606,6 +1647,37 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("same assigned native-source request once", json.dumps(retry["input"]))
         self.assertEqual(self.tools.calls, 0)
+
+    async def test_grouped_work_backlog_uses_one_bounded_capability_correction(self):
+        self.mode = "backlog_capability_omitted_once"
+        request = self.request.model_copy(update={
+            "question": "Show a facility-level backlog table and chart.",
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 1},
+            "charts_requested": True,
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertEqual(self.calls["hydro-qa-agent"], 4)
+        self.assertEqual(self.tools.calls, 2)
+        self.assertEqual(result.charts[0].x_key, "facility_id")
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
+            and "source_capability_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("group_by=facility", json.dumps(repair["input"]))
+
+    def test_grouped_work_backlog_intent_is_centralized(self):
+        self.assertEqual(
+            requested_work_backlog_group("Show a facility-level backlog table and chart."),
+            "facility",
+        )
+        self.assertEqual(
+            requested_work_backlog_group("Choose equipment with the most open orders and chart orders-per-equipment."),
+            "equipment",
+        )
+        self.assertIsNone(requested_work_backlog_group("Read open work for T005."))
 
     async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):
         self.mode = "native_connection_only"
