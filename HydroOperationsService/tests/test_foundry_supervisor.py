@@ -1247,6 +1247,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.owner.evidence = {item.id: item for item in (quality, duplicate_quality, work)}
         self.owner.selected_equipment_ids = {"EQUIP_RTI_T010"}
+        self.owner.specialists.append(SpecialistResult(
+            role="work-order", agent_name="hydro-work-order-agent", version="12",
+            response_id="work-review", duration_ms=10, model_round_count=1,
+            input_digest="0" * 64, text="No draft.", report={"decision": "no_draft"},
+        ))
         request = self.request.model_copy(update={
             "question": "Summarize the verified evidence.",
         })
@@ -1260,6 +1265,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("UNCERTAIN", answer.summary)
         self.assertIn("describe telemetry trust", answer.summary)
         self.assertIn("does not cover this signal", answer.summary)
+        self.assertIn("No new work order was proposed", answer.summary)
+        self.assertIn("stale (>60 seconds)", answer.summary)
+        self.assertFalse(answer.summary.endswith("..."))
 
     def test_reconciliation_rows_without_matching_work_are_complete_and_null_filled(self):
         quality = ToolEvidence(

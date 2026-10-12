@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from hashlib import sha256
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, Protocol, cast
@@ -2460,6 +2460,7 @@ class FoundrySupervisor:
         empty_quality_snapshot = bool(quality_snapshots) and not row_count(quality_snapshots)
         if quality_work_reconciliation:
             quality_by_signal: dict[str, dict[str, object]] = {}
+            quality_read_times: dict[str, datetime] = {}
             open_work_by_equipment: dict[str, dict[str, dict[str, object]]] = {}
             for item in self.evidence.values():
                 collections = [item.result.get("rows")]
@@ -2492,6 +2493,14 @@ class FoundrySupervisor:
                                     current.get("event_time", "")
                                 ):
                                     quality_by_signal[signal] = candidate
+                                    read_time = item.completed_at
+                                    source_clock = item.result.get("read_completed_at_utc")
+                                    if isinstance(source_clock, str):
+                                        try:
+                                            read_time = datetime.fromisoformat(source_clock.replace("Z", "+00:00"))
+                                        except ValueError:
+                                            pass
+                                    quality_read_times[signal] = read_time
                         elif item.tool in ("query_operations", "query_work_backlog"):
                             status = candidate.get("status")
                             if isinstance(status, str) and status.casefold() in ("completed", "cancelled"):
@@ -2500,11 +2509,55 @@ class FoundrySupervisor:
                             order = candidate.get("workOrderNumber") or candidate.get("work_order_number")
                             if isinstance(equipment, str) and isinstance(order, str):
                                 open_work_by_equipment.setdefault(equipment, {})[order] = candidate
-            findings = []
-            for signal, row in sorted(
+            ordered_findings = sorted(
                 quality_by_signal.items(),
                 key=lambda item: str(item[1].get("equipment_id", item[1].get("equipmentId", ""))),
-            )[:5]:
+            )
+            equipment_count = len({
+                row.get("equipment_id") or row.get("equipmentId")
+                for row in quality_by_signal.values()
+                if isinstance(row.get("equipment_id") or row.get("equipmentId"), str)
+            })
+            stale_count = current_count = uncertain_count = 0
+            for signal, row in ordered_findings:
+                event_time = row.get("event_time")
+                if not isinstance(event_time, str):
+                    uncertain_count += 1
+                    continue
+                try:
+                    event_at = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+                except ValueError:
+                    uncertain_count += 1
+                    continue
+                if event_at.tzinfo is None or quality_read_times[signal].tzinfo is None:
+                    uncertain_count += 1
+                    continue
+                age = (quality_read_times[signal] - event_at).total_seconds()
+                if age < 0:
+                    uncertain_count += 1
+                elif age > 60:
+                    stale_count += 1
+                else:
+                    current_count += 1
+            if request.equipment_selection is not None and self.selected_equipment_ids:
+                sentences.append(
+                    "The requested metric and equipment-ID ascending tie-break selected "
+                    f"{', '.join(sorted(self.selected_equipment_ids))} for dependent investigation and draft review."
+                )
+            freshness = f"{stale_count} stale (>60 seconds), {current_count} current"
+            if uncertain_count:
+                freshness += f", and {uncertain_count} with uncertain freshness"
+            sentences.append(
+                f"Returned {len(quality_by_signal)} latest signal-quality rows across {equipment_count} equipment; "
+                f"relative to each source read clock, {freshness}. Signal-quality labels describe telemetry trust, "
+                "not physical condition."
+            )
+            selected_findings = [
+                item for item in ordered_findings
+                if item[1].get("equipment_id", item[1].get("equipmentId")) in self.selected_equipment_ids
+            ]
+            findings = []
+            for signal, row in (selected_findings or ordered_findings[:1]):
                 equipment = row.get("equipment_id") or row.get("equipmentId")
                 turbine = row.get("turbine") or equipment
                 quality = row.get("quality")
@@ -2526,16 +2579,8 @@ class FoundrySupervisor:
                 else:
                     detail += "; no open work was returned"
                 findings.append(detail)
-            if request.equipment_selection is not None and self.selected_equipment_ids:
-                sentences.append(
-                    "The requested metric and equipment-ID ascending tie-break selected "
-                    f"{', '.join(sorted(self.selected_equipment_ids))} for dependent investigation and draft review."
-                )
             if findings:
-                sentences.append("Current signal/work reconciliation: " + "; ".join(findings) + ".")
-                sentences.append(
-                    "Signal-quality labels describe telemetry trust, not the turbine's physical condition."
-                )
+                sentences.append("Selected signal/work reconciliation: " + "; ".join(findings) + ".")
             else:
                 sentences.append(
                     "No selected signal-quality rows were returned for reconciliation; this does not establish "
