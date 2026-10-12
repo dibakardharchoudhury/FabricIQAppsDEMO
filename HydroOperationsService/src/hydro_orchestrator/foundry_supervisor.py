@@ -1739,6 +1739,32 @@ class FoundrySupervisor:
                             ) for key in keys
                         )),),
                     ))
+            explicit_empty_quality = (
+                receipt.tool == "query_signal_quality_snapshot"
+                and isinstance(rows, list)
+                and not rows
+                and receipt.result.get("row_count") == 0
+            )
+            if explicit_empty_quality and len(tables) < 12:
+                fields: list[tuple[str, str, Literal["text", "number", "timestamp"]]] = [
+                    ("row_count", "/row_count", "number"),
+                ]
+                if isinstance(receipt.result.get("read_completed_at_utc"), str):
+                    fields.append(("read_completed_at_utc", "/read_completed_at_utc", "timestamp"))
+                requested_quality = receipt.arguments.get("quality")
+                quality_label = f" {requested_quality}" if isinstance(requested_quality, str) else ""
+                table_id = f"source-{evidence_index + 1}-{len(tables) + 1}"
+                tables.append(PlannedTable(
+                    id=table_id,
+                    title=f"{receipt.tool}{quality_label} empty result",
+                    columns=tuple(AnswerColumn(key=key, label=key, kind=kind) for key, _path, kind in fields),
+                    rows=(PlannedRow(cells=tuple(
+                        AnswerCell(
+                            key=key,
+                            source=EvidenceReference(evidence_id=receipt.id, path=path),
+                        ) for key, path, _kind in fields
+                    )),),
+                ))
             if len(tables) == 12:
                 break
         if not tables:

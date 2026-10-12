@@ -1734,7 +1734,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(request)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual(self.tools.calls, 2)
-        self.assertEqual(result.tables, ())
+        self.assertEqual(len(result.tables), 2)
+        self.assertEqual(
+            {table.title for table in result.tables},
+            {
+                "query_signal_quality_snapshot BAD empty result",
+                "query_signal_quality_snapshot UNCERTAIN empty result",
+            },
+        )
+        self.assertTrue(all(table.rows[0].values["row_count"] == 0 for table in result.tables))
         self.assertEqual(
             result.summary,
             "No matching signal-quality records were returned for the requested window, so no equipment could be "
@@ -1795,7 +1803,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item.tool for item in self.owner.evidence.values()}, {
             "query_signal_quality_snapshot", "query_telemetry",
         })
-        self.assertEqual(result.tables[0].rows[0].values["equipment_id"], "TEST_T005")
+        equipment_table = next(
+            table for table in result.tables
+            if "equipment_id" in table.rows[0].values
+        )
+        self.assertEqual(equipment_table.rows[0].values["equipment_id"], "TEST_T005")
 
     async def test_conditional_work_skips_without_verified_uncovered_issue(self):
         self.mode = "conditional_no_issue"
