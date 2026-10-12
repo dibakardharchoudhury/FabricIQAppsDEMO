@@ -2119,8 +2119,12 @@ class FoundrySupervisor:
             "query_telemetry", "query_signal_quality_snapshot", "query_turbine_temperature_snapshot",
             "query_station_power", "run_kql",
         )]
+        station_power = [item for item in telemetry if item.tool == "query_station_power"]
         quality_snapshots = [item for item in telemetry if item.tool == "query_signal_quality_snapshot"]
-        other_telemetry = [item for item in telemetry if item.tool != "query_signal_quality_snapshot"]
+        other_telemetry = [
+            item for item in telemetry
+            if item.tool not in ("query_signal_quality_snapshot", "query_station_power")
+        ]
         work_reads = [
             item for item in self.evidence.values()
             if item.tool == "query_work_backlog"
@@ -2144,7 +2148,37 @@ class FoundrySupervisor:
             return total
 
         empty_quality_snapshot = bool(quality_snapshots) and not row_count(quality_snapshots)
-        if telemetry:
+        if station_power:
+            station_rows: list[dict[str, object]] = []
+            for item in station_power:
+                rows = item.result.get("rows")
+                if isinstance(rows, list):
+                    station_rows.extend(row for row in rows if isinstance(row, dict))
+            station_findings = []
+            for row in station_rows[:5]:
+                station = row.get("Station") or row.get("station") or row.get("facility_name")
+                average = row.get("average_power_MW")
+                samples = row.get("samples")
+                bad_samples = row.get("bad_samples")
+                latest = row.get("latest_event_time")
+                if isinstance(station, str) and isinstance(average, int | float):
+                    detail = f"{station}: {average:.3f} MW"
+                    if type(samples) is int and type(bad_samples) is int:
+                        detail += f" from {samples} samples ({bad_samples} BAD)"
+                    if isinstance(latest, str):
+                        detail += f", latest {latest}"
+                    station_findings.append(detail)
+            if station_findings:
+                sentences.append("Verified station power averages: " + "; ".join(station_findings) + ".")
+                sentences.append(
+                    "These are sample-weighted arithmetic means of individual turbine readings, not total station "
+                    "output, a time-weighted mean or energy."
+                )
+            else:
+                sentences.append(
+                    "The station-power source returned no usable station-average rows; this is an evidence gap."
+                )
+        if quality_snapshots or other_telemetry:
             if empty_quality_snapshot:
                 sentences.append(
                     "No matching signal-quality records were returned for the requested window, so no equipment "
@@ -2155,7 +2189,7 @@ class FoundrySupervisor:
                         "Other supporting telemetry records were returned and remain visible below, but they do "
                         "not replace the empty signal-quality population used for equipment selection."
                     )
-            elif row_count(telemetry):
+            elif row_count(quality_snapshots + other_telemetry):
                 sentences.append(
                     "Telemetry evidence was returned for the requested scope and is preserved in the "
                     "source-annotated tables with its measurement times."
@@ -2732,13 +2766,21 @@ class FoundrySupervisor:
                         item.tool == "query_signal_quality_snapshot" and item.result.get("row_count") == 0
                         for item in owner.evidence.values()
                     )
+                    deterministic_station_power = any(
+                        item.tool == "query_station_power"
+                        for item in owner.evidence.values()
+                    )
                     deterministic_unsent_message = requests_unsent_message(request.question)
-                    if deterministic_empty_quality or deterministic_unsent_message:
+                    if deterministic_empty_quality or deterministic_station_power or deterministic_unsent_message:
                         plan = owner.deterministic_explanatory_plan(request)
                         projection_id = (
                             "deterministic-unsent-message"
                             if deterministic_unsent_message
-                            else "deterministic-empty-quality"
+                            else (
+                                "deterministic-station-power"
+                                if deterministic_station_power
+                                else "deterministic-empty-quality"
+                            )
                         )
                         projection = ProjectionReceipt(
                             response_id=projection_id,

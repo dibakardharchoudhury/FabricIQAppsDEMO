@@ -1173,6 +1173,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.charts), 1)
         self.assertEqual(result.charts[0].x_key, "Station")
         self.assertEqual(result.charts[0].y_keys, ("average_power_MW",))
+        self.assertIn(
+            "Foyers: 1271.158 MW from 1510 samples (73 BAD), latest 2026-10-11T04:00:00Z",
+            result.summary,
+        )
+        self.assertIn("not total station output", result.summary)
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
