@@ -62,6 +62,71 @@ test('backend intent reuses canonical chart, native and human-priority semantics
     { specialist: 'work-order', native_source: null },
   ], ['ontology']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [] })
 })
+
+test('all ten canonical prompts have one centralized routing and presentation contract', () => {
+  const cases = [
+    {
+      question: 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.',
+      specialists: ['qa', 'rca', 'work-order'], steps: { qa: 2, rca: 1, 'work-order': 1 },
+      native: [], chart: false, priority: 'Medium',
+    },
+    {
+      question: "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
+      specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
+      native: ['ontology'], chart: false, priority: 'Medium',
+    },
+    {
+      question: 'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.',
+      specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
+      native: ['data-agent'], chart: true, priority: 'Medium',
+    },
+    {
+      question: 'Ask the published Fabric Data Agent which turbines have latest signal quality BAD today (UTC), the five hottest turbines from latest raw temperature readings today, and all open work on those turbines. Independently verify both sets using direct telemetry snapshots and SQL work records. Investigate any disagreement: distinguish signal quality from temperature, same-signal from equipment-level work, averaging from latest raw readings, and stale from current data. Return a reconciliation table showing source claims, verified evidence and unresolved differences. Do not silently prefer an answer or propose new work.',
+      specialists: ['qa', 'rca'], steps: { qa: 2, rca: 1 },
+      native: ['data-agent'], chart: false, priority: 'Medium',
+    },
+    {
+      question: 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
+      specialists: ['qa'], steps: { qa: 1 },
+      native: ['data-agent', 'ontology'], chart: true, priority: 'Medium',
+    },
+    {
+      question: 'List spare parts at or below reorder level and related open maintenance work. Investigate whether the evidence supports a parts-related risk; prepare an editable inspection draft only for a verified uncovered equipment issue. Do not order parts or save work.',
+      specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
+      native: [], chart: false, priority: 'Medium',
+    },
+    {
+      question: "Inspect T005's recent telemetry and open work, then investigate whether downtime can actually be established from those sources. Separate sensor quality from loss of production; do not infer an outage from BAD alone.",
+      specialists: ['qa', 'rca'], steps: { qa: 1, rca: 1 },
+      native: [], chart: false, priority: 'Medium',
+    },
+    {
+      question: 'Read maintenance notifications and open work for T005. Investigate inconsistencies and prepare an editable inspection draft only if an uncovered issue is supported. Do not save or send a notification.',
+      specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
+      native: [], chart: false, priority: 'Medium',
+    },
+    {
+      question: 'Chart average power output per station over the last 24 hours. Investigate whether the returned data support a change in equipment condition. Keep observations, competing explanations and missing evidence separate.',
+      specialists: ['qa', 'rca'], steps: { qa: 1, rca: 1 },
+      native: [], chart: true, priority: 'Medium',
+    },
+    {
+      question: 'Check T005 identity and all existing open work. Prepare one editable Low-priority inspection work-order draft titled Acceptance review T005 DO NOT DISPATCH, with no claimed fault. Independently verify coverage. Do not save.',
+      specialists: ['qa', 'work-order'], steps: { qa: 1, 'work-order': 1 },
+      native: [], chart: false, priority: 'Low',
+    },
+  ]
+  assert.equal(cases.length, 10)
+  for (const item of cases) {
+    const intent = chatIntent(item.question)
+    assert.deepEqual(intent.required_specialists, item.specialists)
+    assert.deepEqual(intent.required_specialist_steps, item.steps)
+    assert.deepEqual(intent.native_sources, item.native)
+    assert.equal(intent.charts_requested, item.chart)
+    assert.equal(intent.proposal_priority, item.priority)
+  }
+})
+
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {
   const yaml = await readFile(new URL('../rayfin/rayfin.yml', import.meta.url), 'utf8')
   const parsed = parseRayfinYaml(yaml)

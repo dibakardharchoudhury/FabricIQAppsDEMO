@@ -98,12 +98,13 @@ export function requiredIndependentQaSteps(question: string): number {
   const positive = positiveActionClauses(question)
   const request = /\bindependently\s+(?:check|verify|reconcile)\b[^.!?;\n]{0,80}/i.exec(positive)?.[0]
   if (!request) return 1
+  const finalIndependentPhase = /\bfinally\s*,?\s*independently\s+(?:check|verify|reconcile)\b/i.test(positive)
   const quantified = /\b(both|two|three|four|five|six|seven|eight|[2-8])\b/i.exec(request)?.[1]?.toLowerCase()
-  if (!quantified) return 1
+  if (!quantified) return finalIndependentPhase ? 2 : 1
   const counts: Record<string, number> = {
     both: 2, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
   }
-  return counts[quantified] ?? Number(quantified)
+  return Math.max(finalIndependentPhase ? 2 : 1, counts[quantified] ?? Number(quantified))
 }
 
 export function directVerificationSources(question: string): Array<{ tool: string; entity?: string }> {
