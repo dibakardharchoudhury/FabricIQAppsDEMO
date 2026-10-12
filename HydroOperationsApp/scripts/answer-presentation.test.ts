@@ -495,7 +495,11 @@ test('a draft from an incomplete workflow is withdrawn, not treated as human rej
 })
 
 test('Supervisor requests visible routing and conditional-selection contracts', () => {
-  assert.match(JSON.stringify(agentDefinition('supervisor', 'test').tools), /"required":\["specialist","question","reason","native_source","requires_selection","requires_verified_issue"\]/)
+  const schema = JSON.stringify(agentDefinition('supervisor', 'test').tools)
+  assert.match(schema, /"required":\["specialist","question","reason","native_source","requires_selection","requires_verified_issue"\]/)
+  assert.match(schema, /"version":\{"type":"integer","const":2\}/)
+  assert.match(schema, /"presentation":\{"type":"string","enum":\["direct_records_table"/)
+  assert.doesNotMatch(schema, /"group_by"/)
   const delegation = parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data","requires_selection":false,"requires_verified_issue":false}')
   assert.equal(delegation.reason, 'Ontology-native instance data')
   assert.equal(delegation.requiresSelection, false)

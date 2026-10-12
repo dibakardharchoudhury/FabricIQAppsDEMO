@@ -423,10 +423,11 @@ class DomainDatasetDefinition(Contract):
     source: Literal["lakehouse", "sql", "eventhouse", "derived", "native"]
     entity: str = Field(min_length=1, max_length=120)
     identity_fields: tuple[str, ...] = Field(alias="identityFields", min_length=1, max_length=4)
+    presentations: tuple[str, ...] = Field(min_length=1, max_length=16)
 
 
 def governed_datasets(context: dict[str, object]) -> dict[str, DomainDatasetDefinition]:
-    if context.get("domain_contract_version") != 1:
+    if context.get("domain_contract_version") != 2:
         raise SourceFailure("The shared domain contract version is missing or unsupported.")
     raw = context.get("datasets")
     if not isinstance(raw, list) or not raw:
@@ -461,7 +462,7 @@ class EquipmentSelection(Contract):
 class EvidenceRequirement(Contract):
     kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     scope: Literal["population", "focus"]
-    authority: Literal["direct", "native", "reconciled"]
+    authority: Literal["direct", "native"]
     purpose: Literal["facts", "identity", "coverage", "investigation", "verification"]
 
 
@@ -470,23 +471,50 @@ class AnswerViewContract(Contract):
     title: str = Field(min_length=1, max_length=120)
     kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     scope: Literal["population", "focus"]
-    mode: Literal["records", "grouped", "reconciliation"]
-    authority: Literal["direct", "native", "reconciled"]
-    group_by: Literal["equipment_id", "facility_id"] | None = None
-    chart: Literal["bar", "line", "scatter"] | None = None
+    presentation: Literal[
+        "direct_records_table", "direct_records_bar", "direct_records_line", "direct_records_scatter",
+        "direct_grouped_by_equipment_table", "direct_grouped_by_equipment_bar",
+        "direct_grouped_by_equipment_line", "direct_grouped_by_equipment_scatter",
+        "direct_grouped_by_facility_table", "direct_grouped_by_facility_bar",
+        "direct_grouped_by_facility_line", "direct_grouped_by_facility_scatter",
+        "native_records_table", "native_records_bar", "native_records_line", "native_records_scatter",
+        "native_grouped_by_equipment_table", "native_grouped_by_equipment_bar",
+        "native_grouped_by_equipment_line", "native_grouped_by_equipment_scatter",
+        "native_grouped_by_facility_table", "native_grouped_by_facility_bar",
+        "native_grouped_by_facility_line", "native_grouped_by_facility_scatter",
+        "reconciliation_table",
+    ]
 
-    @model_validator(mode="after")
-    def grouping_matches_mode(self) -> "AnswerViewContract":
-        if (self.mode == "grouped") != (self.group_by is not None):
-            raise ValueError("Grouped views require exactly one canonical grouping.")
-        if self.chart is not None and self.mode == "reconciliation":
-            raise ValueError("Reconciliation views cannot be charted.")
-        if self.mode == "reconciliation" and self.authority != "reconciled":
-            raise ValueError("Reconciliation views require reconciled authority.")
-        return self
+    @property
+    def authority(self) -> Literal["direct", "native", "reconciled"]:
+        if self.presentation == "reconciliation_table":
+            return "reconciled"
+        return "native" if self.presentation.startswith("native_") else "direct"
+
+    @property
+    def mode(self) -> Literal["records", "grouped", "reconciliation"]:
+        if self.presentation == "reconciliation_table":
+            return "reconciliation"
+        return "grouped" if "_grouped_by_" in self.presentation else "records"
+
+    @property
+    def group_by(self) -> Literal["equipment_id", "facility_id"] | None:
+        if "_grouped_by_equipment_" in self.presentation:
+            return "equipment_id"
+        if "_grouped_by_facility_" in self.presentation:
+            return "facility_id"
+        return None
+
+    @property
+    def chart(self) -> Literal["bar", "line", "scatter"] | None:
+        suffix = self.presentation.rsplit("_", 1)[-1]
+        return cast(Literal["bar", "line", "scatter"], suffix) if suffix in (
+            "bar", "line", "scatter",
+        ) else None
 
 
 class OperatorAnswerContract(Contract):
+    version: Literal[2]
     requirements: tuple[EvidenceRequirement, ...] = Field(min_length=1, max_length=16)
     views: tuple[AnswerViewContract, ...] = Field(min_length=1, max_length=8)
 
@@ -499,8 +527,15 @@ class OperatorAnswerContract(Contract):
             for item in self.requirements
         }
         for view in self.views:
-            key = (view.kind, view.scope, view.authority)
-            if key not in declared:
+            if view.authority == "reconciled":
+                authorities = {
+                    item.authority for item in self.requirements if item.scope == view.scope
+                }
+                if authorities != {"direct", "native"}:
+                    raise ValueError(
+                        "Reconciliation views require explicit direct and native evidence requirements."
+                    )
+            elif (view.kind, view.scope, view.authority) not in declared:
                 raise ValueError("Every answer view must have a matching evidence requirement.")
         return self
 
@@ -652,7 +687,7 @@ class NativeBinding(Contract):
 class EvidenceDataset(Contract):
     kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     field: str = Field(min_length=1, max_length=120)
-    authority: Literal["direct", "native"]
+    authority: Literal["direct", "native", "reconciled"]
     scope: Literal["population", "focus"]
     complete: bool = Field(strict=True)
     identity_fields: tuple[str, ...] = Field(min_length=1, max_length=4)
@@ -1612,6 +1647,22 @@ class FoundrySupervisor:
                     "The answer contract requested ungoverned datasets: "
                     + ", ".join(sorted(unknown_kinds))
                 )
+            unsupported_views = []
+            for view in plan.answer_contract.views:
+                if view.authority == "reconciled":
+                    continue
+                prefix = f"{view.authority}_"
+                layout = view.presentation.removeprefix(prefix)
+                if layout not in governed[view.kind].presentations:
+                    unsupported_views.append(
+                        f"{view.id}:{view.kind} does not support {layout}"
+                    )
+            if unsupported_views:
+                raise ToolInputError(
+                    "The answer contract requested unsupported dataset presentations: "
+                    + "; ".join(unsupported_views)
+                    + ". Use only the presentation capabilities in the permitted source catalog."
+                )
             self.answer_contract = plan.answer_contract
             delegations = []
             for step in plan.steps:
@@ -2051,6 +2102,14 @@ class FoundrySupervisor:
                             if isinstance(value, list)
                             and all(isinstance(item, dict) for item in value)
                         )
+                        native_group_by: Literal["equipment_id", "facility_id"] | None = None
+                        if native_presentation is not None:
+                            chart_value = native_presentation.get("chart")
+                            x_key = chart_value.get("x_key") if isinstance(chart_value, dict) else None
+                            if x_key in ("equipment_id", "equipmentId"):
+                                native_group_by = "equipment_id"
+                            elif x_key in ("facility_id", "facilityId", "Station"):
+                                native_group_by = "facility_id"
                         native_scopes: set[Literal["population", "focus"]] = {
                             item.scope for item in self.answer_contract.requirements
                             if item.kind == "native_claims" and item.authority == "native"
@@ -2065,6 +2124,12 @@ class FoundrySupervisor:
                                                        kind="native_claims", field=field, authority="native",
                                                        scope=scope, complete=True,
                                                        identity_fields=("source_identity",),
+                                                       group_by=(
+                                                           native_group_by
+                                                           if native_presentation is not None
+                                                           and native_presentation.get("table_field") == field
+                                                           else None
+                                                       ),
                                                        role="primary" if index == 0 else "support",
                                                    )
                                                    for scope in sorted(native_scopes)
@@ -2095,22 +2160,104 @@ class FoundrySupervisor:
         charts: list[PlannedChart] = []
         limitations: list[str] = []
         summary_parts: list[str] = []
-        for view in contract.views:
-            if view.authority == "reconciled":
-                raise SourceFailure(
-                    f"Answer view {view.id} requires canonical reconciliation, which was not produced."
-                )
+        for requirement in contract.requirements:
             matches = [
-                (receipt, dataset)
+                dataset
                 for receipt in self.evidence.values()
                 for dataset in receipt.datasets
                 if (
-                    dataset.kind == view.kind
-                    and dataset.scope == view.scope
-                    and dataset.authority == view.authority
+                    dataset.kind == requirement.kind
+                    and dataset.scope == requirement.scope
+                    and dataset.authority == requirement.authority
                     and dataset.role != "audit"
                 )
             ]
+            if not matches:
+                if requirement.scope == "focus" and not self.selected_equipment_ids:
+                    limitations.append(
+                        f"{requirement.kind} focus evidence was not read because no equipment was selected."
+                    )
+                    continue
+                raise SourceFailure(
+                    f"Required {requirement.authority} {requirement.kind} "
+                    f"{requirement.scope} evidence was not produced."
+                )
+            if not any(dataset.complete for dataset in matches):
+                raise SourceFailure(
+                    f"Required {requirement.authority} {requirement.kind} evidence is incomplete."
+                )
+        for view in contract.views:
+            if view.authority == "reconciled":
+                requirements = tuple(
+                    item for item in contract.requirements if item.scope == view.scope
+                )
+                source_matches = [
+                    (receipt, dataset)
+                    for receipt in self.evidence.values()
+                    for dataset in receipt.datasets
+                    if dataset.role != "audit" and any(
+                        dataset.kind == item.kind
+                        and dataset.scope == item.scope
+                        and dataset.authority == item.authority
+                        for item in requirements
+                    )
+                ]
+                authorities = {dataset.authority for _receipt, dataset in source_matches}
+                if not {"direct", "native"}.issubset(authorities):
+                    raise SourceFailure(
+                        f"Reconciliation view {view.id} requires complete direct and native evidence."
+                    )
+                reconciled_rows: list[dict[str, object]] = []
+                reconciled_limitations: list[str] = [
+                    "Reconciliation preserves source rows and identities; it does not infer matches "
+                    "between records with different governed identity fields."
+                ]
+                for receipt, dataset in source_matches:
+                    records = receipt.result.get(dataset.field)
+                    if not isinstance(records, list) or not all(isinstance(item, dict) for item in records):
+                        raise SourceFailure(
+                            f"Governed dataset {dataset.kind} does not expose its declared record collection."
+                        )
+                    for index, record in enumerate(records):
+                        reconciled_rows.append({
+                            **record,
+                            "_source_authority": dataset.authority,
+                            "_source_dataset": dataset.kind,
+                            "_source_evidence_id": receipt.id,
+                            "_source_path": f"/{dataset.field}/{index}",
+                        })
+                    reconciled_limitations.extend(receipt.limitations)
+                    reconciled_limitations.extend(dataset.limitations)
+                derived = ToolEvidence(
+                    id=f"reconciliation:{view.id}",
+                    source=request.source,
+                    tool="reconcile_evidence",
+                    arguments={"view_id": view.id},
+                    completed_at=utc_now(),
+                    result={"reconciliation_rows": reconciled_rows},
+                    limitations=tuple(dict.fromkeys(reconciled_limitations))[:8],
+                    datasets=(EvidenceDataset(
+                        kind=view.kind,
+                        field="reconciliation_rows",
+                        authority="reconciled",
+                        scope=view.scope,
+                        complete=True,
+                        identity_fields=("_source_evidence_id", "_source_path"),
+                    ),),
+                )
+                matches = [(derived, derived.datasets[0])]
+            else:
+                matches = [
+                    (receipt, dataset)
+                    for receipt in self.evidence.values()
+                    for dataset in receipt.datasets
+                    if (
+                        dataset.kind == view.kind
+                        and dataset.scope == view.scope
+                        and dataset.authority == view.authority
+                        and dataset.role != "audit"
+                    )
+                ]
             if not matches:
                 raise SourceFailure(
                     f"Required answer view {view.id} has no governed {view.kind} evidence."

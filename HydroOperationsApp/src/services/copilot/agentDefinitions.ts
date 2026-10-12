@@ -1,6 +1,12 @@
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
 import { positiveActionClauses, type AgentRole } from './orchestration.ts'
-import { DOMAIN_DATASET_KEYS, OPERATIONAL_EVIDENCE_CONTRACT } from './domainContract.ts'
+import {
+  ANSWER_PRESENTATIONS,
+  DOMAIN_CONTRACT_VERSION,
+  DOMAIN_DATASETS,
+  DOMAIN_DATASET_KEYS,
+  OPERATIONAL_EVIDENCE_CONTRACT,
+} from './domainContract.ts'
 import { RCA_REPORT_TOOL } from './rcaEvidence.ts'
 
 export const AGENT_NAMES: Record<AgentRole, string> = {
@@ -42,7 +48,7 @@ export function nativeAssignmentError(question: string, source?: NativeSource): 
 export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
   supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
 Plan operational requests using plan_orchestration. Return one complete ordered plan with the minimum required specialist steps: qa for factual questions and independent verification, rca for root cause investigations, work-order for maintenance planning, parts/work coverage review and drafting new work, and fabric-iq only for explicit Fabric Data Agent or ontology-native semantic queries. Preserve which source the user requested. Do not route ordinary Q&A through the Data Agent or ontology. Fabric IQ is a tool, not a synonym for the Data Agent.
-The same call must include one typed answer_contract. Describe requested business datasets and output views, not tool payloads or prompt-specific formatting. Use population scope for every complete qualifying set and focus scope only for evidence about a deterministically selected or explicitly resolved target. Use native authority for requested native claims, direct authority for authoritative application reads, and reconciled authority when the operator asks to compare them. Do not omit a complete population merely because later investigation selects one focus.
+The same call must include one typed answer_contract. Describe requested business datasets and output views, not tool payloads or prompt-specific formatting. Use population scope for every complete qualifying set and focus scope only for evidence about a deterministically selected or explicitly resolved target. Requirements describe source evidence and therefore use only direct or native authority. Do not omit a complete population merely because later investigation selects one focus. Select one presentation value that already combines direct/native/reconciled authority, record/grouped/reconciliation layout, grouping and optional chart intent; never reconstruct those as separate fields. Use reconciliation_table only when the output must compare separately declared direct and native requirements. Dataset presentation capabilities are authoritative: ${DOMAIN_DATASETS.map(dataset => `${dataset.key}=[${dataset.presentations.join(',')}]`).join('; ')}. Prefix a listed layout with direct_ or native_ to match the requirement authority; do not group raw record datasets.
 Reading existing work orders is Q&A, not a Work Order agent task. A question only about turbine health and already-open work goes to qa as one factual task; its direct tools return both telemetry and related work. This does not override additional investigation, drafting or independent-verification requests. Split compound tasks by capability: factual triage to qa, investigation to rca, editable drafts to work-order, and final independent verification back to qa. Do not send the whole compound workflow to qa and let it simulate other specialists.
 An explicit instruction not to save/create SQL records forbids writes, not preparation of an editable review card. A prose draft from qa is not a Work Order specialist result. If conditional drafting is requested, delegate the evidence-backed gap assessment to work-order; it may explicitly conclude no draft is justified.
 For an explicit draft request, include work-order immediately. Do not respond with an optional-field questionnaire or ask for typed confirmation. The specialist resolves equipment and produces the editable review card; only unresolved or ambiguous equipment identity needs clarification. For an explicit multi-step investigation, preserve the requested sequence (for example RCA, then Work Order draft, then Q&A verification). Give every independently requested factual population its own qa step, even when the populations use the same specialist or one may be empty; never combine independent populations into one conditional handoff. Set requires_selection true whenever a step depends on equipment selected or matched by an earlier step; the backend skips that branch if the earlier source evidence selects no equipment. Set requires_verified_issue true only for a conditional work-order step that the operator requested exclusively when RCA verifies an uncovered equipment issue; the backend skips it unless the preceding structured RCA completion certifies that gate. Explicit unconditional draft requests use false. Use false for independent steps and final verification of an empty result. The Agent Framework workflow executes each planned handoff as a typed, checkpointed stage, injects each completed result into dependent stages, verifies the evidence, and compiles the grounded presentation from the answer contract without another model round. Plan all required handoffs once without intermediate Supervisor rounds.
@@ -97,6 +103,7 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
         answer_contract: {
           type: 'object',
           properties: {
+            version: { type: 'integer', const: DOMAIN_CONTRACT_VERSION },
             requirements: {
               type: 'array', minItems: 1, maxItems: 16,
               items: {
@@ -104,7 +111,7 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
                 properties: {
                   kind: { type: 'string', enum: DOMAIN_DATASET_KEYS },
                   scope: { type: 'string', enum: ['population', 'focus'] },
-                  authority: { type: 'string', enum: ['direct', 'native', 'reconciled'] },
+                  authority: { type: 'string', enum: ['direct', 'native'] },
                   purpose: { type: 'string', enum: ['facts', 'identity', 'coverage', 'investigation', 'verification'] },
                 },
                 required: ['kind', 'scope', 'authority', 'purpose'],
@@ -120,17 +127,14 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
                   title: { type: 'string', minLength: 1, maxLength: 120 },
                   kind: { type: 'string', enum: DOMAIN_DATASET_KEYS },
                   scope: { type: 'string', enum: ['population', 'focus'] },
-                  mode: { type: 'string', enum: ['records', 'grouped', 'reconciliation'] },
-                  authority: { type: 'string', enum: ['direct', 'native', 'reconciled'] },
-                  group_by: { type: ['string', 'null'], enum: ['equipment_id', 'facility_id', null] },
-                  chart: { type: ['string', 'null'], enum: ['bar', 'line', 'scatter', null] },
+                  presentation: { type: 'string', enum: ANSWER_PRESENTATIONS },
                 },
-                required: ['id', 'title', 'kind', 'scope', 'mode', 'authority', 'group_by', 'chart'],
+                required: ['id', 'title', 'kind', 'scope', 'presentation'],
                 additionalProperties: false,
               },
             },
           },
-          required: ['requirements', 'views'],
+          required: ['version', 'requirements', 'views'],
           additionalProperties: false,
         },
       }, required: ['steps', 'answer_contract'], additionalProperties: false,

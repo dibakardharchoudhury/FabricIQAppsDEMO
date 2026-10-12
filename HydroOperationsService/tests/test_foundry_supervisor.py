@@ -20,14 +20,15 @@ from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOr
 from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, EquipmentSelection, EvidenceDataset,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
-    FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
+    FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, OperatorAnswerContract, RunJournal,
+    SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, requested_work_backlog_group, safe_exception_signature,
     transient_native_failure,
     canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
-    requests_new_work_order_proposal, requests_unsent_message, selected_equipment_from_evidence,
+    governed_datasets, requests_new_work_order_proposal, requests_unsent_message, selected_equipment_from_evidence,
     updated_equipment_selection,
     with_production_write_status,
 )
@@ -80,11 +81,21 @@ class SourceTools:
             }})
         return {"tools": tools, "context": {
             "mode": "test-only-no-production-access",
-            "domain_contract_version": 1,
+            "domain_contract_version": 2,
             "datasets": [
                 {
                     "key": key, "source": source, "entity": entity,
                     "identityFields": identity,
+                    "presentations": (
+                        ["grouped_by_equipment_table", "grouped_by_equipment_bar",
+                         "grouped_by_facility_table", "grouped_by_facility_bar"]
+                        if key == "work_backlog"
+                        else ["records_table", "records_bar", "records_line",
+                              "grouped_by_equipment_table", "grouped_by_equipment_bar",
+                              "grouped_by_facility_table", "grouped_by_facility_bar"]
+                        if key in ("station_power", "native_claims")
+                        else ["records_table"]
+                    ),
                 }
                 for key, source, entity, identity in (
                     ("signal_quality", "eventhouse", "OPCUAEvents", ["opcua_node_id", "event_time"]),
@@ -228,6 +239,79 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_domain_contract_version_is_identical_at_the_source_boundary(self):
+        datasets = [{
+            "key": "telemetry", "source": "eventhouse", "entity": "OPCUAEvents",
+            "identityFields": ["opcua_node_id", "event_time"],
+            "presentations": ["records_table"],
+        }]
+        self.assertEqual(
+            set(governed_datasets({"domain_contract_version": 2, "datasets": datasets})),
+            {"telemetry"},
+        )
+        with self.assertRaisesRegex(SourceFailure, "version"):
+            governed_datasets({"domain_contract_version": 1, "datasets": datasets})
+
+    def test_missing_declared_evidence_fails_before_presentation(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 2,
+            "requirements": [{
+                "kind": "telemetry", "scope": "focus", "authority": "direct",
+                "purpose": "facts",
+            }],
+            "views": [{
+                "id": "telemetry", "title": "Telemetry", "kind": "telemetry",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T005"}
+        with self.assertRaisesRegex(SourceFailure, "telemetry focus evidence was not produced"):
+            self.owner.contract_answer_plan(self.request)
+
+    def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 2,
+            "requirements": [
+                {
+                    "kind": "signal_quality", "scope": "population", "authority": "direct",
+                    "purpose": "verification",
+                },
+                {
+                    "kind": "native_claims", "scope": "population", "authority": "native",
+                    "purpose": "facts",
+                },
+            ],
+            "views": [{
+                "id": "quality-reconciliation", "title": "Quality reconciliation",
+                "kind": "signal_quality", "scope": "population",
+                "presentation": "reconciliation_table",
+            }],
+        })
+        direct = ToolEvidence(
+            id="direct-quality", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments={}, completed_at=utc_now(),
+            result={"rows": [{"equipment_id": "EQUIP_RTI_T005", "quality": "BAD"}]},
+            datasets=(EvidenceDataset(
+                kind="signal_quality", field="rows", authority="direct", scope="population",
+                complete=True, identity_fields=("equipment_id",),
+            ),),
+        )
+        native = ToolEvidence(
+            id="native-quality", source=SOURCE, tool="fabriciq-data-agent",
+            arguments={}, completed_at=utc_now(),
+            result={"claims": [{"equipmentId": "EQUIP_RTI_T005", "quality": "BAD"}]},
+            datasets=(EvidenceDataset(
+                kind="native_claims", field="claims", authority="native", scope="population",
+                complete=True, identity_fields=("equipmentId",),
+            ),),
+        )
+        self.owner.evidence = {direct.id: direct, native.id: native}
+        plan = self.owner.contract_answer_plan(self.request)
+        self.assertEqual(len(plan.tables), 1)
+        self.assertEqual(len(plan.tables[0].rows), 2)
+        self.assertIn("_source_authority", {column.key for column in plan.tables[0].columns})
+        self.assertTrue(any("does not infer matches" in item for item in plan.limitations))
+
     def test_empty_verification_does_not_erase_a_prior_grounded_selection(self):
         selected = {"EQUIP_RTI_T002", "EQUIP_RTI_T008"}
         self.assertEqual(
@@ -770,13 +854,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 "signal_quality", "station_power", "work_backlog", "native_claims",
             ) else "focus"
             answer_contract = {
+                "version": 2,
                 "requirements": [{
                     "kind": kind, "scope": scope, "authority": authority, "purpose": "facts",
                 }],
                 "views": [{
                     "id": "primary-evidence", "title": "Primary evidence", "kind": kind,
-                    "scope": scope, "mode": view_mode, "authority": authority,
-                    "group_by": group_by, "chart": chart,
+                    "scope": scope,
+                    "presentation": (
+                        f"{authority}_grouped_by_{'facility' if group_by == 'facility_id' else 'equipment'}_{chart or 'table'}"
+                        if view_mode == "grouped"
+                        else "reconciliation_table" if view_mode == "reconciliation"
+                        else f"{authority}_records_{chart or 'table'}"
+                    ),
                 }],
             }
             if self.mode == "independent_empty":
@@ -785,8 +875,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 })
                 answer_contract["views"].append({
                     "id": "supporting-evidence", "title": "Supporting evidence", "kind": "telemetry",
-                    "scope": "focus", "mode": "records", "authority": "direct",
-                    "group_by": None, "chart": None,
+                    "scope": "focus", "presentation": "direct_records_table",
                 })
             output = [self.function("plan_orchestration", {
                 "steps": steps, "answer_contract": answer_contract,

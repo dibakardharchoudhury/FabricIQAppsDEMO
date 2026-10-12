@@ -1,36 +1,66 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
 
-export const DOMAIN_CONTRACT_VERSION = 1
+export const DOMAIN_CONTRACT_VERSION = 2
+
+export const ANSWER_PRESENTATIONS = [
+  'direct_records_table',
+  'direct_records_bar',
+  'direct_records_line',
+  'direct_records_scatter',
+  'direct_grouped_by_equipment_table',
+  'direct_grouped_by_equipment_bar',
+  'direct_grouped_by_equipment_line',
+  'direct_grouped_by_equipment_scatter',
+  'direct_grouped_by_facility_table',
+  'direct_grouped_by_facility_bar',
+  'direct_grouped_by_facility_line',
+  'direct_grouped_by_facility_scatter',
+  'native_records_table',
+  'native_records_bar',
+  'native_records_line',
+  'native_records_scatter',
+  'native_grouped_by_equipment_table',
+  'native_grouped_by_equipment_bar',
+  'native_grouped_by_equipment_line',
+  'native_grouped_by_equipment_scatter',
+  'native_grouped_by_facility_table',
+  'native_grouped_by_facility_bar',
+  'native_grouped_by_facility_line',
+  'native_grouped_by_facility_scatter',
+  'reconciliation_table',
+] as const
 
 type DomainDatasetDefinition = {
   key: string
   source: string
   entity: string
   identityFields: readonly string[]
+  presentations: readonly string[]
   limitations?: readonly string[]
 }
 
 export const DOMAIN_DATASETS = [
-  { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'] },
-  { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'] },
-  { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'] },
-  { key: 'telemetry', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
-  { key: 'signal_quality', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
-  { key: 'temperature', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
+  { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'], presentations: ['records_table'] },
+  { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'], presentations: ['records_table'] },
+  { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'], presentations: ['records_table'] },
+  { key: 'telemetry', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_line', 'records_scatter'] },
+  { key: 'signal_quality', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table'] },
+  { key: 'temperature', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_bar'] },
   {
     key: 'station_power', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['Station'],
+    presentations: ['records_table', 'records_bar', 'records_line', 'grouped_by_facility_table', 'grouped_by_facility_bar'],
     limitations: [
       'Station power is a sample-weighted arithmetic mean of converted power readings with all qualities included; '
         + 'it is not total station output, a time-weighted mean, or energy.',
     ],
   },
-  { key: 'work_orders', source: 'sql', entity: 'work_orders', identityFields: ['workOrderNumber'] },
-  { key: 'work_backlog', source: 'derived', entity: 'work_orders', identityFields: ['group_id'] },
-  { key: 'inspections', source: 'sql', entity: 'inspections', identityFields: ['id'] },
-  { key: 'notifications', source: 'sql', entity: 'notifications', identityFields: ['id'] },
-  { key: 'spare_parts', source: 'sql', entity: 'spare_parts', identityFields: ['id'] },
-  { key: 'asset_models', source: 'sql', entity: 'asset_models', identityFields: ['id'] },
-  { key: 'native_claims', source: 'native', entity: 'native_claims', identityFields: ['source_identity'] },
+  { key: 'work_orders', source: 'sql', entity: 'work_orders', identityFields: ['workOrderNumber'], presentations: ['records_table'] },
+  { key: 'work_backlog', source: 'derived', entity: 'work_orders', identityFields: ['group_id'], presentations: ['grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'] },
+  { key: 'inspections', source: 'sql', entity: 'inspections', identityFields: ['id'], presentations: ['records_table'] },
+  { key: 'notifications', source: 'sql', entity: 'notifications', identityFields: ['id'], presentations: ['records_table'] },
+  { key: 'spare_parts', source: 'sql', entity: 'spare_parts', identityFields: ['id'], presentations: ['records_table'] },
+  { key: 'asset_models', source: 'sql', entity: 'asset_models', identityFields: ['id'], presentations: ['records_table'] },
+  { key: 'native_claims', source: 'native', entity: 'native_claims', identityFields: ['source_identity'], presentations: ['records_table', 'grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'] },
 ] as const satisfies readonly DomainDatasetDefinition[]
 
 export const DOMAIN_DATASET_KEYS = DOMAIN_DATASETS.map(dataset => dataset.key)
@@ -107,7 +137,9 @@ export function describeToolEvidence(
   }
   if (tool === 'query_telemetry' || tool === 'run_kql') return [describe('telemetry')]
   if (tool === 'query_station_power') {
-    return [describe('station_power', 'rows', { scope: 'population', complete: true })]
+    return [describe('station_power', 'rows', {
+      scope: 'population', complete: true, group_by: 'facility_id',
+    })]
   }
   if (tool === 'query_signal_quality_snapshot') {
     return [describe('signal_quality', 'rows', { scope: 'population', complete: true })]
