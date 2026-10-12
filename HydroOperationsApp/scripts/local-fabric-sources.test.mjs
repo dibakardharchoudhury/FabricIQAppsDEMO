@@ -30,10 +30,18 @@ const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url
 test('backend intent reuses canonical chart, native and human-priority semantics without source access', () => {
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
     { charts_requested: false, native_sources: [], proposal_priority: 'Medium',
+      equipment_selection: null,
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.deepEqual(chatIntent('Chart average power output per station over the last 24 hours.'),
     { charts_requested: true, native_sources: [], proposal_priority: 'Medium',
+      equipment_selection: null,
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
+  assert.deepEqual(
+    chatIntent('Select the turbine with the most BAD signals, breaking ties by equipment ID.').equipment_selection,
+    { metric: 'signal_quality_count', quality: 'BAD', tie_break: 'equipment_id_asc' })
+  assert.deepEqual(
+    chatIntent('Choose the equipment with the most open work orders, breaking ties by equipment ID.').equipment_selection,
+    { metric: 'open_work_order_count', tie_break: 'equipment_id_asc' })
   assert.deepEqual(chatIntent('Plot open work orders by equipment.').required_specialists, ['qa'])
   assert.deepEqual(chatIntent('Visualize turbine temperature by equipment.').required_specialists, ['qa'])
   assert.equal(chatIntent('Do not show a chart. Return the rows.').charts_requested, false)

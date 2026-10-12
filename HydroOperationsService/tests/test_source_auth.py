@@ -117,6 +117,7 @@ class RuntimeUserTests(unittest.TestCase):
 class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_intent_fills_only_omitted_options_and_cannot_change_the_question(self):
         intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High",
+                  "equipment_selection": None,
                   "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}}
         chat = ChatInput(question="Show a chart.")
         normalized = normalized_chat_input(chat, intent)
@@ -756,6 +757,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 bridge = AsyncMock()
                 bridge.call.side_effect = [
                     {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
+                     "equipment_selection": None,
                      "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
                     {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},

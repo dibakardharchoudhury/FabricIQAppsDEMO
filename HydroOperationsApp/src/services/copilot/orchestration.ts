@@ -107,6 +107,27 @@ export function requiredIndependentQaSteps(question: string): number {
   return Math.max(finalIndependentPhase ? 2 : 1, counts[quantified] ?? Number(quantified))
 }
 
+export type EquipmentSelection = {
+  metric: 'signal_quality_count' | 'open_work_order_count'
+  quality?: 'BAD' | 'UNCERTAIN'
+  tie_break: 'equipment_id_asc'
+}
+
+export function equipmentSelectionForRequest(question: string): EquipmentSelection | undefined {
+  const positive = positiveActionClauses(question)
+  const selection = /\b(?:select|choose|pick)\b[^.!?;\n]{0,200}\b(?:equipment|turbine|unit)\b[^.!?;\n]{0,120}\bmost\b[^.!?;\n]{0,120}/i
+    .exec(positive)?.[0]
+  if (!selection || !/\bbreak(?:ing)? ties?\b[^.!?;\n]{0,80}\bequipment id\b/i.test(positive)) return undefined
+  const quality = /\b(BAD|UNCERTAIN)\b/i.exec(selection)?.[1]?.toUpperCase()
+  if (quality && /\bsignals?\b/i.test(selection)) {
+    return { metric: 'signal_quality_count', quality: quality as 'BAD' | 'UNCERTAIN', tie_break: 'equipment_id_asc' }
+  }
+  if (/\b(?:open )?(?:work(?: orders?)?|orders?|backlog)\b/i.test(selection)) {
+    return { metric: 'open_work_order_count', tie_break: 'equipment_id_asc' }
+  }
+  return undefined
+}
+
 export function directVerificationSources(question: string): Array<{ tool: string; entity?: string }> {
   const text = positiveActionClauses(question)
   return [

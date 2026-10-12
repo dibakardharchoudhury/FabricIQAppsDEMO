@@ -23,7 +23,10 @@ from .contracts import (
     Approval, Contract, Outcome, Proposal, ResolvedScope, ReviewInput, ReviewRequest, SourceIdentity,
     WorkOrderDecision, utc_now,
 )
-from .foundry_supervisor import ChatAnswer, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource, RunJournal
+from .foundry_supervisor import (
+    ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource,
+    RunJournal,
+)
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
 from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy, SourceAuthorizationError, SourceTokenVerifier
@@ -143,6 +146,7 @@ class ChatInput(Contract):
     charts_requested: bool = Field(default=False, strict=True)
     native_sources: tuple[NativeSource, ...] = ()
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
+    equipment_selection: EquipmentSelection | None = None
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
@@ -151,7 +155,7 @@ class ChatInput(Contract):
 
 def normalized_chat_input(chat: ChatInput, intent: dict[str, object]) -> ChatInput:
     fields = {
-        "charts_requested", "native_sources", "proposal_priority", "required_specialists",
+        "charts_requested", "native_sources", "proposal_priority", "equipment_selection", "required_specialists",
         "required_specialist_steps",
     }
     if set(intent) != fields:

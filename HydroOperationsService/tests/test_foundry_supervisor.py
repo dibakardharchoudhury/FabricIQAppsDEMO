@@ -18,7 +18,8 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, EquipmentSelection,
+    FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, requested_work_backlog_group, safe_exception_signature,
@@ -26,7 +27,8 @@ from hydro_orchestrator.foundry_supervisor import (
     canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
-    requests_new_work_order_proposal, requests_unsent_message, updated_equipment_selection,
+    requests_new_work_order_proposal, requests_unsent_message, selected_equipment_from_evidence,
+    updated_equipment_selection,
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -200,6 +202,36 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             updated_equipment_selection(selected, {"EQUIP_RTI_T010"}, requires_selection=True),
             {"EQUIP_RTI_T002", "EQUIP_RTI_T008", "EQUIP_RTI_T010"},
         )
+
+    def test_equipment_selection_is_deterministic_across_quality_and_work_metrics(self):
+        quality = ToolEvidence(
+            id="quality", source=SOURCE, tool="query_signal_quality_snapshot", arguments={},
+            completed_at=utc_now(), result={"rows": [
+                {"equipment_id": "EQUIP_RTI_T004", "opcua_node_id": "n4", "quality": "BAD"},
+                {"equipment_id": "EQUIP_RTI_T003", "opcua_node_id": "n3", "quality": "BAD"},
+                {"equipment_id": "EQUIP_RTI_T003", "opcua_node_id": "n3", "quality": "BAD"},
+            ]},
+        )
+        selected = selected_equipment_from_evidence(
+            EquipmentSelection(
+                metric="signal_quality_count", quality="BAD", tie_break="equipment_id_asc",
+            ),
+            (quality,),
+        )
+        self.assertEqual(selected, {"EQUIP_RTI_T003"})
+
+        backlog = ToolEvidence(
+            id="backlog", source=SOURCE, tool="query_work_backlog", arguments={"group_by": "equipment"},
+            completed_at=utc_now(), result={"rows": [
+                {"equipment_id": "EQUIP_RTI_T008", "open_work_order_count": 2},
+                {"equipment_id": "EQUIP_RTI_T003", "open_work_order_count": 2},
+            ], "open_work_orders": []},
+        )
+        selected = selected_equipment_from_evidence(
+            EquipmentSelection(metric="open_work_order_count", tie_break="equipment_id_asc"),
+            (backlog,),
+        )
+        self.assertEqual(selected, {"EQUIP_RTI_T003"})
 
     def test_native_count_table_gets_bounded_chart_metadata(self):
         units, presentation = _native_count_chart_metadata({
@@ -1272,6 +1304,56 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         matched = next(row for row in table.rows if row.values["equipment_id"] == "EQUIP_RTI_T010")
         self.assertEqual(matched.values["workOrderNumber"], "WO-2853")
         self.assertEqual(matched.values["status"], "Scheduled")
+
+    def test_complete_backlog_receipt_is_consumed_into_quality_reconciliation(self):
+        quality = ToolEvidence(
+            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
+            arguments={"quality": "BAD"}, completed_at=utc_now(), result={"rows": [
+                {
+                    "equipment_id": "EQUIP_RTI_T003", "opcua_node_id": "n3",
+                    "quality": "BAD", "event_time": "2026-10-12T16:54:26Z",
+                },
+                {
+                    "equipment_id": "EQUIP_RTI_T004", "opcua_node_id": "n4",
+                    "quality": "BAD", "event_time": "2026-10-12T16:54:27Z",
+                },
+            ]},
+        )
+        backlog = ToolEvidence(
+            id="backlog", source=self.request.source, tool="query_work_backlog",
+            arguments={"group_by": "equipment"}, completed_at=utc_now(), result={
+                "rows": [
+                    {"equipment_id": "EQUIP_RTI_T001", "open_work_order_count": 1},
+                    {"equipment_id": "EQUIP_RTI_T003", "open_work_order_count": 1},
+                    {"equipment_id": "EQUIP_RTI_T004", "open_work_order_count": 0},
+                ],
+                "open_work_orders": [
+                    {
+                        "workOrderNumber": "WO-2841", "equipmentId": "EQUIP_RTI_T001",
+                        "title": "Unrelated", "priority": "Critical", "status": "In progress",
+                    },
+                    {
+                        "workOrderNumber": "WO-2829", "equipmentId": "EQUIP_RTI_T003",
+                        "title": "Cooling", "priority": "Medium", "status": "Ready",
+                    },
+                ],
+            },
+        )
+        self.owner.evidence = {item.id: item for item in (quality, backlog)}
+        request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
+
+        plan = self.owner.deterministic_explanatory_plan(request)
+        answer = self.owner.answer(request, plan, use_projected_summary=True)
+
+        self.assertEqual(len(answer.tables), 1)
+        self.assertEqual(answer.tables[0].title, "Signal quality and open work")
+        self.assertEqual(len(answer.tables[0].rows), 2)
+        values = [row.values for row in answer.tables[0].rows]
+        self.assertEqual(values[0]["equipment_id"], "EQUIP_RTI_T003")
+        self.assertEqual(values[0]["workOrderNumber"], "WO-2829")
+        self.assertEqual(values[1]["equipment_id"], "EQUIP_RTI_T004")
+        self.assertIsNone(values[1]["workOrderNumber"])
+        self.assertNotIn("EQUIP_RTI_T001", json.dumps(values))
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
