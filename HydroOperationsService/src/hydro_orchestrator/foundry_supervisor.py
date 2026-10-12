@@ -1180,6 +1180,92 @@ class FoundrySupervisor:
                 f"{type(first).__name__}: source, handoff or validation failed; no successful answer is permitted."
             ) from first
 
+    async def fulfill_catalog_requirements(
+        self, request: ChatRequest, journal: RunJournal,
+    ) -> None:
+        contract = self.answer_contract
+        if contract is None:
+            raise SourceFailure("Evidence fulfillment requires the Chief's validated answer contract.")
+        asset_entities = {"equipment", "instruments"}
+        operation_entities = {"work_orders", "inspections", "notifications", "asset_models"}
+        for requirement in contract.requirements:
+            if requirement.authority != "direct" or requirement.kind not in asset_entities | operation_entities:
+                continue
+            if any(
+                dataset.kind == requirement.kind
+                and dataset.scope == requirement.scope
+                and dataset.authority == "direct"
+                and dataset.role != "audit"
+                and dataset.complete
+                for receipt in self.evidence.values()
+                for dataset in receipt.datasets
+            ):
+                continue
+            if requirement.scope == "focus" and not self.selected_equipment_ids:
+                continue
+            if requirement.kind in asset_entities:
+                name = "query_assets"
+                identity_column = "equipment_id"
+            else:
+                name = "query_operations"
+                identity_column = "equipmentId"
+            arguments: dict[str, object] = {"entity": requirement.kind}
+            if requirement.scope == "focus":
+                arguments["where"] = [{
+                    "column": identity_column,
+                    "op": "in",
+                    "value": sorted(self.selected_equipment_ids),
+                }]
+            catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+            specification = next((tool for tool in catalog.tools if tool.name == name), None)
+            if specification is None:
+                raise SourceFailure(f"Required catalog reader {name} is unavailable.")
+            if list(
+                Draft202012Validator(specification.parameters).iter_errors(
+                    json.loads(_encoded(arguments))
+                )
+            ):
+                raise SourceFailure(
+                    f"Deterministic {requirement.kind} evidence arguments violate the governed source catalog."
+                )
+            key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
+            saved = journal.read(key)
+            if saved is None:
+                async with self.tool_lock:
+                    self.tool_calls += 1
+                    if self.tool_calls > 40:
+                        raise SourceFailure("The per-run source-tool budget was exceeded.")
+                supplied = await self.tools.execute(name, arguments, request)
+                result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
+                journal.save(key, result.model_dump(mode="json"))
+            else:
+                result = ToolEvidence.model_validate(saved)
+            self.healthy(request)
+            if (
+                result.source != request.source
+                or result.tool != name
+                or result.arguments != arguments
+                or result.completed_at > utc_now()
+                or result.completed_at < request.requested_at
+            ):
+                raise SourceFailure("Deterministic catalog evidence changed its source, query, or read clock.")
+            if not any(
+                dataset.kind == requirement.kind
+                and dataset.scope == requirement.scope
+                and dataset.authority == "direct"
+                and dataset.role != "audit"
+                and dataset.complete
+                for dataset in result.datasets
+            ):
+                raise SourceFailure(
+                    f"Deterministic catalog read did not satisfy {requirement.kind} "
+                    f"{requirement.scope} evidence."
+                )
+            prior = self.evidence.get(result.id)
+            if prior is not None and prior != result:
+                raise SourceFailure("Evidence identity was reused for a different source result.")
+            self.evidence[result.id] = result
+
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
             return [item.receipt() for item in self.evidence.values()]
@@ -2860,6 +2946,7 @@ class FoundrySupervisor:
                     if turn.verified:
                         await ctx.send_message(turn.model_dump_json())
                         return
+                    await owner.fulfill_catalog_requirements(request, journal)
                     if any(item.role in ("rca", "work-order") for item in owner.specialists):
                         verified_at = int(utc_now().timestamp() * 1000)
                         owner.chief_trace.append({

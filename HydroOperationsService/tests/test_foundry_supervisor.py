@@ -268,6 +268,44 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "telemetry focus evidence was not produced"):
             self.owner.contract_answer_plan(self.request)
 
+    async def test_missing_focus_catalog_evidence_is_fulfilled_deterministically(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 2,
+            "requirements": [{
+                "kind": "equipment", "scope": "focus", "authority": "direct",
+                "purpose": "identity",
+            }],
+            "views": [{
+                "id": "equipment", "title": "Selected equipment", "kind": "equipment",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T014"}
+        arguments = {
+            "entity": "equipment",
+            "where": [{
+                "column": "equipment_id", "op": "in", "value": ["EQUIP_RTI_T014"],
+            }],
+        }
+        expected = ToolEvidence(
+            id="equipment-focus", source=SOURCE, tool="query_assets", arguments=arguments,
+            completed_at=utc_now(),
+            result={"rows": [{"equipment_id": "EQUIP_RTI_T014", "tag": "T014"}], "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="equipment", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("equipment_id",),
+            ),),
+        )
+        self.tools.execute = AsyncMock(return_value=expected)
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+
+        await self.owner.fulfill_catalog_requirements(self.request, journal)
+
+        self.tools.execute.assert_awaited_once_with("query_assets", arguments, self.request)
+        self.assertEqual(set(self.owner.evidence), {"equipment-focus"})
+        self.owner.contract_answer_plan(self.request)
+
     def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 2,
