@@ -34,6 +34,7 @@ from .workflow import RequiredCheckpointStorage
 logger = logging.getLogger(__name__)
 Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
 NativeSource = Literal["data-agent", "ontology"]
+FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
     "qa": ("condition-triage", "source-reconciliation", "maintenance-planning"),
@@ -1524,7 +1525,7 @@ class FoundrySupervisor:
 
         agent = FoundryAgent(
             project_endpoint=self.endpoint, agent_name=version.name, agent_version=version.version,
-            credential=self.credential, tools=functions, timeout=None,
+            credential=self.credential, tools=functions, timeout=FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 3 if role == "supervisor" else 12,

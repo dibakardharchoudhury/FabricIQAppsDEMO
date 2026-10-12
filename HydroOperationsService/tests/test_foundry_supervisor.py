@@ -18,11 +18,12 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
-    SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
-    safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
-    _native_count_chart_metadata, _native_markdown_tables, _native_markdown_tables_from_payload,
-    initial_equipment_selection, normalize_filter_conjunctions, updated_equipment_selection,
+    AgentVersion, AnswerPlan, ChatRequest, FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS, FoundryAgent, FoundrySupervisor,
+    HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence, operation_skill_guidance,
+    rca_answer_limitations, rca_reference_examples, safe_exception_signature, canonical_source_arguments,
+    _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
+    _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
+    updated_equipment_selection,
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -918,6 +919,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         repair_payload = json.dumps(self.payloads)
         self.assertIn("prior completion was incomplete", repair_payload)
         self.assertIn("Do not call another source tool", repair_payload)
+
+    async def test_foundry_service_calls_have_a_finite_network_timeout(self):
+        with patch(
+            "hydro_orchestrator.foundry_supervisor.FoundryAgent",
+            wraps=FoundryAgent,
+        ) as agent_factory:
+            await self.owner.run(self.request)
+
+        self.assertGreater(agent_factory.call_count, 0)
+        self.assertTrue(all(
+            call.kwargs["timeout"] == FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS
+            for call in agent_factory.call_args_list
+        ))
 
     def test_explicit_resolved_equipment_seeds_conditional_handoffs_when_reads_are_empty(self):
         request = self.request.model_copy(update={
