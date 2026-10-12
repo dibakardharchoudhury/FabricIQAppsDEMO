@@ -6,7 +6,7 @@ import { RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
-import { DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
+import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
 import { createWorkOrderProposal, equipmentSelectionForRequest, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
@@ -91,6 +91,8 @@ export function sourceToolContracts() {
       kusto_source_names: [...KUSTO_SOURCE_NAMES],
       relationships: structuredClone(DOMAIN_RELATIONSHIPS),
       semantics: structuredClone(DOMAIN_SEMANTICS),
+      domain_contract_version: DOMAIN_CONTRACT_VERSION,
+      datasets: structuredClone(DOMAIN_DATASETS),
     },
   }
 }
@@ -720,7 +722,11 @@ async function main() {
     if (request.human_approved !== true) throw new Error('A human approval is required outside agent tool execution.')
     const result = await submitApprovedWorkOrder(config, request.draft, request.edits, request.principal_id,
       request.creation_id, request.tokens, request.allow_create)
-    return { source: metadata.source, result, completed_at: result.read_completed_at_utc }
+    return {
+      source: metadata.source,
+      result: { ...result, _evidence_datasets: describeToolEvidence(request.tool, args, result) },
+      completed_at: result.read_completed_at_utc,
+    }
   }
   if (request.action === 'tool_read') {
     const args = request.arguments

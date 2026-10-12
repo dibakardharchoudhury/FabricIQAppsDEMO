@@ -25,8 +25,62 @@ from hydro_orchestrator.service import create_app
 from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, wait_for
 
 
+class GovernedBridgeCall(AsyncMock):
+    async def _execute_mock_call(self, *args, **kwargs):
+        response = await super()._execute_mock_call(*args, **kwargs)
+        payload = args[0] if args and isinstance(args[0], dict) else {}
+        if payload.get("action") != "tool_read" or not isinstance(response, dict):
+            return response
+        result = response.get("result")
+        if not isinstance(result, dict) or "_evidence_datasets" in result:
+            return response
+        tool = payload.get("tool")
+        arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        scope = "focus" if arguments.get("equipment_id") or arguments.get("equipment_ids") else "population"
+        mapping = {
+            "query_telemetry": ("telemetry", "rows", ("opcua_node_id", "event_time")),
+            "run_kql": ("telemetry", "rows", ("opcua_node_id", "event_time")),
+            "query_station_power": ("station_power", "rows", ("Station",)),
+            "query_signal_quality_snapshot": ("signal_quality", "rows", ("opcua_node_id", "event_time")),
+            "query_turbine_temperature_snapshot": ("temperature", "rows", ("opcua_node_id", "event_time")),
+            "propose_work_order": ("work_orders", "existing_work", ("workOrderNumber",)),
+        }
+        if tool == "query_assets":
+            mapping[tool] = (str(arguments.get("entity")), "rows", (f"{str(arguments.get('entity')).removesuffix('s')}_id",))
+        elif tool == "query_operations":
+            entity = str(arguments.get("entity"))
+            mapping[tool] = (entity, "rows", ("workOrderNumber" if entity == "work_orders" else "id",))
+        descriptors = []
+        if tool == "query_work_backlog":
+            group_by = "facility_id" if arguments.get("group_by") == "facility" else "equipment_id"
+            descriptors = [{
+                "kind": "work_backlog", "field": "rows", "authority": "direct", "scope": "population",
+                "complete": True, "identity_fields": [group_by], "group_by": group_by, "role": "primary",
+                "limitations": [],
+            }, {
+                "kind": "work_orders", "field": "open_work_orders", "authority": "direct", "scope": "population",
+                "complete": True, "identity_fields": ["workOrderNumber"], "group_by": None, "role": "primary",
+                "limitations": [],
+            }]
+        elif tool in mapping:
+            kind, field, identity = mapping[tool]
+            descriptors = [{
+                "kind": kind, "field": field, "authority": "direct", "scope": scope,
+                "complete": result.get("truncated") is False or tool in {
+                    "query_station_power", "query_signal_quality_snapshot",
+                    "query_turbine_temperature_snapshot", "propose_work_order",
+                },
+                "identity_fields": list(identity), "group_by": None,
+                "role": "audit" if tool == "propose_work_order" else "primary", "limitations": [],
+            }]
+        if descriptors:
+            result["_evidence_datasets"] = descriptors
+        return response
+
+
 def reader():
     bridge = AsyncMock()
+    bridge.call = GovernedBridgeCall()
     credential = AsyncMock(spec=AzureCliCredential)
     credential.get_token.return_value = AccessToken("synthetic-token-never-log", 9999999999)
     discovery = Discovery(

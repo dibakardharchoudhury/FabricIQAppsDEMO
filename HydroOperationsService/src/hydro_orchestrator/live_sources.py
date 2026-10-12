@@ -262,7 +262,7 @@ class FabricBackendTools:
     async def execute(
         self, name: str, arguments: dict[str, object], request: "ChatRequest",
     ) -> "ToolEvidence":
-        from .foundry_supervisor import ToolEvidence
+        from .foundry_supervisor import EvidenceDataset, ToolEvidence
 
         self.require_request(request)
         if name not in self.supported_tools:
@@ -343,6 +343,16 @@ class FabricBackendTools:
             public_result["proposal"] = draft.model_dump(mode="json")
             public_result["proposal_digest"] = draft.digest()
             resolved = work_coverage = (draft.equipment_id,)
+        raw_datasets = public_result.pop("_evidence_datasets", None)
+        if not isinstance(raw_datasets, list) or not raw_datasets:
+            raise SourceFailure("Source read omitted its governed evidence dataset descriptors.")
+        datasets = tuple(EvidenceDataset.model_validate(item) for item in raw_datasets)
+        if any(
+            dataset.field not in public_result
+            or not isinstance(public_result[dataset.field], list)
+            for dataset in datasets
+        ):
+            raise SourceFailure("Evidence dataset descriptors do not match returned source collections.")
         identities = public_result.pop("_row_identities", {})
         if not isinstance(identities, dict):
             raise SourceFailure("Private source row identities are malformed.")
@@ -354,7 +364,8 @@ class FabricBackendTools:
                             arguments=arguments, completed_at=result.completed_at, result=public_result,
                             row_identities=identities,
                             column_units=column_units, resolved_equipment_ids=resolved,
-                            work_coverage_equipment_ids=work_coverage, limitations=limitations)
+                            work_coverage_equipment_ids=work_coverage, limitations=limitations,
+                            datasets=datasets)
 
     @staticmethod
     def _work_draft(

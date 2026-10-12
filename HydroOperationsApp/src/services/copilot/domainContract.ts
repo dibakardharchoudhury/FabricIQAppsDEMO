@@ -1,5 +1,128 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
 
+export const DOMAIN_CONTRACT_VERSION = 1
+
+type DomainDatasetDefinition = {
+  key: string
+  source: string
+  entity: string
+  identityFields: readonly string[]
+  limitations?: readonly string[]
+}
+
+export const DOMAIN_DATASETS = [
+  { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'] },
+  { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'] },
+  { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'] },
+  { key: 'telemetry', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
+  { key: 'signal_quality', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
+  { key: 'temperature', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'] },
+  {
+    key: 'station_power', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['Station'],
+    limitations: [
+      'Station power is a sample-weighted arithmetic mean of converted power readings with all qualities included; '
+        + 'it is not total station output, a time-weighted mean, or energy.',
+    ],
+  },
+  { key: 'work_orders', source: 'sql', entity: 'work_orders', identityFields: ['workOrderNumber'] },
+  { key: 'work_backlog', source: 'derived', entity: 'work_orders', identityFields: ['group_id'] },
+  { key: 'inspections', source: 'sql', entity: 'inspections', identityFields: ['id'] },
+  { key: 'notifications', source: 'sql', entity: 'notifications', identityFields: ['id'] },
+  { key: 'spare_parts', source: 'sql', entity: 'spare_parts', identityFields: ['id'] },
+  { key: 'asset_models', source: 'sql', entity: 'asset_models', identityFields: ['id'] },
+  { key: 'native_claims', source: 'native', entity: 'native_claims', identityFields: ['source_identity'] },
+] as const satisfies readonly DomainDatasetDefinition[]
+
+export const DOMAIN_DATASET_KEYS = DOMAIN_DATASETS.map(dataset => dataset.key)
+export const STATION_POWER_SEMANTICS = (DOMAIN_DATASETS as readonly DomainDatasetDefinition[])
+  .find(dataset => dataset.key === 'station_power')!.limitations![0]
+
+type EvidenceDatasetDescription = {
+  kind: string
+  field: string
+  authority: 'direct'
+  scope: 'population' | 'focus'
+  complete: boolean
+  identity_fields: string[]
+  group_by: 'equipment_id' | 'facility_id' | null
+  role: 'primary' | 'support' | 'audit'
+  limitations: string[]
+}
+
+function datasetIdentity(kind: string): string[] {
+  const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
+  if (!dataset) throw new Error(`Unknown governed dataset ${kind}.`)
+  return [...dataset.identityFields]
+}
+
+function hasEquipmentFilter(args: Record<string, unknown>): boolean {
+  if (typeof args.equipment_id === 'string' || Array.isArray(args.equipment_ids)) return true
+  const where = args.where
+  return Array.isArray(where) && where.some(condition =>
+    condition && typeof condition === 'object' && !Array.isArray(condition)
+      && ['equipment_id', 'equipmentId'].includes(String((condition as Record<string, unknown>).column)),
+  )
+}
+
+export function describeToolEvidence(
+  tool: string, args: Record<string, unknown>, result: Record<string, unknown>,
+): EvidenceDatasetDescription[] {
+  const complete = result.truncated === false
+    || ['query_work_backlog', 'query_station_power', 'query_signal_quality_snapshot',
+      'query_turbine_temperature_snapshot', 'propose_work_order'].includes(tool)
+  const scope = hasEquipmentFilter(args) || tool === 'query_telemetry' ? 'focus' : 'population'
+  const describe = (
+    kind: string, field = 'rows', options: Partial<EvidenceDatasetDescription> = {},
+  ): EvidenceDatasetDescription => ({
+    kind, field, authority: 'direct', scope, complete,
+    identity_fields: datasetIdentity(kind), group_by: null, role: 'primary',
+    limitations: [...((DOMAIN_DATASETS as readonly DomainDatasetDefinition[])
+      .find(candidate => candidate.key === kind)?.limitations ?? [])],
+    ...options,
+  })
+  if (tool === 'query_assets') {
+    if (!['facilities', 'equipment', 'instruments'].includes(String(args.entity))) {
+      throw new Error('Asset tool selected an ungoverned dataset.')
+    }
+    return [describe(String(args.entity), 'rows', { role: 'support' })]
+  }
+  if (tool === 'query_operations') {
+    if (!['work_orders', 'inspections', 'notifications', 'spare_parts', 'asset_models']
+      .includes(String(args.entity))) {
+      throw new Error('Operations tool selected an ungoverned dataset.')
+    }
+    return [describe(String(args.entity))]
+  }
+  if (tool === 'query_work_backlog') {
+    const groupBy = args.group_by === 'facility' ? 'facility_id' : 'equipment_id'
+    return [
+      describe('work_backlog', 'rows', {
+        scope: 'population', complete: true, group_by: groupBy,
+        identity_fields: [groupBy],
+      }),
+      describe('work_orders', 'open_work_orders', {
+        scope: 'population', complete: true,
+      }),
+    ]
+  }
+  if (tool === 'query_telemetry' || tool === 'run_kql') return [describe('telemetry')]
+  if (tool === 'query_station_power') {
+    return [describe('station_power', 'rows', { scope: 'population', complete: true })]
+  }
+  if (tool === 'query_signal_quality_snapshot') {
+    return [describe('signal_quality', 'rows', { scope: 'population', complete: true })]
+  }
+  if (tool === 'query_turbine_temperature_snapshot') {
+    return [describe('temperature', 'rows', { scope: 'population', complete: true })]
+  }
+  if (tool === 'propose_work_order') {
+    return [describe('work_orders', 'existing_work', {
+      scope: 'focus', complete: true, role: 'audit',
+    })]
+  }
+  throw new Error(`Tool ${tool} has no governed evidence dataset mapping.`)
+}
+
 export type DomainEndpoint = {
   source: 'lakehouse' | 'sql' | 'eventhouse'
   entity: string
@@ -128,6 +251,16 @@ export const DOMAIN_SEMANTICS = {
     presentation: 'Show the zero count, exact scope and read_completed_at_utc instead of omitting the source result.',
   },
 } as const
+
+export const OPERATIONAL_EVIDENCE_CONTRACT = `Operational evidence contract:
+"Operational SQL work orders" means records from the operational SQL data source, not a work-order type or category. Do not invent a SQL/type/category filter. Open means status neither Completed nor Cancelled.
+For parts at or below reorder level, filter quantityOnHand with op lte and value_column reorderLevel. A column name in value is not a literal threshold. Report actual matching parts, including equality; stock/type alone does not prove an equipment-specific BOM or work-order relation.
+For each affected equipment ID, include EVERY open work order and its number, title, status and priority. Same-signal work requires an exact instrument ID or OPC UA node match to the signal being discussed. EVERY other open order on that equipment is equipment-level work, including orders linked to a different signal; equipment-level does not mean only orders with null signal IDs. These two groups must account for all open orders on that equipment.
+Draft and Planned orders already represent open planned work. Lack of an executed inspection or a completed result does not make their covered purpose uncovered. Do not justify a second conditional draft merely because the existing order is Draft, unscheduled or unexecuted. A distinct uncovered purpose requires specific evidence beyond status; otherwise recommend reviewing the existing order without claiming to attach, merge, cancel or promote it (those mutation tools are unavailable).
+When a compound request selects one turbine for investigation, preserve the requested work inventory for ALL initially affected turbines in the final answer, not only the selected turbine.
+Compare telemetry event timestamps with the tool's read_completed_at_utc when provided; it is the actual read-completion clock, not the request-start clock. For remote telemetry queries, request the query's UTC clock with the evidence when supported. Otherwise identify the supplied current UTC time as the request-start reference, not an invented query time. A reading received after request start does not establish source clock skew. Never use the newest event as the current clock. Explicitly label readings older than 60 seconds as stale; readings ahead of the actual read-completion clock have uncertain freshness. Never describe a reading as fresh merely because it falls inside the lookback window.
+The telemetry 60-second rule does not apply to business dates. Inventory lastRestockedAt, work-order createdAt and notification dates describe business events, not when the current SQL record was read or last synchronized. Do not declare inventory stale from an old restock date alone; state that synchronization freshness is unknown when no authoritative sync timestamp exists. Missing BOM, procurement, dispatch or gateway-log sources are evidence requirements, not callable tools: request operator-provided evidence or a new integration rather than offering to query unavailable tables.
+When forwarding a request to another agent or remote tool, preserve these source and matching rules, the current time, and the original scope.`
 
 type DomainRow = Record<string, unknown>
 

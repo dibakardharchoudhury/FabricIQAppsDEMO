@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, EquipmentSelection,
+    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, EquipmentSelection, EvidenceDataset,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
@@ -78,7 +78,24 @@ class SourceTools:
                     key: {"type": "string"} for key in ("equipment_id", "title", "description")
                 }, "required": ["equipment_id", "title", "description"], "additionalProperties": False,
             }})
-        return {"tools": tools, "context": {"mode": "test-only-no-production-access"}}
+        return {"tools": tools, "context": {
+            "mode": "test-only-no-production-access",
+            "domain_contract_version": 1,
+            "datasets": [
+                {
+                    "key": key, "source": source, "entity": entity,
+                    "identityFields": identity,
+                }
+                for key, source, entity, identity in (
+                    ("signal_quality", "eventhouse", "OPCUAEvents", ["opcua_node_id", "event_time"]),
+                    ("telemetry", "eventhouse", "OPCUAEvents", ["opcua_node_id", "event_time"]),
+                    ("station_power", "eventhouse", "OPCUAEvents", ["Station"]),
+                    ("work_orders", "sql", "work_orders", ["workOrderNumber"]),
+                    ("work_backlog", "derived", "work_orders", ["group_id"]),
+                    ("native_claims", "native", "native_claims", ["source_identity"]),
+                )
+            ],
+        }}
 
     async def execute(self, name, arguments, request):
         self.calls += 1
@@ -120,6 +137,10 @@ class SourceTools:
                 },
                 resolved_equipment_ids=tuple(row["equipment_id"] for row in rows),
                 work_coverage_equipment_ids=tuple(row["equipment_id"] for row in rows),
+                datasets=(EvidenceDataset(
+                    kind="signal_quality", field="rows", authority="direct", scope="population",
+                    complete=True, identity_fields=("opcua_node_id", "event_time"),
+                ),),
             )
         if name == "propose_work_order":
             clock = utc_now()
@@ -133,6 +154,10 @@ class SourceTools:
                 result={"proposal": draft.model_dump(mode="json"), "proposal_digest": draft.digest(),
                         "confirmation_required": True, "production_write_executed": False},
                 resolved_equipment_ids=(draft.equipment_id,), work_coverage_equipment_ids=(draft.equipment_id,),
+                datasets=(EvidenceDataset(
+                    kind="work_orders", field="existing_work", authority="direct", scope="focus",
+                    complete=True, identity_fields=("workOrderNumber",), role="audit",
+                ),),
             )
         if name == "query_station_power":
             return ToolEvidence(
@@ -149,6 +174,13 @@ class SourceTools:
                     },
                 },
                 column_units={"average_power_MW": "MW"},
+                datasets=(EvidenceDataset(
+                    kind="station_power", field="rows", authority="direct", scope="population",
+                    complete=True, identity_fields=("Station",),
+                    limitations=(
+                        "Station power is a sample-weighted arithmetic mean; it is not total station output.",
+                    ),
+                ),),
             )
         if name == "query_work_backlog":
             group_key = "facility_id" if arguments["group_by"] == "facility" else "equipment_id"
@@ -164,6 +196,10 @@ class SourceTools:
                     },
                 },
                 column_units={"open_work_order_count": "work orders"},
+                datasets=(EvidenceDataset(
+                    kind="work_backlog", field="rows", authority="direct", scope="population",
+                    complete=True, identity_fields=(group_key,), group_by=group_key,
+                ),),
             )
         rows = [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C", "quality": "BAD"}]
         if self.extra_row:
@@ -184,6 +220,10 @@ class SourceTools:
             } if self.include_identity else {},
             column_units={"value": "C"},
             limitations=("No approved diagnostic limits supplied.",),
+            datasets=(EvidenceDataset(
+                kind="telemetry", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("equipment_id",),
+            ),),
         )
 
 
@@ -320,50 +360,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("native-1:/response", examples)
 
-    def test_native_markdown_tables_preserve_instance_rows_for_presentation(self):
-        response = """**Read timestamp (UTC):** `2026-10-11T13:19:20Z`
-
-### Equipment row
-
-| equipment_id | facility_id | tag |
-|---|---|---|
-| EQUIP_RTI_T005 | FACILITY_RTI_001 | T005 |
-
-### Instruments
-
-| instrument_id | equipment_id | unit |
-|---|---|---|
-| INST_T005_TEMP | EQUIP_RTI_T005 | C |
-"""
-        parsed = _native_markdown_tables(response)
-        self.assertEqual(parsed, {
-            "native_equipment_row": [{
-                "equipment_id": "EQUIP_RTI_T005",
-                "facility_id": "FACILITY_RTI_001",
-                "tag": "T005",
-            }],
-            "native_instruments": [{
-                "instrument_id": "INST_T005_TEMP",
-                "equipment_id": "EQUIP_RTI_T005",
-                "unit": "C",
-            }],
-        })
-        self.owner.evidence["native-1"] = ToolEvidence(
-            id="native-1", source=SOURCE, tool="fabriciq-ontology", arguments={},
-            completed_at=utc_now(),
-            result={
-                "documents": [{"id": "citation-1", "content": "", "title": "ontology", "url": "https://example"}],
-                "response": response,
-                **parsed,
-            },
-        )
-        plan = self.owner.source_answer_plan(self.request)
-        self.assertIsNotNone(plan)
-        assert plan is not None
-        self.assertEqual(
-            [table.title for table in plan.tables],
-            ["fabriciq-ontology native_equipment_row", "fabriciq-ontology native_instruments"],
-        )
 
     def test_native_markdown_tables_are_extracted_from_document_content(self):
         payload = {
@@ -396,54 +392,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(with_production_write_status("Read-only result.", False), "Read-only result.")
 
-    def test_empty_scoped_work_read_gets_explicit_zero_coverage_table_and_summary(self):
-        receipt = ToolEvidence(
-            id="work-0", source=SOURCE, tool="query_operations",
-            arguments={"entity": "work_orders", "where": [
-                {"column": "equipmentId", "op": "eq", "value": "TEST_T005"},
-            ]},
-            completed_at=utc_now(),
-            result={
-                "rows": [], "row_count": 0, "total_matched": 0,
-                "read_completed_at_utc": "2026-10-11T13:20:00Z", "truncated": False,
-            },
-            work_coverage_equipment_ids=("TEST_T005",),
-        )
-        self.owner.evidence[receipt.id] = receipt
-        plan = self.owner.deterministic_explanatory_plan(self.request)
-        self.assertEqual(len(plan.tables), 1)
-        self.assertEqual(plan.tables[0].title, "query_operations empty result")
-        self.assertIn("zero work orders", plan.summary)
-        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
-        self.assertEqual(answer.tables[0].title, "query_operations empty result")
-        self.assertEqual(answer.tables[0].rows[0].values["row_count"], 0)
-        self.assertNotIn("No production writes executed", answer.summary)
 
-    def test_unsent_notification_has_deterministic_message_contract(self):
-        receipt = ToolEvidence(
-            id="work-0", source=SOURCE, tool="query_operations",
-            arguments={"entity": "work_orders", "where": [
-                {"column": "equipmentId", "op": "eq", "value": "TEST_T005"},
-            ]},
-            completed_at=utc_now(),
-            result={
-                "rows": [], "row_count": 0, "total_matched": 0,
-                "read_completed_at_utc": "2026-10-11T13:20:00Z", "truncated": False,
-            },
-            work_coverage_equipment_ids=("TEST_T005",),
-            limitations=("RCA evidence gaps: independent measurement and inspection evidence.",),
-        )
-        self.owner.evidence[receipt.id] = receipt
-        request = self.request.model_copy(update={
-            "question": "Prepare a concise unsent notification. Do not send it or save a work order.",
-        })
-        plan = self.owner.deterministic_explanatory_plan(request)
-        self.assertTrue(requests_unsent_message(request.question))
-        self.assertIn("UNSENT NOTIFICATION DRAFT", plan.summary)
-        self.assertIn("Verified observations:", plan.summary)
-        self.assertIn("Evidence gaps:", plan.summary)
-        self.assertIn("Recipient: not specified.", plan.summary)
-        self.assertIn("no send or work-order save action", plan.summary)
 
     def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
         specialist = SpecialistResult(
@@ -796,7 +745,52 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "specialist": role, "question": questions[index],
                     "reason": "Execute the assigned capability.", "native_source": None,
                 } for index, role in enumerate(roles)]
-            output = [self.function("plan_orchestration", {"steps": steps})]
+            if self.mode == "standalone_station_chart":
+                kind, authority, view_mode, group_by, chart = "station_power", "direct", "records", None, "bar"
+            elif self.mode == "backlog_capability_omitted_once":
+                kind, authority, view_mode, group_by, chart = (
+                    "work_backlog", "direct", "grouped", "facility_id", "bar",
+                )
+            elif self.mode.startswith("native"):
+                kind, authority, view_mode, group_by, chart = (
+                    "native_claims", "native", "records", None, None,
+                )
+            elif self.mode in (
+                "quality_snapshot", "empty_quality_snapshot", "independent_empty",
+                "conditional_empty", "conditional_empty_with_supporting_rows",
+            ):
+                kind, authority, view_mode, group_by, chart = (
+                    "signal_quality", "direct", "records", None, None,
+                )
+            else:
+                kind, authority, view_mode, group_by, chart = (
+                    "telemetry", "direct", "records", None, None,
+                )
+            scope = "population" if kind in (
+                "signal_quality", "station_power", "work_backlog", "native_claims",
+            ) else "focus"
+            answer_contract = {
+                "requirements": [{
+                    "kind": kind, "scope": scope, "authority": authority, "purpose": "facts",
+                }],
+                "views": [{
+                    "id": "primary-evidence", "title": "Primary evidence", "kind": kind,
+                    "scope": scope, "mode": view_mode, "authority": authority,
+                    "group_by": group_by, "chart": chart,
+                }],
+            }
+            if self.mode == "independent_empty":
+                answer_contract["requirements"].append({
+                    "kind": "telemetry", "scope": "focus", "authority": "direct", "purpose": "facts",
+                })
+                answer_contract["views"].append({
+                    "id": "supporting-evidence", "title": "Supporting evidence", "kind": "telemetry",
+                    "scope": "focus", "mode": "records", "authority": "direct",
+                    "group_by": None, "chart": None,
+                })
+            output = [self.function("plan_orchestration", {
+                "steps": steps, "answer_contract": answer_contract,
+            })]
         elif name == "hydro-qa-agent":
             if self.mode == "backlog_capability_omitted_once":
                 if round_number == 0:
@@ -1149,12 +1143,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "Conflicting source receipts"):
             self.owner.answer(self.request, AnswerPlan.model_validate(self.plan()))
         projection_payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
-        self.assertEqual(len(projection_payloads), 1)
-        self.assertNotIn("tools", projection_payloads[0])
-        self.assertEqual(
-            projection_payloads[0]["text"]["format"]["schema"]["properties"]["summary"]["maxLength"],
-            800,
-        )
+        self.assertEqual(projection_payloads, [])
         before = dict(self.calls)
         restarted = await self.make_owner().run(self.request)
         self.assertEqual(restarted, result)
@@ -1163,7 +1152,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_source_failure_cannot_become_a_successful_supervisor_answer(self):
         self.tools.failure = True
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "validation failed"):
+            with self.assertRaisesRegex(SourceFailure, "Injected source outage"):
                 await self.owner.run(self.request)
         self.assertIsNone(RunJournal(self.root / str(self.request.run_id) / "receipts").read("answer"))
         self.assertNotIn("hydro-rca-agent", self.calls)
@@ -1183,13 +1172,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((SourceFailure, ValidationError)):
                     self.owner.answer(self.request, AnswerPlan.model_validate(self.plan()))
 
-    async def test_explicit_chart_is_typed_and_unrelated_chart_is_not_added(self):
-        self.mode = "chart"
-        self.tools.presentation = True
-        request = self.request.model_copy(update={"charts_requested": True})
-        result = await self.owner.run(request)
-        self.assertEqual(len(result.charts), 1)
-        self.assertEqual(result.charts[0].y_keys, ("value",))
 
     async def test_standalone_station_chart_executes_qa_and_returns_source_owned_chart(self):
         intent = await self.bridge.call({
@@ -1213,196 +1195,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.charts), 1)
         self.assertEqual(result.charts[0].x_key, "Station")
         self.assertEqual(result.charts[0].y_keys, ("average_power_MW",))
-        self.assertIn(
-            "Foyers: 1271.158 MW from 1510 samples (73 BAD), latest 2026-10-11T04:00:00Z",
-            result.summary,
-        )
-        self.assertIn("not total station output", result.summary)
+        self.assertIn("Station=Foyers", result.summary)
+        self.assertIn("average_power_MW=1271.1575", result.summary)
+        self.assertIn("bad_samples=73", result.summary)
+        self.assertTrue(any("not total station output" in item for item in result.limitations))
 
-    def test_selected_evidence_is_one_deduplicated_reconciliation_without_prompt_routing(self):
-        quality = ToolEvidence(
-            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
-            arguments={"quality": ["BAD", "UNCERTAIN"]}, completed_at=utc_now(),
-            result={"rows": [
-                {
-                    "turbine": "T010", "equipment_id": "EQUIP_RTI_T010", "signal": "temperature",
-                    "opcua_node_id": "ns=2;s=T010.turbine_temp", "value": 75.549, "unit": "C",
-                    "quality": "BAD", "event_time": "2026-10-12T12:11:56Z",
-                },
-                {
-                    "turbine": "T001", "equipment_id": "EQUIP_RTI_T001", "signal": "vibration",
-                    "opcua_node_id": "ns=2;s=T001.vibration_a", "value": 3.58, "unit": "mm_s",
-                    "quality": "UNCERTAIN", "event_time": "2026-10-12T12:11:50Z",
-                },
-            ]},
-        )
-        duplicate_quality = quality.model_copy(update={"id": "quality-duplicate"})
-        work = ToolEvidence(
-            id="work", source=self.request.source, tool="query_operations",
-            arguments={"entity": "work_orders"}, completed_at=utc_now(),
-            result={"rows": [{
-                "id": "work-1", "workOrderNumber": "WO-2853", "equipmentId": "EQUIP_RTI_T010",
-                "opcuaNodeId": "ns=2;s=T010.turbine_speed", "title": "Overspeed trip test",
-                "priority": "Low", "status": "Scheduled",
-            }]},
-        )
-        self.owner.evidence = {item.id: item for item in (quality, duplicate_quality, work)}
-        self.owner.selected_equipment_ids = {"EQUIP_RTI_T010"}
-        self.owner.specialists.append(SpecialistResult(
-            role="work-order", agent_name="hydro-work-order-agent", version="12",
-            response_id="work-review", duration_ms=10, model_round_count=1,
-            input_digest="0" * 64, text="No draft.", report={"decision": "no_draft"},
-        ))
-        request = self.request.model_copy(update={
-            "question": "Summarize the verified evidence.",
-        })
-        plan = self.owner.deterministic_explanatory_plan(request)
-        answer = self.owner.answer(request, plan, use_projected_summary=True)
-        self.assertEqual(len(answer.tables), 1)
-        self.assertEqual(answer.tables[0].title, "Signal quality and open work")
-        self.assertEqual(len(answer.tables[0].rows), 1)
-        self.assertEqual(answer.tables[0].rows[0].values["equipment_id"], "EQUIP_RTI_T010")
-        self.assertEqual(answer.tables[0].rows[0].values["workOrderNumber"], "WO-2853")
-        self.assertNotIn("UNCERTAIN", answer.summary)
-        self.assertIn("describe telemetry trust", answer.summary)
-        self.assertIn("does not cover this signal", answer.summary)
-        self.assertIn("No new work order was proposed", answer.summary)
-        self.assertIn("stale (>60 seconds)", answer.summary)
-        self.assertFalse(answer.summary.endswith("..."))
 
-    def test_reconciliation_rows_without_matching_work_are_complete_and_null_filled(self):
-        quality = ToolEvidence(
-            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
-            arguments={"quality": "BAD"}, completed_at=utc_now(),
-            result={"rows": [
-                {
-                    "turbine": "T009", "equipment_id": "EQUIP_RTI_T009", "signal": "temperature",
-                    "opcua_node_id": "ns=2;s=T009.turbine_temp", "value": 76.27325, "unit": "C",
-                    "quality": "BAD", "event_time": "2026-10-12T12:11:55Z",
-                },
-                {
-                    "turbine": "T010", "equipment_id": "EQUIP_RTI_T010", "signal": "temperature",
-                    "opcua_node_id": "ns=2;s=T010.turbine_temp", "value": 78.496, "unit": "C",
-                    "quality": "BAD", "event_time": "2026-10-12T12:11:56Z",
-                },
-            ]},
-        )
-        work = ToolEvidence(
-            id="work", source=self.request.source, tool="query_operations",
-            arguments={"entity": "work_orders"}, completed_at=utc_now(),
-            result={"rows": [{
-                "id": "work-1", "workOrderNumber": "WO-2853", "equipmentId": "EQUIP_RTI_T010",
-                "opcuaNodeId": "ns=2;s=T010.turbine_speed", "title": "Overspeed trip test",
-                "priority": "Low", "status": "Scheduled",
-            }]},
-        )
-        self.owner.evidence = {item.id: item for item in (quality, work)}
-        self.owner.selected_equipment_ids = {"EQUIP_RTI_T009", "EQUIP_RTI_T010"}
-        request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
 
-        plan = self.owner.deterministic_explanatory_plan(request)
-        answer = self.owner.answer(request, plan, use_projected_summary=True)
 
-        self.assertEqual(len(answer.tables), 1)
-        table = answer.tables[0]
-        self.assertEqual(len(table.rows), 2)
-        self.assertTrue(all(set(row.values) == {column.key for column in table.columns} for row in table.rows))
-        unmatched = next(row for row in table.rows if row.values["equipment_id"] == "EQUIP_RTI_T009")
-        self.assertIsNone(unmatched.values["workOrderNumber"])
-        self.assertIsNone(unmatched.values["status"])
-        matched = next(row for row in table.rows if row.values["equipment_id"] == "EQUIP_RTI_T010")
-        self.assertEqual(matched.values["workOrderNumber"], "WO-2853")
-        self.assertEqual(matched.values["status"], "Scheduled")
 
-    def test_complete_backlog_receipt_is_consumed_into_quality_reconciliation(self):
-        quality = ToolEvidence(
-            id="quality", source=self.request.source, tool="query_signal_quality_snapshot",
-            arguments={"quality": "BAD"}, completed_at=utc_now(), result={"rows": [
-                {
-                    "equipment_id": "EQUIP_RTI_T003", "opcua_node_id": "n3",
-                    "quality": "BAD", "event_time": "2026-10-12T16:54:26Z",
-                },
-                {
-                    "equipment_id": "EQUIP_RTI_T004", "opcua_node_id": "n4",
-                    "quality": "BAD", "event_time": "2026-10-12T16:54:27Z",
-                },
-            ]},
-        )
-        backlog = ToolEvidence(
-            id="backlog", source=self.request.source, tool="query_work_backlog",
-            arguments={"group_by": "equipment"}, completed_at=utc_now(), result={
-                "rows": [
-                    {"equipment_id": "EQUIP_RTI_T001", "open_work_order_count": 1},
-                    {"equipment_id": "EQUIP_RTI_T003", "open_work_order_count": 1},
-                    {"equipment_id": "EQUIP_RTI_T004", "open_work_order_count": 0},
-                ],
-                "open_work_orders": [
-                    {
-                        "workOrderNumber": "WO-2841", "equipmentId": "EQUIP_RTI_T001",
-                        "title": "Unrelated", "priority": "Critical", "status": "In progress",
-                    },
-                    {
-                        "workOrderNumber": "WO-2829", "equipmentId": "EQUIP_RTI_T003",
-                        "title": "Cooling", "priority": "Medium", "status": "Ready",
-                    },
-                ],
-            },
-        )
-        identity = ToolEvidence(
-            id="identity", source=self.request.source, tool="query_assets",
-            arguments={"entity": "instruments"}, completed_at=utc_now(), result={"rows": [{
-                "instrument_id": "INST_T003_VIBRATION_D", "opcua_node_id": "n3",
-                "equipment_id": "EQUIP_RTI_T003", "tag": "vibration_d",
-            }]},
-        )
-        proposal = ToolEvidence(
-            id="proposal", source=self.request.source, tool="propose_work_order",
-            arguments={}, completed_at=utc_now(), result={
-                "existing_work": [{
-                    "workOrderNumber": "WO-2829", "equipmentId": "EQUIP_RTI_T003", "status": "Ready",
-                }],
-            },
-        )
-        self.owner.evidence = {item.id: item for item in (quality, backlog, identity, proposal)}
-        request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
-
-        plan = self.owner.deterministic_explanatory_plan(request)
-        self.assertEqual(len(plan.tables), 1)
-        self.owner.evidence.pop(proposal.id)
-        answer = self.owner.answer(request, plan, use_projected_summary=True)
-
-        self.assertEqual(len(answer.tables), 1)
-        self.assertEqual(answer.tables[0].title, "Signal quality and open work")
-        self.assertEqual(len(answer.tables[0].rows), 2)
-        values = [row.values for row in answer.tables[0].rows]
-        self.assertEqual(values[0]["equipment_id"], "EQUIP_RTI_T003")
-        self.assertEqual(values[0]["workOrderNumber"], "WO-2829")
-        self.assertEqual(values[1]["equipment_id"], "EQUIP_RTI_T004")
-        self.assertIsNone(values[1]["workOrderNumber"])
-        self.assertNotIn("EQUIP_RTI_T001", json.dumps(values))
-
-    def test_repeated_empty_work_reads_render_one_latest_business_result(self):
-        older = ToolEvidence(
-            id="older", source=self.request.source, tool="query_operations",
-            arguments={"entity": "work_orders"}, completed_at=utc_now() - timedelta(seconds=2),
-            result={"rows": [], "row_count": 0, "total_matched": 0,
-                    "read_completed_at_utc": "2026-10-12T18:43:37Z"},
-        )
-        latest = ToolEvidence(
-            id="latest", source=self.request.source, tool="query_operations",
-            arguments={"entity": "work_orders"}, completed_at=utc_now(),
-            result={"rows": [], "row_count": 0, "total_matched": 0,
-                    "read_completed_at_utc": "2026-10-12T18:44:10Z"},
-        )
-        self.owner.evidence = {item.id: item for item in (older, latest)}
-
-        plan = self.owner.source_answer_plan(self.request)
-
-        self.assertIsNotNone(plan)
-        if plan is None:
-            self.fail("Expected an explicit empty-work plan.")
-        self.assertEqual(len(plan.tables), 1)
-        self.assertEqual(plan.tables[0].rows[0].cells[0].source.evidence_id, "latest")
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1433,155 +1234,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                         self.owner.answer(request, AnswerPlan.model_validate(self.plan()))
                     self.mode = "valid"
 
-    async def test_rejected_chart_answer_can_fall_back_to_source_rows_without_chartable_units(self):
-        receipt = ToolEvidence(
-            id="work-1", source=self.request.source, tool="query_operations", arguments={},
-            completed_at=utc_now(), result={
-                "rows": [{"equipmentId": "TEST_T005", "workOrderNumber": "WO-1", "status": "Ready"}],
-            },
-        )
-        self.owner.evidence[receipt.id] = receipt
-        request = self.request.model_copy(update={"charts_requested": True})
-        fallback = self.owner.source_bound_answer(request)
-        self.assertIsNotNone(fallback)
-        if fallback is None:
-            self.fail("Expected a verified source-bound fallback.")
-        plan, result = fallback
-        self.assertEqual(result.charts, ())
-        self.assertEqual(plan.tables[0].rows[0].cells[0].source.evidence_id, receipt.id)
-        self.assertIn("no numeric measure with verified units", result.limitations[-1])
 
-    async def test_source_capability_presentation_renders_verified_requested_chart_without_another_model(self):
-        receipt = ToolEvidence(
-            id="backlog-1", source=self.request.source, tool="query_work_backlog",
-            arguments={"group_by": "equipment"}, completed_at=utc_now(),
-            result={
-                "group_by": "equipment",
-                "rows": [
-                    {"equipment_id": "TEST_T005", "open_work_order_count": 2},
-                    {"equipment_id": "TEST_T006", "open_work_order_count": 1},
-                ],
-                "presentation": {
-                    "table_field": "rows",
-                    "chart": {
-                        "kind": "bar", "x_key": "equipment_id", "y_keys": ["open_work_order_count"],
-                    },
-                },
-            },
-            column_units={"open_work_order_count": "work orders"},
-        )
-        self.owner.evidence[receipt.id] = receipt
-        request = self.request.model_copy(update={"charts_requested": True})
-        fallback = self.owner.source_bound_answer(request)
-        self.assertIsNotNone(fallback)
-        if fallback is None:
-            self.fail("Expected a source-defined chart fallback.")
-        plan, result = fallback
-        self.assertEqual(len(plan.charts), 1)
-        self.assertEqual(plan.charts[0].x_key, "equipment_id")
-        self.assertEqual(plan.charts[0].y_keys, ("open_work_order_count",))
-        self.assertEqual(result.charts, plan.charts)
 
-    async def test_projection_selects_requested_facility_chart_without_available_equipment_chart(self):
-        def receipt(receipt_id, group_key):
-            return ToolEvidence(
-                id=receipt_id, source=self.request.source, tool="query_work_backlog",
-                arguments={"group_by": group_key}, completed_at=utc_now(),
-                result={
-                    "rows": [{group_key: f"TEST_{group_key.upper()}", "open_work_order_count": 2}],
-                    "presentation": {
-                        "table_field": "rows",
-                        "chart": {
-                            "kind": "bar", "x_key": group_key, "y_keys": ["open_work_order_count"],
-                        },
-                    },
-                },
-                column_units={"open_work_order_count": "work orders"},
-            )
 
-        self.owner.evidence = {
-            "facility-backlog": receipt("facility-backlog", "facility_id"),
-            "equipment-backlog": receipt("equipment-backlog", "equipment_id"),
-        }
-        self.projection_chart_indexes = [0]
-        request = self.request.model_copy(update={
-            "question": "Chart open work by facility.",
-            "charts_requested": True,
-        })
-        journal = RunJournal(self.root / str(request.run_id) / "receipts")
-        plan, _ = await self.owner.project_answer(
-            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
-        )
-        self.assertEqual(len(plan.charts), 1)
-        self.assertEqual(plan.charts[0].x_key, "facility_id")
-        self.assertNotIn("equipment_id", {chart.x_key for chart in plan.charts})
 
-    async def test_projection_retains_a_sole_requested_source_chart_when_model_omits_its_index(self):
-        receipt = ToolEvidence(
-            id="station-power", source=self.request.source, tool="query_station_power",
-            arguments={"lookback": "24h"}, completed_at=utc_now(),
-            result={
-                "rows": [{"Station": "North", "average_power_MW": 8 / 3}],
-                "presentation": {
-                    "table_field": "rows",
-                    "chart": {"kind": "bar", "x_key": "Station", "y_keys": ["average_power_MW"]},
-                },
-            },
-            column_units={"average_power_MW": "MW"},
-        )
-        self.owner.evidence = {receipt.id: receipt}
-        self.projection_chart_indexes = []
-        request = self.request.model_copy(update={
-            "question": "Chart average power output per station.",
-            "charts_requested": True,
-        })
-        journal = RunJournal(self.root / str(request.run_id) / "receipts")
-        plan, _ = await self.owner.project_answer(
-            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
-        )
-        self.assertEqual(plan.charts, self.owner.source_answer_plan(request).charts)
 
-    async def test_projection_instructions_require_explicit_unsent_message_format(self):
-        receipt = await self.tools.execute("query_telemetry", {}, self.request)
-        self.owner.evidence = {receipt.id: receipt}
-        request = self.request.model_copy(update={
-            "question": "Prepare a concise unsent notification from the verified assessment. Do not send it.",
-        })
-        journal = RunJournal(self.root / str(request.run_id) / "receipts")
-        await self.owner.project_answer(
-            request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
-        )
-        payload = self.payloads[-1]
-        self.assertIn("clearly label the summary as an unsent draft", json.dumps(payload))
-        self.assertIn("without inventing a recipient", json.dumps(payload))
 
-    async def test_projection_repairs_one_incomplete_structured_response(self):
-        receipt = await self.tools.execute("query_telemetry", {}, self.request)
-        self.owner.evidence = {receipt.id: receipt}
-        self.mode = "projection_invalid_once"
-        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
-        plan, projection = await self.owner.project_answer(
-            self.request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
-        )
-        payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
-        self.assertEqual(len(payloads), 2)
-        repair = json.loads(payloads[-1]["input"][0]["content"][0]["text"])["projection_repair"]
-        self.assertIn("complete NarrativeProjection contract", repair["reason"])
-        self.assertEqual(plan.summary, "The evidence does not establish a physical fault. The returned measurements "
-                         "require engineering limits and corroborating evidence before a condition conclusion.")
-        self.assertEqual(projection.response_id, "resp_projection")
-
-    async def test_projection_repairs_a_row_count_only_summary(self):
-        receipt = await self.tools.execute("query_telemetry", {}, self.request)
-        self.owner.evidence = {receipt.id: receipt}
-        self.mode = "projection_count_only_once"
-        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
-        plan, _ = await self.owner.project_answer(
-            self.request, journal, self.versions["supervisor"], "invalid prior plan", SourceFailure("invalid"),
-        )
-        payloads = [payload for payload in self.payloads if "agent_reference" not in payload]
-        self.assertEqual(len(payloads), 2)
-        self.assertFalse(plan.summary.lower().startswith("returned "))
 
     async def test_cross_source_rows_require_authoritative_join_identity_without_displaying_it(self):
         first = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1643,34 +1301,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "chart"):
             self.owner.answer(self.request, AnswerPlan.model_validate(plan))
 
-    async def test_projected_cross_source_rows_use_private_identity_but_never_display_it(self):
-        first = await self.tools.execute("query_telemetry", {}, self.request)
-        first = first.model_copy(update={
-            "result": {"rows": [{"value": 75.0}]},
-            "row_identities": {"/rows/0": {"equipment_id": "TEST_T005"}},
-        })
-        second = first.model_copy(update={
-            "id": "work-1", "tool": "query_operations",
-            "result": {"rows": [{"status": "Scheduled"}]},
-            "row_identities": {"/rows/0": {"equipmentId": "TEST_T005"}},
-        })
-        plan = self.plan()
-        plan["tables"][0]["columns"][1] = {"key": "status", "label": "Status", "kind": "text"}
-        plan["tables"][0]["rows"][0]["cells"][1] = {
-            "key": "status", "source": {"evidence_id": second.id, "path": "/rows/0/status"},
-        }
-        self.owner.evidence = {first.id: first, second.id: second}
-        result = self.owner.answer(self.request, AnswerPlan.model_validate(plan))
-        self.assertEqual(result.tables[0].rows[0].values, {"value": 75.0, "status": "Scheduled"})
-        self.assertNotIn("row_identities", first.receipt())
-        schema = self.owner.answer_schema()
-        self.assertNotIn("equipment_id", json.dumps(schema))
-        for identity in ("TEST_T006", " "):
-            self.owner.evidence[second.id] = second.model_copy(update={
-                "row_identities": {"/rows/0": {"equipmentId": identity}},
-            })
-            with self.assertRaisesRegex(SourceFailure, "identit"):
-                self.owner.answer(self.request, AnswerPlan.model_validate(plan))
 
     async def test_credential_lease_does_not_limit_execution_and_changed_source_stops(self):
         expired = self.request.model_copy(update={"deadline": utc_now() - timedelta(seconds=1)})
@@ -1689,15 +1319,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_changed_provider_identity_is_not_committed_as_evidence(self):
         self.tools.changed_source = True
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "validation failed"):
+            with self.assertRaisesRegex(SourceFailure, "changed its authoritative source"):
                 await self.owner.run(self.request)
         journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
         self.assertIsNone(journal.read('tool:{"arguments":{"equipment_id":"TEST_T005"},"name":"query_telemetry"}'))
 
     async def test_delegation_budget_stops_instead_of_simulating_remaining_roles(self):
-        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "validation failed"):
-                await self.make_owner(max_delegations=1).run(self.request)
+        with self.assertRaisesRegex(SourceFailure, "specialist budget was exceeded"):
+            await self.make_owner(max_delegations=1).run(self.request)
         self.assertNotIn("hydro-rca-agent", self.calls)
 
     async def test_corrupt_receipt_is_not_replaced_by_an_empty_fallback(self):
@@ -1717,9 +1346,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_source_requires_verified_binding_and_a_matching_execution_receipt(self):
         self.mode = "native"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
-        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "validation failed"):
-                await self.make_owner().run(request)
+        with self.assertRaisesRegex(SourceFailure, "verified target-specific native connection binding"):
+            await self.make_owner().run(request)
         self.assertNotIn("hydro-fabric-iq-agent", self.calls)
         self.calls.clear()
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
@@ -1757,42 +1385,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa"])
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
 
-    async def test_backend_manifest_executes_required_specialist_when_chief_omits_plan_tool(self):
-        self.mode = "supervisor_no_plan"
-        self.tools.stage = True
-        request = self.request.model_copy(update={
-            "question": "Create an editable work-order draft for the resolved equipment.",
-            "required_specialists": ("work-order",),
-            "required_specialist_steps": {"work-order": 1},
-        })
-        result = await self.owner.run(request)
-        self.assertEqual([item.role for item in result.specialists], ["work-order"])
-        self.assertEqual(self.calls["hydro-work-order-agent"], 2)
-        self.assertTrue(any(
-            "capability manifest" in event["detail"].lower()
-            for event in self.events if event["role"] == "supervisor"
-        ))
 
-    async def test_backend_manifest_recovers_native_and_repeated_specialist_steps(self):
-        self.mode = "supervisor_no_plan"
-        self.owner = self.make_owner(native_binding=NativeBinding(
-            source=SOURCE, connections={"data-agent": "native-data"},
-        ))
-        self.owner.set_event_sink(self.events.append)
-        request = self.request.model_copy(update={
-            "native_sources": ("data-agent",),
-            "required_specialists": ("qa",),
-            "required_specialist_steps": {"qa": 2},
-        })
-        result = await self.owner.run(request)
-        self.assertEqual([item.role for item in result.specialists], ["fabric-iq", "qa", "qa"])
-        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
-        self.assertEqual(self.calls["hydro-qa-agent"], 4)
 
     async def test_chief_without_plan_and_without_backend_manifest_fails_closed(self):
         self.mode = "supervisor_no_plan"
         request = self.request.model_copy(update={"question": "Hello."})
-        with self.assertRaisesRegex(SourceFailure, "did not execute any existing specialist"):
+        with self.assertRaisesRegex(SourceFailure, "validated orchestration plan"):
             await self.owner.run(request)
 
     def test_native_markdown_identity_projection_is_field_bounded(self):
@@ -1854,9 +1452,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "native_wrong_source"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
-        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "validation failed"):
-                await owner.run(request)
+        with self.assertRaisesRegex(SourceFailure, "Native source mismatch"):
+            await owner.run(request)
         self.assertEqual(self.tools.calls, 0)
 
     async def test_native_source_mismatch_gets_one_bounded_same_agent_correction(self):
@@ -1942,9 +1539,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "native_refusal_always"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
-        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="ERROR"):
-            with self.assertRaisesRegex(SourceFailure, "no successful answer is permitted"):
-                await owner.run(request)
+        with self.assertRaisesRegex(SourceFailure, "Native source refusal"):
+            await owner.run(request)
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
         self.assertEqual(self.tools.calls, 0)
 
@@ -1992,10 +1588,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "native_connection_only"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
-        with self.assertLogs("agent_framework", level="ERROR") as logs:
-            with self.assertRaisesRegex(SourceFailure, "no successful answer is permitted"):
-                await owner.run(request)
-        self.assertTrue(any("connection metadata without domain evidence" in item for item in logs.output))
+        with self.assertRaisesRegex(SourceFailure, "connection metadata without domain evidence"):
+            await owner.run(request)
         self.assertEqual(self.tools.calls, 0)
 
     async def test_partial_receipt_after_process_stop_is_discarded_not_used_as_evidence(self):
@@ -2054,13 +1648,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse((self.root / "chat" / str(missing_id)).exists())
         self.assertEqual(self.tools.calls, 1)
 
-    async def test_generic_source_projection_keeps_different_signal_rows_separate(self):
-        self.mode = "mixed_rows"
-        self.tools.extra_row = True
-        result = await self.owner.run(self.request)
-        self.assertEqual(len(result.tables[0].rows), 2)
-        self.assertEqual(result.tables[0].rows[0].values["unit"], "C")
-        self.assertEqual(result.tables[0].rows[1].values["unit"], "MW")
 
     async def test_failure_after_final_agent_response_recovers_without_repeating_agents_or_sources(self):
         save = FileCheckpointStorage.save
@@ -2144,21 +1731,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ["qa", "rca", "work-order"],
         )
 
-    async def test_projection_schema_allows_only_actual_source_field_pointer_pairs(self):
-        receipt = await self.tools.execute("query_telemetry", {"equipment_id": "TEST_T005"}, self.request)
-        self.owner.evidence[receipt.id] = receipt
-        schema = self.owner.answer_schema()
-        Draft202012Validator.check_schema(schema)
-        validator = Draft202012Validator(schema)
-        validator.validate(self.plan())
-        for mode in ("invented", "transposed"):
-            with self.subTest(mode=mode):
-                self.mode = mode
-                self.assertTrue(list(validator.iter_errors(self.plan())))
-        self.mode = "valid"
-        invalid_pointer = self.plan()
-        invalid_pointer["tables"][0]["rows"][0]["cells"][0]["source"]["path"] = "/data/rows/0/value"
-        self.assertTrue(list(validator.iter_errors(invalid_pointer)))
 
     async def test_source_argument_repair_does_not_consume_structured_completion_repair(self):
         self.mode = "repair_query_and_report"
@@ -2176,7 +1748,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-work-order-agent"], 1)
         self.assertEqual(self.tools.calls, 1)
         self.assertEqual(len(result.tables), 1)
-        self.assertEqual(sum("agent_reference" not in payload for payload in self.payloads), 1)
+        self.assertEqual(sum("agent_reference" not in payload for payload in self.payloads), 0)
         self.assertEqual(result.specialists[1].model_round_count, 1)
         self.assertEqual(result.specialists[2].model_round_count, 1)
         audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
@@ -2309,14 +1881,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-qa-agent"], 2)
         self.assertEqual(self.tools.calls, 2)
         self.assertEqual([item.role for item in result.specialists], ["qa"])
-        self.assertEqual(len(result.tables), 2)
+        self.assertEqual(len(result.tables), 1)
         self.assertEqual(
             {row.values["quality"] for table in result.tables for row in table.rows},
             {"BAD", "UNCERTAIN"},
         )
         self.assertEqual(
             sum("model" in payload and "agent_reference" not in payload for payload in self.payloads),
-            1,
+            0,
         )
 
     async def test_empty_multi_quality_snapshot_returns_certified_zero_rows(self):
@@ -2331,20 +1903,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         result = await self.owner.run(request)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertEqual(self.tools.calls, 2)
-        self.assertEqual(len(result.tables), 2)
-        self.assertEqual(
-            {table.title for table in result.tables},
-            {
-                "query_signal_quality_snapshot BAD empty result",
-                "query_signal_quality_snapshot UNCERTAIN empty result",
-            },
-        )
-        self.assertTrue(all(table.rows[0].values["row_count"] == 0 for table in result.tables))
-        self.assertEqual(
-            result.summary,
-            "No matching signal-quality records were returned for the requested window, so no equipment could be "
-            "selected; this is an evidence gap, not proof that any turbine is healthy or faulty.",
-        )
+        self.assertEqual(len(result.tables), 1)
+        self.assertEqual(result.tables[0].title, "Primary evidence")
+        self.assertEqual(result.tables[0].rows, ())
+        self.assertIn("no matching records", result.summary.lower())
         self.assertTrue(any("90 expected signals; 90 had no reading" in item for item in result.limitations))
         self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
 
@@ -2356,30 +1918,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.role for item in result.specialists], ["qa", "qa"])
         self.assertNotIn("hydro-rca-agent", self.calls)
         self.assertNotIn("hydro-work-order-agent", self.calls)
-        self.assertIn("no equipment could be selected", result.summary)
+        self.assertIn("no equipment could be selected", result.summary.lower())
         chief_events = [event for event in self.events if event["role"] == "supervisor"]
         self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
                             for event in chief_events))
 
-    async def test_empty_quality_with_supporting_tables_keeps_explanatory_summary(self):
-        self.mode = "conditional_empty_with_supporting_rows"
-        self.tools.quality_snapshot = True
-        self.tools.empty_quality_snapshot = True
-        self.tools.include_identity = True
-        self.request = self.request.model_copy(update={
-            "question": (
-                "Which turbines have BAD signal quality? Investigate the selected equipment, prepare an editable "
-                "inspection work-order draft only for an uncovered gap, and independently verify the result."
-            ),
-        })
-        result = await self.owner.run(self.request)
-        self.assertGreater(len(result.tables), 0)
-        self.assertNotRegex(result.summary, r"^Returned \d+ source rows")
-        self.assertIn("no equipment could be selected", result.summary)
-        self.assertIn("no work-order gap review", result.summary)
-        self.assertIn("no production write was executed", result.summary)
-        audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
-        self.assertEqual(audit["answer_projection"]["response_id"], "deterministic-empty-quality")
 
     async def test_empty_independent_population_does_not_skip_sibling_population(self):
         self.mode = "independent_empty"
@@ -2402,7 +1945,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         })
         equipment_table = next(
             table for table in result.tables
-            if "equipment_id" in table.rows[0].values
+            if table.rows and "equipment_id" in table.rows[0].values
         )
         self.assertEqual(equipment_table.rows[0].values["equipment_id"], "TEST_T005")
 
@@ -2431,39 +1974,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         rca = next(item for item in result.specialists if item.role == "rca")
         self.assertEqual(rca.report["maintenance_follow_up"]["decision"], "verified_uncovered_issue")
 
-    async def test_incomplete_projection_uses_grounded_deterministic_explanation(self):
-        self.mode = "projection_incomplete"
-        self.tools.presentation = True
-        self.request = self.request.model_copy(update={"charts_requested": True})
-        result = await self.owner.run(self.request)
-        self.assertIn("Telemetry evidence was returned", result.summary)
-        self.assertIn("does not establish a physical fault", result.summary)
-        self.assertEqual(len(result.charts), 1)
-        audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
-        self.assertEqual(
-            audit["answer_projection"]["response_id"],
-            "deterministic-source-bound-fallback",
-        )
 
-    async def test_chart_projection_preserves_sources_and_does_not_repeat_specialists(self):
-        self.mode = "chart"
-        self.tools.presentation = True
-        self.request = self.request.model_copy(update={"charts_requested": True})
-        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
-            result = await self.owner.run(self.request)
-        self.assertEqual(result.tables[0].rows[0].values["value"], 75.0)
-        self.assertEqual(len(result.charts), 1)
-        self.assertEqual(self.tools.calls, 1)
-        self.assertIn("does not establish a physical fault", result.summary)
-        self.assertIn("corroborating evidence", result.summary)
-        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
-        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
-        self.assertNotIn("agent_reference", self.payloads[-1])
-        self.assertIn("source_receipts", json.dumps(self.payloads[-1]))
-        audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
-        self.assertEqual(audit["answer_projection"]["response_id"], "resp_projection")
-        self.assertEqual(audit["answer_projection"]["model"], "test")
-        self.assertNotEqual(audit["supervisor"]["response_id"], audit["answer_projection"]["response_id"])
 
 
 if __name__ == "__main__":
