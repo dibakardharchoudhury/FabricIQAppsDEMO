@@ -273,6 +273,18 @@ def safe_exception_signature(error: BaseException) -> str:
     return " <- ".join(signatures)
 
 
+def exception_chain_contains(error: BaseException, expected: type[BaseException]) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, expected):
+            return True
+        seen.add(id(current))
+        cause = current.__cause__ or current.__context__
+        current = cause if isinstance(cause, BaseException) and cause is not current else None
+    return False
+
+
 def operation_skill_guidance(role: Role) -> tuple[dict[str, str], ...]:
     root = Path(__file__).resolve().parents[2] / "skills"
     paths = [root / name for name in ROLE_SKILLS[role]]
@@ -1601,6 +1613,24 @@ class FoundrySupervisor:
                     response = await agent.run(json.dumps(active_context), options=options)
                 except AgentFrameworkException as error:
                     logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
+                    if (
+                        role == "fabric-iq"
+                        and completion_attempt == 0
+                        and exception_chain_contains(error, APITimeoutError)
+                    ):
+                        logger.warning(
+                            "Foundry native invocation timed out before a completed receipt; retrying the same "
+                            "selected source once."
+                        )
+                        active_context = {
+                            **context,
+                            "native_timeout_recovery": (
+                                "The prior selected-source invocation timed out before returning a completed "
+                                "receipt. Retry exactly the same assigned native-source request once. Do not use "
+                                "another connection, broaden the scope, or substitute direct tools."
+                            ),
+                        }
+                        continue
                     self.healthy(request)
                     raise
                 except APIStatusError as error:

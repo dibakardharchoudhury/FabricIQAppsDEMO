@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 from azure.core.credentials import AccessToken
 from azure.identity.aio import AzureCliCredential
-from openai import AsyncOpenAI
+from openai import APITimeoutError, AsyncOpenAI
 from agent_framework import FileCheckpointStorage
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
@@ -621,6 +621,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["max_output_tokens"], 8192 if name == "hydro-supervisor-agent" else 4096)
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
+        if self.mode == "native_timeout_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
+            raise APITimeoutError(request=httpx.Request("POST", request.url))
         if name == "hydro-supervisor-agent":
             if self.mode == "supervisor_no_plan":
                 output = [self.message("I will coordinate the requested work.")]
@@ -1588,6 +1590,21 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             and "native_source_repair" in json.dumps(payload["input"])
         )
         self.assertIn("fabriciq-data-agent", json.dumps(repair["input"]))
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_timeout_gets_one_bounded_same_source_retry(self):
+        self.mode = "native_timeout_once"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        retry = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "native_timeout_recovery" in json.dumps(payload["input"])
+        )
+        self.assertIn("same assigned native-source request once", json.dumps(retry["input"]))
         self.assertEqual(self.tools.calls, 0)
 
     async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):
