@@ -36,31 +36,34 @@ type DomainDatasetDefinition = {
   entity: string
   identityFields: readonly string[]
   presentations: readonly string[]
+  evidenceScopes: readonly ('population' | 'focus')[]
+  evidenceAuthorities: readonly ('direct' | 'native')[]
   limitations?: readonly string[]
 }
 
 export const DOMAIN_DATASETS = [
-  { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'], presentations: ['records_table'] },
-  { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'], presentations: ['records_table'] },
-  { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'], presentations: ['records_table'] },
-  { key: 'telemetry', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_line', 'records_scatter'] },
-  { key: 'signal_quality', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table'] },
-  { key: 'temperature', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_bar'] },
+  { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'], presentations: ['records_table'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
+  { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'telemetry', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_line', 'records_scatter'], evidenceScopes: ['focus'], evidenceAuthorities: ['direct'] },
+  { key: 'signal_quality', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
+  { key: 'temperature', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['opcua_node_id', 'event_time'], presentations: ['records_table', 'records_bar'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
   {
     key: 'station_power', source: 'eventhouse', entity: 'OPCUAEvents', identityFields: ['Station'],
     presentations: ['records_table', 'records_bar', 'records_line', 'grouped_by_facility_table', 'grouped_by_facility_bar'],
+    evidenceScopes: ['population'], evidenceAuthorities: ['direct'],
     limitations: [
       'Station power is a sample-weighted arithmetic mean of converted power readings with all qualities included; '
         + 'it is not total station output, a time-weighted mean, or energy.',
     ],
   },
-  { key: 'work_orders', source: 'sql', entity: 'work_orders', identityFields: ['workOrderNumber'], presentations: ['records_table'] },
-  { key: 'work_backlog', source: 'derived', entity: 'work_orders', identityFields: ['group_id'], presentations: ['grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'] },
-  { key: 'inspections', source: 'sql', entity: 'inspections', identityFields: ['id'], presentations: ['records_table'] },
-  { key: 'notifications', source: 'sql', entity: 'notifications', identityFields: ['id'], presentations: ['records_table'] },
-  { key: 'spare_parts', source: 'sql', entity: 'spare_parts', identityFields: ['id'], presentations: ['records_table'] },
-  { key: 'asset_models', source: 'sql', entity: 'asset_models', identityFields: ['id'], presentations: ['records_table'] },
-  { key: 'native_claims', source: 'native', entity: 'native_claims', identityFields: ['source_identity'], presentations: ['records_table', 'grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'] },
+  { key: 'work_orders', source: 'sql', entity: 'work_orders', identityFields: ['workOrderNumber'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'work_backlog', source: 'derived', entity: 'work_orders', identityFields: ['group_id'], presentations: ['grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
+  { key: 'inspections', source: 'sql', entity: 'inspections', identityFields: ['id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'notifications', source: 'sql', entity: 'notifications', identityFields: ['id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'spare_parts', source: 'sql', entity: 'spare_parts', identityFields: ['id'], presentations: ['records_table'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
+  { key: 'asset_models', source: 'sql', entity: 'asset_models', identityFields: ['id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
+  { key: 'native_claims', source: 'native', entity: 'native_claims', identityFields: ['source_identity'], presentations: ['records_table', 'grouped_by_equipment_table', 'grouped_by_equipment_bar', 'grouped_by_facility_table', 'grouped_by_facility_bar'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['native'] },
 ] as const satisfies readonly DomainDatasetDefinition[]
 
 export const DOMAIN_DATASET_KEYS = DOMAIN_DATASETS.map(dataset => dataset.key)

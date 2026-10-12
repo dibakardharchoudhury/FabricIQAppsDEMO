@@ -96,6 +96,12 @@ class SourceTools:
                         if key in ("station_power", "native_claims")
                         else ["records_table"]
                     ),
+                    "evidenceScopes": (
+                        ["focus"] if key == "telemetry"
+                        else ["population", "focus"] if key in ("work_orders", "native_claims")
+                        else ["population"]
+                    ),
+                    "evidenceAuthorities": ["native"] if key == "native_claims" else ["direct"],
                 }
                 for key, source, entity, identity in (
                     ("signal_quality", "eventhouse", "OPCUAEvents", ["opcua_node_id", "event_time"]),
@@ -244,6 +250,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "key": "telemetry", "source": "eventhouse", "entity": "OPCUAEvents",
             "identityFields": ["opcua_node_id", "event_time"],
             "presentations": ["records_table"],
+            "evidenceScopes": ["focus"],
+            "evidenceAuthorities": ["direct"],
         }]
         self.assertEqual(
             set(governed_datasets({"domain_contract_version": 2, "datasets": datasets})),

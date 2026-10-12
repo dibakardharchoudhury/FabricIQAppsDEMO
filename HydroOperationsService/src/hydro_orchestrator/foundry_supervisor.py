@@ -424,6 +424,12 @@ class DomainDatasetDefinition(Contract):
     entity: str = Field(min_length=1, max_length=120)
     identity_fields: tuple[str, ...] = Field(alias="identityFields", min_length=1, max_length=4)
     presentations: tuple[str, ...] = Field(min_length=1, max_length=16)
+    evidence_scopes: tuple[Literal["population", "focus"], ...] = Field(
+        alias="evidenceScopes", min_length=1, max_length=2,
+    )
+    evidence_authorities: tuple[Literal["direct", "native"], ...] = Field(
+        alias="evidenceAuthorities", min_length=1, max_length=2,
+    )
     limitations: tuple[str, ...] = Field(default=(), max_length=8)
 
 
@@ -1733,6 +1739,19 @@ class FoundrySupervisor:
                 raise ToolInputError(
                     "The answer contract requested ungoverned datasets: "
                     + ", ".join(sorted(unknown_kinds))
+                )
+            unsupported_requirements = [
+                f"{item.kind}/{item.scope}/{item.authority}"
+                for item in plan.answer_contract.requirements
+                if (
+                    item.scope not in governed[item.kind].evidence_scopes
+                    or item.authority not in governed[item.kind].evidence_authorities
+                )
+            ]
+            if unsupported_requirements:
+                raise ToolInputError(
+                    "The answer contract requested unsupported dataset evidence combinations: "
+                    + ", ".join(unsupported_requirements)
                 )
             unsupported_views = []
             for view in plan.answer_contract.views:
