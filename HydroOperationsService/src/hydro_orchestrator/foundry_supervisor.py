@@ -1908,18 +1908,33 @@ class FoundrySupervisor:
                         ]
                         if not native_receipts:
                             raise SourceFailure("Native execution has no inspectable service receipt.")
+                        native_equipment_ids: set[str] = set()
                         for raw in native_receipts:
                             await self.bridge.call({
                                 "action": "validate_native_receipt", "receipt": raw, "source": native_source,
                             })
-                            _validated_native_result(raw.get("output"))
+                            native_equipment_ids.update(
+                                _native_equipment_ids(_validated_native_result(raw.get("output")))
+                            )
+                        required_native_equipment_ids = initial_equipment_selection(request)
+                        if (
+                            required_native_equipment_ids
+                            and not required_native_equipment_ids.issubset(native_equipment_ids)
+                        ):
+                            raise SourceFailure(
+                                "Native identity coverage missing: the selected source did not return the resolved "
+                                "equipment instance requested by the operator."
+                            )
                     except SourceFailure as error:
                         source_mismatch = str(error).startswith("Native source mismatch:")
                         source_refusal = str(error).startswith("Native source refusal:")
-                        if completion_attempt == 0 and (source_mismatch or source_refusal):
+                        identity_missing = str(error).startswith("Native identity coverage missing:")
+                        if completion_attempt == 0 and (source_mismatch or source_refusal or identity_missing):
                             logger.warning(
                                 "Foundry native agent returned %s; requesting one bounded same-source correction.",
-                                "the wrong connection" if source_mismatch else "a moderation/refusal payload",
+                                "the wrong connection" if source_mismatch
+                                else "a moderation/refusal payload" if source_refusal
+                                else "incomplete requested-identity coverage",
                             )
                             active_context = {
                                 **context,
@@ -1927,8 +1942,14 @@ class FoundrySupervisor:
                                     (
                                         "The prior call used the wrong native connection. "
                                         if source_mismatch
-                                        else "The prior selected-source call returned moderation/refusal text "
-                                             "instead of domain evidence. "
+                                        else (
+                                            "The prior selected-source call returned moderation/refusal text "
+                                            "instead of domain evidence. "
+                                            if source_refusal
+                                            else "The prior selected-source result omitted the operator's resolved "
+                                                 "equipment instance. Return actual instance values and relationships "
+                                                 "for every requested resolved equipment ID. "
+                                        )
                                     )
                                     + f"Call only fabriciq-{native_source}, which is the backend-selected source for "
                                       "this step. Retry the same bounded factual request without broadening scope or "
@@ -2113,6 +2134,16 @@ class FoundrySupervisor:
         quality_rows: dict[str, SourceRow] = {}
         work_rows: dict[str, SourceRow] = {}
         work_coverage = False
+        empty_work_receipts = [
+            receipt for receipt in self.evidence.values()
+            if receipt.tool == "query_operations"
+            and receipt.arguments.get("entity") == "work_orders"
+            and receipt.result.get("rows") == []
+        ]
+        latest_empty_work_id = (
+            max(empty_work_receipts, key=lambda receipt: receipt.completed_at).id
+            if empty_work_receipts else None
+        )
         for receipt in self.evidence.values():
             if receipt.tool == "propose_work_order":
                 consumed_evidence_ids.add(receipt.id)
@@ -2332,7 +2363,13 @@ class FoundrySupervisor:
                 receipt.tool == "query_operations"
                 and receipt.arguments.get("entity") == "work_orders"
             )
-            if explicit_empty_work and isinstance(rows, list) and not rows and len(tables) < 12:
+            if (
+                explicit_empty_work
+                and receipt.id == latest_empty_work_id
+                and isinstance(rows, list)
+                and not rows
+                and len(tables) < 12
+            ):
                 keys = tuple(
                     key for key in ("row_count", "total_matched", "read_completed_at_utc")
                     if key in receipt.result and type(receipt.result[key]) in (str, int, float)

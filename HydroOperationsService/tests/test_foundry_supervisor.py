@@ -960,6 +960,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "title": "hydro-fabric-ontology", "url": "https://example.test/ontology",
                 }]}
                 if self.mode == "native_handoff_no_identity"
+                or self.mode == "native_identity_once" and round_number == 0
                 else {"rows": [{"equipment_id": "TEST_T005", "value": 75.0, "unit": "C"}]}
             )
             output = [{
@@ -1379,6 +1380,29 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values[1]["equipment_id"], "EQUIP_RTI_T004")
         self.assertIsNone(values[1]["workOrderNumber"])
         self.assertNotIn("EQUIP_RTI_T001", json.dumps(values))
+
+    def test_repeated_empty_work_reads_render_one_latest_business_result(self):
+        older = ToolEvidence(
+            id="older", source=self.request.source, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now() - timedelta(seconds=2),
+            result={"rows": [], "row_count": 0, "total_matched": 0,
+                    "read_completed_at_utc": "2026-10-12T18:43:37Z"},
+        )
+        latest = ToolEvidence(
+            id="latest", source=self.request.source, tool="query_operations",
+            arguments={"entity": "work_orders"}, completed_at=utc_now(),
+            result={"rows": [], "row_count": 0, "total_matched": 0,
+                    "read_completed_at_utc": "2026-10-12T18:44:10Z"},
+        )
+        self.owner.evidence = {item.id: item for item in (older, latest)}
+
+        plan = self.owner.source_answer_plan(self.request)
+
+        self.assertIsNotNone(plan)
+        if plan is None:
+            self.fail("Expected an explicit empty-work plan.")
+        self.assertEqual(len(plan.tables), 1)
+        self.assertEqual(plan.tables[0].rows[0].cells[0].source.evidence_id, "latest")
 
     async def test_explicit_chart_cannot_be_silently_omitted_when_source_units_exist(self):
         receipt = await self.tools.execute("query_telemetry", {}, self.request)
@@ -1888,6 +1912,31 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("moderation/refusal text", json.dumps(repair["input"]))
         self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_requested_identity_gets_one_bounded_same_source_correction(self):
+        self.mode = "native_identity_once"
+        request = self.request.model_copy(update={
+            "native_sources": ("data-agent",),
+            "resolved_scope": ResolvedScope(
+                source=SOURCE,
+                read_completed_at=utc_now(),
+                matches=(ResolvedIdentity(
+                    mention="T005", kind="equipment", canonical_id="TEST_T005",
+                    label="T005", matched_by="tag",
+                ),),
+            ),
+        })
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(next(iter(owner.evidence.values())).resolved_equipment_ids, ("TEST_T005",))
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "native_source_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("omitted the operator's resolved equipment instance", json.dumps(repair["input"]))
 
     async def test_repeated_native_refusal_is_not_accepted_as_evidence(self):
         self.mode = "native_refusal_always"
