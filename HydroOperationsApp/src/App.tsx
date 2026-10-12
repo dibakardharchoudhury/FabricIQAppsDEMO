@@ -15,6 +15,7 @@ import {
   type MaintenanceNotificationRecord, type SparePartRecord, type WorkOrderRecord,
 } from './services/rayfin'
 import { twinSignalStatus, twinStatus, ageLabel, freshnessOf, type TwinSignal, type TwinStatus } from './twin'
+import { uncertifiedFailureMessage } from './services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const orderStatuses = ['Draft', 'Approved', 'Planned', 'Scheduled', 'Ready', 'In progress', 'On hold', 'Completed', 'Cancelled']
@@ -76,7 +77,7 @@ const UI_CREDIT_LINE_1 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string
 const UI_CREDIT_LINE_2 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_2 as string | undefined)?.trim()
 
 // A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
-type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; meta?: { elapsedMs: number; tokens?: number } }
+type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; failed?: boolean; meta?: { elapsedMs: number; tokens?: number } }
 const wantsChart = (text: string) => /\b(chart|graph|plot|visuali[sz]e?|visual|trend(?:ing|s|line)?|bar\s*chart|pie|line\s*chart|histogram)\b/i.test(text)
 const INITIAL_MESSAGE: ChatMessage = { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' }
 
@@ -643,16 +644,16 @@ export default function App() {
     // Append the user turn plus an empty agent bubble that streamed tokens fill in place.
     const chart = wantsChart(text)
     setMessages(current => [...current, { role: 'user', text }, { role: 'agent', text: '', chart }])
-    const setLastAgent = (value: string, meta?: ChatMessage['meta']) => setMessages(current => {
+    const setLastAgent = (value: string, meta?: ChatMessage['meta'], failed?: boolean) => setMessages(current => {
       const copy = current.slice()
-      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, chart: copy[i].chart, meta: meta ?? copy[i].meta }; break } }
+      for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].role === 'agent') { copy[i] = { role: 'agent', text: value, chart: failed ? false : copy[i].chart, failed, meta: meta ?? copy[i].meta }; break } }
       return copy
     })
     try {
       const { text: answer, usage } = await askDataAgent(text, partial => setLastAgent(partial))
       setLastAgent(answer, { elapsedMs: Date.now() - startedAt, tokens: usage?.total })
     }
-    catch (error) { setLastAgent(errorMessage(error), { elapsedMs: Date.now() - startedAt }) }
+    catch (error) { setLastAgent(uncertifiedFailureMessage(error), { elapsedMs: Date.now() - startedAt }, true) }
     setBusy(false)
   }
 

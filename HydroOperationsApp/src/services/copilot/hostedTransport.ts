@@ -122,6 +122,7 @@ export class HostedTransport {
   private readonly credentials: () => Promise<SourceTokens>
   private readonly fetcher: typeof fetch
   private previousRunId: string | undefined
+  private interruptedRunId: string | undefined
 
   constructor(
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
@@ -151,6 +152,7 @@ export class HostedTransport {
     if (this.running || this.inFlight) throw new Error('Wait for the hosted request before resetting the conversation.')
     this.sessionId = crypto.randomUUID()
     this.previousRunId = undefined
+    this.interruptedRunId = undefined
   }
 
   private async invoke(
@@ -187,14 +189,23 @@ export class HostedTransport {
             for (const line of lines) {
               if (!line) continue
               const message = record(JSON.parse(line))
-              if (message.type === 'event') onEvent(streamedExecutionEvent(message.event))
+              if (message.type === 'run') {
+                if (typeof message.run_id !== 'string' || !message.run_id) {
+                  throw new Error('Hosted streaming invocation returned no recoverable run identity.')
+                }
+                const streamSource = record(message.source)
+                if (Object.entries(this.source).some(([key, value]) => streamSource[key] !== value)) {
+                  throw new Error('Hosted streaming invocation changed its verified source identity.')
+                }
+                this.interruptedRunId = message.run_id
+              } else if (message.type === 'event') onEvent(streamedExecutionEvent(message.event))
               else if (message.type === 'answer') answer = record(message.answer)
               else if (message.type === 'error') {
                 const status = typeof message.status === 'number' ? message.status : 500
                 throw new HostedInvocationError(status,
                   message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail)
                     ? record(message.detail) : undefined)
-              } else if (message.type !== 'run') {
+              } else {
                 throw new Error('Hosted streaming invocation returned an unknown message type.')
               }
             }
@@ -223,18 +234,56 @@ export class HostedTransport {
     }
   }
 
+  private async recoverInterruptedRun(): Promise<Record<string, unknown>> {
+    const runId = this.interruptedRunId
+    if (!runId) throw new Error('The interrupted hosted request has no server-assigned run identity.')
+    let consecutiveTransportFailures = 0
+    while (true) {
+      try {
+        const result = await this.invoke({ operation: 'result', run_id: runId })
+        consecutiveTransportFailures = 0
+        if (result.status === 'completed') return record(result.answer)
+        if (result.status === 'failed') {
+          const failure = result.failure
+          throw new HostedInvocationError(500,
+            failure && typeof failure === 'object' && !Array.isArray(failure) ? record(failure) : undefined)
+        }
+        if (result.status !== 'running' || result.run_id !== runId) {
+          throw new Error('Hosted run recovery returned an invalid status contract.')
+        }
+      } catch (error) {
+        if (error instanceof HostedInvocationError) throw error
+        consecutiveTransportFailures++
+        if (consecutiveTransportFailures >= 3) {
+          throw new Error(
+            `The hosted stream was interrupted and run ${runId} could not be recovered after three consecutive transport attempts.`,
+            { cause: error },
+          )
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
+
   async run(chat: HostedChat, onEvents?: (events: OrchestrationEvent[]) => void): Promise<HostedAnswer> {
     if (this.running) throw new Error('A hosted request is already running.')
     this.running = true
     try {
       const streamedEvents: OrchestrationEvent[] = []
-      const reply = await this.invoke({ operation: 'run', chat: { ...chat,
-        ...(this.previousRunId ? { previous_run_id: this.previousRunId } : {}) } }, onEvents ? event => {
-          const index = streamedEvents.findIndex(item => item.id === event.id)
-          if (index < 0) streamedEvents.push(event)
-          else streamedEvents[index] = event
-          onEvents([...streamedEvents])
-        } : undefined)
+      this.interruptedRunId = undefined
+      let reply: Record<string, unknown>
+      try {
+        reply = await this.invoke({ operation: 'run', chat: { ...chat,
+          ...(this.previousRunId ? { previous_run_id: this.previousRunId } : {}) } }, event => {
+            const index = streamedEvents.findIndex(item => item.id === event.id)
+            if (index < 0) streamedEvents.push(event)
+            else streamedEvents[index] = event
+            onEvents?.([...streamedEvents])
+          })
+      } catch (error) {
+        if (!this.interruptedRunId || error instanceof HostedInvocationError) throw error
+        reply = await this.recoverInterruptedRun()
+      }
       const source = record(reply.source)
       if (Object.entries(this.source).some(([key, value]) => source[key] !== value)
         || reply.production_write_executed !== false || typeof reply.run_id !== 'string') {
@@ -290,8 +339,13 @@ export class HostedTransport {
       })
       const visualizations = presentation.visualizations.map(visualization)
       const committedEvents = presentation.execution_events.map(executionEvent)
-      const executionEvents = streamedEvents.length ? streamedEvents : committedEvents
+      const mergedEvents = new Map(streamedEvents.map(event => [event.id, event]))
+      for (const event of committedEvents) {
+        mergedEvents.set(event.id, { ...mergedEvents.get(event.id), ...event })
+      }
+      const executionEvents = [...mergedEvents.values()]
       this.previousRunId = runId
+      this.interruptedRunId = undefined
       return { runId, text: presentation.text, proposals, visualizations, executionEvents, receipt: reply }
     } catch (error) {
       this.previousRunId = undefined

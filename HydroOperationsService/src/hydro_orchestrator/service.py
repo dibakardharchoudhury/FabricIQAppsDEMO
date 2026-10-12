@@ -25,7 +25,7 @@ from .contracts import (
 )
 from .foundry_supervisor import ChatAnswer, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource, RunJournal
 from pydantic import Field, ValidationError, model_validator
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from .source_auth import DelegatedCredential, DelegatedTokens, SourceAuthPolicy, SourceAuthorizationError, SourceTokenVerifier
 from .store import Conflict, Store, StoredRun
 from .workflow import ReviewAdapters, build_workflow, checkpoint_store
@@ -238,7 +238,7 @@ async def create_runtime_app(
 
 
 class DelegatedInvocation(DelegatedTokens):
-    operation: Literal["run", "evidence", "decide", "reconcile"]
+    operation: Literal["run", "result", "evidence", "decide", "reconcile"]
     chat: ChatInput | None = None
     run_id: UUID | None = None
     decision: WorkOrderDecision | None = None
@@ -248,8 +248,10 @@ class DelegatedInvocation(DelegatedTokens):
     def distinct_operations(self) -> "DelegatedInvocation":
         if self.operation == "run" and (self.chat is None or self.run_id is not None or self.decision is not None):
             raise ValueError("Run invocations require chat input and a server-assigned run identity.")
-        if self.operation == "evidence" and (self.run_id is None or self.chat is not None or self.decision is not None):
-            raise ValueError("Evidence invocations require only a run identity.")
+        if self.operation in ("result", "evidence") and (
+            self.run_id is None or self.chat is not None or self.decision is not None
+        ):
+            raise ValueError("Result and evidence invocations require only a run identity.")
         if self.operation in ("decide", "reconcile") and (self.run_id is None or self.chat is not None or self.decision is None):
             raise ValueError("Decision invocations require a run identity and an explicit reviewed decision.")
         if self.operation != "run" and self.stream:
@@ -350,6 +352,13 @@ def create_delegated_app(
     if not 0 < run_timeout <= 300 or max_concurrent_runs < 1:
         raise ValueError("Credential admission leases and concurrency must be bounded.")
     capacity = asyncio.Semaphore(max_concurrent_runs)
+    detached_streams: set[asyncio.Task[None]] = set()
+
+    def forget_detached(task: asyncio.Task[None]) -> None:
+        detached_streams.discard(task)
+        if not task.cancelled():
+            task.exception()
+
     app = FastAPI()
 
     @app.post("/invocations")
@@ -429,6 +438,27 @@ def create_delegated_app(
                     "intent": journal.read(f"approval:{draft.id}:intent"),
                     "result": journal.read(f"approval:{draft.id}:result"),
                 } for draft in answer.proposals]}
+            if body.operation == "result":
+                assert body.run_id is not None
+                journal = RunJournal(state / str(body.run_id) / "receipts")
+                failure = journal.read("failure")
+                if failure is not None:
+                    return {"status": "failed", "failure": failure}
+                completed_answer = journal.read("answer")
+                if completed_answer is not None:
+                    answer = ChatAnswer.model_validate(completed_answer)
+                    if answer.run_id != body.run_id or answer.source != source:
+                        raise HTTPException(404, "No run is available for this signed-in user and source.")
+                    completed = answer.model_copy(update={
+                        "audit_url": "/invocations", "presentation": client_presentation(answer),
+                    })
+                    return {"status": "completed", "answer": completed.model_dump(mode="json")}
+                if journal.read("admission") is None and journal.read("request") is None:
+                    raise HTTPException(404, "No run is available for this signed-in user and source.")
+                return JSONResponse(
+                    {"status": "running", "run_id": str(body.run_id)},
+                    status_code=202,
+                )
             if capacity.locked():
                 raise HTTPException(429, "Orchestration capacity is busy; retry later.")
             assert body.chat is not None
@@ -444,6 +474,10 @@ def create_delegated_app(
             )
             if body.stream:
                 assert credential is not None and state is not None
+                RunJournal(state / str(chat.run_id) / "receipts").save("admission", {
+                    "run_id": str(chat.run_id), "source": source.model_dump(mode="json"),
+                    "requested_at": chat.requested_at.isoformat(),
+                })
                 stream_credential = credential
                 credential = None
 
@@ -473,6 +507,8 @@ def create_delegated_app(
                             latest_running_event = event
                         elif latest_running_event is not None and event.get("id") == latest_running_event.get("id"):
                             latest_running_event = None
+                        if events.full():
+                            events.get_nowait()
                         events.put_nowait(event)
 
                     async def execute() -> ChatAnswer:
@@ -485,6 +521,29 @@ def create_delegated_app(
 
                     task = asyncio.create_task(execute())
                     last_output_at = monotonic()
+
+                    async def complete_detached() -> None:
+                        try:
+                            answer = await task
+                            if (answer.run_id != chat.run_id or answer.source != source
+                                    or answer.requested_at != chat.requested_at):
+                                raise ValueError("Supervisor returned an answer for a different invocation.")
+                        except SourceAuthorizationError:
+                            failed(401, "authorization", "Renew source access through the existing sign-in session.")
+                        except httpx.HTTPError as failure:
+                            logger.error("Detached source request failed (%s).", type(failure).__name__)
+                            failed(502, "source_request",
+                                   "An authorized source request failed; inspect the execution audit.")
+                        except TimeoutError:
+                            failed(504, "source_timeout",
+                                   "An upstream source operation timed out; inspect the execution audit.")
+                        except Exception as failure:
+                            logger.error("Detached orchestration failed (%s).", type(failure).__name__)
+                            failed(500, "execution", "Orchestration failed; inspect the execution audit.")
+                        finally:
+                            await stream_credential.close()
+
+                    detached = False
                     try:
                         yield line({"type": "run", "run_id": str(chat.run_id),
                                     "source": source.model_dump(mode="json")})
@@ -516,8 +575,6 @@ def create_delegated_app(
                         })
                         yield line({"type": "answer", "answer": completed.model_dump(mode="json")})
                     except asyncio.CancelledError:
-                        task.cancel()
-                        await asyncio.gather(task, return_exceptions=True)
                         raise
                     except SourceAuthorizationError:
                         yield line(terminal_event("Source authorization expired; no answer was certified."))
@@ -545,9 +602,12 @@ def create_delegated_app(
                         yield line({"type": "error", "status": error.status_code, "detail": error.detail})
                     finally:
                         if not task.done():
-                            task.cancel()
-                            await asyncio.gather(task, return_exceptions=True)
-                        await stream_credential.close()
+                            detached = True
+                            continuation = asyncio.create_task(complete_detached())
+                            detached_streams.add(continuation)
+                            continuation.add_done_callback(forget_detached)
+                        if not detached:
+                            await stream_credential.close()
 
                 return StreamingResponse(
                     stream_run(), media_type="application/x-ndjson",

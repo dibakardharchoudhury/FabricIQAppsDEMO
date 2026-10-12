@@ -18,6 +18,7 @@ import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr, ValidationError
+from starlette.requests import Request
 
 from hydro_orchestrator.contracts import SourceIdentity, WorkOrderDraft, utc_now
 from hydro_orchestrator.live_sources import FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
@@ -498,6 +499,48 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(contexts, ["closed"])
             with self.assertRaises(SourceAuthorizationError):
                 await leases[0].get_token(self.policy.scopes["fabric"])
+
+    async def test_interrupted_stream_continues_and_same_principal_recovers_exact_result(self):
+        with TemporaryDirectory() as directory:
+            app, _, _, contexts = self.ingress(Path(directory), delay=.05)
+            invocation = {**self.invocation(), "stream": True}
+            payload = json.dumps(invocation).encode()
+            delivered = False
+
+            async def receive():
+                nonlocal delivered
+                if delivered:
+                    return {"type": "http.disconnect"}
+                delivered = True
+                return {"type": "http.request", "body": payload, "more_body": False}
+
+            route = next(route for route in app.routes if getattr(route, "path", None) == "/invocations")
+            request = Request({
+                "type": "http", "http_version": "1.1", "method": "POST",
+                "scheme": "http", "path": "/invocations", "raw_path": b"/invocations",
+                "query_string": b"", "headers": [], "client": ("test", 1), "server": ("test", 80),
+            }, receive)
+            streamed = await route.endpoint(request)
+            first = await anext(streamed.body_iterator)
+            run = json.loads(first)
+            self.assertEqual(run["type"], "run")
+            await streamed.body_iterator.aclose()
+
+            recovery = {"operation": "result", "run_id": run["run_id"], "tokens": invocation["tokens"]}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test") as client:
+                pending = await client.post("/invocations", json=recovery)
+                self.assertEqual(pending.status_code, 202, pending.text)
+                self.assertEqual(pending.json(), {"status": "running", "run_id": run["run_id"]})
+                await asyncio.sleep(.15)
+                result = await client.post("/invocations", json=recovery)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["status"], "completed")
+                self.assertEqual(result.json()["answer"]["run_id"], run["run_id"])
+                foreign = self.invocation(UUID("66666666-6666-4666-8666-666666666666"))
+                denied = await client.post("/invocations", json={**recovery, "tokens": foreign["tokens"]})
+                self.assertEqual(denied.status_code, 404)
+            self.assertEqual(contexts, ["closed"])
 
     async def test_streaming_ingress_refreshes_the_active_event_during_long_specialist_work(self):
         with TemporaryDirectory() as directory:

@@ -2429,6 +2429,15 @@ button.v2-signal-row:hover,
 .v2-agent-step-body { padding: 0 9px 8px; }
 .v2-agent-step-body p { margin: 0 0 6px; color: var(--cp-text-muted); }
 .v2-agent-step-error { color: #b3423c; }
+.v2-agent-failure {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--cp-danger) 45%, var(--cp-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cp-danger) 8%, var(--cp-surface));
+  color: var(--cp-danger);
+  font-weight: 650;
+}
 .v2-agent-step-body pre { margin: 0 0 6px; padding: 7px 9px; border-radius: 5px; background: var(--cp-bg-elevated); color: var(--cp-text-soft); font-size: 10px; white-space: pre-wrap; word-break: break-word; }
 @keyframes v2-step-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 .v2-agent-processing { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--cp-text-muted); font-size: 11px; }

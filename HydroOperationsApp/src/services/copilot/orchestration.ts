@@ -33,6 +33,33 @@ export type OrchestrationEvent = {
   proposalIds?: string[]
 }
 
+export function failedExecutionEvents(
+  events: OrchestrationEvent[] | undefined, detail: string, timestamp = Date.now(),
+): OrchestrationEvent[] {
+  const values = events?.map(event => event.status === 'queued' || event.status === 'running'
+    ? { ...event, status: 'error' as const, detail, timestamp }
+    : event) ?? []
+  if (values.some(event => event.status === 'error')) return values
+  return [...values, {
+    id: `transport-failure:${timestamp}`,
+    role: 'supervisor',
+    status: 'error',
+    label: 'Agent request failed',
+    detail,
+    timestamp,
+    agentName: 'Hydro Operations',
+  }]
+}
+
+export function uncertifiedFailureMessage(error: unknown): string {
+  const technical = error instanceof Error && error.message.trim()
+    ? error.message.trim()
+    : 'The agent transport failed.'
+  return `The request failed before a certified answer was returned. No answer or write outcome is certified. ` +
+    `Do not repeat this request or any write decision until connectivity recovers and the prior run audit is checked. ` +
+    `Technical detail: ${technical}`
+}
+
 export type WorkOrderProposal = {
   id: string
   equipmentId: string

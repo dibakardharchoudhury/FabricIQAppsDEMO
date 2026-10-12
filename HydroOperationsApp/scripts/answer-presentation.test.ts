@@ -4,8 +4,26 @@ import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRe
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
-import { createWorkOrderProposal, delegationOrderError, isWorkOrderRequest, missingRequestedSpecialists } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, delegationOrderError, failedExecutionEvents, isWorkOrderRequest, missingRequestedSpecialists, uncertifiedFailureMessage } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
+
+test('transport failures terminate active crew state and explicitly fail certification', () => {
+  const events = failedExecutionEvents([
+    { id: 'chief', role: 'supervisor', status: 'completed', label: 'Chief', detail: 'Planned.', timestamp: 1 },
+    { id: 'gauge', role: 'qa', status: 'running', label: 'Gauge', detail: 'Reading.', timestamp: 2 },
+    { id: 'fixer', role: 'work-order', status: 'queued', label: 'Fixer', detail: 'Waiting.', timestamp: 3 },
+  ], 'Connection reset.', 4)
+  assert.deepEqual(events.map(event => [event.id, event.status]), [
+    ['chief', 'completed'],
+    ['gauge', 'error'],
+    ['fixer', 'error'],
+  ])
+  assert.match(uncertifiedFailureMessage(new Error('Connection reset.')), /No answer or write outcome is certified/)
+  const empty = failedExecutionEvents(undefined, 'Connection reset.', 5)
+  assert.equal(empty.length, 1)
+  assert.equal(empty[0].role, 'supervisor')
+  assert.equal(empty[0].status, 'error')
+})
 
 test('Chief routes post-draft physical-fault follow-ups only to RCA', () => {
   const instructions = agentDefinition('supervisor', 'test-model').instructions

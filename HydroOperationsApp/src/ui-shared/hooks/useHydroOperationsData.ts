@@ -14,7 +14,10 @@ import {
 import { twinStatus, type TwinStatus } from '../../twin'
 import { isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
 import { askCopilot } from '../../services/copilot/askCopilot'
-import type { OrchestrationEvent, WorkOrderProposal } from '../../services/copilot/orchestration'
+import {
+  failedExecutionEvents, uncertifiedFailureMessage,
+  type OrchestrationEvent, type WorkOrderProposal,
+} from '../../services/copilot/orchestration'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -50,7 +53,7 @@ type TelemetryStatus = 'live' | 'delayed' | 'stale' | 'unavailable'
 export type ProgressJob = { kind: 'seed' | 'stream' | 'weather'; label: string; status: string; pct: number; startedAt: number; etaMs: number; endedAt?: number }
 export type TelemetryExplorerSelection = { assetId?: string; signalId?: string; range: TelemetryHistoryRange }
 export type CopilotEngine = 'data-agent' | 'foundry'
-export type ChatMessage = { role: 'user' | 'agent'; text: string; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
+export type ChatMessage = { role: 'user' | 'agent'; text: string; failed?: boolean; backendOwned?: boolean; artifacts?: AgentArtifact[]; visualizations?: AgentVisualization[]; models?: Asset3DModelRecord[]; steps?: AgentStep[]; orchestrationEvents?: OrchestrationEvent[]; proposals?: WorkOrderProposal[]; meta?: { elapsedMs: number; tokens?: number } }
 type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetryConnected?: boolean; selectedFacilityId?: string; selectedAssetIds?: Record<string, string> }
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
@@ -780,9 +783,10 @@ function useHydroOperationsDataController() {
     let liveEvents: OrchestrationEvent[] | undefined
     let proposals: WorkOrderProposal[] | undefined
     let backendOwned: boolean | undefined
+    let failed = false
     const paint = (meta?: ChatMessage['meta'], artifacts?: AgentArtifact[], visualizations?: AgentVisualization[], models?: Asset3DModelRecord[]) => setMessages(current => {
       const next = current.slice()
-      next[next.length - 1] = { role: 'agent', text: liveText, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
+      next[next.length - 1] = { role: 'agent', text: liveText, failed, steps: liveSteps, orchestrationEvents: liveEvents, proposals, backendOwned, artifacts, visualizations, models, meta }
       return next
     })
     try {
@@ -800,7 +804,12 @@ function useHydroOperationsDataController() {
       liveEvents = answer.orchestrationEvents ?? liveEvents
       paint({ elapsedMs: Date.now() - startedAt, tokens: answer.usage?.total }, answer.artifacts, answer.visualizations, answer.models)
     } catch (error) {
-      liveText = error instanceof Error ? error.message : 'The copilot request failed.'
+      const detail = uncertifiedFailureMessage(error)
+      failed = true
+      backendOwned = true
+      proposals = undefined
+      liveText = detail
+      liveEvents = failedExecutionEvents(liveEvents, detail)
       paint({ elapsedMs: Date.now() - startedAt })
     } finally { setCopilotBusy(false) }
   }, [copilotBusy, copilotEngine])

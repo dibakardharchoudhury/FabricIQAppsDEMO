@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Gauge, Maximize2, Minimize2, RotateCcw, Send, Swords } from 'lucide-react'
 import { resetDataAgentConversation, type AgentAnswer } from '../services/fabric'
 import { askCopilot } from '../services/copilot/askCopilot'
-import { isWorkOrderRequest } from '../services/copilot/orchestration'
+import { failedExecutionEvents, isWorkOrderRequest, uncertifiedFailureMessage } from '../services/copilot/orchestration'
 import { askFoundryCopilot, isHostedFoundryConfigured, resetFoundryConversation, type FoundryAnswer } from '../services/copilot/foundry'
-import { runAgentBattle, type AgentBattleEngine, type AgentBattleMode } from '../services/copilot/agentBattle'
+import { runAgentBattle, type AgentBattleEngine } from '../services/copilot/agentBattle'
 import { CopilotResponse, type CopilotMessage } from './CopilotExperience'
 import { AgentElapsedTime } from './AgentElapsedTime'
 import { VoiceInput } from './VoiceInput'
@@ -52,7 +52,6 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
   const [prompt, setPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
   const [voiceReset, setVoiceReset] = useState(0)
-  const [mode, setMode] = useState<AgentBattleMode>('sequential')
   const [sides, setSides] = useState<BattleSides>(EMPTY_SIDES)
   const running = Object.values(sides).some(side => side.status === 'running' || side.status === 'queued')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -77,12 +76,12 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
   const run = async () => {
     const exactPrompt = prompt.trim()
     if (!exactPrompt || running) return
-    const executionMode = !isHostedFoundryConfigured() && isWorkOrderRequest(exactPrompt) ? 'sequential' : mode
+    const executionMode = 'sequential'
     setPrompt('')
     setLastPrompt(exactPrompt)
     setSides({
       'data-agent': { status: 'running', message: { role: 'agent', text: '' } },
-      foundry: { status: executionMode === 'parallel' ? 'running' : 'queued', message: { role: 'agent', text: '' } },
+      foundry: { status: 'queued', message: { role: 'agent', text: '' } },
     })
 
     const runners = {
@@ -111,11 +110,27 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
       if (result.ok && result.value) {
         updateSide(result.engine, { status: 'completed', message: asMessage(result.value, result.elapsedMs) })
       } else {
-        updateMessage(result.engine, {
-          text: result.error ?? 'The agent request failed.',
-          meta: { elapsedMs: result.elapsedMs },
-        })
-        updateSide(result.engine, { status: 'error' })
+        const detail = uncertifiedFailureMessage(result.error)
+        setSides(current => ({
+          ...current,
+          [result.engine]: {
+            ...current[result.engine],
+            status: 'error',
+            message: {
+              role: 'agent',
+              ...current[result.engine].message,
+              text: detail,
+              failed: true,
+              backendOwned: true,
+              proposals: undefined,
+              visualizations: undefined,
+              orchestrationEvents: failedExecutionEvents(
+                current[result.engine].message?.orchestrationEvents, detail,
+              ),
+              meta: { elapsedMs: result.elapsedMs },
+            },
+          },
+        }))
       }
     })
   }
@@ -146,10 +161,9 @@ export function AgentBattleExperience({ onExit }: { onExit: () => void }) {
 
     <section className="agent-battle-toolbar">
       <div className="v2-engine-toggle" role="group" aria-label="Battle execution mode">
-        <button type="button" className={mode === 'sequential' ? 'on' : ''} disabled={running} onClick={() => setMode('sequential')}>Capacity-safe</button>
-        <button type="button" className={mode === 'parallel' ? 'on' : ''} disabled={running} onClick={() => setMode('parallel')}>Parallel</button>
+        <button type="button" className="on" disabled>Capacity-safe</button>
       </div>
-      <small>{mode === 'sequential' ? 'Runs one agent at a time so shared Fabric capacity does not distort results.' : 'Runs both together for wall-clock speed; shared capacity contention can affect latency.'}</small>
+      <small>Runs one agent at a time so shared Fabric and Foundry capacity cannot distort results or cause duplicate source pressure.</small>
       <span>
         <button type="button" aria-label={battleView.expanded ? 'Restore battle' : 'Maximize battle'} aria-pressed={battleView.expanded} onClick={battleView.toggleExpanded}>{battleView.expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}{battleView.expanded ? 'Restore' : 'Maximize'}</button>
         <button type="button" disabled={running} onClick={reset}><RotateCcw size={14} />Reset</button>

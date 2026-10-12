@@ -24,6 +24,7 @@ const canRenderModel = (format?: string) => Boolean(format && ['GLB', 'GLTF'].in
 export type CopilotMessage = {
   role: 'user' | 'agent'
   text: string
+  failed?: boolean
   artifacts?: AgentArtifact[]
   visualizations?: AgentVisualization[]
   models?: Asset3DModelRecord[]
@@ -137,7 +138,7 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
             {message.role === 'agent'
               ? <CopilotResponse message={message} streaming={busy && last} showCrew={false} question={messages[index - 1]?.role === 'user' ? messages[index - 1].text : undefined} />
               : <p>{message.text}</p>}
-            {message.role === 'agent' && last && !busy && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
+            {message.role === 'agent' && last && !busy && !message.failed && index > 0 && <SuggestionChips message={message} onCompose={compose} onSend={send} />}
           </div>
         })}
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
@@ -181,7 +182,9 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     message.backendOwned ? message.text : stripOptionsMarker(streaming ? '' : operatorNarrative(message.text))
   )
   const draftParts = draftReady && presentedText ? draftAnswerParts(presentedText) : undefined
-  const answer = presentedText && (message.backendOwned
+  const answer = presentedText && (message.failed
+    ? <p className="v2-agent-failure" role="alert">{presentedText}</p>
+    : message.backendOwned
     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{presentedText}</ReactMarkdown>
     : <AnswerText text={presentedText} streaming={streaming} />)
   const draftSummary = draftParts?.summary && (message.backendOwned
@@ -205,8 +208,8 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
       : <a className="v2-agent-file" href={artifact.url} download={artifact.name} aria-disabled={!artifact.url} key={artifact.fileId}><Download size={14} />{artifact.name}</a>)}
-    {!streaming && !message.backendOwned && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
-    {!streaming && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
+    {!streaming && !message.failed && !message.backendOwned && <AnswerDashboard text={message.text} question={question} visualizations={message.visualizations} steps={message.steps} receiptPrefix={receiptPrefix} checkedText={checkedText} />}
+    {!streaming && !message.failed && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
   </>

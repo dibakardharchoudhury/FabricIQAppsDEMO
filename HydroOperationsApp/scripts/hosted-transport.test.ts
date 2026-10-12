@@ -97,6 +97,58 @@ test('streaming transport paints only backend execution events and returns the c
   ])
 })
 
+test('stream interruption recovers the exact server run without starting a duplicate', async () => {
+  const operations: string[] = []
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    operations.push(body.operation)
+    if (body.operation === 'result') {
+      assert.equal(body.run_id, 'run-recover')
+      return response({ status: 'completed', answer: { ...reply(), run_id: 'run-recover' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'run', run_id: 'run-recover', source })}\n`))
+        } else {
+          controller.error(new Error('connection reset'))
+        }
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  const answer = await client.run({ question: 'Recover this run.' }, () => {})
+  assert.equal(answer.runId, 'run-recover')
+  assert.deepEqual(operations, ['run', 'result'])
+})
+
+test('persisted failure after stream interruption remains an explicit failed run', async () => {
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    if (body.operation === 'result') {
+      return response({ status: 'failed', failure: { run_id: 'run-failed', category: 'source_request' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'run', run_id: 'run-failed', source })}\n`))
+        } else {
+          controller.error(new Error('connection reset'))
+        }
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  })
+  await assert.rejects(
+    client.run({ question: 'Fail this run.' }, () => {}),
+    error => error instanceof HostedInvocationError && error.detail?.category === 'source_request',
+  )
+})
+
 test('foreign source, changed write boundary and malformed display never become connected answers', async () => {
   for (const changed of [
     { ...reply(), source: { ...source, workspace_id: 'foreign' } },
