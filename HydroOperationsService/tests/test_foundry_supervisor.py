@@ -24,7 +24,7 @@ from hydro_orchestrator.foundry_supervisor import (
     rca_answer_limitations, rca_reference_examples, safe_exception_signature, canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
-    requests_unsent_message, updated_equipment_selection,
+    requests_new_work_order_proposal, requests_unsent_message, updated_equipment_selection,
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -1837,6 +1837,55 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         audit = RunJournal(self.root / str(request.run_id) / "receipts").read("evidence")
         self.assertEqual(audit["supervisor"]["model_round_count"], 1)
         self.assertEqual(audit["supervisor"]["response_id"], "resp_hydro-supervisor-agent_0")
+
+    def test_only_current_explicit_draft_intent_authorizes_a_new_proposal(self):
+        for question in (
+            "Prepare one editable Low-priority inspection work-order draft.",
+            "Create a work order for T005.",
+            "Stage an inspection draft only if an uncovered issue is supported.",
+            "I need a WO for T005.",
+            "Read BAD quality, investigate and propose a T005 signal inspection; verify.",
+        ):
+            self.assertTrue(requests_new_work_order_proposal(question), question)
+        for question in (
+            "Investigate whether any physical fault was established. Keep the draft separate from saved work "
+            "and do not submit it.",
+            "Prepare a concise unsent notification. Do not save a work order.",
+            "Do not create a work order.",
+            "Review the prior draft and show the evidence gaps.",
+        ):
+            self.assertFalse(requests_new_work_order_proposal(question), question)
+
+    async def test_post_draft_fault_review_removes_proposal_tool_from_current_turn(self):
+        self.mode = "direct_rca"
+        self.tools.stage = True
+        previous = HistoricalContext(
+            run_id=uuid4(), source=SOURCE,
+            question="Prepare one editable inspection work-order draft.",
+            rendered_answer="Review work-order draft\nBackend-grounded human approval",
+            requested_at=utc_now() - timedelta(minutes=1),
+            proposal_ids=(uuid4(),),
+        )
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Investigate whether any physical fault was established. Keep the draft separate from "
+                        "saved work and do not submit it. Show the evidence gaps.",
+            "previous_run_id": previous.run_id,
+            "historical_context": previous,
+        })
+        self.seed(request)
+        result = await self.owner.run(request)
+        self.assertFalse(result.proposals)
+        rca_payload = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-rca-agent"
+        )
+        context = json.loads(rca_payload["input"][0]["content"][0]["text"])
+        self.assertNotIn(
+            "propose_work_order",
+            [tool["name"] for tool in context["permitted_source_catalog"]["tools"]],
+        )
+        self.assertIn("does not request a new proposal", context["proposal_authorization"])
 
     async def test_terse_equipment_rca_uses_one_generic_chief_plan(self):
         self.mode = "direct_rca"

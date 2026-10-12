@@ -238,6 +238,23 @@ def requests_unsent_message(question: str) -> bool:
     )
 
 
+def requests_new_work_order_proposal(question: str) -> bool:
+    normalized = re.sub(r"\s+", " ", question.lower())
+    for clause in re.split(r"[.!?;]+", normalized):
+        if not any(term in clause for term in ("work order", "work-order", " wo ", "draft", "propose")):
+            continue
+        if re.search(r"(?:^|please\s+)draft\b", clause.strip()):
+            return True
+        for match in re.finditer(
+            r"\b(?:prepare|create|stage|propose|open|raise|generate|make|need|want|request)\b",
+            clause,
+        ):
+            prefix = clause[max(0, match.start() - 32):match.start()]
+            if not re.search(r"\b(?:do not|don't|never|no)\b(?:\W+\w+){0,3}\W*$", prefix):
+                return True
+    return False
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -1175,6 +1192,11 @@ class FoundrySupervisor:
             specification = next((tool for tool in catalog.tools if tool.name == tool_name), None)
             if specification is None:
                 raise ToolInputError("Selected tool is not enabled by the backend source catalog. Choose a listed tool.")
+            if tool_name == "propose_work_order" and not requests_new_work_order_proposal(request.question):
+                raise ToolInputError(
+                    "This turn did not explicitly request a new work-order proposal. Treat any historical draft as "
+                    "read-only conversation context and complete a no-draft review instead."
+                )
             errors = list(Draft202012Validator(specification.parameters).iter_errors(json.loads(_encoded(arguments))))
             if errors:
                 fields = ", ".join(str(key) for key in errors[0].absolute_path) or "arguments"
@@ -1448,13 +1470,20 @@ class FoundrySupervisor:
                 return call
 
             functions.append(FunctionTool(name=name, func=bind(name, callback), input_model=parameters))
+        proposal_authorized = requests_new_work_order_proposal(request.question)
+        permitted_catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+        if not proposal_authorized:
+            permitted_catalog = permitted_catalog.model_copy(update={
+                "tools": tuple(tool for tool in permitted_catalog.tools if tool.name != "propose_work_order"),
+            })
         context = {
             "assignment": question, "operator_question": request.question,
             "historical_context": (request.historical_context.model_dump(mode="json")
                                    if request.historical_context else None),
             "historical_context_policy": "Historical display is only conversational context, not current evidence. "
                                          "Execute fresh reads for all current facts and work proposals. "
-                                         "Never reuse a prior approval or infer human consent from conversation.",
+                                         "Never reuse a prior approval or infer human consent from conversation. "
+                                         "A prior draft does not authorize staging another proposal.",
             "source": request.source.model_dump(mode="json"),
             "resolved_scope": request.resolved_scope.model_dump(mode="json") if request.resolved_scope else None,
             "resolved_scope_policy": (
@@ -1473,7 +1502,14 @@ class FoundrySupervisor:
             "required_specialists": request.required_specialists,
             "required_specialist_steps": request.required_specialist_steps,
             "conditional_maintenance_gate_requested": maintenance_gate_required,
-            "permitted_source_catalog": journal.read("tool_catalog"),
+            "permitted_source_catalog": permitted_catalog.model_dump(mode="json"),
+            "proposal_authorization": (
+                "This current turn explicitly requests a new editable proposal; propose_work_order may be called "
+                "only after fresh complete work coverage and canonical equipment verification."
+                if proposal_authorized
+                else "This current turn does not request a new proposal. Do not call propose_work_order. Any draft "
+                     "mentioned in historical context is read-only and must remain separate from current evidence."
+            ),
             "completion_constraints": {
                 "complete_work_order_review": {"exact_fields": ["decision", "reason"], "reason_max_characters": 1000,
                                                "decisions": ["no_draft", "needs_clarification"]},
