@@ -604,7 +604,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "requires_selection": False,
                     "requires_verified_issue": False,
                 }]
-            elif self.mode == "conditional_empty":
+            elif self.mode in ("conditional_empty", "conditional_empty_with_supporting_rows"):
                 steps = [
                     {"specialist": "qa", "question": "Read the qualifying fleet.", "reason": "Find matches.",
                      "native_source": None, "requires_selection": False},
@@ -654,6 +654,20 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                         "tool_name": "query_telemetry",
                         "arguments": {"equipment_id": "TEST_T005"},
                     })] if round_number % 2 == 0 else [self.message("Population B is complete.")]
+            elif self.mode == "conditional_empty_with_supporting_rows":
+                if round_number < 2:
+                    output = [
+                        self.function("hydro_query", {
+                            "tool_name": "query_signal_quality_snapshot",
+                            "arguments": {"quality": quality, "lookback": "6h", "equipment_type": "turbine"},
+                        }) for quality in ("BAD", "UNCERTAIN")
+                    ] if round_number == 0 else [self.message("The requested quality snapshots are complete.")]
+                else:
+                    output = [
+                        self.function("hydro_query", {
+                            "tool_name": "query_telemetry", "arguments": {"equipment_id": "TEST_T005"},
+                        })
+                    ] if round_number == 2 else [self.message("The supporting inventory check is complete.")]
             elif self.mode in ("quality_snapshot", "empty_quality_snapshot", "conditional_empty"):
                 output = [
                     self.function("hydro_query", {
@@ -1723,8 +1737,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tables, ())
         self.assertEqual(
             result.summary,
-            "No matching signal-quality rows were returned; no equipment was selected and no production writes "
-            "executed.",
+            "No matching signal-quality records were returned for the requested window, so no equipment could be "
+            "selected; this is an evidence gap, not proof that any turbine is healthy or faulty.",
         )
         self.assertTrue(any("90 expected signals; 90 had no reading" in item for item in result.limitations))
         self.assertFalse(any("model" in payload and "agent_reference" not in payload for payload in self.payloads))
@@ -1737,10 +1751,30 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.role for item in result.specialists], ["qa", "qa"])
         self.assertNotIn("hydro-rca-agent", self.calls)
         self.assertNotIn("hydro-work-order-agent", self.calls)
-        self.assertIn("no equipment was selected", result.summary)
+        self.assertIn("no equipment could be selected", result.summary)
         chief_events = [event for event in self.events if event["role"] == "supervisor"]
         self.assertTrue(any("conditional specialist step was skipped" in event["detail"].lower()
                             for event in chief_events))
+
+    async def test_empty_quality_with_supporting_tables_keeps_explanatory_summary(self):
+        self.mode = "conditional_empty_with_supporting_rows"
+        self.tools.quality_snapshot = True
+        self.tools.empty_quality_snapshot = True
+        self.tools.include_identity = True
+        self.request = self.request.model_copy(update={
+            "question": (
+                "Which turbines have BAD signal quality? Investigate the selected equipment, prepare an editable "
+                "inspection work-order draft only for an uncovered gap, and independently verify the result."
+            ),
+        })
+        result = await self.owner.run(self.request)
+        self.assertGreater(len(result.tables), 0)
+        self.assertNotRegex(result.summary, r"^Returned \d+ source rows")
+        self.assertIn("no equipment could be selected", result.summary)
+        self.assertIn("no work-order gap review", result.summary)
+        self.assertIn("no production write was executed", result.summary)
+        audit = RunJournal(self.root / str(self.request.run_id) / "receipts").read("evidence")
+        self.assertEqual(audit["answer_projection"]["response_id"], "deterministic-empty-quality")
 
     async def test_empty_independent_population_does_not_skip_sibling_population(self):
         self.mode = "independent_empty"

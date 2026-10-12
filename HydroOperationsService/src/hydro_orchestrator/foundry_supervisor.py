@@ -1800,6 +1800,8 @@ class FoundrySupervisor:
             "query_telemetry", "query_signal_quality_snapshot", "query_turbine_temperature_snapshot",
             "query_station_power", "run_kql",
         )]
+        quality_snapshots = [item for item in telemetry if item.tool == "query_signal_quality_snapshot"]
+        other_telemetry = [item for item in telemetry if item.tool != "query_signal_quality_snapshot"]
         work_reads = [
             item for item in self.evidence.values()
             if item.tool == "query_work_backlog"
@@ -1822,8 +1824,19 @@ class FoundrySupervisor:
                     total += len(rows)
             return total
 
+        empty_quality_snapshot = bool(quality_snapshots) and not row_count(quality_snapshots)
         if telemetry:
-            if row_count(telemetry):
+            if empty_quality_snapshot:
+                sentences.append(
+                    "No matching signal-quality records were returned for the requested window, so no equipment "
+                    "could be selected; this is an evidence gap, not proof that any turbine is healthy or faulty."
+                )
+                if row_count(other_telemetry):
+                    sentences.append(
+                        "Other supporting telemetry records were returned and remain visible below, but they do "
+                        "not replace the empty signal-quality population used for equipment selection."
+                    )
+            elif row_count(telemetry):
                 sentences.append(
                     "Telemetry evidence was returned for the requested scope and is preserved in the "
                     "source-annotated tables with its measurement times."
@@ -1869,6 +1882,11 @@ class FoundrySupervisor:
             sentences.append(
                 "No editable work-order draft was staged unless a source-verified uncovered issue appears in "
                 "the supporting findings."
+            )
+        elif empty_quality_snapshot and "work-order" in request.required_specialists:
+            sentences.append(
+                "Without a grounded equipment selection, no work-order gap review or editable draft was possible, "
+                "and no production write was executed."
             )
         if request.charts_requested and source_plan.charts:
             sentences.append("The requested chart is derived from the same verified rows shown in its source table.")
@@ -2151,7 +2169,7 @@ class FoundrySupervisor:
         summary = (
             "No matching signal-quality rows were returned; no equipment was selected and no production writes "
             "executed."
-            if not tables and empty_quality_snapshots
+            if not use_projected_summary and not tables and empty_quality_snapshots
             else (
                 with_production_write_status(plan.summary, write_reviewed)
                 if use_projected_summary
@@ -2374,13 +2392,27 @@ class FoundrySupervisor:
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
                         return
                     projection: ProjectionReceipt | None = None
-                    source_answer = owner.source_bound_answer(request)
                     deterministic_empty_quality = any(
                         item.tool == "query_signal_quality_snapshot" and item.result.get("row_count") == 0
                         for item in owner.evidence.values()
                     )
-                    if source_answer is not None and deterministic_empty_quality:
-                        plan, result = source_answer
+                    if deterministic_empty_quality:
+                        plan = owner.deterministic_explanatory_plan(request)
+                        projection = ProjectionReceipt(
+                            response_id="deterministic-empty-quality",
+                            model="application",
+                            duration_ms=0,
+                            input_digest=sha256(_encoded({
+                                "request": request.model_dump(mode="json"),
+                                "evidence": [item.receipt() for item in owner.evidence.values()],
+                                "specialists": [item.model_dump(mode="json") for item in owner.specialists],
+                            })).hexdigest(),
+                        )
+                        journal.save("answer_projection:deterministic-empty-quality", {
+                            "text": plan.summary,
+                            **projection.model_dump(mode="json"),
+                        })
+                        result = owner.answer(request, plan, use_projected_summary=True)
                     else:
                         try:
                             parsed_plan = AnswerPlan.model_validate_json(turn.text)
