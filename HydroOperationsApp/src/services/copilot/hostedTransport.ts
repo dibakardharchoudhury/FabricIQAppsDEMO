@@ -121,6 +121,7 @@ export class HostedTransport {
   private readonly source: HostedSource
   private readonly credentials: () => Promise<SourceTokens>
   private readonly fetcher: typeof fetch
+  private readonly streamLivenessMs: number
   private previousRunId: string | undefined
   private interruptedRunId: string | undefined
 
@@ -128,6 +129,7 @@ export class HostedTransport {
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
     credentials: () => Promise<SourceTokens>,
     fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init),
+    streamLivenessMs = 45_000,
   ) {
     const project = new URL(projectEndpoint)
     const endpoint = new URL(invocationUrl)
@@ -139,13 +141,15 @@ export class HostedTransport {
       || !endpoint.pathname.endsWith('/invocations')
       || endpoint.username || endpoint.password || endpoint.hash
       || [...endpoint.searchParams.keys()].some(key => key !== 'api-version')
-      || source.generation !== 2 || !/^[a-f0-9]{64}$/.test(source.configuration_digest)) {
+      || source.generation !== 2 || !/^[a-f0-9]{64}$/.test(source.configuration_digest)
+      || !Number.isInteger(streamLivenessMs) || streamLivenessMs < 1_000) {
       throw new Error('Hosted transport requires an explicit same-project invocation URL and verified v2 source identity.')
     }
     this.endpoint = endpoint
     this.source = { ...source }
     this.credentials = credentials
     this.fetcher = fetcher
+    this.streamLivenessMs = streamLivenessMs
   }
 
   reset() {
@@ -182,7 +186,23 @@ export class HostedTransport {
           let buffer = ''
           let answer: Record<string, unknown> | undefined
           while (true) {
-            const { value, done } = await reader.read()
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const stalled = new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(
+                () => reject(new Error('Hosted streaming invocation heartbeat was interrupted.')),
+                this.streamLivenessMs,
+              )
+            })
+            let chunk: ReadableStreamReadResult<Uint8Array>
+            try {
+              chunk = await Promise.race([reader.read(), stalled])
+            } catch (error) {
+              await reader.cancel().catch(() => undefined)
+              throw error
+            } finally {
+              if (timer !== undefined) clearTimeout(timer)
+            }
+            const { value, done } = chunk
             buffer += decoder.decode(value, { stream: !done })
             const lines = buffer.split('\n')
             buffer = lines.pop() ?? ''

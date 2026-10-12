@@ -23,7 +23,10 @@ from starlette.requests import Request
 from hydro_orchestrator.contracts import SourceIdentity, WorkOrderDraft, utc_now
 from hydro_orchestrator.live_sources import FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
 from hydro_orchestrator.foundry_supervisor import ChatAnswer, FoundrySupervisor, NativeBinding, RunJournal
-from hydro_orchestrator.service import ChatInput, RuntimeConfiguration, create_delegated_app, create_fabric_delegated_app, create_runtime_app, decide_work_order, normalized_chat_input
+from hydro_orchestrator.service import (
+    ChatInput, RuntimeConfiguration, create_delegated_app, create_fabric_delegated_app, create_runtime_app,
+    decide_work_order, interrupted_worker_failure, normalized_chat_input,
+)
 from hydro_orchestrator.source_auth import (
     DelegatedTokens, SourceAuthPolicy, SourceAuthorizationError, SourceTokenVerifier,
 )
@@ -32,6 +35,36 @@ from hydro_orchestrator.__main__ import prepare_runtime_user
 TENANT = UUID("11111111-1111-4111-8111-111111111111")
 SPA = UUID("22222222-2222-4222-8222-222222222222")
 USER = UUID("33333333-3333-4333-8333-333333333333")
+
+
+class WorkerRecoveryTests(unittest.TestCase):
+    def test_replacement_worker_fails_only_a_verified_orphaned_admission(self):
+        run_id = uuid4()
+        source = SourceIdentity(
+            tenant_id=TENANT,
+            workspace_id=UUID("44444444-4444-4444-8444-444444444444"),
+            ontology_id=UUID("55555555-5555-4555-8555-555555555555"),
+            generation=2,
+            configuration_digest="a" * 64,
+        )
+        admission = {
+            "source": source.model_dump(mode="json"),
+            "requested_at": "2026-10-12T09:00:00Z",
+            "worker_instance_id": "original-worker",
+        }
+        failure = interrupted_worker_failure(run_id, source, admission, "replacement-worker")
+        self.assertIsNotNone(failure)
+        assert failure is not None
+        self.assertEqual(failure["category"], "worker_interrupted")
+        self.assertIsNone(interrupted_worker_failure(run_id, source, admission, "original-worker"))
+        self.assertIsNone(interrupted_worker_failure(run_id, source, {}, "replacement-worker"))
+        with self.assertRaises(ValueError):
+            interrupted_worker_failure(
+                run_id,
+                source,
+                {**admission, "source": {**source.model_dump(mode="json"), "workspace_id": "foreign"}},
+                "replacement-worker",
+            )
 
 
 class RuntimeUserTests(unittest.TestCase):

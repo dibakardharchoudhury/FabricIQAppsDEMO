@@ -124,6 +124,35 @@ test('stream interruption recovers the exact server run without starting a dupli
   assert.deepEqual(operations, ['run', 'result'])
 })
 
+test('missing stream heartbeat enters exact-run recovery without imposing an answer deadline', async () => {
+  const operations: string[] = []
+  const encoder = new TextEncoder()
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
+    const body = JSON.parse(String(init?.body))
+    operations.push(body.operation)
+    if (body.operation === 'result') {
+      assert.equal(body.run_id, 'run-stalled-stream')
+      return response({ status: 'completed', answer: { ...reply(), run_id: 'run-stalled-stream' } })
+    }
+    let sent = false
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(encoder.encode(`${JSON.stringify({
+            type: 'run', run_id: 'run-stalled-stream', source,
+          })}\n`))
+          return
+        }
+        return new Promise(() => {})
+      },
+    }), { headers: { 'Content-Type': 'application/x-ndjson' } })
+  }, 1_000)
+  const answer = await client.run({ question: 'Recover a stalled stream.' }, () => {})
+  assert.equal(answer.runId, 'run-stalled-stream')
+  assert.deepEqual(operations, ['run', 'result'])
+})
+
 test('persisted failure after stream interruption remains an explicit failed run', async () => {
   const encoder = new TextEncoder()
   const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {

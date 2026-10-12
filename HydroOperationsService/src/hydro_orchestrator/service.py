@@ -35,6 +35,28 @@ from .foundry_rca import verified_project_endpoint
 
 logger = logging.getLogger(__name__)
 STREAM_HEARTBEAT_SECONDS = 15.0
+WORKER_INSTANCE_ID = secrets.token_hex(16)
+
+
+def interrupted_worker_failure(
+    run_id: UUID, source: SourceIdentity, admission: object, worker_instance_id: str,
+) -> dict[str, object] | None:
+    if not isinstance(admission, dict):
+        return None
+    admitted_worker = admission.get("worker_instance_id")
+    admitted_source = admission.get("source")
+    if not isinstance(admitted_worker, str) or admitted_worker == worker_instance_id:
+        return None
+    if admitted_source != source.model_dump(mode="json"):
+        raise ValueError("Persisted admission changed its verified source identity.")
+    return {
+        "run_id": str(run_id),
+        "status": "failed",
+        "category": "worker_interrupted",
+        "source": source.model_dump(mode="json"),
+        "requested_at": admission.get("requested_at"),
+        "failed_at": utc_now().isoformat(),
+    }
 
 
 class LocalRunner:
@@ -453,8 +475,16 @@ def create_delegated_app(
                         "audit_url": "/invocations", "presentation": client_presentation(answer),
                     })
                     return {"status": "completed", "answer": completed.model_dump(mode="json")}
-                if journal.read("admission") is None and journal.read("request") is None:
+                admission = journal.read("admission")
+                if admission is None and journal.read("request") is None:
                     raise HTTPException(404, "No run is available for this signed-in user and source.")
+                interrupted = interrupted_worker_failure(
+                    body.run_id, source, admission, WORKER_INSTANCE_ID,
+                )
+                if interrupted is not None:
+                    journal.save("failure", interrupted)
+                    logger.error("Delegated run %s lost its original hosted worker.", body.run_id)
+                    return {"status": "failed", "failure": interrupted}
                 return JSONResponse(
                     {"status": "running", "run_id": str(body.run_id)},
                     status_code=202,
@@ -477,6 +507,7 @@ def create_delegated_app(
                 RunJournal(state / str(chat.run_id) / "receipts").save("admission", {
                     "run_id": str(chat.run_id), "source": source.model_dump(mode="json"),
                     "requested_at": chat.requested_at.isoformat(),
+                    "worker_instance_id": WORKER_INSTANCE_ID,
                 })
                 stream_credential = credential
                 credential = None
