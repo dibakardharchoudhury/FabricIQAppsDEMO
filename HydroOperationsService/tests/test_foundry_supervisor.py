@@ -21,7 +21,8 @@ from hydro_orchestrator.foundry_supervisor import (
     AgentVersion, AnswerPlan, ChatRequest, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal,
     SpecialistResult, ToolEvidence, operation_skill_guidance, rca_answer_limitations, rca_reference_examples,
     safe_exception_signature, canonical_source_arguments, _bounded_citation_fragments, _native_equipment_ids,
-    _native_markdown_tables, _native_markdown_tables_from_payload, with_production_write_status,
+    _native_markdown_tables, _native_markdown_tables_from_payload, normalize_filter_conjunctions,
+    with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
@@ -162,6 +163,31 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    def test_redundant_filter_conjunctions_are_normalized_without_changing_conditions(self):
+        conditions = [
+            {"column": "status", "op": "neq", "value": "Completed"},
+            {"column": "status", "op": "neq", "value": "Cancelled"},
+        ]
+        self.assertEqual(
+            normalize_filter_conjunctions({
+                "entity": "work_orders",
+                "where": [conditions[0], " AND ", conditions[1]],
+            }),
+            {"entity": "work_orders", "where": conditions},
+        )
+        self.assertEqual(
+            normalize_filter_conjunctions({"where": [[conditions[0]], conditions[1]]}),
+            {"where": conditions},
+        )
+        self.assertEqual(
+            normalize_filter_conjunctions({"where": conditions[0]}),
+            {"where": [conditions[0]]},
+        )
+        invalid = {"where": [conditions[0], "or", conditions[1]]}
+        self.assertIs(normalize_filter_conjunctions(invalid), invalid)
+        invalid_null = {"where": [conditions[0], None, conditions[1]]}
+        self.assertIs(normalize_filter_conjunctions(invalid_null), invalid_null)
+
     def test_all_roles_receive_nonempty_bounded_operation_skills(self):
         expected = {
             "supervisor": {"source-reconciliation", "grounded-presentation"},

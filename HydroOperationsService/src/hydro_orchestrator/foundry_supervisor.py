@@ -338,6 +338,36 @@ def canonical_source_arguments(request: ChatRequest, arguments: dict[str, object
     return canonical
 
 
+def normalize_filter_conjunctions(arguments: dict[str, object]) -> dict[str, object]:
+    where = arguments.get("where")
+    if isinstance(where, dict):
+        return {**arguments, "where": [where]}
+    if not isinstance(where, list) or not where:
+        return arguments
+
+    conditions: list[dict[object, object]] = []
+    changed = False
+
+    def collect(items: list[object]) -> bool:
+        nonlocal changed
+        for item in items:
+            if isinstance(item, dict):
+                conditions.append(item)
+            elif isinstance(item, str) and item.strip().lower() == "and":
+                changed = True
+            elif isinstance(item, list) and item:
+                changed = True
+                if not collect(item):
+                    return False
+            else:
+                return False
+        return True
+
+    if not collect(where) or not changed:
+        return arguments
+    return {**arguments, "where": conditions}
+
+
 class NativeBinding(Contract):
     source: SourceIdentity
     connections: dict[NativeSource, str]
@@ -1061,6 +1091,13 @@ class FoundrySupervisor:
 
         async def query(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
             arguments = canonical_source_arguments(request, arguments)
+            normalized_arguments = normalize_filter_conjunctions(arguments)
+            if normalized_arguments != arguments:
+                logger.warning(
+                    "Normalized redundant AND separators in Foundry %s %s filter arguments.",
+                    role, tool_name,
+                )
+                arguments = normalized_arguments
             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
             specification = next((tool for tool in catalog.tools if tool.name == tool_name), None)
             if specification is None:
@@ -1068,9 +1105,17 @@ class FoundrySupervisor:
             errors = list(Draft202012Validator(specification.parameters).iter_errors(json.loads(_encoded(arguments))))
             if errors:
                 fields = ", ".join(str(key) for key in errors[0].absolute_path) or "arguments"
+                filter_shape = (
+                    ' The "where" field is an array of condition objects and already uses AND semantics; '
+                    'do not insert "and" strings between objects.'
+                    if errors[0].validator == "type"
+                    and list(errors[0].absolute_path)[:1] == ["where"]
+                    else ""
+                )
                 raise ToolInputError(
                     f"Invalid {tool_name} {fields}: {errors[0].validator} constraint failed. "
                     "Correct arguments using the exact supplied JSON schema; do not add aliases or wrappers."
+                    f"{filter_shape}"
                 )
             parsed = await self.bridge.call({"action": "validate_hydro_query",
                                             "role": role,
