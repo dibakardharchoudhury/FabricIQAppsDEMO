@@ -18,8 +18,9 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, ChatRequest, FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS, FoundryAgent, FoundrySupervisor,
-    HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence, operation_skill_guidance,
+    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+    FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
+    operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, safe_exception_signature, canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
@@ -958,6 +959,19 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             call.kwargs["timeout"] == FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS
             for call in agent_factory.call_args_list
         ))
+
+    def test_foundry_project_client_disables_hidden_sdk_retries(self):
+        client = BoundedAIProjectClient(endpoint=ENDPOINT, credential=self.credential)
+        with patch(
+            "azure.ai.projects.aio.AIProjectClient.get_openai_client",
+            return_value=self.openai,
+        ) as get_openai_client:
+            self.assertIs(client.get_openai_client(), self.openai)
+        self.assertEqual(get_openai_client.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(
+            get_openai_client.call_args.kwargs["timeout"],
+            FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+        )
 
     def test_explicit_resolved_equipment_seeds_conditional_handoffs_when_reads_are_empty(self):
         request = self.request.model_copy(update={

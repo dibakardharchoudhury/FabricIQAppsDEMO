@@ -19,6 +19,7 @@ from agent_framework import (
     MiddlewareTermination, WorkflowBuilder, WorkflowContext, WorkflowViz, function_middleware, handler,
 )
 from agent_framework.foundry import FoundryAgent, FoundryChatClient
+from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials_async import AsyncTokenCredential
 from filelock import FileLock
 from jsonschema import Draft202012Validator
@@ -42,6 +43,13 @@ ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "work-order": ("maintenance-planning", "work-order-review"),
     "fabric-iq": ("source-reconciliation",),
 }
+
+
+class BoundedAIProjectClient(AIProjectClient):
+    def get_openai_client(self, *, agent_name: str | None = None, **kwargs: object):  # type: ignore[no-untyped-def]
+        kwargs.setdefault("max_retries", 0)
+        kwargs.setdefault("timeout", FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS)
+        return super().get_openai_client(agent_name=agent_name, **kwargs)
 
 
 def _has_native_domain_evidence(value: object) -> bool:
@@ -1530,9 +1538,10 @@ class FoundrySupervisor:
                     or invocation.function.name == "propose_work_order"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
+        project_client = BoundedAIProjectClient(endpoint=self.endpoint, credential=self.credential)
         agent = FoundryAgent(
-            project_endpoint=self.endpoint, agent_name=version.name, agent_version=version.version,
-            credential=self.credential, tools=functions, timeout=FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+            project_client=project_client, agent_name=version.name, agent_version=version.version,
+            tools=functions, timeout=FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 3 if role == "supervisor" else 12,
@@ -1543,7 +1552,7 @@ class FoundrySupervisor:
             },
         )
         started = perf_counter()
-        async with agent:
+        async with project_client, agent:
             options: ChatOptions = {
                 "store": False,
                 "max_tokens": 8192 if role == "supervisor" else 4096,
@@ -2101,10 +2110,11 @@ class FoundrySupervisor:
             "when no chart was requested. When a chart was requested, select only the candidate that exactly matches "
             "the operator's requested grouping and measure; never include merely available extra charts."
         )
+        project_client = BoundedAIProjectClient(endpoint=self.endpoint, credential=self.credential)
         agent = Agent(
             name="hydro_operator_answer_projection",
             client=FoundryChatClient(
-                project_endpoint=self.endpoint, model=version.model, credential=self.credential,
+                project_client=project_client, model=version.model,
                 function_invocation_configuration={"terminate_on_unknown_calls": True, "max_iterations": 1},
             ),
             instructions=narrative_instructions,
@@ -2125,7 +2135,7 @@ class FoundrySupervisor:
         narrative: NarrativeProjection | None = None
         receipt: ProjectionReceipt | None = None
         invalid_output = ""
-        async with agent:
+        async with project_client, agent:
             for attempt in range(2):
                 attempt_context = context if attempt == 0 else {
                     **context,
