@@ -1354,10 +1354,20 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 "equipment_id": "EQUIP_RTI_T003", "tag": "vibration_d",
             }]},
         )
-        self.owner.evidence = {item.id: item for item in (quality, backlog, identity)}
+        proposal = ToolEvidence(
+            id="proposal", source=self.request.source, tool="propose_work_order",
+            arguments={}, completed_at=utc_now(), result={
+                "existing_work": [{
+                    "workOrderNumber": "WO-2829", "equipmentId": "EQUIP_RTI_T003", "status": "Ready",
+                }],
+            },
+        )
+        self.owner.evidence = {item.id: item for item in (quality, backlog, identity, proposal)}
         request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
 
         plan = self.owner.deterministic_explanatory_plan(request)
+        self.assertEqual(len(plan.tables), 1)
+        self.owner.evidence.pop(proposal.id)
         answer = self.owner.answer(request, plan, use_projected_summary=True)
 
         self.assertEqual(len(answer.tables), 1)

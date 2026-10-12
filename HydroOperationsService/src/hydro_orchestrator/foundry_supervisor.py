@@ -2114,6 +2114,9 @@ class FoundrySupervisor:
         work_rows: dict[str, SourceRow] = {}
         work_coverage = False
         for receipt in self.evidence.values():
+            if receipt.tool == "propose_work_order":
+                consumed_evidence_ids.add(receipt.id)
+                continue
             collections = [("rows", receipt.result.get("rows"))]
             if receipt.tool == "query_work_backlog":
                 collections.append(("open_work_orders", receipt.result.get("open_work_orders")))
