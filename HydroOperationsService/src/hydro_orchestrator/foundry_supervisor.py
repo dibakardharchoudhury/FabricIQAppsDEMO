@@ -2227,6 +2227,27 @@ class FoundrySupervisor:
                 rows=tuple(planned_rows),
             ))
             consumed_evidence_ids.update(reconciliation_evidence_ids)
+            reconciled_equipment = {
+                value
+                for quality in quality_rows.values()
+                for value in (quality[3].get("equipment_id"), quality[3].get("equipmentId"))
+                if isinstance(value, str) and value
+            }
+            for receipt in self.evidence.values():
+                if receipt.tool != "query_assets":
+                    continue
+                rows = receipt.result.get("rows")
+                if not isinstance(rows, list) or not rows:
+                    continue
+                equipment = {
+                    value
+                    for row in rows
+                    if isinstance(row, dict)
+                    for value in (row.get("equipment_id"), row.get("equipmentId"))
+                    if isinstance(value, str) and value
+                }
+                if equipment and equipment.issubset(reconciled_equipment):
+                    consumed_evidence_ids.add(receipt.id)
         for evidence_index, receipt in enumerate(self.evidence.values()):
             if receipt.id in consumed_evidence_ids:
                 continue

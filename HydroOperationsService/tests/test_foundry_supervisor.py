@@ -1347,7 +1347,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         )
-        self.owner.evidence = {item.id: item for item in (quality, backlog)}
+        identity = ToolEvidence(
+            id="identity", source=self.request.source, tool="query_assets",
+            arguments={"entity": "instruments"}, completed_at=utc_now(), result={"rows": [{
+                "instrument_id": "INST_T003_VIBRATION_D", "opcua_node_id": "n3",
+                "equipment_id": "EQUIP_RTI_T003", "tag": "vibration_d",
+            }]},
+        )
+        self.owner.evidence = {item.id: item for item in (quality, backlog, identity)}
         request = self.request.model_copy(update={"question": "Summarize the verified evidence."})
 
         plan = self.owner.deterministic_explanatory_plan(request)
