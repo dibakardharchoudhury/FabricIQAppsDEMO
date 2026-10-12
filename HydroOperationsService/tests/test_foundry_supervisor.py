@@ -850,9 +850,12 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             }, self.message("Native result.")]
         else:
             raise AssertionError(name)
+        incomplete = self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
         return httpx.Response(200, json={
             "id": f"resp_{name}_{round_number}", "object": "response", "created_at": 1,
-            "model": "test", "status": "completed", "output": output, "parallel_tool_calls": False,
+            "model": "test", "status": "incomplete" if incomplete else "completed",
+            "incomplete_details": {"reason": "max_output_tokens"} if incomplete else None,
+            "output": output, "parallel_tool_calls": False,
             "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
         })
 
@@ -897,6 +900,23 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         serialized = json.dumps(self.events)
         self.assertNotIn("test-not-a-real-token", serialized)
         self.assertNotIn("rows", serialized)
+
+    async def test_incomplete_qa_completion_gets_one_bounded_evidence_only_retry(self):
+        self.mode = "qa_incomplete_once"
+        request = self.request.model_copy(update={
+            "question": "Read and verify current telemetry.",
+            "required_specialists": ("qa",),
+            "required_specialist_steps": {"qa": 1},
+        })
+        self.seed(request)
+        owner = self.make_owner()
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        self.assertEqual(self.calls["hydro-qa-agent"], 6)
+        self.assertEqual(self.tools.calls, 1)
+        repair_payload = json.dumps(self.payloads)
+        self.assertIn("prior completion was incomplete", repair_payload)
+        self.assertIn("Do not call another source tool", repair_payload)
 
     async def test_rca_prose_gets_one_bounded_structured_completion_repair(self):
         self.mode = "rca_prose_once"

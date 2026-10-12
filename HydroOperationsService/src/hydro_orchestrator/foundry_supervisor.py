@@ -1545,7 +1545,26 @@ class FoundrySupervisor:
                 except APITimeoutError as error:
                     raise SourceFailure(f"Foundry {role} invocation exceeded an upstream service deadline.") from error
                 self.healthy(request)
-                if not response.response_id or response.finish_reason in ("length", "content_filter"):
+                if not response.response_id or response.finish_reason == "length":
+                    if completion_attempt == 0 and role != "supervisor":
+                        logger.warning(
+                            "Foundry %s returned an incomplete completion; requesting one bounded evidence-only "
+                            "completion repair.",
+                            role,
+                        )
+                        active_context = {
+                            **context,
+                            "evidence": self.model_evidence(role, targeted=True),
+                            "completed_specialists": self.model_specialists(role, compact=True),
+                            "completion_repair": (
+                                "The prior completion was incomplete after its source calls. Use only the captured "
+                                "immutable evidence below and finish the assigned factual response now. Do not call "
+                                "another source tool, broaden scope, or repeat completed work."
+                            ),
+                        }
+                        continue
+                    raise SourceFailure("Foundry response has no completed, inspectable service identity.")
+                if response.finish_reason == "content_filter":
                     raise SourceFailure("Foundry response has no completed, inspectable service identity.")
                 for message in response.messages:
                     if any(content.type in ("error", "function_approval_request") for content in message.contents):
