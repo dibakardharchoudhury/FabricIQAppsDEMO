@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from jsonschema import Draft202012Validator
 
 from hydro_orchestrator.contracts import ReviewRequest, WorkOrderDraft, WorkOrderEdits, utc_now
-from hydro_orchestrator.foundry_supervisor import ChatRequest, SourceCatalog
+from hydro_orchestrator.foundry_supervisor import ChatRequest, SourceCatalog, governed_datasets
 from hydro_orchestrator.live_sources import Discovery, FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
 from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, wait_for
@@ -249,6 +249,17 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         sources = reader()
         sources.bridge = NodeSourceBridge()
         catalog = SourceCatalog.model_validate(await FabricBackendTools(sources).catalog(self.chat(sources)))
+        datasets = governed_datasets(catalog.context)
+        self.assertEqual(
+            set(datasets),
+            {
+                "facilities", "equipment", "instruments", "telemetry", "signal_quality",
+                "temperature", "station_power", "work_orders", "work_backlog", "inspections",
+                "notifications", "spare_parts", "asset_models", "native_claims",
+            },
+        )
+        self.assertTrue(datasets["station_power"].limitations)
+        self.assertIn("grouped_by_facility_bar", datasets["station_power"].presentations)
         self.assertEqual({tool.name for tool in catalog.tools}, FabricBackendTools.supported_tools)
         schema = next(tool.parameters for tool in catalog.tools if tool.name == "query_operations")
         validator = Draft202012Validator(schema)

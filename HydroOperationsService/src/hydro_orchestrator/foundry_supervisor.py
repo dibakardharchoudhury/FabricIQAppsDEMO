@@ -424,6 +424,7 @@ class DomainDatasetDefinition(Contract):
     entity: str = Field(min_length=1, max_length=120)
     identity_fields: tuple[str, ...] = Field(alias="identityFields", min_length=1, max_length=4)
     presentations: tuple[str, ...] = Field(min_length=1, max_length=16)
+    limitations: tuple[str, ...] = Field(default=(), max_length=8)
 
 
 def governed_datasets(context: dict[str, object]) -> dict[str, DomainDatasetDefinition]:
