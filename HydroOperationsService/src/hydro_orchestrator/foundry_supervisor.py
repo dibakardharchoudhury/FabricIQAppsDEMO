@@ -223,6 +223,13 @@ def initial_equipment_selection(request: "ChatRequest") -> set[str]:
     }
 
 
+def requests_unsent_message(question: str) -> bool:
+    normalized = re.sub(r"\s+", " ", question.lower())
+    return "unsent" in normalized and any(
+        term in normalized for term in ("notification", "email", "message", "draft")
+    )
+
+
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -2052,6 +2059,22 @@ class FoundrySupervisor:
                 "The requested source checks completed, and their verified records, timestamps and limitations "
                 "are preserved below for review."
             )
+        if requests_unsent_message(request.question):
+            observations = " ".join(sentences[:3])
+            evidence_gaps = next(
+                (item for item in source_plan.limitations if "gap" in item.lower()),
+                "No independent inspection or physical-condition evidence was provided.",
+            )
+            summary = (
+                "UNSENT NOTIFICATION DRAFT\n\n"
+                f"Verified observations: {observations} "
+                f"Evidence gaps: {evidence_gaps} "
+                "Recipient: not specified. Fault statement: no conclusion beyond the verified observations above. "
+                "Status: draft only; no send or work-order save action is included."
+            )
+            if len(summary) > 1200:
+                summary = summary[:1196].rsplit(" ", 1)[0] + "..."
+            return source_plan.model_copy(update={"summary": summary})
         summary = " ".join(sentences[:5])
         if len(summary) > 800:
             summary = summary[:796].rsplit(" ", 1)[0] + "..."
@@ -2553,10 +2576,16 @@ class FoundrySupervisor:
                         item.tool == "query_signal_quality_snapshot" and item.result.get("row_count") == 0
                         for item in owner.evidence.values()
                     )
-                    if deterministic_empty_quality:
+                    deterministic_unsent_message = requests_unsent_message(request.question)
+                    if deterministic_empty_quality or deterministic_unsent_message:
                         plan = owner.deterministic_explanatory_plan(request)
+                        projection_id = (
+                            "deterministic-unsent-message"
+                            if deterministic_unsent_message
+                            else "deterministic-empty-quality"
+                        )
                         projection = ProjectionReceipt(
-                            response_id="deterministic-empty-quality",
+                            response_id=projection_id,
                             model="application",
                             duration_ms=0,
                             input_digest=sha256(_encoded({
@@ -2565,7 +2594,7 @@ class FoundrySupervisor:
                                 "specialists": [item.model_dump(mode="json") for item in owner.specialists],
                             })).hexdigest(),
                         )
-                        journal.save("answer_projection:deterministic-empty-quality", {
+                        journal.save(f"answer_projection:{projection_id}", {
                             "text": plan.summary,
                             **projection.model_dump(mode="json"),
                         })

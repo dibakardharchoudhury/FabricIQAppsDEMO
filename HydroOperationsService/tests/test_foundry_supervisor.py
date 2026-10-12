@@ -23,7 +23,7 @@ from hydro_orchestrator.foundry_supervisor import (
     rca_answer_limitations, rca_reference_examples, safe_exception_signature, canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
-    updated_equipment_selection,
+    requests_unsent_message, updated_equipment_selection,
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
@@ -365,6 +365,32 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.tables[0].title, "query_operations empty result")
         self.assertEqual(answer.tables[0].rows[0].values["row_count"], 0)
         self.assertNotIn("No production writes executed", answer.summary)
+
+    def test_unsent_notification_has_deterministic_message_contract(self):
+        receipt = ToolEvidence(
+            id="work-0", source=SOURCE, tool="query_operations",
+            arguments={"entity": "work_orders", "where": [
+                {"column": "equipmentId", "op": "eq", "value": "TEST_T005"},
+            ]},
+            completed_at=utc_now(),
+            result={
+                "rows": [], "row_count": 0, "total_matched": 0,
+                "read_completed_at_utc": "2026-10-11T13:20:00Z", "truncated": False,
+            },
+            work_coverage_equipment_ids=("TEST_T005",),
+            limitations=("RCA evidence gaps: independent measurement and inspection evidence.",),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        request = self.request.model_copy(update={
+            "question": "Prepare a concise unsent notification. Do not send it or save a work order.",
+        })
+        plan = self.owner.deterministic_explanatory_plan(request)
+        self.assertTrue(requests_unsent_message(request.question))
+        self.assertIn("UNSENT NOTIFICATION DRAFT", plan.summary)
+        self.assertIn("Verified observations:", plan.summary)
+        self.assertIn("Evidence gaps:", plan.summary)
+        self.assertIn("Recipient: not specified.", plan.summary)
+        self.assertIn("no send or work-order save action", plan.summary)
 
     def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
         specialist = SpecialistResult(
