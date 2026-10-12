@@ -6,7 +6,36 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## October 11 v74 current release
+## October 12 v76 recovery release
+
+Hosted Agent v76 is active from commit `7b09ed1` on immutable image
+`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
+(`validated-20261012063154`, ACR run `dt2e`). Fabric app `1.0.872` was
+published from the same commit. The canonical app deployment returned
+`SUCCESS`, preserved 39 SPA redirects, and passed AppBackend GraphQL/token
+preflight and POST-readiness checks. The runtime retains verified ontology
+generation 2 and `production_writes_enabled=true`; agent tools still cannot
+write SQL.
+
+The recovery contract now binds the server-assigned run ID in the first NDJSON
+frame. A browser disconnect no longer cancels the server run: execution
+continues in the same hosted session and persists either the certified answer
+or an explicit failure. The signed `result` operation is isolated by principal
+and verified source and returns running, completed or failed state for that
+exact run. The client renews delegated source leases while polling and never
+starts a replacement orchestration or retries a decision. Failed turns terminate
+active crew states, suppress success-shaped charts/suggestions/cards, and state
+that neither answer nor write outcome is certified. Battle execution is now
+capacity-safe and serial.
+
+Validation passed 170 backend tests plus 80 subtests, 387 application contracts,
+Pyright, TypeScript, ESLint, environment validation and production build.
+Authenticated live acceptance could not resume after deployment because the
+private Fabric host presented `Sign in required` and its sign-in popup did not
+complete silently. No CLI token or hosting/authentication bypass was used.
+Therefore the v76 ten-prompt matrix remains pending rather than accepted.
+
+## October 11 v74 historical release
 
 Hosted Agent v74 is active from commit `258b2e5` on immutable image
 `sha256:507a364ff9f8c4516f9de4a47a6f81145476d4a42fec123b87be446e21594aae`

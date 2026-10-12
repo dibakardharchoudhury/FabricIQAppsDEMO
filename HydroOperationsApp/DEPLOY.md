@@ -8,16 +8,17 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.803 (`5a47c24`)** with Hosted Agent v23.
-The October 9 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
-observed the assigned capacity Active, preserved all 39 redirects, verified
-GPT-5.6-sol agent definitions Chief v17, Gauge v16, Sleuth v18, Fixer v16 and
-Sparky v13, and passed AppBackend preflight/POST checks. Hosted Agent v23 uses
+Current deployed release: **1.0.872 (`7b09ed1`)** with Hosted Agent v76.
+The October 12 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
+observed the assigned capacity Active, preserved all 39 redirects, and passed
+AppBackend GraphQL/token preflight and POST checks. Hosted Agent v76 uses
 immutable image digest
-`sha256:733847fae112cba8743cc1caeb7570a19f49898056da3f46601039f027bcde67`.
-Hosting verification returned `protected-sign-in-gate`; the current release's
-signed-user source execution and ten-prompt acceptance matrix remain pending.
-Do not infer runtime acceptance from deployment or planner-only checks.
+`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
+from ACR run `dt2e`, retains verified ontology generation 2 and keeps the
+separately signed human-approved production-write path enabled. Hosting
+verification returned `protected-sign-in-gate`; the current release's
+signed-user ten-prompt acceptance matrix remains pending. Do not infer runtime
+acceptance from deployment or planner-only checks.
 
 The v23 runtime replaces the open-ended Chief tool loop with one schema-bound
 `plan_orchestration` call and bounded serial specialist execution. All ten canonical

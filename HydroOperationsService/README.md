@@ -4,7 +4,34 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## Current v74 release
+## Current v76 recovery release
+
+Hosted Agent v76 is active from commit `7b09ed1` on immutable image
+`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
+(`validated-20261012063154`, ACR run `dt2e`). It retains verified ontology
+generation 2 and the separately signed, human-approved production-write path.
+
+The release closes the browser-stream recovery gap without hiding source
+failures. The first NDJSON frame binds the server-assigned run ID; if the client
+disconnects, the same-session server run continues and persists its certified
+answer or failure. A same-principal, same-source `result` operation reports
+running state or returns that exact terminal receipt, and the SPA recovers it
+without starting another orchestration. Work-order decisions remain
+non-retryable. Persistent connection failure is rendered as an uncertified
+failed turn, active crew states terminate as errors, and charts, suggestions
+and approval cards are removed. Battle comparisons now always run serially to
+avoid shared Fabric/Foundry source pressure.
+
+Validation passed 170 backend tests plus 80 subtests under Node 24.21.0, Pyright
+with zero diagnostics, 387 application/source-contract tests, TypeScript,
+ESLint, environment validation and the production build. The Fabric app
+`1.0.872` from the same commit deployed through the canonical orchestrator,
+preserved 39 redirects and passed AppBackend GraphQL/token preflight and POST
+readiness. Authenticated ten-prompt acceptance is still pending because the
+private hosting session returned the protected sign-in gate after deployment;
+no CLI token or authentication bypass was used.
+
+## Historical v74 release
 
 Hosted Agent v74 is active from commit `258b2e5` on immutable image
 `sha256:507a364ff9f8c4516f9de4a47a6f81145476d4a42fec123b87be446e21594aae`
