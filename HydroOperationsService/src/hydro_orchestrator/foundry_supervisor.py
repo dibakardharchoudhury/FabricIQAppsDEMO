@@ -298,6 +298,29 @@ def exception_chain_contains(error: BaseException, expected: type[BaseException]
     return False
 
 
+def transient_native_failure(error: BaseException) -> str | None:
+    if exception_chain_contains(error, APITimeoutError):
+        return "timeout"
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if (
+            isinstance(current, APIStatusError)
+            and current.status_code == 400
+            and getattr(current, "code", None) == "tool_user_error"
+        ):
+            detail = str(current)
+            if (
+                "Remote MCP server error while getting LRO task" in detail
+                and "completed without a reply to request with ID" in detail
+            ):
+                return "missing_mcp_reply"
+        seen.add(id(current))
+        cause = current.__cause__ or current.__context__
+        current = cause if isinstance(cause, BaseException) and cause is not current else None
+    return None
+
+
 def operation_skill_guidance(role: Role) -> tuple[dict[str, str], ...]:
     root = Path(__file__).resolve().parents[2] / "skills"
     paths = [root / name for name in ROLE_SKILLS[role]]
@@ -1639,21 +1662,23 @@ class FoundrySupervisor:
                     response = await agent.run(json.dumps(active_context), options=options)
                 except AgentFrameworkException as error:
                     logger.error("Foundry %s invocation failed (%s).", role, safe_exception_signature(error))
+                    transient_failure = transient_native_failure(error) if role == "fabric-iq" else None
                     if (
-                        role == "fabric-iq"
+                        transient_failure is not None
                         and completion_attempt == 0
-                        and exception_chain_contains(error, APITimeoutError)
                     ):
                         logger.warning(
-                            "Foundry native invocation timed out before a completed receipt; retrying the same "
-                            "selected source once."
+                            "Foundry native invocation had a transient %s before a completed receipt; retrying the "
+                            "same selected source once.",
+                            transient_failure,
                         )
                         active_context = {
                             **context,
                             "native_timeout_recovery": (
-                                "The prior selected-source invocation timed out before returning a completed "
-                                "receipt. Retry exactly the same assigned native-source request once. Do not use "
-                                "another connection, broaden the scope, or substitute direct tools."
+                                "The prior selected-source invocation ended with a transient upstream transport "
+                                "failure before returning a completed receipt. Retry exactly the same assigned "
+                                "native-source request once. Do not use another connection, broaden the scope, or "
+                                "substitute direct tools."
                             ),
                         }
                         continue

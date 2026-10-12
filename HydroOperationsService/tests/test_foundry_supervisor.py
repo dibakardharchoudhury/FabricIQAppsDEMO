@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 from azure.core.credentials import AccessToken
 from azure.identity.aio import AzureCliCredential
-from openai import APITimeoutError, AsyncOpenAI
+from openai import APITimeoutError, AsyncOpenAI, BadRequestError
 from agent_framework import FileCheckpointStorage
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
@@ -22,6 +22,7 @@ from hydro_orchestrator.foundry_supervisor import (
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, RunJournal, SpecialistResult, ToolEvidence,
     operation_skill_guidance,
     rca_answer_limitations, rca_reference_examples, requested_work_backlog_group, safe_exception_signature,
+    transient_native_failure,
     canonical_source_arguments,
     _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
@@ -642,6 +643,16 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.calls[name] = round_number + 1
         if self.mode == "native_timeout_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
             raise APITimeoutError(request=httpx.Request("POST", request.url))
+        if self.mode == "native_mcp_transport_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
+            response = httpx.Response(400, request=httpx.Request("POST", request.url))
+            raise BadRequestError(
+                (
+                    "Remote MCP server error while getting LRO task ask_ontology:test: Streamable HTTP POST "
+                    "response completed without a reply to request with ID: 3"
+                ),
+                response=response,
+                body={"code": "tool_user_error", "type": "invalid_request_error"},
+            )
         if name == "hydro-supervisor-agent":
             if self.mode == "supervisor_no_plan":
                 output = [self.message("I will coordinate the requested work.")]
@@ -1647,6 +1658,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("same assigned native-source request once", json.dumps(retry["input"]))
         self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_missing_mcp_reply_gets_one_bounded_same_source_retry(self):
+        self.mode = "native_mcp_transport_once"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    def test_ordinary_native_bad_request_is_not_retryable(self):
+        response = httpx.Response(400, request=httpx.Request("POST", ENDPOINT))
+        error = BadRequestError(
+            "Invalid native request.",
+            response=response,
+            body={"code": "tool_user_error", "type": "invalid_request_error"},
+        )
+        self.assertIsNone(transient_native_failure(error))
 
     async def test_grouped_work_backlog_uses_one_bounded_capability_correction(self):
         self.mode = "backlog_capability_omitted_once"
