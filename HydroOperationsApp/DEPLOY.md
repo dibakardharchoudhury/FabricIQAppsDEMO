@@ -8,17 +8,24 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.872 (`7b09ed1`)** with Hosted Agent v76.
+Current deployed release: **1.0.874 (`30ee16e`)** with Hosted Agent v77.
 The October 12 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
 observed the assigned capacity Active, preserved all 39 redirects, and passed
-AppBackend GraphQL/token preflight and POST checks. Hosted Agent v76 uses
+AppBackend GraphQL/token preflight and POST checks. Hosted Agent v77 uses
 immutable image digest
-`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
-from ACR run `dt2e`, retains verified ontology generation 2 and keeps the
+`sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`
+from ACR run `dt2f`, retains verified ontology generation 2 and keeps the
 separately signed human-approved production-write path enabled. Hosting
 verification returned `protected-sign-in-gate`; the current release's
 signed-user ten-prompt acceptance matrix remains pending. Do not infer runtime
 acceptance from deployment or planner-only checks.
+
+The current executable contract covers all ten canonical prompts and asserts
+required specialists, minimum invocation counts, native sources, chart intent
+and work-order priority. It also requires two Gauge phases when a request
+explicitly asks for a final independent check, preserving the documented
+Gauge -> Sleuth -> Fixer -> Gauge route without prompt-specific asset logic.
+All 388 application/source contracts passed before publication.
 
 The v23 runtime replaces the open-ended Chief tool loop with one schema-bound
 `plan_orchestration` call and bounded serial specialist execution. All ten canonical

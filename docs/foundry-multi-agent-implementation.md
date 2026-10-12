@@ -6,11 +6,11 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
-## October 12 v76 recovery release
+## October 12 v77 canonical-prompt release
 
-Hosted Agent v76 is active from commit `7b09ed1` on immutable image
-`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
-(`validated-20261012063154`, ACR run `dt2e`). Fabric app `1.0.872` was
+Hosted Agent v77 is active from commit `30ee16e` on immutable image
+`sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`
+(`validated-20261012070135`, ACR run `dt2f`). Fabric app `1.0.874` was
 published from the same commit. The canonical app deployment returned
 `SUCCESS`, preserved 39 SPA redirects, and passed AppBackend GraphQL/token
 preflight and POST-readiness checks. The runtime retains verified ontology
@@ -28,12 +28,16 @@ active crew states, suppress success-shaped charts/suggestions/cards, and state
 that neither answer nor write outcome is certified. Battle execution is now
 capacity-safe and serial.
 
-Validation passed 170 backend tests plus 80 subtests, 387 application contracts,
+Validation passed 170 backend tests plus 80 subtests, 388 application contracts,
 Pyright, TypeScript, ESLint, environment validation and production build.
+The executable contract now enumerates all ten canonical prompts and verifies
+specialist routing and minimum counts, native source selection, chart intent and
+work-order priority. Explicit final independent verification requires a second
+Gauge phase, preserving Gauge -> Sleuth -> Fixer -> Gauge.
 Authenticated live acceptance could not resume after deployment because the
 private Fabric host presented `Sign in required` and its sign-in popup did not
 complete silently. No CLI token or hosting/authentication bypass was used.
-Therefore the v76 ten-prompt matrix remains pending rather than accepted.
+Therefore the v77 ten-prompt matrix remains pending rather than accepted.
 
 ## October 11 v74 historical release
 

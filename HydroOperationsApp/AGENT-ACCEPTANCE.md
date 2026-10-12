@@ -10,12 +10,12 @@ Operator-ready prompts: [ten copy-and-paste multi-agent tests](AGENT-TEST-PROMPT
 Consolidated change history and architecture:
 [October 7-8 Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## October 12 v76 recovery release
+## October 12 v77 canonical-prompt release
 
-**Current Hosted Agent: v76 from source commit `7b09ed1`, image
-`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
-(`validated-20261012063154`, ACR run `dt2e`). Current Fabric app: `1.0.872`
-from `7b09ed1`.** Both deployments retain verified ontology generation 2 and
+**Current Hosted Agent: v77 from source commit `30ee16e`, image
+`sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`
+(`validated-20261012070135`, ACR run `dt2f`). Current Fabric app: `1.0.874`
+from `30ee16e`.** Both deployments retain verified ontology generation 2 and
 `production_writes_enabled=true`; no agent tool can directly write SQL.
 
 The release adds exact-run recovery for interrupted browser streams. The client
@@ -25,9 +25,13 @@ running state, the certified answer, or the persisted failure without creating
 a second run. Decisions are never automatically replayed. Failed turns now end
 active crew states as errors and remove charts, suggestions and proposals.
 Battle comparisons are always serial so shared Fabric/Foundry capacity does not
-distort the comparison or create avoidable upstream pressure.
+distort the comparison or create avoidable upstream pressure. The executable
+contract now enumerates all ten canonical prompts and verifies required
+specialists, minimum specialist counts, native sources, chart intent and
+work-order priority. An explicitly final independent check requires a second
+Gauge phase, enforcing the documented Gauge -> Sleuth -> Fixer -> Gauge route.
 
-Validation passed 170 backend tests plus 80 subtests, 387 application/source
+Validation passed 170 backend tests plus 80 subtests, 388 application/source
 contracts, Pyright, TypeScript, ESLint, environment validation and production
 build. The canonical Fabric deployment returned `SUCCESS`, preserved 39 SPA
 redirects, and passed GraphQL/token preflight and POST readiness.
@@ -35,7 +39,7 @@ redirects, and passed GraphQL/token preflight and POST readiness.
 The post-deployment browser opened the protected `Sign in required` gate. The
 existing session did not complete sign-in silently and no interactive prompt,
 CLI-token substitution or authentication bypass was used. Consequently, no
-v76 canonical prompt is recorded as a live pass here. The earlier v74/v75
+v77 canonical prompt is recorded as a live pass here. The earlier v74/v75
 Prompt 1-4 results remain historical evidence, and Prompts 5-10 plus final
 same-build reruns remain pending authenticated acceptance. No acceptance work
 order was approved or created.

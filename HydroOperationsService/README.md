@@ -4,11 +4,11 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## Current v76 recovery release
+## Current v77 canonical-prompt release
 
-Hosted Agent v76 is active from commit `7b09ed1` on immutable image
-`sha256:7f8567c94dd1b0fa60d8d003965fd68bc531d90e19d27d85ae4d44dc01dea103`
-(`validated-20261012063154`, ACR run `dt2e`). It retains verified ontology
+Hosted Agent v77 is active from commit `30ee16e` on immutable image
+`sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`
+(`validated-20261012070135`, ACR run `dt2f`). It retains verified ontology
 generation 2 and the separately signed, human-approved production-write path.
 
 The release closes the browser-stream recovery gap without hiding source
@@ -23,13 +23,19 @@ and approval cards are removed. Battle comparisons now always run serially to
 avoid shared Fabric/Foundry source pressure.
 
 Validation passed 170 backend tests plus 80 subtests under Node 24.21.0, Pyright
-with zero diagnostics, 387 application/source-contract tests, TypeScript,
+with zero diagnostics, 388 application/source-contract tests, TypeScript,
 ESLint, environment validation and the production build. The Fabric app
-`1.0.872` from the same commit deployed through the canonical orchestrator,
+`1.0.874` from the same commit deployed through the canonical orchestrator,
 preserved 39 redirects and passed AppBackend GraphQL/token preflight and POST
 readiness. Authenticated ten-prompt acceptance is still pending because the
 private hosting session returned the protected sign-in gate after deployment;
 no CLI token or authentication bypass was used.
+
+The executable application contract now enumerates all ten canonical prompts
+and verifies required specialists, minimum invocation counts, native sources,
+chart intent and work-order priority. An explicitly final independent check
+requires a second Gauge phase, preserving the documented
+Gauge -> Sleuth -> Fixer -> Gauge route.
 
 ## Historical v74 release
 
