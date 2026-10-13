@@ -367,7 +367,7 @@ async def decide_work_order(
 def create_delegated_app(
     root: Path, verifier: SourceTokenVerifier, source: SourceIdentity,
     factory: Callable[[Path, DelegatedCredential], AbstractAsyncContextManager[FoundrySupervisor]],
-    *, run_timeout: float = 300, max_concurrent_runs: int = 4,
+    *, run_timeout: float = 600, max_concurrent_runs: int = 4,
     decision_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
     reconciliation_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
     normalize_chat: Callable[[ChatInput, DelegatedCredential], Awaitable[ChatInput]] | None = None,
@@ -375,7 +375,7 @@ def create_delegated_app(
     """Raw invocations boundary; the deployment must supply an authorized source factory."""
     if source.tenant_id != verifier.policy.tenant_id:
         raise ValueError("Source and delegated authorization tenants must match.")
-    if not 0 < run_timeout <= 300 or max_concurrent_runs < 1:
+    if not 0 < run_timeout <= 600 or max_concurrent_runs < 1:
         raise ValueError("Credential admission leases and concurrency must be bounded.")
     capacity = asyncio.Semaphore(max_concurrent_runs)
     detached_streams: set[asyncio.Task[None]] = set()

@@ -37,6 +37,7 @@ Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
 NativeSource = Literal["data-agent", "ontology"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
+MAX_CHAT_RUN_DURATION = timedelta(minutes=10)
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
     "qa": ("condition-triage", "source-reconciliation", "maintenance-planning"),
@@ -595,8 +596,8 @@ class ChatRequest(Contract):
 
     @model_validator(mode="after")
     def bounded_credential_lease(self) -> "ChatRequest":
-        if not self.requested_at < self.deadline <= self.requested_at + timedelta(minutes=5):
-            raise ValueError("Credential lease must be within five minutes of its persisted request clock.")
+        if not self.requested_at < self.deadline <= self.requested_at + MAX_CHAT_RUN_DURATION:
+            raise ValueError("Credential lease must be within ten minutes of its persisted request clock.")
         if len(self.native_sources) != len(set(self.native_sources)):
             raise ValueError("Requested native sources must be distinct.")
         if len(self.required_specialists) != len(set(self.required_specialists)):

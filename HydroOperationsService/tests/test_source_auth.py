@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import time
@@ -273,7 +273,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         return {"operation": "run", "chat": {"question": "Review actual source evidence."},
                 "tokens": {kind: self.token(kind, oid=str(user)) for kind in ("fabric", "foundry")}}
 
-    def ingress(self, root, *, run=None, timeout=300, capacity=4, alter_owner=None, delay=0,
+    def ingress(self, root, *, run=None, timeout=600, capacity=4, alter_owner=None, delay=0,
                 draft_factory=None, approval_tools=None):
         source = SourceIdentity(
             tenant_id=TENANT, workspace_id=UUID("44444444-4444-4444-8444-444444444444"),
@@ -347,6 +347,28 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                               equipment_id="T1", title="Inspect signal", description="Operator-requested inspection.",
                               priority="Medium", work_read_at=clock, expires_at=clock + timedelta(minutes=15),
                               existing_work=())
+
+    async def test_delegated_run_uses_bounded_ten_minute_lease(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, leases, namespaces, _ = self.ingress(root)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test",
+            ) as client:
+                response = await client.post("/invocations", json=self.invocation())
+            self.assertEqual(response.status_code, 200, response.text)
+            persisted = RunJournal(
+                namespaces[0] / response.json()["run_id"] / "receipts",
+            ).read("request")
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            requested_at = datetime.fromisoformat(persisted["requested_at"])
+            deadline = datetime.fromisoformat(persisted["deadline"])
+            self.assertEqual(deadline - requested_at, timedelta(minutes=10))
+            for lease in leases:
+                await lease.close()
+        with TemporaryDirectory() as directory, self.assertRaises(ValueError):
+            self.ingress(Path(directory), timeout=601)
 
     async def test_signed_human_approval_is_idempotent_isolated_and_cannot_be_changed_after_submission(self):
         tools = AsyncMock(spec=FabricBackendTools)
