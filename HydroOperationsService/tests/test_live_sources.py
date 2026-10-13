@@ -653,20 +653,34 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             "required_evidence_kinds": intent["required_evidence_kinds"],
             "answer_contract": {
                 "version": 3,
-                "requirements": [{
-                    "evidence": "signal_quality_population_direct",
-                    "purpose": "facts",
-                }],
-                "views": [{
-                    "id": "quality", "title": "Signal quality", "kind": "signal_quality",
-                    "scope": "population", "presentation": "direct_records_table",
-                }],
+                "requirements": [
+                    {
+                        "evidence": "signal_quality_population_direct",
+                        "purpose": "facts",
+                    },
+                    {
+                        "evidence": "telemetry_focus_direct",
+                        "purpose": "facts",
+                    },
+                ],
+                "views": [
+                    {
+                        "id": "quality", "title": "Signal quality", "kind": "signal_quality",
+                        "scope": "population", "presentation": "direct_records_table",
+                    },
+                    {
+                        "id": "selected-telemetry", "title": "Selected telemetry", "kind": "telemetry",
+                        "scope": "focus", "presentation": "direct_records_line",
+                    },
+                ],
             },
         }))
         requirement_kinds = {item.kind for item in compiled.requirements}
         view_kinds = {item.kind for item in compiled.views}
         self.assertTrue(set(intent["required_evidence_kinds"]).issubset(requirement_kinds))
         self.assertTrue(set(intent["required_evidence_kinds"]).issubset(view_kinds))
+        selected_telemetry = next(item for item in compiled.views if item.id == "selected-telemetry")
+        self.assertEqual(selected_telemetry.presentation, "direct_records_table")
 
     async def test_bridge_reads_only_bounded_final_envelope_after_library_output(self):
         process = AsyncMock()

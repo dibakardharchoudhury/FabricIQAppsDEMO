@@ -188,7 +188,19 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
     throw new Error('Answer contract compilation requires a governed request and typed contract.')
   }
   const requirements = structuredClone(contract.requirements)
-  const views = structuredClone(contract.views)
+  const views = structuredClone(contract.views).map(view => {
+    if (chartsRequested || typeof view?.kind !== 'string' || typeof view?.presentation !== 'string') {
+      return view
+    }
+    const match = /^(direct|native)_(.+)_(?:bar|line|scatter)$/.exec(view.presentation)
+    if (!match) return view
+    const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === view.kind)
+    const tablePresentation = `${match[2]}_table`
+    if (!dataset?.presentations.includes(tablePresentation)) {
+      throw new Error(`No governed table presentation can replace unrequested ${view.kind} chart.`)
+    }
+    return { ...view, presentation: `${match[1]}_${tablePresentation}` }
+  })
   for (const kind of requiredKinds) {
     const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
     if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)

@@ -277,6 +277,27 @@ test('deterministic compiler completes every canonical required evidence kind an
   }
 })
 
+test('deterministic compiler removes unrequested model-authored charts', () => {
+  const contract = {
+    version: DOMAIN_CONTRACT_VERSION,
+    requirements: [{ evidence: 'telemetry_focus_direct', purpose: 'facts' }],
+    views: [{
+      id: 'selected-telemetry', title: 'Selected telemetry', kind: 'telemetry',
+      scope: 'focus', presentation: 'direct_records_line',
+    }],
+  }
+  assert.equal(
+    compileAnswerContract('Show a findings table.', false, ['telemetry'], contract)
+      .views[0].presentation,
+    'direct_records_table',
+  )
+  assert.equal(
+    compileAnswerContract('Chart the telemetry.', true, ['telemetry'], contract)
+      .views[0].presentation,
+    'direct_records_line',
+  )
+})
+
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {
   const yaml = await readFile(new URL('../rayfin/rayfin.yml', import.meta.url), 'utf8')
   const parsed = parseRayfinYaml(yaml)
