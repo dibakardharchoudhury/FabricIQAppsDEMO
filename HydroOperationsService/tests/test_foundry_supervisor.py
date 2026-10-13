@@ -1002,6 +1002,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     "specialist": role, "question": questions[index],
                     "reason": "Execute the assigned capability.", "native_source": None,
                 } for index, role in enumerate(roles)]
+            if self.mode == "gap_review_invalid_gate":
+                next(step for step in steps if step["specialist"] == "work-order")[
+                    "requires_verified_issue"
+                ] = True
             if self.mode == "standalone_station_chart":
                 kind, authority, view_mode, group_by, chart = "station_power", "direct", "records", None, "bar"
             elif self.mode == "backlog_capability_omitted_once":
@@ -1289,6 +1293,28 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         serialized = json.dumps(self.events)
         self.assertNotIn("test-not-a-real-token", serialized)
         self.assertNotIn("rows", serialized)
+
+    async def test_backend_normalizes_invalid_gap_review_gate_without_chief_retry(self):
+        self.mode = "gap_review_invalid_gate"
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": (
+                "Read BAD signal quality, investigate it, prepare an editable inspection draft for any "
+                "evidence-backed gap, and independently verify the result. Do not save a work order."
+            ),
+        })
+        self.seed(request)
+
+        result = await self.owner.run(request)
+
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
+        self.assertEqual([item.role for item in result.specialists], ["qa", "rca", "work-order", "qa"])
+        work_order_step = next(
+            step for step in self.owner.orchestration_plan.steps
+            if step.specialist == "work-order"
+        )
+        self.assertFalse(work_order_step.requires_verified_issue)
+        self.assertFalse(result.production_write_executed)
 
     async def test_incomplete_qa_completion_gets_one_bounded_evidence_only_retry(self):
         self.mode = "qa_incomplete_once"

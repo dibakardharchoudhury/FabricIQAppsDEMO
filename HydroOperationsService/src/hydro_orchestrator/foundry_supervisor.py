@@ -1904,15 +1904,11 @@ class FoundrySupervisor:
                 delegation = Delegation.model_validate(parsed)
                 if (
                     delegation.specialist == "work-order"
-                    and delegation.requires_verified_issue
                     and requests_new_work_order_proposal(request.question)
-                    and not requires_rca_verified_issue(request.question)
                 ):
-                    raise ToolInputError(
-                        "The operator requested a work-order gap review, not a draft gated exclusively on RCA "
-                        "verification. Set requires_verified_issue false; Fixer must assess the verified evidence "
-                        "and may conclude no draft is justified."
-                    )
+                    delegation = delegation.model_copy(update={
+                        "requires_verified_issue": requires_rca_verified_issue(request.question),
+                    })
                 delegations.append(delegation)
             requirements = await self.bridge.call({
                 "action": "validate_plan_requirements",
