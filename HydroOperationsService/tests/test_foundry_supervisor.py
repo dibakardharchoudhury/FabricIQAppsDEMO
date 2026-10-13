@@ -1408,6 +1408,31 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(work_order_step.requires_verified_issue)
 
+    async def test_canonical_data_agent_facility_reconciliation_compiles_cross_runtime(self):
+        question = (
+            "Ask the published Fabric Data Agent for all facility instances and every open "
+            "operational SQL work order by equipment. Reconcile those claims with direct facility, "
+            "equipment and work-order records, then show a facility-level backlog table and chart. "
+            "Preserve unmatched IDs and source limitations instead of guessing relationships. "
+            "This turn is read-only."
+        )
+        intent = await self.bridge.call({"action": "chat_intent", "question": question})
+        request = ChatRequest.model_validate({
+            **self.request.model_dump(),
+            **intent,
+            "run_id": uuid4(),
+            "question": question,
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+        plan = await self.owner.compile_orchestration_plan(request, journal)
+        native = next(
+            requirement for requirement in plan.answer_contract.requirements
+            if requirement.kind == "native_claims"
+        )
+        self.assertEqual(native.scope, "population")
+        self.assertTrue(any(view.authority == "reconciled" for view in plan.answer_contract.views))
+
     async def test_incomplete_qa_completion_gets_one_bounded_evidence_only_retry(self):
         self.mode = "qa_incomplete_once"
         request = self.request.model_copy(update={

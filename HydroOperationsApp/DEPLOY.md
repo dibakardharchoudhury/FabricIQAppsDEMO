@@ -596,8 +596,8 @@ forcing the remaining agents to invent a successful sequence.
 
 5. **Conversation continuity with a new requested sequence**
 
-   > Ask the published Fabric Data Agent for facility instances and open operational
-   > SQL work by equipment. Reconcile those claims with direct facility, equipment
+   > Ask the published Fabric Data Agent for all facility instances and every open
+   > operational SQL work order by equipment. Reconcile those claims with direct facility, equipment
    > and work-order records, then show a facility-level
    > backlog table and chart. Preserve unmatched IDs and source limitations instead
    > of guessing relationships. This turn is read-only.
