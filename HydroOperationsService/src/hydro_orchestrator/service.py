@@ -148,6 +148,7 @@ class ChatInput(Contract):
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     equipment_selection: EquipmentSelection | None = None
     required_evidence_kinds: tuple[str, ...] = ()
+    permitted_evidence_kinds: tuple[str, ...] = ()
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
@@ -157,7 +158,7 @@ class ChatInput(Contract):
 def normalized_chat_input(chat: ChatInput, intent: dict[str, object]) -> ChatInput:
     fields = {
         "charts_requested", "native_sources", "proposal_priority", "equipment_selection", "required_specialists",
-        "required_specialist_steps", "required_evidence_kinds",
+        "required_specialist_steps", "required_evidence_kinds", "permitted_evidence_kinds",
     }
     if set(intent) != fields:
         raise ValueError("Intent normalization returned an unsupported contract.")
@@ -166,7 +167,10 @@ def normalized_chat_input(chat: ChatInput, intent: dict[str, object]) -> ChatInp
         **normalized.model_dump(),
         **{
             key: getattr(chat, key) for key in chat.model_fields_set
-            if key not in {"required_evidence_kinds", "required_specialists", "required_specialist_steps"}
+            if key not in {
+                "required_evidence_kinds", "permitted_evidence_kinds",
+                "required_specialists", "required_specialist_steps",
+            }
         },
     })
 

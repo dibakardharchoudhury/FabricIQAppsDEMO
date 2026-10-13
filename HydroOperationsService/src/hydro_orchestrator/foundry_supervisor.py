@@ -584,6 +584,7 @@ class ChatRequest(Contract):
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     equipment_selection: EquipmentSelection | None = None
     required_evidence_kinds: tuple[str, ...] = ()
+    permitted_evidence_kinds: tuple[str, ...] = ()
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
@@ -603,6 +604,12 @@ class ChatRequest(Contract):
             or any(not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", kind) for kind in self.required_evidence_kinds)
         ):
             raise ValueError("Required evidence kinds must be distinct governed identifiers.")
+        if (
+            len(self.permitted_evidence_kinds) != len(set(self.permitted_evidence_kinds))
+            or any(not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", kind) for kind in self.permitted_evidence_kinds)
+            or not set(self.required_evidence_kinds).issubset(self.permitted_evidence_kinds)
+        ):
+            raise ValueError("Permitted evidence kinds must be distinct and include every required kind.")
         if (any(role not in self.required_specialists for role in self.required_specialist_steps)
                 or any(count < 1 or count > 8 for count in self.required_specialist_steps.values())):
             raise ValueError("Required specialist step counts must be bounded and match required specialists.")
@@ -1832,6 +1839,16 @@ class FoundrySupervisor:
                 ) from error
             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
             governed = governed_datasets(catalog.context)
+            compiled_contract = await self.bridge.call({
+                "action": "compile_answer_contract",
+                "question": request.question,
+                "charts_requested": request.charts_requested,
+                "required_evidence_kinds": list(request.required_evidence_kinds),
+                "answer_contract": plan.answer_contract.model_dump(mode="json"),
+            })
+            plan = plan.model_copy(update={
+                "answer_contract": OperatorAnswerContract.model_validate(compiled_contract),
+            })
             requested_kinds = {
                 item.kind for item in plan.answer_contract.requirements
             }.union(view.kind for view in plan.answer_contract.views)
@@ -1902,6 +1919,7 @@ class FoundrySupervisor:
                 "question": request.question,
                 "answer_kinds": sorted(requested_kinds),
                 "required_evidence_kinds": list(request.required_evidence_kinds),
+                "permitted_evidence_kinds": list(request.permitted_evidence_kinds),
                 "required_specialists": list(request.required_specialists),
                 "required_specialist_steps": request.required_specialist_steps,
                 "steps": [{
@@ -2100,6 +2118,13 @@ class FoundrySupervisor:
                 "investigation, conditional or unconditional maintenance review, and any final verification. A "
                 "native-source step never satisfies a separately requested direct read, investigation, or work "
                 "review. Do not omit a requested capability merely because an earlier step may return related data."
+            )
+            context["required_evidence_kinds"] = list(request.required_evidence_kinds)
+            context["permitted_evidence_kinds"] = list(request.permitted_evidence_kinds)
+            context["evidence_manifest_policy"] = (
+                "These immutable ingress manifests are authoritative. The answer contract must include at least one "
+                "requirement and one compatible view for every required_evidence_kind, may use only "
+                "permitted_evidence_kinds, and must not infer a different evidence scope from the wording."
             )
         if len(_encoded(context)) > 524288:
             raise SourceFailure("Combined evidence exceeds the bounded model-context size.")
@@ -2891,7 +2916,7 @@ class FoundrySupervisor:
                 intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
                 if set(intent) != {
                     "charts_requested", "native_sources", "proposal_priority", "equipment_selection",
-                    "required_evidence_kinds", "required_specialists",
+                    "required_evidence_kinds", "permitted_evidence_kinds", "required_specialists",
                     "required_specialist_steps",
                 }:
                     raise SourceFailure("Executor intent recovery returned an unsupported contract.")

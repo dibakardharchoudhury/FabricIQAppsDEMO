@@ -736,6 +736,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.request = ChatRequest(
             run_id=uuid4(), source=SOURCE, question="Read BAD signal quality; investigate, review work and verify.",
             deadline=utc_now() + timedelta(minutes=3),
+            permitted_evidence_kinds=(
+                "facilities", "equipment", "instruments", "telemetry", "signal_quality", "temperature",
+                "station_power", "work_orders", "work_backlog", "inspections", "notifications",
+                "spare_parts", "asset_models", "native_claims",
+            ),
         )
         self.credential = AsyncMock(spec=AzureCliCredential)
         self.credential.get_token.return_value = AccessToken("test-not-a-real-token", 9999999999)
@@ -1897,7 +1902,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                                                   headers={"Idempotency-Key": str(run_id)})
                 self.assertEqual(unauthorized.status_code, 401)
                 headers = {**HEADERS, "Idempotency-Key": str(run_id)}
-                submitted = await client.post("/chat/runs", json={"question": self.request.question}, headers=headers)
+                request_body = {
+                    "question": self.request.question,
+                    "permitted_evidence_kinds": list(self.request.permitted_evidence_kinds),
+                }
+                submitted = await client.post("/chat/runs", json=request_body, headers=headers)
                 self.assertEqual(submitted.status_code, 202, submitted.text)
                 deadline = asyncio.get_running_loop().time() + 20
                 while True:
@@ -1912,7 +1921,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.json()["tables"][0]["rows"][0]["values"]["value"], 75.0)
                 audit = await client.get(f"/chat/runs/{run_id}/evidence", headers=HEADERS)
                 self.assertEqual(audit.json()["receipts"][0]["id"], "reading-1")
-                replay = await client.post("/chat/runs", json={"question": self.request.question}, headers=headers)
+                replay = await client.post("/chat/runs", json=request_body, headers=headers)
                 self.assertEqual(replay.status_code, 202)
                 conflict = await client.post("/chat/runs", json={"question": "Different request."}, headers=headers)
                 self.assertEqual(conflict.status_code, 409)
@@ -2014,6 +2023,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         request = self.request.model_copy(update={
             "run_id": uuid4(),
             "question": "Which turbines have unusual telemetry, and what work is already open?",
+            "permitted_evidence_kinds": ("equipment", "telemetry", "work_orders"),
         })
         self.seed(request)
 
@@ -2027,25 +2037,35 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             json.dumps(self.payloads),
         )
 
-    async def test_missing_required_evidence_is_corrected_before_source_or_specialist_execution(self):
+    async def test_missing_required_evidence_is_compiled_before_source_or_specialist_execution(self):
         self.mode = "missing_evidence_repair"
         self.tools.quality_snapshot = True
         request = self.request.model_copy(update={
             "run_id": uuid4(),
             "question": "Which turbines have latest signal quality BAD today?",
             "required_evidence_kinds": ("signal_quality",),
+            "permitted_evidence_kinds": ("equipment", "telemetry", "signal_quality"),
         })
         self.seed(request)
 
         answer = await self.owner.run(request)
 
-        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 1)
         self.assertTrue(any(
             item.tool == "query_signal_quality_snapshot" for item in self.owner.evidence.values()
         ))
-        self.assertIn(
-            "omitted evidence explicitly required by the operator: signal_quality",
-            json.dumps(self.payloads),
+        assert self.owner.answer_contract is not None
+        self.assertIn("signal_quality", {
+            item.kind for item in self.owner.answer_contract.requirements
+        })
+        self.assertIn("signal_quality", {
+            item.kind for item in self.owner.answer_contract.views
+        })
+        chief_context = json.loads(self.payloads[0]["input"][0]["content"][0]["text"])
+        self.assertEqual(chief_context["required_evidence_kinds"], ["signal_quality"])
+        self.assertEqual(
+            chief_context["permitted_evidence_kinds"],
+            ["equipment", "telemetry", "signal_quality"],
         )
         self.assertEqual(answer.proposals, ())
 

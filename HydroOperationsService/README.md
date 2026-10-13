@@ -154,10 +154,13 @@ sentences and 600 instructed characters.
 Chief now exposes one strict `plan_orchestration` tool. It returns one complete
 ordered plan of one to eight specialist steps; the backend validates and executes
 those steps serially and propagates immutable evidence and completed reports.
-Ingress persists a centralized `required_evidence_kinds` manifest derived by the
-TypeScript domain semantics. Chief contracts that omit those primary datasets or
-add unrelated datasets receive one bounded, actionable correction before any
-specialist or source executes. The same TypeScript boundary produces strict
+Ingress persists centralized `required_evidence_kinds` and
+`permitted_evidence_kinds` manifests derived by the TypeScript domain semantics,
+validates that every required kind is permitted, and supplies both immutable sets
+to Chief before its single planning call. A deterministic TypeScript compiler adds
+any omitted required requirement and compatible view before execution, while
+unrelated datasets and malformed or unsupported contracts still fail closed with
+one bounded correction. The same TypeScript boundary produces strict
 object-enveloped analytical execution plans for signal-quality, temperature,
 station-power and grouped-backlog evidence. Verification reuses existing receipts
 when they satisfy the operator's explicit quality, window, rank, equipment-type

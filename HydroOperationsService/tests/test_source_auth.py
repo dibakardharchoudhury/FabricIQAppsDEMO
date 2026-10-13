@@ -119,6 +119,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High",
                   "equipment_selection": None,
                   "required_evidence_kinds": ["native_claims"],
+                  "permitted_evidence_kinds": ["native_claims"],
                   "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}}
         chat = ChatInput(question="Show a chart.")
         normalized = normalized_chat_input(chat, intent)
@@ -132,6 +133,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             normalized_chat_input(explicit, intent),
             explicit.model_copy(update={"required_evidence_kinds": ("native_claims",),
+                                        "permitted_evidence_kinds": ("native_claims",),
                                         "required_specialists": ("qa",),
                                         "required_specialist_steps": {"qa": 1}}),
         )
@@ -784,6 +786,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                     {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
                      "equipment_selection": None,
                      "required_evidence_kinds": [],
+                     "permitted_evidence_kinds": [],
                      "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
                     {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},

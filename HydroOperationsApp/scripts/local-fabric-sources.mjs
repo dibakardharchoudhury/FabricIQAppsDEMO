@@ -30,6 +30,7 @@ export function chatIntent(question) {
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
     required_evidence_kinds: requiredEvidenceKinds(question),
+    permitted_evidence_kinds: permittedEvidenceKinds(question),
     required_specialists: specialists,
     required_specialist_steps: Object.fromEntries(specialists.map(role => [
       role, role === 'qa' ? requiredIndependentQaSteps(question) : 1,
@@ -77,7 +78,7 @@ export function permittedEvidenceKinds(question) {
   if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{3})\b/i.test(text)) kinds.add('equipment')
   if (/\b(?:instrument|signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
   if (/\b(?:telemetry|readings?|signals?|power|temperature|quality)\b/i.test(text)) kinds.add('telemetry')
-  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone)\b/i.test(text)
+  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone|running bad)\b/i.test(text)
       || /\bquality\b/i.test(text) && /\b(?:BAD|GOOD|UNCERTAIN)\b/i.test(text)) {
     kinds.add('signal_quality')
   }
@@ -141,11 +142,93 @@ export function analyticalEvidencePlan(question, answerKinds) {
   return plan
 }
 
+function defaultEvidenceScope(kind, question) {
+  const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
+  if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
+  if (dataset.evidenceScopes.length === 1) return dataset.evidenceScopes[0]
+  const text = positiveActionClauses(question)
+  if (kind === 'native_claims') {
+    return /\b(?:all|every|inventory|list facility instances|which turbines)\b/i.test(text)
+      ? 'population' : 'focus'
+  }
+  if (kind === 'work_orders') {
+    return /\b(?:all|every|inventory|backlog|on each|by equipment|facility[- ]level)\b/i.test(text)
+      ? 'population' : 'focus'
+  }
+  if (kind === 'equipment') {
+    return /\b(?:all|every|inventory|direct asset records?|facility[- ]level)\b/i.test(text)
+      ? 'population' : 'focus'
+  }
+  return 'focus'
+}
+
+function defaultPresentation(kind, authority, chartsRequested, question) {
+  const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
+  if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
+  let presentation = 'records_table'
+  if (kind === 'work_backlog') {
+    const group = requestedWorkBacklogGroup(question)
+    if (!group) throw new Error('Required work backlog evidence has no governed grouping intent.')
+    presentation = `grouped_by_${group}_${chartsRequested ? 'bar' : 'table'}`
+  } else if (kind === 'station_power' && chartsRequested) {
+    presentation = 'grouped_by_facility_bar'
+  } else if (kind === 'temperature' && chartsRequested) {
+    presentation = 'records_bar'
+  }
+  if (!dataset.presentations.includes(presentation)) {
+    throw new Error(`No governed presentation can compile required ${kind} evidence.`)
+  }
+  return `${authority}_${presentation}`
+}
+
+export function compileAnswerContract(question, chartsRequested, requiredKinds, contract) {
+  if (typeof question !== 'string' || typeof chartsRequested !== 'boolean'
+      || !Array.isArray(requiredKinds) || !contract || typeof contract !== 'object'
+      || !Array.isArray(contract.requirements) || !Array.isArray(contract.views)) {
+    throw new Error('Answer contract compilation requires a governed request and typed contract.')
+  }
+  const requirements = structuredClone(contract.requirements)
+  const views = structuredClone(contract.views)
+  for (const kind of requiredKinds) {
+    const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
+    if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
+    let requirement = requirements.find(candidate =>
+      typeof candidate?.evidence === 'string' && candidate.evidence.startsWith(`${kind}_`))
+    if (!requirement) {
+      const scope = defaultEvidenceScope(kind, question)
+      const authority = dataset.evidenceAuthorities[0]
+      requirement = {
+        evidence: `${kind}_${scope}_${authority}`,
+        purpose: ['equipment', 'facilities', 'instruments'].includes(kind) ? 'identity'
+          : ['work_orders', 'work_backlog'].includes(kind) ? 'coverage' : 'facts',
+      }
+      requirements.push(requirement)
+    }
+    if (!views.some(candidate => candidate?.kind === kind)) {
+      const match = /^([a-z][a-z0-9_]*)_(population|focus)_(direct|native)$/.exec(requirement.evidence)
+      if (!match) throw new Error(`Required ${kind} evidence has an invalid governed identity.`)
+      views.push({
+        id: `required-${kind.replaceAll('_', '-')}`,
+        title: kind.split('_').map(value => value[0].toUpperCase() + value.slice(1)).join(' '),
+        kind,
+        scope: match[2],
+        presentation: defaultPresentation(kind, match[3], chartsRequested, question),
+      })
+    }
+  }
+  if (requirements.length > 16 || views.length > 8) {
+    throw new Error('Compiled answer contract exceeds its bounded size.')
+  }
+  return { version: DOMAIN_CONTRACT_VERSION, requirements, views }
+}
+
 export function validatePlanRequirements(required, requiredSteps, steps, nativeSources,
-  question = '', answerKinds = [], requiredEvidenceKinds_ = []) {
+  question = '', answerKinds = [], requiredEvidenceKinds_ = [],
+  permittedEvidenceKinds_ = permittedEvidenceKinds(question)) {
   if (!Array.isArray(required) || !requiredSteps || typeof requiredSteps !== 'object'
       || Array.isArray(requiredSteps) || !Array.isArray(steps) || !Array.isArray(nativeSources)
       || typeof question !== 'string' || !Array.isArray(answerKinds) || !Array.isArray(requiredEvidenceKinds_)
+      || !Array.isArray(permittedEvidenceKinds_)
       || required.some(role => !['qa', 'rca', 'work-order'].includes(role))) {
     throw new Error('Plan requirements need verified required specialists, steps and native sources.')
   }
@@ -163,9 +246,7 @@ export function validatePlanRequirements(required, requiredSteps, steps, nativeS
     missing_specialist_steps: missingSteps,
     missing_native_sources: nativeSources.filter(source => !plannedNative.has(source)),
     missing_evidence_kinds: requiredEvidenceKinds_.filter(kind => !answerKinds.includes(kind)),
-    unexpected_evidence_kinds: answerKinds.filter(kind =>
-      !(kind === 'native_claims' && nativeSources.length)
-      && !permittedEvidenceKinds(question).includes(kind)),
+    unexpected_evidence_kinds: answerKinds.filter(kind => !permittedEvidenceKinds_.includes(kind)),
   }
 }
 
@@ -790,13 +871,17 @@ async function main() {
   if (request.action === 'analytical_evidence_plan') {
     return { entries: analyticalEvidencePlan(request.question, request.answer_kinds) }
   }
+  if (request.action === 'compile_answer_contract') {
+    return compileAnswerContract(
+      request.question, request.charts_requested, request.required_evidence_kinds, request.answer_contract)
+  }
   if (request.action === 'work_backlog_group') {
     return { group_by: requestedWorkBacklogGroup(request.question) ?? null }
   }
   if (request.action === 'validate_plan_requirements') {
     return validatePlanRequirements(
       request.required_specialists, request.required_specialist_steps, request.steps, request.native_sources,
-      request.question, request.answer_kinds, request.required_evidence_kinds)
+      request.question, request.answer_kinds, request.required_evidence_kinds, request.permitted_evidence_kinds)
   }
   if (request.action === 'source_contracts') return sourceToolContracts()
   if (request.action === 'rca_contract') return { tool: RCA_REPORT_TOOL }

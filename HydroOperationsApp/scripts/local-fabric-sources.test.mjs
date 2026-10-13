@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
-import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
+import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 
 const id = '11111111-1111-1111-1111-111111111111'
 const config = { workspace_id: id, ontology_id: id, database_id: id, eventhouse_id: id, appbackend_id: id,
@@ -55,11 +55,13 @@ test('backend intent reuses canonical chart, native and human-priority semantics
     { charts_requested: false, native_sources: [], proposal_priority: 'Medium',
       equipment_selection: null,
       required_evidence_kinds: ['signal_quality'],
+      permitted_evidence_kinds: ['equipment', 'signal_quality'],
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.deepEqual(chatIntent('Chart average power output per station over the last 24 hours.'),
     { charts_requested: true, native_sources: [], proposal_priority: 'Medium',
       equipment_selection: null,
       required_evidence_kinds: ['station_power'],
+      permitted_evidence_kinds: ['telemetry', 'station_power'],
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.deepEqual(
     chatIntent('Select the turbine with the most BAD signals, breaking ties by equipment ID.').equipment_selection,
@@ -234,9 +236,45 @@ test('prompt one accepts governed equipment backlog evidence at the plan boundar
     intent.native_sources,
     question,
     intent.required_evidence_kinds,
+    intent.permitted_evidence_kinds,
   )
   assert.deepEqual(requirements.missing_evidence_kinds, [])
   assert.deepEqual(requirements.unexpected_evidence_kinds, [])
+})
+
+test('deterministic compiler completes every canonical required evidence kind and view', () => {
+  const questions = [
+    'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.',
+    "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
+    'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.',
+    'Ask the published Fabric Data Agent which turbines have latest signal quality BAD today (UTC), the five hottest turbines from latest raw temperature readings today, and all open work on those turbines. Independently verify both sets using direct telemetry snapshots and SQL work records. Investigate any disagreement: distinguish signal quality from temperature, same-signal from equipment-level work, averaging from latest raw readings, and stale from current data. Return a reconciliation table showing source claims, verified evidence and unresolved differences. Do not silently prefer an answer or propose new work.',
+    'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
+  ]
+  for (const question of questions) {
+    const intent = chatIntent(question)
+    const first = intent.required_evidence_kinds[0]
+    const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === first)
+    const scope = dataset.evidenceScopes[0]
+    const authority = dataset.evidenceAuthorities[0]
+    const contract = compileAnswerContract(question, intent.charts_requested, intent.required_evidence_kinds, {
+      version: DOMAIN_CONTRACT_VERSION,
+      requirements: [{ evidence: `${first}_${scope}_${authority}`, purpose: 'facts' }],
+      views: [{
+        id: 'seed-view', title: 'Seed view', kind: first, scope,
+        presentation: `${authority}_${dataset.presentations[0]}`,
+      }],
+    })
+    const requirementKinds = contract.requirements.map(item =>
+      item.evidence.replace(/_(?:population|focus)_(?:direct|native)$/, ''))
+    assert.deepEqual(
+      intent.required_evidence_kinds.filter(kind => !requirementKinds.includes(kind)),
+      [],
+    )
+    assert.deepEqual(
+      intent.required_evidence_kinds.filter(kind => !contract.views.some(view => view.kind === kind)),
+      [],
+    )
+  }
 })
 
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {

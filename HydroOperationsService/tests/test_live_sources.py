@@ -19,7 +19,9 @@ from pydantic import ValidationError
 from jsonschema import Draft202012Validator
 
 from hydro_orchestrator.contracts import ReviewRequest, WorkOrderDraft, WorkOrderEdits, utc_now
-from hydro_orchestrator.foundry_supervisor import ChatRequest, SourceCatalog, governed_datasets
+from hydro_orchestrator.foundry_supervisor import (
+    ChatRequest, OperatorAnswerContract, SourceCatalog, governed_datasets,
+)
 from hydro_orchestrator.live_sources import Discovery, FabricBackendTools, LiveSources, NodeSourceBridge, SourceFailure
 from hydro_orchestrator.service import create_app
 from test_durable_service import BODY, HEADERS, SOURCE, TOKEN, TestAdapters, wait_for
@@ -631,6 +633,40 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(SourceFailure, "output suppressed") as caught:
                 await NodeSourceBridge().call({"action": "configuration"})
         self.assertNotIn("private", str(caught.exception))
+
+    async def test_bridge_compiles_prompt_one_evidence_before_chief_correction(self):
+        question = (
+            "Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? "
+            "Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using "
+            "available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an "
+            "editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, "
+            "independently check the selected equipment/signal identity and existing-work coverage, and summarize "
+            "any changes needed to the draft. Show a findings table and distinguish stale readings from current "
+            "conditions. Do not save a work order."
+        )
+        bridge = NodeSourceBridge()
+        intent = await bridge.call({"action": "chat_intent", "question": question})
+        compiled = OperatorAnswerContract.model_validate(await bridge.call({
+            "action": "compile_answer_contract",
+            "question": question,
+            "charts_requested": intent["charts_requested"],
+            "required_evidence_kinds": intent["required_evidence_kinds"],
+            "answer_contract": {
+                "version": 3,
+                "requirements": [{
+                    "evidence": "signal_quality_population_direct",
+                    "purpose": "facts",
+                }],
+                "views": [{
+                    "id": "quality", "title": "Signal quality", "kind": "signal_quality",
+                    "scope": "population", "presentation": "direct_records_table",
+                }],
+            },
+        }))
+        requirement_kinds = {item.kind for item in compiled.requirements}
+        view_kinds = {item.kind for item in compiled.views}
+        self.assertTrue(set(intent["required_evidence_kinds"]).issubset(requirement_kinds))
+        self.assertTrue(set(intent["required_evidence_kinds"]).issubset(view_kinds))
 
     async def test_bridge_reads_only_bounded_final_envelope_after_library_output(self):
         process = AsyncMock()
