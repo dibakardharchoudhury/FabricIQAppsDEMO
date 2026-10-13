@@ -2476,8 +2476,10 @@ class FoundrySupervisor:
                     else "text"
                 ),
             ) for key in scalar_keys[:40])
-            rows = tuple(
-                PlannedRow(cells=tuple(
+            rows_list = []
+            omitted_non_scalar_rows = 0
+            for receipt, dataset, index, record in source_rows[:500]:
+                cells = tuple(
                     AnswerCell(
                         key=column.key,
                         source=EvidenceReference(
@@ -2487,9 +2489,17 @@ class FoundrySupervisor:
                         ),
                     )
                     for column in columns if column.key in record
-                ))
-                for receipt, dataset, index, record in source_rows[:500]
-            )
+                )
+                if cells:
+                    rows_list.append(PlannedRow(cells=cells))
+                else:
+                    omitted_non_scalar_rows += 1
+            rows = tuple(rows_list)
+            if omitted_non_scalar_rows:
+                limitations.append(
+                    f"{view.title}: {omitted_non_scalar_rows} nested-only source record(s) remain available "
+                    "in the audit but were omitted from the scalar answer table."
+                )
             table = PlannedTable(id=view.id, title=view.title, columns=columns, rows=rows)
             tables.append(table)
             if not source_rows:
