@@ -3,7 +3,8 @@
 Use **Intelligence -> Foundry**, not the native-only Data Agent mode. Start a
 **New chat** for each numbered test. Expand **Agent crew** and inspect execution
 receipts, not just animation. These are expected routes, not claims of passing tests.
-Chief coordinates every handoff; arrows below omit the returns through Chief.
+The deterministic Supervisor coordinates every handoff; arrows below omit returns through
+Supervisor.
 For observed results and limitations, see [acceptance](AGENT-ACCEPTANCE.md).
 
 Do not approve/save test work orders or send notifications. Reject any test cards.
