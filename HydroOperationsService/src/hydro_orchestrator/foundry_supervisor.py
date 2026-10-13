@@ -2780,9 +2780,29 @@ class FoundrySupervisor:
                 unit_keys = {
                     key for receipt, _dataset in matches for key in receipt.column_units
                 }
-                y_keys = tuple(
+                candidate_y_keys = tuple(
                     column.key for column in columns
                     if column.kind == "number" and column.key in unit_keys
+                )
+                preferred_measures = (
+                    "open_work_orders", "open_work_order_count", "record_count", "work_order_count", "count",
+                )
+                primary_y = next(
+                    (key for key in preferred_measures if key in candidate_y_keys),
+                    candidate_y_keys[0] if candidate_y_keys else None,
+                )
+                primary_units = {
+                    receipt.column_units[primary_y]
+                    for receipt, _dataset in matches
+                    if primary_y is not None and primary_y in receipt.column_units
+                }
+                y_keys = tuple(
+                    key for key in candidate_y_keys
+                    if {
+                        receipt.column_units[key]
+                        for receipt, _dataset in matches
+                        if key in receipt.column_units
+                    } == primary_units
                 )[:4]
                 if x_key is None or not y_keys:
                     raise SourceFailure(

@@ -209,14 +209,21 @@ class SourceTools:
                 id=f"{arguments['group_by']}-backlog", source=request.source, tool=name, arguments=arguments,
                 completed_at=utc_now(),
                 result={
-                    "rows": [{group_key: "TEST_GROUP", "open_work_order_count": 2}],
+                    "rows": [{
+                        group_key: "TEST_GROUP",
+                        "equipment_with_open_work": 1,
+                        "open_work_order_count": 2,
+                    }],
                     "row_count": 1,
                     "presentation": {
                         "table_field": "rows",
                         "chart": {"kind": "bar", "x_key": group_key, "y_keys": ["open_work_order_count"]},
                     },
                 },
-                column_units={"open_work_order_count": "work orders"},
+                column_units={
+                    "equipment_with_open_work": "equipment",
+                    "open_work_order_count": "work orders",
+                },
                 datasets=(EvidenceDataset(
                     kind="work_backlog", field="rows", authority="direct", scope="population",
                     complete=True, identity_fields=(group_key,), group_by=group_key,
@@ -2015,6 +2022,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-qa-agent"], 4)
         self.assertEqual(self.tools.calls, 2)
         self.assertEqual(result.charts[0].x_key, "facility_id")
+        self.assertEqual(result.charts[0].y_keys, ("open_work_order_count",))
         repair = next(
             payload for payload in self.payloads
             if payload.get("agent_reference", {}).get("name") == "hydro-qa-agent"
