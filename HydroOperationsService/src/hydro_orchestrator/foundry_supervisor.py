@@ -10,7 +10,7 @@ from hashlib import sha256
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
 NativeSource = Literal["data-agent", "ontology"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
+FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
     "qa": ("condition-triage", "source-reconciliation", "maintenance-planning"),
@@ -46,9 +47,21 @@ ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
 
 
 class BoundedAIProjectClient(AIProjectClient):
+    def __init__(
+        self,
+        endpoint: str,
+        credential: AsyncTokenCredential,
+        *,
+        request_timeout: float = FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+        allow_preview: bool = False,
+        **kwargs: Any,
+    ):
+        self.request_timeout = request_timeout
+        super().__init__(endpoint, credential, allow_preview=allow_preview, **kwargs)
+
     def get_openai_client(self, *, agent_name: str | None = None, **kwargs: object):  # type: ignore[no-untyped-def]
         kwargs.setdefault("max_retries", 0)
-        kwargs.setdefault("timeout", FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS)
+        kwargs.setdefault("timeout", self.request_timeout)
         return super().get_openai_client(agent_name=agent_name, **kwargs)
 
 
@@ -358,8 +371,6 @@ def exception_chain_contains(error: BaseException, expected: type[BaseException]
 
 
 def transient_native_failure(error: BaseException) -> str | None:
-    if exception_chain_contains(error, APITimeoutError):
-        return "timeout"
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -2003,10 +2014,16 @@ class FoundrySupervisor:
                     or invocation.function.name == "propose_work_order"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
-        project_client = BoundedAIProjectClient(endpoint=self.endpoint, credential=self.credential)
+        service_timeout = (
+            FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS if role == "fabric-iq"
+            else FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS
+        )
+        project_client = BoundedAIProjectClient(
+            endpoint=self.endpoint, credential=self.credential, request_timeout=service_timeout,
+        )
         agent = FoundryAgent(
             project_client=project_client, agent_name=version.name, agent_version=version.version,
-            tools=functions, timeout=FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
+            tools=functions, timeout=service_timeout,
             middleware=[finish_assessment],
             function_invocation_configuration={
                 "max_iterations": 3 if role == "supervisor" else 6,
