@@ -2678,12 +2678,18 @@ class FoundrySupervisor:
                 limitations.extend(item for item in receipt.limitations if item not in limitations)
                 limitations.extend(item for item in dataset.limitations if item not in limitations)
             scalar_keys: list[str] = []
-            for _receipt, dataset, _index, record in source_rows:
-                for key, value in record.items():
-                    if (
-                        key not in scalar_keys
-                        and (value is None or type(value) in (str, int, float))
-                        and not (isinstance(value, str) and len(value) > 2400)
+            for _receipt, _dataset, _index, record in source_rows:
+                for key in record:
+                    values_for_key = [
+                        candidate[key]
+                        for _other_receipt, _other_dataset, _other_index, candidate in source_rows
+                        if key in candidate
+                    ]
+                    if key not in scalar_keys and all(
+                        value is None
+                        or type(value) in (int, float)
+                        or isinstance(value, str) and len(value) <= 2400
+                        for value in values_for_key
                     ):
                         scalar_keys.append(key)
             if not scalar_keys:

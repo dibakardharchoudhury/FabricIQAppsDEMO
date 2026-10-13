@@ -496,7 +496,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         direct = ToolEvidence(
             id="direct-quality", source=SOURCE, tool="query_signal_quality_snapshot",
             arguments={}, completed_at=utc_now(),
-            result={"rows": [{"equipment_id": "EQUIP_RTI_T005", "quality": "BAD"}]},
+            result={"rows": [{
+                "equipment_id": "EQUIP_RTI_T005", "quality": "BAD", "details": "brief",
+            }]},
             datasets=(EvidenceDataset(
                 kind="signal_quality", field="rows", authority="direct", scope="population",
                 complete=True, identity_fields=("equipment_id",),
@@ -505,7 +507,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         native = ToolEvidence(
             id="native-quality", source=SOURCE, tool="fabriciq-data-agent",
             arguments={}, completed_at=utc_now(),
-            result={"claims": [{"equipmentId": "EQUIP_RTI_T005", "quality": "BAD"}]},
+            result={"claims": [{
+                "equipmentId": "EQUIP_RTI_T005", "quality": "BAD", "details": "x" * 2401,
+            }]},
             datasets=(EvidenceDataset(
                 kind="native_claims", field="claims", authority="native", scope="population",
                 complete=True, identity_fields=("equipmentId",),
@@ -516,6 +520,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(plan.tables), 1)
         self.assertEqual(len(plan.tables[0].rows), 2)
         self.assertIn("_source_authority", {column.key for column in plan.tables[0].columns})
+        self.assertNotIn("details", {column.key for column in plan.tables[0].columns})
         self.assertTrue(any("does not infer matches" in item for item in plan.limitations))
         self.assertIn("reconciliation:quality-reconciliation", self.owner.evidence)
         answer = self.owner.answer(self.request, plan, use_projected_summary=True)
