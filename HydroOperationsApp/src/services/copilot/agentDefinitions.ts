@@ -5,6 +5,7 @@ import {
   DOMAIN_CONTRACT_VERSION,
   DOMAIN_DATASETS,
   DOMAIN_DATASET_KEYS,
+  DOMAIN_EVIDENCE_REQUIREMENTS,
   OPERATIONAL_EVIDENCE_CONTRACT,
 } from './domainContract.ts'
 import { RCA_REPORT_TOOL } from './rcaEvidence.ts'
@@ -107,17 +108,13 @@ export function agentDefinition(role: AgentRole, model: string, fabricIqConnecti
             requirements: {
               type: 'array', minItems: 1, maxItems: 16,
               items: {
-                oneOf: DOMAIN_DATASETS.map(dataset => ({
-                  type: 'object',
-                  properties: {
-                    kind: { type: 'string', const: dataset.key },
-                    scope: { type: 'string', enum: dataset.evidenceScopes },
-                    authority: { type: 'string', enum: dataset.evidenceAuthorities },
-                    purpose: { type: 'string', enum: ['facts', 'identity', 'coverage', 'investigation', 'verification'] },
-                  },
-                  required: ['kind', 'scope', 'authority', 'purpose'],
-                  additionalProperties: false,
-                })),
+                type: 'object',
+                properties: {
+                  evidence: { type: 'string', enum: DOMAIN_EVIDENCE_REQUIREMENTS },
+                  purpose: { type: 'string', enum: ['facts', 'identity', 'coverage', 'investigation', 'verification'] },
+                },
+                required: ['evidence', 'purpose'],
+                additionalProperties: false,
               },
             },
             views: {

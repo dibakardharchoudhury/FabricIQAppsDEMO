@@ -434,7 +434,7 @@ class DomainDatasetDefinition(Contract):
 
 
 def governed_datasets(context: dict[str, object]) -> dict[str, DomainDatasetDefinition]:
-    if context.get("domain_contract_version") != 2:
+    if context.get("domain_contract_version") != 3:
         raise SourceFailure("The shared domain contract version is missing or unsupported.")
     raw = context.get("datasets")
     if not isinstance(raw, list) or not raw:
@@ -467,10 +467,29 @@ class EquipmentSelection(Contract):
 
 
 class EvidenceRequirement(Contract):
-    kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    scope: Literal["population", "focus"]
-    authority: Literal["direct", "native"]
+    evidence: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}_(?:population|focus)_(?:direct|native)$")
     purpose: Literal["facts", "identity", "coverage", "investigation", "verification"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: object) -> object:
+        if isinstance(value, dict) and "evidence" not in value:
+            kind, scope, authority = value.get("kind"), value.get("scope"), value.get("authority")
+            if all(isinstance(item, str) for item in (kind, scope, authority)):
+                return {"evidence": f"{kind}_{scope}_{authority}", "purpose": value.get("purpose")}
+        return value
+
+    @property
+    def authority(self) -> Literal["direct", "native"]:
+        return "native" if self.evidence.endswith("_native") else "direct"
+
+    @property
+    def scope(self) -> Literal["population", "focus"]:
+        return "population" if self.evidence.endswith(("_population_direct", "_population_native")) else "focus"
+
+    @property
+    def kind(self) -> str:
+        return self.evidence.removesuffix(f"_{self.scope}_{self.authority}")
 
 
 class AnswerViewContract(Contract):
@@ -521,7 +540,7 @@ class AnswerViewContract(Contract):
 
 
 class OperatorAnswerContract(Contract):
-    version: Literal[2]
+    version: Literal[3]
     requirements: tuple[EvidenceRequirement, ...] = Field(min_length=1, max_length=16)
     views: tuple[AnswerViewContract, ...] = Field(min_length=1, max_length=8)
 

@@ -1,6 +1,6 @@
 import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
 
-export const DOMAIN_CONTRACT_VERSION = 2
+export const DOMAIN_CONTRACT_VERSION = 3
 
 export const ANSWER_PRESENTATIONS = [
   'direct_records_table',
@@ -67,6 +67,11 @@ export const DOMAIN_DATASETS = [
 ] as const satisfies readonly DomainDatasetDefinition[]
 
 export const DOMAIN_DATASET_KEYS = DOMAIN_DATASETS.map(dataset => dataset.key)
+export const DOMAIN_EVIDENCE_REQUIREMENTS = DOMAIN_DATASETS.flatMap(dataset =>
+  dataset.evidenceScopes.flatMap(scope =>
+    dataset.evidenceAuthorities.map(authority => `${dataset.key}_${scope}_${authority}`),
+  ),
+)
 export const STATION_POWER_SEMANTICS = (DOMAIN_DATASETS as readonly DomainDatasetDefinition[])
   .find(dataset => dataset.key === 'station_power')!.limitations![0]
 

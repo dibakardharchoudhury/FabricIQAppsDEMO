@@ -81,7 +81,7 @@ class SourceTools:
             }})
         return {"tools": tools, "context": {
             "mode": "test-only-no-production-access",
-            "domain_contract_version": 2,
+            "domain_contract_version": 3,
             "datasets": [
                 {
                     "key": key, "source": source, "entity": entity,
@@ -254,7 +254,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "evidenceAuthorities": ["direct"],
         }]
         self.assertEqual(
-            set(governed_datasets({"domain_contract_version": 2, "datasets": datasets})),
+            set(governed_datasets({"domain_contract_version": 3, "datasets": datasets})),
             {"telemetry"},
         )
         with self.assertRaisesRegex(SourceFailure, "version"):
@@ -262,7 +262,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     def test_missing_declared_evidence_fails_before_presentation(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
-            "version": 2,
+            "version": 3,
             "requirements": [{
                 "kind": "telemetry", "scope": "focus", "authority": "direct",
                 "purpose": "facts",
@@ -278,7 +278,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_focus_catalog_evidence_is_fulfilled_deterministically(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
-            "version": 2,
+            "version": 3,
             "requirements": [{
                 "kind": "equipment", "scope": "focus", "authority": "direct",
                 "purpose": "identity",
@@ -316,7 +316,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
-            "version": 2,
+            "version": 3,
             "requirements": [
                 {
                     "kind": "signal_quality", "scope": "population", "authority": "direct",
@@ -900,7 +900,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 "signal_quality", "station_power", "work_backlog", "native_claims",
             ) else "focus"
             answer_contract = {
-                "version": 2,
+                "version": 3,
                 "requirements": [{
                     "kind": kind, "scope": scope, "authority": authority, "purpose": "facts",
                 }],
