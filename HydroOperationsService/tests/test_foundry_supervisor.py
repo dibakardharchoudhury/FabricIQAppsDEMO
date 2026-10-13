@@ -935,6 +935,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 }],
             }
+            if self.mode == "answer_contract_repair" and round_number == 0:
+                answer_contract["views"][0]["kind"] = "equipment"
             if self.mode == "independent_empty":
                 answer_contract["requirements"].append({
                     "kind": "telemetry", "scope": "focus", "authority": "direct", "purpose": "facts",
@@ -1835,6 +1837,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         payload = json.dumps(self.payloads)
         self.assertIn("invalid_arguments", payload)
         self.assertIn("source_executed", payload)
+
+    async def test_invalid_answer_contract_gets_one_correction_without_poisoning_run(self):
+        self.mode = "answer_contract_repair"
+
+        answer = await self.owner.run(self.request)
+
+        self.assertEqual(answer.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual(self.owner.failures, [])
 
     async def test_repeated_invalid_arguments_stop_without_touching_sources(self):
         self.mode = "repeat_invalid"

@@ -1744,10 +1744,16 @@ class FoundrySupervisor:
                 value["requiresSelection"] = value.pop("requires_selection", False)
                 value["requiresVerifiedIssue"] = value.pop("requires_verified_issue", False)
                 normalized.append(value)
-            plan = OrchestrationPlan.model_validate({
-                "steps": normalized,
-                "answer_contract": answer_contract,
-            })
+            try:
+                plan = OrchestrationPlan.model_validate({
+                    "steps": normalized,
+                    "answer_contract": answer_contract,
+                })
+            except ValidationError as error:
+                raise ToolInputError(
+                    "The orchestration or answer contract is invalid. Correct the reported contract mismatch "
+                    "and call plan_orchestration once more."
+                ) from error
             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
             governed = governed_datasets(catalog.context)
             requested_kinds = {
