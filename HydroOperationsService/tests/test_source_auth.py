@@ -116,7 +116,7 @@ class RuntimeUserTests(unittest.TestCase):
 
 class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_intent_fills_only_omitted_options_and_cannot_change_the_question(self):
-        intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High",
+        intent = {"charts_requested": True, "native_sources": ["data-agent"], "proposal_priority": "High",
                   "equipment_selection": None,
                   "required_evidence_kinds": ["native_claims"],
                   "permitted_evidence_kinds": ["native_claims"],
@@ -125,7 +125,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
         normalized = normalized_chat_input(chat, intent)
         self.assertEqual(normalized.question, chat.question)
         self.assertTrue(normalized.charts_requested)
-        self.assertEqual(normalized.native_sources, ("ontology",))
+        self.assertEqual(normalized.native_sources, ("data-agent",))
         self.assertEqual(normalized.required_specialists, ("qa",))
         self.assertEqual(normalized.required_specialist_steps, {"qa": 1})
         explicit = ChatInput(question=chat.question, charts_requested=False,

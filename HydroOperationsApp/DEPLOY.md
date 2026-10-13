@@ -385,16 +385,14 @@ not private model reasoning.
 | Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
 | Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
 | Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
-| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit Data Agent requests or ontology-native semantic queries. Uses the two distinct connections below; it is not the default for all Fabric-hosted data. |
+| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit published Data Agent requests through one verified connection. It is not the default for all Fabric-hosted data, and it does not execute ontology-native chat queries. |
 
-Fabric IQ selects `fabriciq-data-agent` for an explicit Data Agent request and
-`fabriciq-ontology` for native ontology definitions, entities/relationships or instance
-properties. These are `fabric_iq_preview` tools, not the deprecated Data Agent tool.
-The current client verifies both configured v2 identities before invoking this
-specialist; it does not provide independent per-connection preflight availability.
-The Data Agent's known ontology-query product limitation does not establish failure
-of the separate direct Ontology endpoint. A schema-only response is insufficient
-when the user asked for instances. No silent endpoint substitution is authorized.
+Fabric IQ exposes exactly one `fabric_iq_preview` tool labelled
+`fabriciq-data-agent`. The deployment verifies that this connection targets the
+published Data Agent bound to the verified generation-2 ontology. Direct
+ontology-native chat execution is intentionally unsupported and is never simulated
+through the Data Agent. Ontology-v2 publication, the app's operator-bound native
+graph, and their independent readiness checks remain separate platform capabilities.
 
 Precedence and boundaries:
 
@@ -554,17 +552,17 @@ forcing the remaining agents to invent a successful sequence.
 
 2. **Ontology context to maintenance recommendation**
 
-   > Use the selected ontology directly to resolve T005's equipment identity,
-   > facility and available relationships; return actual instance values, not just
-   > schema. Using those verified IDs, inspect its latest raw telemetry within the
+   > Ask the published Fabric Data Agent to resolve T005's equipment identity,
+   > facility and available relationships; return actual rows, not just schema.
+   > Using those verified IDs, inspect its latest raw telemetry within the
    > last six hours and all open SQL work. Investigate any supported concerns and
    > prepare an editable inspection draft only if a specific uncovered issue warrants
-   > one. Show the ontology context, evidence timestamps, work coverage and uncertainty
+   > one. Show the Data Agent context, evidence timestamps, work coverage and uncertainty
    > in separate sections. Do not create a SQL record.
 
-   Expected capabilities: Sparky (Ontology) -> Gauge -> Sleuth -> Fixer. Assert the
-   Ontology endpoint actually executed, downstream IDs match returned instances,
-   schema-only output is not accepted, and stale telemetry is disclosed.
+   Expected capabilities: Sparky (Data Agent) -> Gauge -> Sleuth -> Fixer. Assert the
+   Data Agent tool actually executed, downstream IDs match returned rows, schema-only
+   output is not accepted, and stale telemetry is disclosed.
 
 3. **Data Agent backlog to evidence-backed follow-up**
 
@@ -598,13 +596,13 @@ forcing the remaining agents to invent a successful sequence.
 
 5. **Conversation continuity with a new requested sequence**
 
-   > Use the selected ontology directly to list facility instances. Ask the published
-   > Fabric Data Agent for open operational SQL work by equipment. Reconcile those
-   > results with direct asset and work-order records, then show a facility-level
+   > Ask the published Fabric Data Agent for facility instances and open operational
+   > SQL work by equipment. Reconcile those claims with direct facility, equipment
+   > and work-order records, then show a facility-level
    > backlog table and chart. Preserve unmatched IDs and source limitations instead
    > of guessing relationships. This turn is read-only.
 
-   Expected first-turn capabilities: Sparky (both connections) -> Gauge. Then send:
+   Expected first-turn capabilities: Sparky (Data Agent) -> Gauge. Then send:
 
    > Now investigate T005 using the latest available telemetry within six hours and
    > recorded inspections. Prepare one editable Low-priority inspection draft titled

@@ -36,7 +36,7 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   const gauge = agentDefinition('qa', 'test-model')
   const sleuth = agentDefinition('rca', 'test-model')
   const fixer = agentDefinition('work-order', 'test-model')
-  const sparky = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq', 'ontology-iq')
+  const sparky = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq')
   assert.equal(chief.reasoning.effort, 'medium')
   assert.equal(gauge.reasoning.effort, 'low')
   assert.equal(sleuth.reasoning.effort, 'low')
@@ -51,7 +51,7 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   assert.deepEqual(gauge.tools.map(tool => tool.name), ['hydro_query'])
   assert.deepEqual(sleuth.tools.map(tool => tool.name), ['hydro_query', 'complete_rca_assessment'])
   assert.deepEqual(fixer.tools.map(tool => tool.name), ['hydro_query', 'complete_work_order_review'])
-  assert.deepEqual(sparky.tools.map(tool => tool.server_label), ['fabriciq-data-agent', 'fabriciq-ontology'])
+  assert.deepEqual(sparky.tools.map(tool => tool.server_label), ['fabriciq-data-agent'])
 })
 
 test('operator narrative excludes technical inventories and pointer ledgers but keeps limitations', () => {
@@ -209,10 +209,13 @@ test('ordinary parts queries cannot invent a native-source request; follow-ups r
   assert.match(nativeSourceError('List spare parts at or below reorder level and related open maintenance work.', 'data-agent') ?? '', /not requested/)
   assert.equal(nativeSourceError('Use Fabric IQ to retrieve inventory.', 'data-agent'), undefined)
   assert.equal(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the published Data Agent for open work.']), undefined)
-  assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /not direct Ontology/)
-  assert.equal(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']), undefined)
-  assert.match(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the Data Agent.', 'Now use the ontology.']) ?? '', /not the Data Agent/)
-  assert.deepEqual(requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'), ['ontology', 'data-agent'])
+  assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
+  assert.match(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
+  assert.match(nativeSourceError('Now use the selected ontology.', 'data-agent', ['Ask the Data Agent for open work.']) ?? '', /ontology-native chat execution is disabled/)
+  assert.throws(
+    () => requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'),
+    /ontology-native chat execution is not supported/,
+  )
   assert.deepEqual(requestedNativeSources('Ask the Data Agent for open work. Do not use the ontology.'), ['data-agent'])
   assert.deepEqual(requestedNativeSources('What is the Data Agent?'), [])
 })
@@ -552,7 +555,7 @@ test('persistent agents share source semantics, complete equipment work and real
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /read_completed_at_utc/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /received after request start does not establish source clock skew/)
   for (const role of ['supervisor', 'qa', 'rca', 'work-order', 'fabric-iq'] as const) {
-    assert.ok(agentDefinition(role, 'test', 'data', 'ontology').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
+    assert.ok(agentDefinition(role, 'test', 'data').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
   }
 })
 
@@ -562,13 +565,16 @@ test('native specialists do not depend on Fabric; only IQ has the IQ tool', () =
     assert.equal(definition.tools[0].type, 'function')
     assert.doesNotMatch(JSON.stringify(definition.tools), /fabric_dataagent|fabric_iq/)
   }
-  const iq = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq', 'ontology-iq')
-  assert.equal(iq.tools.length, 2)
+  const iq = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq')
+  assert.equal(iq.tools.length, 1)
   assert.equal(iq.tools[0].type, 'fabric_iq_preview')
   assert.match(JSON.stringify(iq.tools[0]), /data-agent-iq/)
-  assert.match(JSON.stringify(iq.tools[1]), /ontology-iq/)
-  assert.throws(() => agentDefinition('fabric-iq', 'test-model', 'data-agent-only'), /connection/)
+  assert.throws(() => agentDefinition('fabric-iq', 'test-model'), /connection/)
   assert.equal(parseDelegation('{"specialist":"fabric-iq","question":"query ontology","requires_selection":false,"requires_verified_issue":false}').specialist, 'fabric-iq')
+  assert.throws(
+    () => parseDelegation('{"specialist":"fabric-iq","question":"query ontology","native_source":"ontology","requires_selection":false,"requires_verified_issue":false}'),
+    /Unsupported native source/,
+  )
   assert.throws(() => parseDelegation('{"specialist":"arbitrary-agent","question":"query","requires_selection":false,"requires_verified_issue":false}'), /Unknown/)
 })
 

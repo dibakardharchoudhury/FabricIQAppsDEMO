@@ -11,6 +11,9 @@ Do not approve/save test work orders or send notifications. Reject any test card
 Stale/empty telemetry, missing BOM data, or an upstream error must be disclosed,
 never replaced with an invented diagnosis, record or successful result.
 Native compound requests have taken 3-5 minutes; this is not a latency guarantee.
+Every Sparky route below uses its single published Fabric Data Agent tool. Direct
+ontology-native chat is intentionally unsupported; ontology-v2 publication and the
+application's explicitly bound native graph remain separate platform capabilities.
 
 For **every test**, structured records must be real HTML tables, not pipe-delimited
 paragraphs, JSON or CSV dumps. Tables are the default. Explicitly requested charts
@@ -39,15 +42,15 @@ Which turbines have latest signal quality BAD today (UTC), and what work is alre
 Check: BAD means signal quality; preserve all matching signals and work. A conditional
 draft may correctly result in no draft.
 
-## 2. Ontology identity -> direct evidence -> investigation -> gap review
+## 2. Data Agent identity -> direct evidence -> investigation -> gap review
 
-Expected specialists: Sparky (ontology) -> Gauge -> Sleuth -> Fixer.
+Expected specialists: Sparky (Data Agent) -> Gauge -> Sleuth -> Fixer.
 
 ```text
-Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.
+Ask the published Fabric Data Agent to resolve T005's equipment identity, facility and available relationships; return actual rows, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the Data Agent context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.
 ```
 
-Check: actual ontology instance receipt, not schema discovery alone. Empty telemetry
+Check: actual Data Agent execution receipt and returned rows, not schema discovery alone. Empty telemetry
 does not establish that the turbine is healthy or physically faulty.
 
 ## 3. Native work inventory -> verification -> investigation -> gap review
@@ -72,15 +75,15 @@ Ask the published Fabric Data Agent which turbines have latest signal quality BA
 Check: direct populations are not restricted to native-reported nodes; temperature
 ranking is not an approved hot/fault threshold. Preserve precision differences.
 
-## 5. Ontology + native SQL -> direct facility backlog reconciliation
+## 5. Data Agent facility/work claims -> direct facility backlog reconciliation
 
-Expected specialists: Sparky (ontology), Sparky (Data Agent) -> Gauge.
+Expected specialists: Sparky (Data Agent) -> Gauge.
 
 ```text
-Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.
+Ask the published Fabric Data Agent for facility instances and open operational SQL work by equipment. Reconcile those claims with direct facility, equipment and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.
 ```
 
-Check: two distinct native source receipts; complete direct work/equipment/facility
+Check: one Data Agent receipt; complete direct work/equipment/facility
 inventories; unmatched IDs disclosed and chart/table counts agree.
 
 ## 6. Parts stock -> risk investigation -> conditional work review

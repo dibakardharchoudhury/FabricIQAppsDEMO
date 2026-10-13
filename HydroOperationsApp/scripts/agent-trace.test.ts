@@ -56,7 +56,7 @@ test('trace retains every real response identity without recording hidden reason
   assert.equal(captureFoundryEvent(event, { type: 'response.reasoning_text.delta', delta: 'private' }), false)
   assert.equal(captureFoundryEvent(event, { type: 'response.output_text.delta', delta: 'answer' }), false)
   captureFoundryEvent(event, { type: 'response.output_item.done', item: {
-    type: 'mcp_call', name: 'query', server_label: 'fabriciq-ontology', output: 'sensitive rows',
+    type: 'mcp_call', name: 'query', server_label: 'fabriciq-data-agent', output: 'sensitive rows',
   } }, 30)
   assert.doesNotMatch(JSON.stringify(event.trace), /private|sensitive rows/)
   assert.equal(event.trace?.length, 3)

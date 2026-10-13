@@ -265,7 +265,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Fabric IQ connection {connection_name} readback did not match its requested identity/authentication.")
 
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
-        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, iq_name, ontology_connection,
+        deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, iq_name,
     ), cwd=deploy.APP_DIR))
     for name, definition in definitions.items():
         url = f"{endpoint}/agents/{name}"

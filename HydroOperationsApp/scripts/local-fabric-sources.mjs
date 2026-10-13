@@ -52,11 +52,11 @@ export function requiredEvidenceKinds(question) {
     kinds.add('work_orders')
   }
   if (requestedWorkBacklogGroup(text)) kinds.add('work_backlog')
-  if (/\b(?:list facility instances|direct asset|asset records?)\b/i.test(text)
+  if (/\b(?:list facility instances|direct (?:asset|facility)|asset records?)\b/i.test(text)
       || /\bresolve\b[^.!?;\n]{0,120}\bfacilit(?:y|ies)\b/i.test(text)) {
     kinds.add('facilities')
   }
-  if (/\b(?:resolve|check)\b[^.!?;\n]{0,100}\b(?:equipment )?identity\b|\bdirect (?:asset|equipment)\b/i.test(text)) {
+  if (/\b(?:resolve|check)\b[^.!?;\n]{0,100}\b(?:equipment )?identity\b|\bdirect\b[^.!?;\n]{0,50}\b(?:asset|equipment)\b/i.test(text)) {
     kinds.add('equipment')
   }
   if (/\b(?:signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
@@ -284,12 +284,12 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
 }
 
 function sourceClause(question, source) {
-  const matcher = source === 'data-agent' ? /\bdata[\s-]+agent\b/i : /\bontology\b/i
+  if (source !== 'data-agent') throw new Error('Sparky supports only the published Fabric Data Agent.')
   return positiveActionClauses(question)
     .split(/(?<=[.!?;\n])/)
     .map(value => value.trim())
-    .find(value => matcher.test(value))
-    ?? `Use the requested ${source === 'data-agent' ? 'Fabric Data Agent' : 'ontology'} source.`
+    .find(value => /\bdata[\s-]+agent\b/i.test(value))
+    ?? 'Use the requested published Fabric Data Agent.'
 }
 
 function requiresFinalQa(question) {
@@ -437,7 +437,7 @@ export function validatePlanRequirements(required, requiredSteps, steps, nativeS
   const plannedNative = new Set(steps
     .filter(step => step?.specialist === 'fabric-iq')
     .map(step => step?.native_source)
-    .filter(source => source === 'data-agent' || source === 'ontology'))
+    .filter(source => source === 'data-agent'))
   return {
     missing_specialists: required.filter(role => !roles.includes(role)),
     missing_specialist_steps: missingSteps,

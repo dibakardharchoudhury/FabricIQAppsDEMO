@@ -79,7 +79,7 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.equal(chatIntent('Draft a high-priority work order.').proposal_priority, 'High')
   assert.throws(() => chatIntent('Draft a high-priority work order and draft a low-priority work order.'), /conflicting/)
   assert.throws(() => chatIntent(' '), /nonempty/)
-  const compound = "Use the selected ontology to resolve T005's identity. Using those verified IDs, inspect telemetry and open work. Investigate concerns and prepare an editable inspection draft only if warranted."
+  const compound = "Ask the published Fabric Data Agent to resolve T005's identity. Using those verified IDs, inspect telemetry and open work. Investigate concerns and prepare an editable inspection draft only if warranted."
   assert.deepEqual(chatIntent(compound).required_specialists, ['qa', 'rca', 'work-order'])
   const independent = 'Ask a native source for two populations. Independently verify both sets using direct reads.'
   assert.deepEqual(chatIntent(independent).required_specialist_steps, { qa: 2 })
@@ -87,8 +87,8 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.deepEqual(chatIntent(acceptance).required_specialist_steps, { qa: 2, rca: 1 })
   assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'],
     { qa: 2, rca: 1, 'work-order': 1 }, [
-    { specialist: 'fabric-iq', native_source: 'ontology' },
-  ], ['ontology']), {
+    { specialist: 'fabric-iq', native_source: 'data-agent' },
+  ], ['data-agent']), {
     missing_specialists: ['qa', 'rca', 'work-order'],
     missing_specialist_steps: { qa: 2, rca: 1, 'work-order': 1 }, missing_native_sources: [],
     missing_evidence_kinds: [],
@@ -96,21 +96,25 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   })
   assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'],
     { qa: 2, rca: 1, 'work-order': 1 }, [
-    { specialist: 'fabric-iq', native_source: 'ontology' },
+    { specialist: 'fabric-iq', native_source: 'data-agent' },
     { specialist: 'qa', native_source: null },
     { specialist: 'qa', native_source: null },
     { specialist: 'rca', native_source: null },
     { specialist: 'work-order', native_source: null },
-  ], ['ontology']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [],
+  ], ['data-agent']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [],
     missing_evidence_kinds: [],
     unexpected_evidence_kinds: [] })
   assert.deepEqual(permittedEvidenceKinds(compound).sort(),
     ['equipment', 'native_claims', 'telemetry', 'work_orders'].sort())
   assert.deepEqual(validatePlanRequirements(['qa'], { qa: 1 }, [
-    { specialist: 'fabric-iq', native_source: 'ontology' },
+    { specialist: 'fabric-iq', native_source: 'data-agent' },
     { specialist: 'qa', native_source: null },
-  ], ['ontology'], compound, ['native_claims', 'equipment', 'telemetry', 'work_orders', 'signal_quality'])
+  ], ['data-agent'], compound, ['native_claims', 'equipment', 'telemetry', 'work_orders', 'signal_quality'])
     .unexpected_evidence_kinds, ['signal_quality'])
+  assert.throws(
+    () => chatIntent('Use the selected ontology directly to list facility instances.'),
+    /Direct ontology-native chat execution is not supported/,
+  )
   assert.deepEqual(
     analyticalEvidencePlan(
       'Verify BAD and UNCERTAIN signal quality and the five hottest turbines in the last six hours, '
@@ -155,9 +159,9 @@ test('all ten canonical prompts have one centralized routing and presentation co
       required: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_backlog', 'work_orders'],
     },
     {
-      question: "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
+      question: "Ask the published Fabric Data Agent to resolve T005's equipment identity, facility and available relationships; return actual rows, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the Data Agent context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
-      native: ['ontology'], chart: false, priority: 'Medium',
+      native: ['data-agent'], chart: false, priority: 'Medium',
       evidence: ['equipment', 'facilities', 'native_claims', 'telemetry', 'work_orders'],
       required: ['equipment', 'facilities', 'native_claims', 'telemetry', 'work_orders'],
     },
@@ -176,9 +180,9 @@ test('all ten canonical prompts have one centralized routing and presentation co
       required: ['native_claims', 'signal_quality', 'temperature', 'work_orders'],
     },
     {
-      question: 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
+      question: 'Ask the published Fabric Data Agent for facility instances and open operational SQL work by equipment. Reconcile those claims with direct facility, equipment and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
       specialists: ['qa'], steps: { qa: 1 },
-      native: ['ontology', 'data-agent'], chart: true, priority: 'Medium',
+      native: ['data-agent'], chart: true, priority: 'Medium',
       evidence: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
       required: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
     },
@@ -235,7 +239,7 @@ test('all ten canonical prompts have one centralized routing and presentation co
 test('deterministic Supervisor compiles canonical prompts 1, 3, and 5 in exact order', () => {
   const prompt1 = 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.'
   const prompt3 = 'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.'
-  const prompt5 = 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.'
+  const prompt5 = 'Ask the published Fabric Data Agent for facility instances and open operational SQL work by equipment. Reconcile those claims with direct facility, equipment and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.'
   const first = compileOrchestrationPlan(prompt1)
   const third = compileOrchestrationPlan(prompt3)
   const fifth = compileOrchestrationPlan(prompt5)
@@ -246,7 +250,7 @@ test('deterministic Supervisor compiles canonical prompts 1, 3, and 5 in exact o
   assert.equal(third.steps[0].native_source, 'data-agent')
   assert.equal(third.steps[3].requires_verified_issue, true)
   assert.deepEqual(fifth.steps.map(step => [step.specialist, step.native_source]),
-    [['fabric-iq', 'ontology'], ['fabric-iq', 'data-agent'], ['qa', null]])
+    [['fabric-iq', 'data-agent'], ['qa', null]])
   for (const [question, plan] of [[prompt1, first], [prompt3, third], [prompt5, fifth]]) {
     const intent = chatIntent(question)
     assert.deepEqual(
@@ -281,10 +285,10 @@ test('prompt one accepts governed equipment backlog evidence at the plan boundar
 test('deterministic compiler completes every canonical required evidence kind and view', () => {
   const questions = [
     'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.',
-    "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
+    "Ask the published Fabric Data Agent to resolve T005's equipment identity, facility and available relationships; return actual rows, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the Data Agent context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
     'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.',
     'Ask the published Fabric Data Agent which turbines have latest signal quality BAD today (UTC), the five hottest turbines from latest raw temperature readings today, and all open work on those turbines. Independently verify both sets using direct telemetry snapshots and SQL work records. Investigate any disagreement: distinguish signal quality from temperature, same-signal from equipment-level work, averaging from latest raw readings, and stale from current data. Return a reconciliation table showing source claims, verified evidence and unresolved differences. Do not silently prefer an answer or propose new work.',
-    'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
+    'Ask the published Fabric Data Agent for facility instances and open operational SQL work by equipment. Reconcile those claims with direct facility, equipment and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
   ]
   for (const question of questions) {
     const intent = chatIntent(question)
@@ -336,7 +340,7 @@ test('deterministic compiler removes unrequested model-authored charts', () => {
 
 test('deterministic compiler normalizes scope and dataset-specific presentation intent', () => {
   const scopedWork = compileAnswerContract(
-    "Use the selected ontology to resolve T005. Using those IDs, inspect all open SQL work.",
+    "Ask the published Fabric Data Agent to resolve T005. Using those IDs, inspect all open SQL work.",
     false,
     ['work_orders'],
     {

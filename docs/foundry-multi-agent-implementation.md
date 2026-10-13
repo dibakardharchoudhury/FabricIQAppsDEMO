@@ -930,7 +930,7 @@ workers or five Agent Framework-hosted processes.
 | **Gauge**, `hydro-qa-agent`, v11 | Facts, telemetry, existing work, inventory, charts and requested factual verification | `hydro_query` with catalog-governed STID/SQL reads, KQL templates and validation, station-power/quality snapshots and presentation tools | Read/visualize, not create work |
 | **Sleuth**, `hydro-rca-agent`, v13 | Investigation, diagnosis review and RCA follow-ups | Read tools plus `complete_rca_assessment`; evidence references, competing hypotheses and missing-evidence rules | Proposes explanations, not proven causes or operational control actions |
 | **Fixer**, `hydro-work-order-agent`, v11 | Explicit or conditional new-work review | Identity/coverage reads, `propose_work_order`, `complete_work_order_review` | Editable proposal or explicit no-draft/clarification result; no model-issued SQL write |
-| **Sparky**, `hydro-fabric-iq-agent`, v8 | Explicit native Data Agent or selected-ontology retrieval | Separate `fabriciq-data-agent` and `fabriciq-ontology` connections using `fabric_iq_preview` | Native retrieval; cannot silently replace one source with the other |
+| **Sparky**, `hydro-fabric-iq-agent` | Explicit published Data Agent retrieval | One verified `fabriciq-data-agent` connection using `fabric_iq_preview` | Data Agent retrieval only; direct ontology-native chat is rejected |
 
 The source catalog supplies schema/allow-list knowledge, **not embedded business
 records**. TypeScript implements query validation, evidence checks, routing,

@@ -34,7 +34,7 @@ from .workflow import RequiredCheckpointStorage
 
 logger = logging.getLogger(__name__)
 Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
-NativeSource = Literal["data-agent", "ontology"]
+NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
 MAX_CHAT_RUN_DURATION = timedelta(minutes=10)
@@ -1636,8 +1636,14 @@ class FoundrySupervisor:
             live_tools = definition.get("tools", [])
             if role == "fabric-iq":
                 labels = {tool.get("server_label") for tool in live_tools if tool.get("type") == "fabric_iq_preview"}
-                if labels != {"fabriciq-data-agent", "fabriciq-ontology"}:
-                    raise SourceFailure("Both existing native-source connections must be retained.")
+                if (
+                    labels != {"fabriciq-data-agent"}
+                    or len(live_tools) != 1
+                    or self.native_binding is None
+                    or live_tools[0].get("project_connection_id")
+                    != self.native_binding.connections.get("data-agent")
+                ):
+                    raise SourceFailure("The live Fabric IQ agent must retain only its verified Data Agent connection.")
             else:
                 wanted = expected[role]
                 for tool in wanted:
@@ -1920,6 +1926,10 @@ class FoundrySupervisor:
         version = versions[role]
         selected: list[dict[str, object]] = []
         if role == "fabric-iq":
+            if native_source != "data-agent":
+                raise SourceFailure(
+                    "Direct ontology-native chat execution is disabled; Sparky is bound only to the Data Agent."
+                )
             if self.native_binding is None or native_source not in self.native_binding.connections:
                 raise SourceFailure("A separately verified target-specific native connection binding is required.")
             selected = [tool for tool in version.tools

@@ -805,7 +805,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.versions = {
             role: AgentVersion(name=name, version="12", model="test", tools=tuple(contracts["tools"].get(role, [
                 {"type": "fabric_iq_preview", "server_label": "fabriciq-data-agent", "project_connection_id": "native-data"},
-                {"type": "fabric_iq_preview", "server_label": "fabriciq-ontology", "project_connection_id": "native-ontology"},
             ]))) for role, name in contracts["names"].items()
         }
         self.request = ChatRequest(

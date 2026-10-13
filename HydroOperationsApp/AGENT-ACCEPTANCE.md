@@ -1062,7 +1062,7 @@ it does not run a supervisor or specialist tool loop.
 | **Gauge / hydro-qa-agent** | Factual retrieval, current health, existing work, stock lists, charts, independent factual verification | `hydro_query`: catalog-governed asset/operations reads, KQL and telemetry templates, canonical BAD/HOT snapshots, station-power chart, visualization and 3D model retrieval. |
 | **Sleuth / hydro-rca-agent** | Explicit investigation, diagnosis or root-cause analysis | The same read-only data tools; assigned evidence and scientific RCA instructions. No validated OEM manual retrieval corpus or numerical causal model is currently attached. |
 | **Fixer / hydro-work-order-agent** | Explicit or conditional requests for editable new work | Read tools plus `propose_work_order` (in-memory card only) and `complete_work_order_review` (no-draft/clarification decision). SQL creation belongs to the human-approved application path, not the agent. |
-| **Sparky / hydro-fabric-iq-agent** | Explicit published Data Agent or ontology-native context/query tasks | Two separate native `fabric_iq_preview` connections: `fabriciq-data-agent` and `fabriciq-ontology`. These are distinct sources, not interchangeable fallback tools. |
+| **Sparky / hydro-fabric-iq-agent** | Explicit published Data Agent context/query tasks | One verified native `fabric_iq_preview` connection: `fabriciq-data-agent`. Direct ontology-native chat execution is rejected rather than substituted. |
 
 The source catalog describes allowed entities, columns and KQL functions; it is not a
 copy of the underlying business data. Hosted Node/TypeScript contracts implement query
@@ -1121,9 +1121,9 @@ verification rather than inferring speed from reduced input construction.
     before writing a Draft. Validation and write each have a 90-second bound. Validation
     timeout cannot later start a write. Write timeout is uncertain and cannot replay.
     A late successful acknowledgement updates the card with the returned number.
-11. **Explicit published Data Agent request inside Foundry:** Chief -> Sparky using the
-    Data Agent connection. **Explicit selected ontology identities/relationships/native
-    semantics:** Chief -> Sparky using the Ontology connection.
+11. **Explicit published Data Agent request inside Foundry:** Supervisor -> Sparky using
+    Sparky's single Data Agent connection. Explicit ontology-native chat requests fail
+    closed; they are not redirected through the Data Agent.
 12. **Mixed source request:** Sparky completes only its native-source step; Gauge does
     direct verification; Sleuth investigates; Fixer evaluates proposed work as needed.
     There is no automatic native-source substitution after failure.
@@ -1152,13 +1152,13 @@ No mapping is guessed from model prose. Errors and stale evidence remain visible
 
 Do not invoke Sparky just because the app runs in Fabric, a question mentions an asset,
 SQL is involved, or the user wants a graph/chart. Direct telemetry and operational reads
-are normally faster and provide deterministic filters. An ontology-native relationship
-question or explicit cross-source reconciliation justifies Sparky; ordinary station
-power charts do not. Schema discovery alone is not an instance answer.
+are normally faster and provide deterministic filters. Only an explicit published
+Data Agent request justifies Sparky; ordinary station power charts and direct ontology
+requests do not.
 
 The selected ontology must be live generation 2 with verified identity and publication.
-The Data Agent ontology-source path has a known product limitation; direct table reads
-and the direct Ontology connection have separate readiness. Neither graph materialization
+The Data Agent remains bound to the verified ontology, but Sparky has no direct Ontology
+connection. Direct table reads and the native graph have separate readiness. Neither graph materialization
 nor agent runtime readiness follows from item creation. Native graph materialization uses
 the manual ontology Manage graph flow and verified binding described in DEPLOY.
 
