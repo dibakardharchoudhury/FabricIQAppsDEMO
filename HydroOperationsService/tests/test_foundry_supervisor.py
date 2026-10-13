@@ -276,6 +276,26 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "telemetry focus evidence was not produced"):
             self.owner.contract_answer_plan(self.request)
 
+    def test_empty_selection_omits_focus_view_with_explicit_limitation(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "evidence": "telemetry_focus_direct", "purpose": "investigation",
+            }],
+            "views": [{
+                "id": "telemetry", "title": "Selected turbine telemetry", "kind": "telemetry",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+
+        plan = self.owner.contract_answer_plan(self.request)
+
+        self.assertEqual(plan.tables, ())
+        self.assertIn(
+            "Selected turbine telemetry was omitted because the population evidence selected no equipment.",
+            plan.limitations,
+        )
+
     async def test_missing_focus_catalog_evidence_is_fulfilled_deterministically(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,

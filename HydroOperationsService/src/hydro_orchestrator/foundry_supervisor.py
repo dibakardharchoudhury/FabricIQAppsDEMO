@@ -2384,6 +2384,11 @@ class FoundrySupervisor:
                     )
                 ]
             if not matches:
+                if view.scope == "focus" and not self.selected_equipment_ids:
+                    limitations.append(
+                        f"{view.title} was omitted because the population evidence selected no equipment."
+                    )
+                    continue
                 raise SourceFailure(
                     f"Required answer view {view.id} has no governed {view.kind} evidence."
                 )
