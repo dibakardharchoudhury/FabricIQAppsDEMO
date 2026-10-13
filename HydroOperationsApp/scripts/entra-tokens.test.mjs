@@ -124,3 +124,20 @@ test('hosted Rayfin exchange refreshes every delegated token before a bounded ru
   assert.match(source, /silentToken\(\[GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE\], true\)/)
   assert.match(source, /silentToken\(\[kustoScope\(cluster\)\], true\)/)
 })
+
+test('explicit source connection preserves the user gesture for deployment-bound resource consent', () => {
+  const source = readFileSync(new URL('../src/services/fabric.ts', import.meta.url), 'utf8')
+  const connect = source.slice(
+    source.indexOf('export async function beginInteractiveConnect'),
+    source.indexOf('export type Facility'),
+  )
+  const knownConfig = connect.indexOf('const knownConfig = configCache ?? envConfig()')
+  const stidPopup = connect.indexOf('await popupToken([GRAPHQL_SCOPE])')
+  const telemetryPopup = connect.indexOf('await popupToken([kustoScope(knownConfig.eventhouseQueryUri)])')
+  const discovery = connect.indexOf('const config = await ensureConfig(true)')
+  assert.ok(knownConfig >= 0)
+  assert.ok(stidPopup > knownConfig && stidPopup < discovery)
+  assert.ok(telemetryPopup > knownConfig && telemetryPopup < discovery)
+  assert.match(connect, /Click Connect STID again to authorize the GraphQL API/)
+  assert.match(connect, /Click Connect telemetry again to authorize the Eventhouse/)
+})

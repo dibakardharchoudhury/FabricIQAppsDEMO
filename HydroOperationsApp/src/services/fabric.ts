@@ -452,15 +452,29 @@ async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: J
 /** Sign in / consent for a resource using a popup; the caller then retries its query. */
 export async function beginInteractiveConnect(target: ConnectTarget) {
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
+  const knownConfig = configCache ?? envConfig()
+  if (target === 'stid') {
+    if (knownConfig.graphqlUrl) {
+      await popupToken([GRAPHQL_SCOPE])
+      return
+    }
+  } else if (target === 'telemetry') {
+    if (knownConfig.eventhouseQueryUri) {
+      await popupToken([kustoScope(knownConfig.eventhouseQueryUri)])
+      return
+    }
+  }
+
   const config = await ensureConfig(true)
   if (target === 'stid') {
     if (!config?.graphqlUrl) throw new Error('No GraphQL API found in the workspace. Publish the STID GraphQL API (run RTI_011) and try again.')
-    await popupToken([GRAPHQL_SCOPE])
-  } else if (target === 'telemetry') {
-    if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
-    await popupToken([kustoScope(config.eventhouseQueryUri)])
+    throw new Error('Fabric access is connected. Click Connect STID again to authorize the GraphQL API.')
   }
-  // 'stream' needs only the Fabric token already acquired by ensureConfig.
+  if (target === 'telemetry') {
+    if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
+    throw new Error('Fabric access is connected. Click Connect telemetry again to authorize the Eventhouse.')
+  }
+  // 'stream' needs only the Fabric token acquired by workspace discovery.
 }
 
 export type Facility = {
