@@ -146,8 +146,9 @@ class PublishedIdentityTests(unittest.TestCase):
             "tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology,
             "generation": 2, "configuration_digest": digest,
         }
+        native_binding = {"source": source, "connections": {"data-agent": "hydro-fabric-iq"}}
         agent = {"versions": {"latest": {"definition": {"environment_variables": {
-            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": source}),
+            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": source, "native_binding": native_binding}),
         }}}}}
         module.verify_hosted_source(agent, tenant, workspace, ontology, digest)
         for invalid in [
@@ -156,7 +157,20 @@ class PublishedIdentityTests(unittest.TestCase):
                 "HYDRO_ORCHESTRATOR_CONFIG": "not-json",
             }}}}},
             {"versions": {"latest": {"definition": {"environment_variables": {
-                "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({"source": {**source, "workspace_id": tenant}}),
+                "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({
+                    "source": {**source, "workspace_id": tenant}, "native_binding": native_binding,
+                }),
+            }}}}},
+            {"versions": {"latest": {"definition": {"environment_variables": {
+                "HYDRO_ORCHESTRATOR_CONFIG": json.dumps({
+                    "source": source,
+                    "native_binding": {
+                        "source": source,
+                        "connections": {
+                            "data-agent": "hydro-fabric-iq", "ontology": "hydro-fabric-ontology",
+                        },
+                    },
+                }),
             }}}}},
         ]:
             with self.assertRaises(RuntimeError):

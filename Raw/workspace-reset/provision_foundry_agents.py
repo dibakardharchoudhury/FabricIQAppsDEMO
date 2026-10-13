@@ -131,9 +131,11 @@ def source_configuration_digest(tenant: str, workspace: str, ontology: str, valu
 def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str, digest: str) -> None:
     try:
         raw = agent["versions"]["latest"]["definition"]["environment_variables"]["HYDRO_ORCHESTRATOR_CONFIG"]
-        source = json.loads(raw)["source"]
+        configuration = json.loads(raw)
+        source = configuration["source"]
+        native_binding = configuration["native_binding"]
     except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise RuntimeError("The active hosted runtime has no readable source identity configuration.") from error
+        raise RuntimeError("The active hosted runtime has no readable source/native-binding configuration.") from error
     expected = {
         "tenant_id": tenant,
         "workspace_id": workspace,
@@ -143,6 +145,8 @@ def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str
     }
     if source != expected:
         raise RuntimeError("The active hosted runtime source identity does not match the selected Fabric deployment.")
+    if native_binding != {"source": expected, "connections": {"data-agent": "hydro-fabric-iq"}}:
+        raise RuntimeError("The active hosted runtime must retain only the verified Data Agent native binding.")
 
 
 def provision(deploy, tenant: str, workspace: str) -> None:
