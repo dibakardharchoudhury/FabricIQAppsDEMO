@@ -152,7 +152,7 @@ function defaultEvidenceScope(kind, question) {
       ? 'population' : 'focus'
   }
   if (kind === 'work_orders') {
-    return /\b(?:all|every|inventory|backlog|on each|by equipment|facility[- ]level)\b/i.test(text)
+    return /\b(?:every|inventory|backlog|on each|by equipment|facility[- ]level)\b/i.test(text)
       ? 'population' : 'focus'
   }
   if (kind === 'equipment') {
@@ -160,6 +160,21 @@ function defaultEvidenceScope(kind, question) {
       ? 'population' : 'focus'
   }
   return 'focus'
+}
+
+function chartRequestedForKind(kind, chartsRequested, question) {
+  if (!chartsRequested) return false
+  const chartText = positiveActionClauses(question)
+    .split(/[.!?;\n]+/)
+    .filter(clause => /\b(?:chart|plot|graph|visuali[sz]e)\b/i.test(clause))
+    .join(' ')
+  if (kind === 'work_backlog') {
+    return /\b(?:backlog|orders?[- ]per[- ]equipment|facility[- ]level)\b/i.test(chartText)
+  }
+  if (kind === 'station_power') return /\b(?:station power|power output per station)\b/i.test(chartText)
+  if (kind === 'temperature') return /\b(?:temperature|temperatures|hot|hottest)\b/i.test(chartText)
+  if (kind === 'telemetry') return /\b(?:telemetry|readings?|signals?)\b/i.test(chartText)
+  return false
 }
 
 function defaultPresentation(kind, authority, chartsRequested, question) {
@@ -171,9 +186,11 @@ function defaultPresentation(kind, authority, chartsRequested, question) {
     if (!group) throw new Error('Required work backlog evidence has no governed grouping intent.')
     presentation = `grouped_by_${group}_${chartsRequested ? 'bar' : 'table'}`
   } else if (kind === 'station_power' && chartsRequested) {
-    presentation = 'grouped_by_facility_bar'
+    presentation = 'records_bar'
   } else if (kind === 'temperature' && chartsRequested) {
     presentation = 'records_bar'
+  } else if (kind === 'telemetry' && chartsRequested) {
+    presentation = 'records_line'
   }
   if (!dataset.presentations.includes(presentation)) {
     throw new Error(`No governed presentation can compile required ${kind} evidence.`)
@@ -188,34 +205,54 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
     throw new Error('Answer contract compilation requires a governed request and typed contract.')
   }
   const requirements = structuredClone(contract.requirements)
-  const views = structuredClone(contract.views).map(view => {
-    if (chartsRequested || typeof view?.kind !== 'string' || typeof view?.presentation !== 'string') {
-      return view
-    }
-    const match = /^(direct|native)_(.+)_(?:bar|line|scatter)$/.exec(view.presentation)
-    if (!match) return view
-    const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === view.kind)
-    const tablePresentation = `${match[2]}_table`
-    if (!dataset?.presentations.includes(tablePresentation)) {
-      throw new Error(`No governed table presentation can replace unrequested ${view.kind} chart.`)
-    }
-    return { ...view, presentation: `${match[1]}_${tablePresentation}` }
-  })
   for (const kind of requiredKinds) {
     const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === kind)
     if (!dataset) throw new Error(`Cannot compile an ungoverned evidence kind: ${kind}.`)
+    const scope = defaultEvidenceScope(kind, question)
+    const authority = dataset.evidenceAuthorities[0]
     let requirement = requirements.find(candidate =>
       typeof candidate?.evidence === 'string' && candidate.evidence.startsWith(`${kind}_`))
     if (!requirement) {
-      const scope = defaultEvidenceScope(kind, question)
-      const authority = dataset.evidenceAuthorities[0]
       requirement = {
         evidence: `${kind}_${scope}_${authority}`,
         purpose: ['equipment', 'facilities', 'instruments'].includes(kind) ? 'identity'
           : ['work_orders', 'work_backlog'].includes(kind) ? 'coverage' : 'facts',
       }
       requirements.push(requirement)
+    } else {
+      requirement.evidence = `${kind}_${scope}_${authority}`
     }
+  }
+  const views = structuredClone(contract.views).map(view => {
+    if (view?.presentation === 'reconciliation_table'
+        || typeof view?.kind !== 'string' || typeof view?.presentation !== 'string') {
+      return view
+    }
+    const dataset = DOMAIN_DATASETS.find(candidate => candidate.key === view.kind)
+    if (!dataset) return view
+    const authority = view.presentation.startsWith('native_') ? 'native' : 'direct'
+    const requirement = requirements.find(candidate =>
+      typeof candidate?.evidence === 'string'
+      && candidate.evidence.startsWith(`${view.kind}_`)
+      && candidate.evidence.endsWith(`_${authority}`))
+    if (!requirement) return view
+    const match = /^([a-z][a-z0-9_]*)_(population|focus)_(direct|native)$/.exec(requirement.evidence)
+    if (!match) throw new Error(`Required ${view.kind} evidence has an invalid governed identity.`)
+    return {
+      ...view,
+      scope: match[2],
+      presentation: defaultPresentation(
+        view.kind,
+        authority,
+        chartRequestedForKind(view.kind, chartsRequested, question),
+        question,
+      ),
+    }
+  })
+  for (const kind of requiredKinds) {
+    const requirement = requirements.find(candidate =>
+      typeof candidate?.evidence === 'string' && candidate.evidence.startsWith(`${kind}_`))
+    if (!requirement) throw new Error(`Required ${kind} evidence was not compiled.`)
     if (!views.some(candidate => candidate?.kind === kind)) {
       const match = /^([a-z][a-z0-9_]*)_(population|focus)_(direct|native)$/.exec(requirement.evidence)
       if (!match) throw new Error(`Required ${kind} evidence has an invalid governed identity.`)
@@ -224,7 +261,12 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
         title: kind.split('_').map(value => value[0].toUpperCase() + value.slice(1)).join(' '),
         kind,
         scope: match[2],
-        presentation: defaultPresentation(kind, match[3], chartsRequested, question),
+        presentation: defaultPresentation(
+          kind,
+          match[3],
+          chartRequestedForKind(kind, chartsRequested, question),
+          question,
+        ),
       })
     }
   }

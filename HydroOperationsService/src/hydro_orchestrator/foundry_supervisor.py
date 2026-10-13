@@ -362,6 +362,8 @@ def transient_native_failure(error: BaseException) -> str | None:
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
+        if isinstance(current, APIStatusError) and 500 <= current.status_code <= 599:
+            return f"http_{current.status_code}"
         if (
             isinstance(current, APIStatusError)
             and current.status_code == 400

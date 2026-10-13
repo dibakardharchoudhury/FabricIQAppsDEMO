@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx
 from azure.core.credentials import AccessToken
 from azure.identity.aio import AzureCliCredential
-from openai import APITimeoutError, AsyncOpenAI, BadRequestError
+from openai import APITimeoutError, AsyncOpenAI, BadRequestError, InternalServerError
 from agent_framework import AgentFrameworkException, FileCheckpointStorage
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
@@ -890,6 +890,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 response=response,
                 body={"code": "tool_user_error", "type": "invalid_request_error"},
+            )
+        if self.mode == "native_server_error_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
+            response = httpx.Response(500, request=httpx.Request("POST", request.url))
+            raise InternalServerError(
+                "Transient native service failure.",
+                response=response,
+                body={"code": "server_error", "type": "server_error"},
             )
         if name == "hydro-supervisor-agent":
             if self.mode == "supervisor_no_plan":
@@ -1785,6 +1792,15 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_missing_mcp_reply_gets_one_bounded_same_source_retry(self):
         self.mode = "native_mcp_transport_once"
+        request = self.request.model_copy(update={"native_sources": ("data-agent",)})
+        owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
+        result = await owner.run(request)
+        self.assertEqual([item.role for item in result.specialists], ["fabric-iq"])
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_server_error_gets_one_bounded_same_source_retry(self):
+        self.mode = "native_server_error_once"
         request = self.request.model_copy(update={"native_sources": ("data-agent",)})
         owner = self.make_owner(native_binding=NativeBinding(source=SOURCE, connections={"data-agent": "native-data"}))
         result = await owner.run(request)

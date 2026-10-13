@@ -298,6 +298,74 @@ test('deterministic compiler removes unrequested model-authored charts', () => {
   )
 })
 
+test('deterministic compiler normalizes scope and dataset-specific presentation intent', () => {
+  const scopedWork = compileAnswerContract(
+    "Use the selected ontology to resolve T005. Using those IDs, inspect all open SQL work.",
+    false,
+    ['work_orders'],
+    {
+      version: DOMAIN_CONTRACT_VERSION,
+      requirements: [{ evidence: 'work_orders_population_direct', purpose: 'coverage' }],
+      views: [{
+        id: 'selected-work', title: 'Selected work', kind: 'work_orders',
+        scope: 'population', presentation: 'direct_records_table',
+      }],
+    },
+  )
+  assert.equal(scopedWork.requirements[0].evidence, 'work_orders_focus_direct')
+  assert.equal(scopedWork.views[0].scope, 'focus')
+
+  const equipmentBacklog = compileAnswerContract(
+    'Include a backlog table and orders-per-equipment chart. Investigate recent telemetry.',
+    true,
+    ['work_backlog', 'telemetry'],
+    {
+      version: DOMAIN_CONTRACT_VERSION,
+      requirements: [
+        { evidence: 'work_backlog_population_direct', purpose: 'coverage' },
+        { evidence: 'telemetry_focus_direct', purpose: 'facts' },
+      ],
+      views: [
+        {
+          id: 'backlog', title: 'Backlog', kind: 'work_backlog',
+          scope: 'population', presentation: 'direct_grouped_by_facility_table',
+        },
+        {
+          id: 'selected-equipment-telemetry', title: 'Selected telemetry', kind: 'telemetry',
+          scope: 'focus', presentation: 'direct_records_line',
+        },
+      ],
+    },
+  )
+  assert.equal(equipmentBacklog.views[0].presentation, 'direct_grouped_by_equipment_bar')
+  assert.equal(equipmentBacklog.views[1].presentation, 'direct_records_table')
+
+  const facilityBacklog = compileAnswerContract(
+    'List facility instances and show a facility-level backlog table and chart.',
+    true,
+    ['native_claims', 'work_backlog'],
+    {
+      version: DOMAIN_CONTRACT_VERSION,
+      requirements: [
+        { evidence: 'native_claims_population_native', purpose: 'facts' },
+        { evidence: 'work_backlog_population_direct', purpose: 'coverage' },
+      ],
+      views: [
+        {
+          id: 'native-dataagent-claims-by-equipment', title: 'Native claims', kind: 'native_claims',
+          scope: 'population', presentation: 'native_grouped_by_equipment_bar',
+        },
+        {
+          id: 'facility-backlog', title: 'Facility backlog', kind: 'work_backlog',
+          scope: 'population', presentation: 'direct_grouped_by_equipment_bar',
+        },
+      ],
+    },
+  )
+  assert.equal(facilityBacklog.views[0].presentation, 'native_records_table')
+  assert.equal(facilityBacklog.views[1].presentation, 'direct_grouped_by_facility_bar')
+})
+
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {
   const yaml = await readFile(new URL('../rayfin/rayfin.yml', import.meta.url), 'utf8')
   const parsed = parseRayfinYaml(yaml)
