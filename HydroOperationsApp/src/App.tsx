@@ -75,6 +75,7 @@ const BUILD_STAMP = new Date(__BUILD_TIME__).toLocaleString([], { year: 'numeric
 // Optional UI credits injected by `rayfin env --framework vite` from RAYFIN_PUBLIC_* variables.
 const UI_CREDIT_LINE_1 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_1 as string | undefined)?.trim()
 const UI_CREDIT_LINE_2 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_2 as string | undefined)?.trim()
+const UI_CREDIT_LINE_3 = (import.meta.env.VITE_RAYFIN_UI_CREDIT_LINE_3 as string | undefined)?.trim()
 
 // A Copilot chat turn; agent turns carry per-answer timing/token metrics once finished.
 type ChatMessage = { role: 'user' | 'agent'; text: string; chart?: boolean; failed?: boolean; meta?: { elapsedMs: number; tokens?: number } }
@@ -694,7 +695,7 @@ export default function App() {
         </div>
       </div>
       <div className="top-actions">
-        {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2) && <div
+        {(UI_CREDIT_LINE_1 || UI_CREDIT_LINE_2 || UI_CREDIT_LINE_3) && <div
           aria-label="Application credits"
           style={{
             display: 'flex',
@@ -710,6 +711,7 @@ export default function App() {
         >
           {UI_CREDIT_LINE_1 && <span>{UI_CREDIT_LINE_1}</span>}
           {UI_CREDIT_LINE_2 && <span>{UI_CREDIT_LINE_2}</span>}
+          {UI_CREDIT_LINE_3 && <span>{UI_CREDIT_LINE_3}</span>}
         </div>}
         <span className="app-version" title={`Version ${__APP_VERSION__}${__BUILD_COMMIT__ ? ` · ${__BUILD_COMMIT__}` : ''} · built ${BUILD_STAMP}`}><strong>v{__APP_VERSION__}</strong><small>{BUILD_STAMP}</small><a href="?ui=v2">Click here for V2 UI</a></span>
         <button className="avatar" onClick={() => void authenticate()} title={user?.email ?? 'Step 1 · Sign in with your Microsoft Fabric identity'}>{user?.name.slice(0, 2).toUpperCase() ?? 'ID'}</button>
