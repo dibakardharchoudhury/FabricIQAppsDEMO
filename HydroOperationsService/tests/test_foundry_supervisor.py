@@ -1845,6 +1845,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.tables[0].rows[0].values["value"], 75.0)
         self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
         self.assertEqual(self.owner.failures, [])
+        self.assertIn(
+            "Every answer view must have a matching evidence requirement",
+            json.dumps(self.payloads),
+        )
 
     async def test_repeated_invalid_arguments_stop_without_touching_sources(self):
         self.mode = "repeat_invalid"

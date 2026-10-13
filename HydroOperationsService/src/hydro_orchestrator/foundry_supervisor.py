@@ -410,6 +410,14 @@ class ToolInputError(ValueError):
     """Invalid model arguments rejected before any backend source execution."""
 
 
+def validation_error_summary(error: ValidationError) -> str:
+    details = []
+    for item in error.errors(include_url=False, include_input=False)[:8]:
+        location = ".".join(str(part) for part in item["loc"]) or "input"
+        details.append(f"{location}: {item['msg']}")
+    return "; ".join(details)
+
+
 class ToolSpecification(Contract):
     name: str
     parameters: dict[str, object]
@@ -1763,8 +1771,9 @@ class FoundrySupervisor:
                 })
             except ValidationError as error:
                 raise ToolInputError(
-                    "The orchestration or answer contract is invalid. Correct the reported contract mismatch "
-                    "and call plan_orchestration once more."
+                    "The orchestration or answer contract is invalid. "
+                    f"Validation errors: {validation_error_summary(error)}. "
+                    "Correct these exact fields and call plan_orchestration once more."
                 ) from error
             catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
             governed = governed_datasets(catalog.context)
