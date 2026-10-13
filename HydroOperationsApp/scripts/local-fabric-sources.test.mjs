@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -132,6 +132,17 @@ test('backend intent reuses canonical chart, native and human-priority semantics
         arguments: { group_by: 'facility' }, match_arguments: { group_by: 'facility' } },
     ],
   )
+  assert.deepEqual(
+    analyticalEvidencePlan(
+      'Inspect the selected turbine latest raw telemetry within the last six hours.',
+      ['telemetry'],
+    ),
+    [{
+      kind: 'telemetry', tool: 'query_telemetry',
+      arguments: { lookback: '6h', aggregation: 'latest' },
+      match_arguments: { lookback: '6h', aggregation: 'latest' },
+    }],
+  )
 })
 
 test('all ten canonical prompts have one centralized routing and presentation contract', () => {
@@ -167,7 +178,7 @@ test('all ten canonical prompts have one centralized routing and presentation co
     {
       question: 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
       specialists: ['qa'], steps: { qa: 1 },
-      native: ['data-agent', 'ontology'], chart: true, priority: 'Medium',
+      native: ['ontology', 'data-agent'], chart: true, priority: 'Medium',
       evidence: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
       required: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
     },
@@ -218,6 +229,31 @@ test('all ten canonical prompts have one centralized routing and presentation co
     assert.deepEqual(intent.required_evidence_kinds.sort(), item.required.sort())
     assert.deepEqual(requiredEvidenceKinds(item.question).sort(), item.required.sort())
     assert.deepEqual(permittedEvidenceKinds(item.question).sort(), item.evidence.sort())
+  }
+})
+
+test('deterministic Supervisor compiles canonical prompts 1, 3, and 5 in exact order', () => {
+  const prompt1 = 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.'
+  const prompt3 = 'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.'
+  const prompt5 = 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.'
+  const first = compileOrchestrationPlan(prompt1)
+  const third = compileOrchestrationPlan(prompt3)
+  const fifth = compileOrchestrationPlan(prompt5)
+
+  assert.deepEqual(first.steps.map(step => step.specialist), ['qa', 'rca', 'work-order', 'qa'])
+  assert.equal(first.steps[2].requires_verified_issue, true)
+  assert.deepEqual(third.steps.map(step => step.specialist), ['fabric-iq', 'qa', 'rca', 'work-order'])
+  assert.equal(third.steps[0].native_source, 'data-agent')
+  assert.equal(third.steps[3].requires_verified_issue, true)
+  assert.deepEqual(fifth.steps.map(step => [step.specialist, step.native_source]),
+    [['fabric-iq', 'ontology'], ['fabric-iq', 'data-agent'], ['qa', null]])
+  for (const [question, plan] of [[prompt1, first], [prompt3, third], [prompt5, fifth]]) {
+    const intent = chatIntent(question)
+    assert.deepEqual(
+      plan.answer_contract.requirements.map(item => item.evidence.split(/_(?:population|focus)_(?:direct|native)$/)[0]).sort(),
+      [...intent.required_evidence_kinds].sort(),
+    )
+    assert.ok(plan.steps.every(step => step.question !== question))
   }
 })
 

@@ -25,7 +25,7 @@ const EMPTY_SIDES: BattleSides = {
 
 const LABELS: Record<AgentBattleEngine, { name: string; source: string }> = {
   'data-agent': { name: 'Fabric Data Agent', source: 'Published MCP · Preview Runtime' },
-  foundry: { name: 'Foundry Agents', source: 'Persistent supervisor + specialists' },
+  foundry: { name: 'Foundry Agents', source: 'Deterministic Supervisor + specialists' },
 }
 
 const SAMPLES = [

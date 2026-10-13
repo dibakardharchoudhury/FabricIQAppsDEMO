@@ -36,8 +36,8 @@ test('multi-step handoffs retain names and roles and always return through Super
   const route = crewHandoffs([supervisor, ...children])
   assert.equal(route.length, 6)
   for (let index = 0; index < route.length; index += 2) {
-    assert.match(route[index].from, /Chief.*Supervisor/)
-    assert.match(route[index + 1].to, /Chief.*Supervisor/)
+    assert.match(route[index].from, /Supervisor/)
+    assert.match(route[index + 1].to, /Supervisor/)
   }
   assert.match(route[0].to, /Sleuth.*RCA/)
   assert.match(route[2].to, /Fixer.*Work Order/)

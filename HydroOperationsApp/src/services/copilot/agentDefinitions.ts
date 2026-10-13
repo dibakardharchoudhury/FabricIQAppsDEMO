@@ -197,9 +197,12 @@ export function requestedNativeSources(question: string): NativeSource[] {
   const positive = positiveActionClauses(question)
   const action = '\\b(?:use|ask|query|consult|retrieve|read|compare|request|list|resolve)\\b[^.!?;\\n]{0,180}\\b'
   return [
-    ...(new RegExp(`${action}data[\\s-]+agent\\b`, 'i').test(positive) ? ['data-agent' as const] : []),
-    ...(new RegExp(`${action}ontology\\b`, 'i').test(positive) ? ['ontology' as const] : []),
+    { source: 'data-agent' as const, match: new RegExp(`${action}data[\\s-]+agent\\b`, 'i').exec(positive) },
+    { source: 'ontology' as const, match: new RegExp(`${action}ontology\\b`, 'i').exec(positive) },
   ]
+    .filter(candidate => candidate.match)
+    .sort((left, right) => (left.match?.index ?? 0) - (right.match?.index ?? 0))
+    .map(candidate => candidate.source)
 }
 
 export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {

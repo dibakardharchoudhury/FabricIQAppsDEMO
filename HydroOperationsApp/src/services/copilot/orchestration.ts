@@ -1,6 +1,6 @@
 export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
-  supervisor: 'Chief', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky',
+  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky',
 }
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 
@@ -184,6 +184,7 @@ export function isWorkOrderRequest(question: string): boolean {
     match => match.replace(/^\w+/, 'show'))
   return MUTATION_INTENT.test(positiveClauses)
     || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork[\s-]*orders?\b/i.test(positiveClauses))
+    || /\b(?:propose|prepare|create|stage)\b[^.!?;\n]{0,80}\b(?:inspection|maintenance)(?:\s+(?:work|task|follow-up))?\b/i.test(positiveClauses)
 }
 
 export function workOrderPriorityForRequest(question: string): WorkOrderProposal['priority'] {
@@ -226,7 +227,7 @@ export function requiredSpecialists(question: string, hasNativeRequest = false):
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
   const missing: AgentRole[] = []
   const positive = positiveActionClauses(question)
-  const investigationMatch = /\b(?:investigate|diagnose|root[- ]cause analysis|perform (?:an? )?RCA)\b|\b(?:reassess|review|continue)\b.{0,60}\b(?:investigation|diagnosis|RCA)\b/i.exec(positive)
+  const investigationMatch = /\b(?:investigate|diagnose|RCA|root[- ]cause analysis|perform (?:an? )?RCA)\b|\b(?:reassess|review|continue)\b.{0,60}\b(?:investigation|diagnosis|RCA)\b/i.exec(positive)
   const investigation = Boolean(investigationMatch)
   if (investigation && !completed.includes('rca')) missing.push('rca')
   const drafting = isWorkOrderRequest(question)

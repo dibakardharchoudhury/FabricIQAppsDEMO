@@ -535,7 +535,7 @@ def create_delegated_app(
                                 "id": f"{chat.run_id}:chief",
                                 "role": "supervisor",
                                 "status": "error",
-                                "label": "Chief",
+                                "label": "Supervisor",
                                 "detail": detail,
                                 "timestamp": int(utc_now().timestamp() * 1000),
                             },

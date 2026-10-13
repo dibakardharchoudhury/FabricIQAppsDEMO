@@ -29,7 +29,7 @@ export function CopilotSettingsPanel() {
       </div>
     </summary>
     <div className="copilot-settings-body">
-      <p>Chief and specialist instructions, skills, tools and source catalogs are deployment-owned.
+      <p>Supervisor control-plane contracts and specialist instructions, skills, tools and source catalogs are deployment-owned.
         This browser cannot redefine their capabilities, grant Entra permissions or authorize work-order creation.</p>
 
       {!hostedInvocationUrl ? <p className="copilot-settings-warning">
@@ -57,7 +57,7 @@ export function CopilotSettingsPanel() {
         <h4>Foundry Agent Service
           <button type="button" className="copilot-settings-inline" disabled={draft.projectEndpoint === defaults.projectEndpoint} onClick={() => setDraft(current => ({ ...current, projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint }))}>Restore deployed project</button>
         </h4>
-        <p>The Hosted Agent runs the Microsoft Agent Framework workflow. Chief coordinates Q&amp;A, RCA, Work Order, and Fabric IQ specialists; the deployment orchestrator owns their definitions and model selection.</p>
+        <p>The Hosted Agent runs one deterministic Supervisor control plane that compiles evidence and presentation contracts, dispatches bounded Q&amp;A, RCA, Work Order, and Fabric IQ specialists, verifies their receipts, and certifies the final answer.</p>
         <div className="copilot-settings-fields">
           <label>
             <span>Project endpoint</span>

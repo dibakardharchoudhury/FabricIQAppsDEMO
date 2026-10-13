@@ -1,4 +1,4 @@
-"""Server-owned Agent Framework execution of the existing Foundry prompt agents."""
+"""Deterministic Agent Framework orchestration of bounded Foundry specialists."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from filelock import FileLock
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, APITimeoutError
-from pydantic import AwareDatetime, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, SourceFailure
@@ -315,19 +315,6 @@ def requests_new_work_order_proposal(question: str) -> bool:
     return False
 
 
-def requires_rca_verified_issue(question: str) -> bool:
-    normalized = re.sub(r"\s+", " ", question.lower())
-    return bool(re.search(
-        r"\b(?:if|only (?:if|when)|unless)\b[^.!?;]{0,120}"
-        r"\b(?:rca|root cause|investigation)\b[^.!?;]{0,120}"
-        r"\b(?:verif(?:y|ies|ied)|confirm(?:s|ed)?|establish(?:es|ed)?|find(?:s|ing)?)\b",
-        normalized,
-    ))
-
-
-
-
-
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -397,14 +384,6 @@ def operation_skill_guidance(role: Role) -> tuple[dict[str, str], ...]:
 
 class ToolInputError(ValueError):
     """Invalid model arguments rejected before any backend source execution."""
-
-
-def validation_error_summary(error: ValidationError) -> str:
-    details = []
-    for item in error.errors(include_url=False, include_input=False)[:8]:
-        location = ".".join(str(part) for part in item["loc"]) or "input"
-        details.append(f"{location}: {item['msg']}")
-    return "; ".join(details)
 
 
 class ToolSpecification(Contract):
@@ -975,6 +954,30 @@ def selected_equipment_from_evidence(
     return {min(equipment for equipment, count in counts.items() if count == maximum)}
 
 
+ANALYTICAL_POPULATION_TOOLS = {
+    "signal_quality": "query_signal_quality_snapshot",
+    "temperature": "query_turbine_temperature_snapshot",
+    "station_power": "query_station_power",
+    "work_backlog": "query_work_backlog",
+}
+CATALOG_DIRECT_KINDS = {
+    "facilities", "equipment", "instruments", "work_orders", "inspections",
+    "notifications", "spare_parts", "asset_models",
+}
+
+
+def deterministic_fulfillment_route(
+    kind: str, scope: Literal["population", "focus"],
+) -> str | None:
+    if scope == "population" and kind in ANALYTICAL_POPULATION_TOOLS:
+        return ANALYTICAL_POPULATION_TOOLS[kind]
+    if kind in CATALOG_DIRECT_KINDS:
+        return "query_assets" if kind in {"facilities", "equipment", "instruments"} else "query_operations"
+    if kind == "telemetry" and scope == "focus":
+        return "query_telemetry"
+    return None
+
+
 def _native_markdown_tables_from_payload(value: object) -> dict[str, list[dict[str, str]]]:
     tables: dict[str, list[dict[str, str]]] = {}
     metadata_keys = {"id", "title", "url", "type", "status", "name", "server_label"}
@@ -1278,12 +1281,13 @@ class FoundrySupervisor:
     ) -> None:
         contract = self.answer_contract
         if contract is None:
-            raise SourceFailure("Evidence fulfillment requires the Chief's validated answer contract.")
+            raise SourceFailure("Evidence fulfillment requires the Supervisor's validated answer contract.")
         catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
 
         async def execute_required(
             name: str, arguments: dict[str, object], kind: str, scope: Literal["population", "focus"],
-        ) -> None:
+            *, publish: bool = True,
+        ) -> ToolEvidence:
             specification = next((tool for tool in catalog.tools if tool.name == name), None)
             if specification is None:
                 raise SourceFailure(f"Required evidence reader {name} is unavailable.")
@@ -1327,16 +1331,29 @@ class FoundrySupervisor:
                 raise SourceFailure(
                     f"Deterministic {name} read did not satisfy {kind} {scope} evidence."
                 )
-            prior = self.evidence.get(result.id)
-            if prior is not None and prior != result:
-                raise SourceFailure("Evidence identity was reused for a different source result.")
-            self.evidence[result.id] = result
+            if publish:
+                prior = self.evidence.get(result.id)
+                if prior is not None and prior != result:
+                    raise SourceFailure("Evidence identity was reused for a different source result.")
+                self.evidence[result.id] = result
+            return result
 
         direct_requirements = {
             (item.kind, item.scope)
             for item in contract.requirements
             if item.authority == "direct"
         }
+        unsupported = sorted(
+            f"{kind}/{scope}" for kind, scope in direct_requirements
+            if deterministic_fulfillment_route(
+                kind, cast(Literal["population", "focus"], scope),
+            ) is None
+        )
+        if unsupported:
+            raise SourceFailure(
+                "The answer contract has no deterministic pre-execution evidence route for: "
+                + ", ".join(unsupported)
+            )
         answer_kinds = sorted({kind for kind, _scope in direct_requirements})
         analytical_contract = await self.bridge.call({
             "action": "analytical_evidence_plan",
@@ -1345,12 +1362,8 @@ class FoundrySupervisor:
         })
         if set(analytical_contract) != {"entries"} or not isinstance(analytical_contract["entries"], list):
             raise SourceFailure("Analytical evidence planning returned an unsupported contract.")
-        analytical_tools = {
-            "signal_quality": "query_signal_quality_snapshot",
-            "temperature": "query_turbine_temperature_snapshot",
-            "station_power": "query_station_power",
-            "work_backlog": "query_work_backlog",
-        }
+        analytical_tools = {**ANALYTICAL_POPULATION_TOOLS, "telemetry": "query_telemetry"}
+        deferred_focus_analytics: list[tuple[str, dict[str, object], dict[str, object]]] = []
         for item in analytical_contract["entries"]:
             if not isinstance(item, dict) or set(item) != {
                 "kind", "tool", "arguments", "match_arguments",
@@ -1358,22 +1371,26 @@ class FoundrySupervisor:
                 raise SourceFailure("Analytical evidence planning returned an unsupported entry.")
             kind, name = item["kind"], item["tool"]
             arguments, match_arguments = item["arguments"], item["match_arguments"]
+            scope: Literal["population", "focus"] = "focus" if kind == "telemetry" else "population"
             if (
                 not isinstance(kind, str)
                 or not isinstance(name, str)
                 or not isinstance(arguments, dict)
                 or not isinstance(match_arguments, dict)
                 or analytical_tools.get(kind) != name
-                or (kind, "population") not in direct_requirements
+                or (kind, scope) not in direct_requirements
                 or any(key not in arguments or arguments[key] != value
                        for key, value in match_arguments.items())
             ):
                 raise SourceFailure("Analytical evidence planning crossed the governed answer contract.")
+            if scope == "focus":
+                deferred_focus_analytics.append((name, arguments, match_arguments))
+                continue
             if any(
                 receipt.tool == name
                 and all(receipt.arguments.get(key) == value for key, value in match_arguments.items())
                 and any(
-                    dataset.kind == kind and dataset.scope == "population"
+                    dataset.kind == kind and dataset.scope == scope
                     and dataset.authority == "direct" and dataset.role != "audit" and dataset.complete
                     for dataset in receipt.datasets
                 )
@@ -1382,10 +1399,13 @@ class FoundrySupervisor:
                 continue
             await execute_required(name, arguments, kind, "population")
 
+        if request.equipment_selection is not None:
+            self.selected_equipment_ids = selected_equipment_from_evidence(
+                request.equipment_selection, self.evidence.values(),
+            )
+
         asset_entities = {"facilities", "equipment", "instruments"}
-        operation_entities = {
-            "work_orders", "inspections", "notifications", "spare_parts", "asset_models",
-        }
+        operation_entities = CATALOG_DIRECT_KINDS - asset_entities
         for requirement in contract.requirements:
             if requirement.authority != "direct" or requirement.kind not in asset_entities | operation_entities:
                 continue
@@ -1415,6 +1435,79 @@ class FoundrySupervisor:
                     "value": sorted(self.selected_equipment_ids),
                 }]
             await execute_required(name, arguments, requirement.kind, requirement.scope)
+
+        for name, planned_arguments, match_arguments in deferred_focus_analytics:
+            if not self.selected_equipment_ids:
+                continue
+            if any(
+                receipt.tool == name
+                and all(receipt.arguments.get(key) == value for key, value in match_arguments.items())
+                and any(
+                    dataset.kind == "telemetry" and dataset.scope == "focus"
+                    and dataset.authority == "direct" and dataset.role != "audit" and dataset.complete
+                    for dataset in receipt.datasets
+                )
+                for receipt in self.evidence.values()
+            ):
+                continue
+            specification = next((tool for tool in catalog.tools if tool.name == name), None)
+            if specification is None:
+                raise SourceFailure(f"Required evidence reader {name} is unavailable.")
+            properties = specification.parameters.get("properties", {})
+            if not isinstance(properties, dict):
+                raise SourceFailure("The governed telemetry reader has no parameter schema.")
+            arguments = {
+                key: value for key, value in planned_arguments.items()
+                if key in properties
+            }
+            if "opcua_node_ids" in properties:
+                prerequisites: list[ToolEvidence] = []
+
+                def selected_nodes() -> set[str]:
+                    nodes: set[str] = set()
+                    for receipt in [*self.evidence.values(), *prerequisites]:
+                        rows = receipt.result.get("rows")
+                        if not isinstance(rows, list):
+                            continue
+                        for index, row in enumerate(rows):
+                            if not isinstance(row, dict):
+                                continue
+                            identity = receipt.row_identities.get(f"/rows/{index}", {})
+                            equipment = row.get(
+                                "equipment_id", row.get("equipmentId",
+                                identity.get("equipment_id", identity.get("equipmentId")))
+                            )
+                            node = row.get(
+                                "opcua_node_id", row.get("opcuaNodeId",
+                                identity.get("opcua_node_id", identity.get("opcuaNodeId")))
+                            )
+                            if equipment in self.selected_equipment_ids and isinstance(node, str) and node:
+                                nodes.add(node)
+                    return nodes
+
+                nodes = selected_nodes()
+                if not nodes:
+                    prerequisites.append(await execute_required("query_assets", {
+                        "entity": "instruments",
+                        "where": [{
+                            "column": "equipment_id",
+                            "op": "in",
+                            "value": sorted(self.selected_equipment_ids),
+                        }],
+                    }, "instruments", "focus", publish=False))
+                    nodes = selected_nodes()
+                if not nodes:
+                    raise SourceFailure(
+                        "Required telemetry focus evidence has no verified signal identity."
+                    )
+                arguments["opcua_node_ids"] = sorted(nodes)
+            elif "equipment_id" in properties and len(self.selected_equipment_ids) == 1:
+                arguments["equipment_id"] = next(iter(self.selected_equipment_ids))
+            else:
+                raise SourceFailure(
+                    "The governed telemetry reader cannot bind the selected equipment."
+                )
+            await execute_required(name, arguments, "telemetry", "focus")
 
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
@@ -1563,6 +1656,141 @@ class FoundrySupervisor:
         journal.save("agent_versions", {role: version.model_dump(mode="json") for role, version in versions.items()})
         return versions
 
+    async def compile_orchestration_plan(
+        self, request: ChatRequest, journal: RunJournal,
+    ) -> OrchestrationPlan:
+        compiled = await self.bridge.call({
+            "action": "compile_orchestration_plan",
+            "question": request.question,
+            "intent": {
+                "charts_requested": request.charts_requested,
+                "native_sources": list(request.native_sources),
+                "proposal_priority": request.proposal_priority,
+                "equipment_selection": (
+                    request.equipment_selection.model_dump(mode="json")
+                    if request.equipment_selection is not None else None
+                ),
+                "required_evidence_kinds": list(request.required_evidence_kinds),
+                "permitted_evidence_kinds": list(request.permitted_evidence_kinds),
+                "required_specialists": list(request.required_specialists),
+                "required_specialist_steps": request.required_specialist_steps,
+            },
+        })
+        if not isinstance(compiled, dict) or set(compiled) != {"steps", "answer_contract"}:
+            raise SourceFailure("Deterministic orchestration compilation returned an unsupported contract.")
+        raw_steps = compiled.get("steps")
+        if not isinstance(raw_steps, list):
+            raise SourceFailure("Deterministic orchestration steps are not a bounded list.")
+        normalized_steps = []
+        for raw_step in raw_steps:
+            if not isinstance(raw_step, dict):
+                raise SourceFailure("Deterministic orchestration emitted an invalid specialist step.")
+            step = dict(raw_step)
+            step["nativeSource"] = step.pop("native_source", None)
+            step["requiresSelection"] = step.pop("requires_selection", False)
+            step["requiresVerifiedIssue"] = step.pop("requires_verified_issue", False)
+            normalized_steps.append(step)
+        plan = OrchestrationPlan.model_validate({
+            **compiled,
+            "steps": normalized_steps,
+        })
+        catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+        governed = governed_datasets(catalog.context)
+        requested_kinds = {
+            item.kind for item in plan.answer_contract.requirements
+        }.union(view.kind for view in plan.answer_contract.views)
+        unknown_kinds = requested_kinds.difference(governed)
+        if unknown_kinds:
+            raise SourceFailure(
+                "Deterministic orchestration requested ungoverned datasets: "
+                + ", ".join(sorted(unknown_kinds))
+            )
+        unsupported_requirements = [
+            f"{item.kind}/{item.scope}/{item.authority}"
+            for item in plan.answer_contract.requirements
+            if (
+                item.scope not in governed[item.kind].evidence_scopes
+                or item.authority not in governed[item.kind].evidence_authorities
+            )
+        ]
+        if unsupported_requirements:
+            raise SourceFailure(
+                "Deterministic orchestration requested unsupported evidence combinations: "
+                + ", ".join(unsupported_requirements)
+            )
+        for view in plan.answer_contract.views:
+            if view.authority == "reconciled":
+                continue
+            layout = view.presentation.removeprefix(f"{view.authority}_")
+            if layout not in governed[view.kind].presentations:
+                raise SourceFailure(
+                    f"Deterministic orchestration requested unsupported presentation "
+                    f"{view.id}:{view.kind}/{layout}."
+                )
+        delegations = []
+        for step in plan.steps:
+            parsed = await self.bridge.call({
+                "action": "validate_delegation",
+                "report": json.dumps({
+                    "specialist": step.specialist,
+                    "question": step.question,
+                    "reason": step.reason,
+                    "native_source": step.native_source,
+                    "requires_selection": step.requires_selection,
+                    "requires_verified_issue": step.requires_verified_issue,
+                }),
+            })
+            delegations.append(Delegation.model_validate(parsed))
+        requirements = await self.bridge.call({
+            "action": "validate_plan_requirements",
+            "question": request.question,
+            "answer_kinds": sorted(requested_kinds),
+            "required_evidence_kinds": list(request.required_evidence_kinds),
+            "permitted_evidence_kinds": list(request.permitted_evidence_kinds),
+            "required_specialists": list(request.required_specialists),
+            "required_specialist_steps": request.required_specialist_steps,
+            "steps": [{
+                "specialist": item.specialist,
+                "native_source": item.native_source,
+            } for item in delegations],
+            "native_sources": list(request.native_sources),
+        })
+        if set(requirements) != {
+            "missing_specialists", "missing_specialist_steps",
+            "missing_native_sources", "missing_evidence_kinds", "unexpected_evidence_kinds",
+        }:
+            raise SourceFailure("Deterministic plan validation returned an unsupported contract.")
+        missing_specialists = requirements.get("missing_specialists")
+        missing_steps = requirements.get("missing_specialist_steps")
+        missing_sources = requirements.get("missing_native_sources")
+        missing_evidence = requirements.get("missing_evidence_kinds")
+        unexpected_evidence = requirements.get("unexpected_evidence_kinds")
+        if (
+            not isinstance(missing_specialists, list)
+            or not isinstance(missing_steps, dict)
+            or not isinstance(missing_sources, list)
+            or not isinstance(missing_evidence, list)
+            or not isinstance(unexpected_evidence, list)
+        ):
+            raise SourceFailure("Deterministic plan validation returned invalid field shapes.")
+        defects = [
+            *missing_specialists,
+            *(f"{role}:{count} steps" for role, count in missing_steps.items()),
+            *(f"fabric-iq:{source}" for source in missing_sources),
+            *(f"evidence:{kind}" for kind in missing_evidence),
+            *(f"unexpected-evidence:{kind}" for kind in unexpected_evidence),
+        ]
+        if defects:
+            raise SourceFailure(
+                "Deterministic orchestration failed its complete request contract: "
+                + ", ".join(str(item) for item in defects)
+            )
+        accepted = plan.model_copy(update={"steps": tuple(delegations)})
+        self.orchestration_plan = accepted
+        self.answer_contract = accepted.answer_contract
+        self.selected_equipment_ids = set(initial_equipment_selection(request))
+        return accepted
+
     async def handoff(
         self, delegation: Delegation, request: ChatRequest, journal: RunJournal, versions: dict[Role, AgentVersion],
         targeted_context: bool = False, maintenance_gate_required: bool = False,
@@ -1582,16 +1810,17 @@ class FoundrySupervisor:
             dispatched_at = int(utc_now().timestamp() * 1000)
             self.chief_trace.append({
                 "id": f"{call_id}:dispatch", "timestamp": dispatched_at, "source": "application",
-                "label": f"Chief delegated to {versions[selected].name}.", "callId": call_id,
+                "label": f"Supervisor dispatched {versions[selected].name}.", "callId": call_id,
                 "activity": "tool-start",
             })
             self.emit_event(
-                chief_id, "supervisor", "running", "Chief", "Coordinating verified specialist work.",
-                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                chief_id, "supervisor", "running", "Supervisor",
+                "Dispatching bounded specialist work from the deterministic plan.",
+                agent_name="hydro-orchestrator", trace=list(self.chief_trace),
             )
             self.emit_event(
                 specialist_id, selected, "running", versions[selected].name,
-                delegation.reason or f"Chief delegated verified {selected} work.",
+                delegation.reason or f"Supervisor dispatched verified {selected} work.",
                 agent_name=versions[selected].name,
                 parent_id=chief_id, parent_call_id=call_id,
             )
@@ -1655,8 +1884,8 @@ class FoundrySupervisor:
                     "failed": True, "activity": "delegation-return",
                 })
                 self.emit_event(
-                    chief_id, "supervisor", "running", "Chief", "A specialist failure was returned.",
-                    agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                    chief_id, "supervisor", "running", "Supervisor", "A specialist failure was returned.",
+                    agent_name="hydro-orchestrator", trace=list(self.chief_trace),
                 )
                 raise
             self.emit_event(
@@ -1671,8 +1900,9 @@ class FoundrySupervisor:
                 "responseId": result.response_id, "callId": call_id, "activity": "delegation-return",
             })
             self.emit_event(
-                chief_id, "supervisor", "running", "Chief", "Specialist output returned for verification.",
-                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                chief_id, "supervisor", "running", "Supervisor",
+                "Specialist output returned to the deterministic verifier.",
+                agent_name="hydro-orchestrator", trace=list(self.chief_trace),
             )
             if result not in self.specialists:
                 self.specialists.append(result)
@@ -1684,6 +1914,8 @@ class FoundrySupervisor:
         versions: dict[Role, AgentVersion], native_source: NativeSource | None = None,
         targeted_context: bool = False, maintenance_gate_required: bool = False,
     ) -> tuple[AgentResponse, dict[str, object] | None, float]:
+        if role == "supervisor":
+            raise SourceFailure("The deterministic Supervisor control plane cannot invoke a planning model.")
         self.healthy(request)
         version = versions[role]
         selected: list[dict[str, object]] = []
@@ -1695,7 +1927,7 @@ class FoundrySupervisor:
             if len(selected) != 1 or selected[0].get("project_connection_id") != self.native_binding.connections[native_source]:
                 raise SourceFailure("Native agent connection does not match the verified selected source binding.")
         completed_report: dict[str, object] | None = None
-        plan_completed = False
+
         input_repairs: dict[str, int] = {}
 
         async def guarded(name: str, callback, **kwargs):
@@ -1871,172 +2103,11 @@ class FoundrySupervisor:
             completed_report = validated_report
             return completed_report
 
-        async def plan_orchestration(
-            steps: list[dict[str, object]], answer_contract: dict[str, object],
-        ) -> dict[str, object]:
-            nonlocal plan_completed
-            normalized = []
-            for step in steps:
-                value = dict(step)
-                value["nativeSource"] = value.pop("native_source", None)
-                value["requiresSelection"] = value.pop("requires_selection", False)
-                value["requiresVerifiedIssue"] = value.pop("requires_verified_issue", False)
-                normalized.append(value)
-            try:
-                plan = OrchestrationPlan.model_validate({
-                    "steps": normalized,
-                    "answer_contract": answer_contract,
-                })
-            except ValidationError as error:
-                raise ToolInputError(
-                    "The orchestration or answer contract is invalid. "
-                    f"Validation errors: {validation_error_summary(error)}. "
-                    "Correct these exact fields and call plan_orchestration once more."
-                ) from error
-            catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
-            governed = governed_datasets(catalog.context)
-            compiled_contract = await self.bridge.call({
-                "action": "compile_answer_contract",
-                "question": request.question,
-                "charts_requested": request.charts_requested,
-                "required_evidence_kinds": list(request.required_evidence_kinds),
-                "answer_contract": plan.answer_contract.model_dump(mode="json"),
-            })
-            plan = plan.model_copy(update={
-                "answer_contract": OperatorAnswerContract.model_validate(compiled_contract),
-            })
-            requested_kinds = {
-                item.kind for item in plan.answer_contract.requirements
-            }.union(view.kind for view in plan.answer_contract.views)
-            unknown_kinds = requested_kinds.difference(governed)
-            if unknown_kinds:
-                raise ToolInputError(
-                    "The answer contract requested ungoverned datasets: "
-                    + ", ".join(sorted(unknown_kinds))
-                )
-            unsupported_requirements = [
-                f"{item.kind}/{item.scope}/{item.authority}"
-                for item in plan.answer_contract.requirements
-                if (
-                    item.scope not in governed[item.kind].evidence_scopes
-                    or item.authority not in governed[item.kind].evidence_authorities
-                )
-            ]
-            if unsupported_requirements:
-                raise ToolInputError(
-                    "The answer contract requested unsupported dataset evidence combinations: "
-                    + ", ".join(unsupported_requirements)
-                )
-            unsupported_views = []
-            for view in plan.answer_contract.views:
-                if view.authority == "reconciled":
-                    continue
-                prefix = f"{view.authority}_"
-                layout = view.presentation.removeprefix(prefix)
-                if layout not in governed[view.kind].presentations:
-                    unsupported_views.append(
-                        f"{view.id}:{view.kind} does not support {layout}"
-                    )
-            if unsupported_views:
-                raise ToolInputError(
-                    "The answer contract requested unsupported dataset presentations: "
-                    + "; ".join(unsupported_views)
-                    + ". Use only the presentation capabilities in the permitted source catalog."
-                )
-            self.answer_contract = plan.answer_contract
-            delegations = []
-            for step in plan.steps:
-                parsed = await self.bridge.call({
-                    "action": "validate_delegation",
-                    "report": json.dumps({
-                        "specialist": step.specialist,
-                        "question": step.question,
-                        "reason": step.reason,
-                        "native_source": step.native_source,
-                        "requires_selection": step.requires_selection,
-                        "requires_verified_issue": step.requires_verified_issue,
-                    }),
-                })
-                delegation = Delegation.model_validate(parsed)
-                if (
-                    delegation.specialist == "work-order"
-                    and requests_new_work_order_proposal(request.question)
-                ):
-                    delegation = delegation.model_copy(update={
-                        "requires_verified_issue": requires_rca_verified_issue(request.question),
-                    })
-                delegations.append(delegation)
-            requirements = await self.bridge.call({
-                "action": "validate_plan_requirements",
-                "question": request.question,
-                "answer_kinds": sorted(requested_kinds),
-                "required_evidence_kinds": list(request.required_evidence_kinds),
-                "permitted_evidence_kinds": list(request.permitted_evidence_kinds),
-                "required_specialists": list(request.required_specialists),
-                "required_specialist_steps": request.required_specialist_steps,
-                "steps": [{
-                    "specialist": item.specialist,
-                    "native_source": item.native_source,
-                } for item in delegations],
-                "native_sources": list(request.native_sources),
-            })
-            if set(requirements) != {
-                "missing_specialists", "missing_specialist_steps",
-                "missing_native_sources", "missing_evidence_kinds", "unexpected_evidence_kinds",
-            }:
-                raise SourceFailure("Plan requirement validation returned an unsupported contract.")
-            missing_specialists = requirements.get("missing_specialists")
-            missing_specialist_steps = requirements.get("missing_specialist_steps")
-            missing_native_sources = requirements.get("missing_native_sources")
-            missing_evidence_kinds = requirements.get("missing_evidence_kinds")
-            unexpected_evidence_kinds = requirements.get("unexpected_evidence_kinds")
-            if (
-                not isinstance(missing_specialists, list)
-                or not isinstance(missing_specialist_steps, dict)
-                or not isinstance(missing_native_sources, list)
-                or not isinstance(missing_evidence_kinds, list)
-                or not isinstance(unexpected_evidence_kinds, list)
-            ):
-                raise SourceFailure("Plan requirement validation returned invalid field shapes.")
-            if unexpected_evidence_kinds:
-                raise ToolInputError(
-                    "The answer contract requested evidence unrelated to the operator's request: "
-                    + ", ".join(str(item) for item in unexpected_evidence_kinds)
-                    + ". Remove those requirements and views; do not broaden the operator's question."
-                )
-            if missing_evidence_kinds:
-                raise ToolInputError(
-                    "The answer contract omitted evidence explicitly required by the operator: "
-                    + ", ".join(str(item) for item in missing_evidence_kinds)
-                    + ". Add matching requirements and views without removing other requested evidence."
-                )
-            if missing_specialists or missing_specialist_steps or missing_native_sources:
-                missing = [
-                    *(missing_specialists if isinstance(missing_specialists, list) else []),
-                    *(f"{role}:{count} steps" for role, count in (
-                        missing_specialist_steps.items()
-                        if isinstance(missing_specialist_steps, dict) else []
-                    )),
-                    *(f"fabric-iq:{source}" for source in (
-                        missing_native_sources if isinstance(missing_native_sources, list) else []
-                    )),
-                ]
-                raise ToolInputError(
-                    "The plan omitted explicitly requested capabilities: "
-                    f"{', '.join(str(item) for item in missing)}. "
-                    "Retry plan_orchestration with one complete ordered plan; no specialist has run yet."
-                )
-            self.orchestration_plan = plan.model_copy(update={"steps": tuple(delegations)})
-            self.selected_equipment_ids = set(initial_equipment_selection(request))
-            plan_completed = True
-            return {
-                "status": "plan_accepted",
-                "planned_specialist_count": len(delegations),
-                "answer_contract": plan.answer_contract.model_dump(mode="json"),
-            }
-
-        callbacks = {"hydro_query": query, "plan_orchestration": plan_orchestration,
-                     "complete_rca_assessment": report, "complete_work_order_review": report}
+        callbacks = {
+            "hydro_query": query,
+            "complete_rca_assessment": report,
+            "complete_work_order_review": report,
+        }
         functions = []
         for definition in version.tools:
             name = definition.get("name")
@@ -2156,28 +2227,6 @@ class FoundrySupervisor:
                     "unchanged sources. Immediately call propose_work_order once for the verified equipment and "
                     "uncovered purpose, using a factual editable title and description with no invented diagnosis."
                 )
-        if role == "supervisor":
-            context["handoff_execution"] = (
-                "Call plan_orchestration exactly once with the complete minimal ordered specialist plan. The backend "
-                "executes each step as a typed Agent Framework workflow stage and injects completed specialist reports "
-                "and immutable source receipts into dependent assignments. Do not emit prose, call another tool, "
-                "guess source values or predict downstream findings. Assign each specialist only its own capability "
-                "and evidence criteria."
-            )
-            context["plan_completeness_checklist"] = (
-                "Before the single tool call, account for every explicit operator operation in order: requested "
-                "native identity or inventory retrieval, direct factual reads or independent verification, causal "
-                "investigation, conditional or unconditional maintenance review, and any final verification. A "
-                "native-source step never satisfies a separately requested direct read, investigation, or work "
-                "review. Do not omit a requested capability merely because an earlier step may return related data."
-            )
-            context["required_evidence_kinds"] = list(request.required_evidence_kinds)
-            context["permitted_evidence_kinds"] = list(request.permitted_evidence_kinds)
-            context["evidence_manifest_policy"] = (
-                "These immutable ingress manifests are authoritative. The answer contract must include at least one "
-                "requirement and one compatible view for every required_evidence_kind, may use only "
-                "permitted_evidence_kinds, and must not infer a different evidence scope from the wording."
-            )
         if len(_encoded(context)) > 524288:
             raise SourceFailure("Combined evidence exceeds the bounded model-context size.")
 
@@ -2189,7 +2238,6 @@ class FoundrySupervisor:
             self.healthy(request)
             if ((completed_report is not None and invocation.function.name in (
                     "complete_rca_assessment", "complete_work_order_review"))
-                    or (invocation.function.name == "plan_orchestration" and plan_completed)
                     or invocation.function.name == "propose_work_order"):
                 raise MiddlewareTermination("The grounded structured assessment is complete.")
 
@@ -2205,8 +2253,8 @@ class FoundrySupervisor:
             tools=functions, timeout=service_timeout,
             middleware=[finish_assessment],
             function_invocation_configuration={
-                "max_iterations": 3 if role == "supervisor" else 6,
-                "max_function_calls": 2 if role == "supervisor" else 8,
+                "max_iterations": 6,
+                "max_function_calls": 8,
                 "max_consecutive_errors_per_request": 2,
                 "terminate_on_unknown_calls": True, "include_detailed_errors": False,
                 "allow_concurrent_invocation": role != "supervisor",
@@ -2216,7 +2264,7 @@ class FoundrySupervisor:
         async with project_client, agent:
             options: ChatOptions = {
                 "store": False,
-                "max_tokens": 8192 if role == "supervisor" else 4096,
+                "max_tokens": 4096,
             }
             active_context = context
             response: AgentResponse | None = None
@@ -2470,19 +2518,12 @@ class FoundrySupervisor:
                 item.tool == "propose_work_order" for item in self.evidence.values()
             ):
                 raise SourceFailure("Fixer returned neither a staged approval card nor a structured review.")
-            if role == "supervisor" and self.orchestration_plan is None and (
-                request.native_sources or request.required_specialists
-            ):
-                raise SourceFailure(
-                    "Chief omitted the required typed orchestration and answer contract; no fallback execution is "
-                    "permitted."
-                )
             return response, completed_report, (perf_counter() - started) * 1000
 
     def contract_answer_plan(self, request: ChatRequest) -> AnswerPlan:
         contract = self.answer_contract
         if contract is None:
-            raise SourceFailure("Presentation requires the Chief's validated typed answer contract.")
+            raise SourceFailure("Presentation requires the Supervisor's validated typed answer contract.")
         tables: list[PlannedTable] = []
         charts: list[PlannedChart] = []
         limitations: list[str] = []
@@ -2964,7 +3005,11 @@ class FoundrySupervisor:
             if existing is not None and existing != encoded:
                 raise SourceFailure("Run identity already belongs to a different immutable request.")
             journal.save("request", encoded)
-            if not request.required_specialists:
+            if (
+                not request.required_specialists
+                or not request.required_evidence_kinds
+                or not request.permitted_evidence_kinds
+            ):
                 intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
                 if set(intent) != {
                     "charts_requested", "native_sources", "proposal_priority", "equipment_selection",
@@ -2979,8 +3024,23 @@ class FoundrySupervisor:
                 if (parsed_intent.required_specialists
                         and parsed_intent.native_sources == request.native_sources):
                     recovered = request.model_copy(update={
-                        "required_specialists": parsed_intent.required_specialists,
-                        "required_specialist_steps": parsed_intent.required_specialist_steps,
+                        "required_specialists": (
+                            request.required_specialists or parsed_intent.required_specialists
+                        ),
+                        "required_specialist_steps": (
+                            request.required_specialist_steps or parsed_intent.required_specialist_steps
+                        ),
+                        "required_evidence_kinds": (
+                            request.required_evidence_kinds or parsed_intent.required_evidence_kinds
+                        ),
+                        "permitted_evidence_kinds": (
+                            request.permitted_evidence_kinds or parsed_intent.permitted_evidence_kinds
+                        ),
+                        "equipment_selection": (
+                            request.equipment_selection or parsed_intent.equipment_selection
+                        ),
+                        "charts_requested": request.charts_requested or parsed_intent.charts_requested,
+                        "proposal_priority": parsed_intent.proposal_priority,
                     })
                     logger.warning(
                         "Recovered a missing backend specialist manifest at the executor boundary: %s.",
@@ -2998,9 +3058,9 @@ class FoundrySupervisor:
             self.healthy(request)
             versions = await self.versions(journal)
             self.emit_event(
-                f"{request.run_id}:chief", "supervisor", "running", "Chief",
-                "Reading the request and coordinating the verified workflow.",
-                agent_name=versions["supervisor"].name, trace=list(self.chief_trace),
+                f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
+                "Compiling the governed request, evidence, and presentation contract.",
+                agent_name="hydro-orchestrator", trace=list(self.chief_trace),
             )
             if journal.read("tool_catalog") is None:
                 catalog = SourceCatalog.model_validate(await self.tools.catalog(request))
@@ -3064,23 +3124,38 @@ class FoundrySupervisor:
                         await ctx.send_message(restore_turn(SupervisorTurn.model_validate(recovered).model_dump_json())
                                                .model_dump_json())
                         return
-                    response, _report, elapsed = await owner.invoke(
-                        "supervisor", question, request, journal, versions,
+                    started = perf_counter()
+                    plan = await owner.compile_orchestration_plan(request, journal)
+                    elapsed = (perf_counter() - started) * 1000
+                    response_text = plan.model_dump_json(by_alias=True)
+                    response_id = "deterministic-orchestrator:" + sha256(
+                        response_text.encode()
+                    ).hexdigest()
+                    model_round_count = None
+                    journal.save(f"supervisor_output:{response_id}", {
+                        "text": response_text,
+                        "control_plane": "deterministic",
+                        "model_invoked": False,
+                    })
+                    owner.chief_trace.append({
+                        "id": f"{request.run_id}:plan-compiled",
+                        "timestamp": int(utc_now().timestamp() * 1000),
+                        "source": "application",
+                        "label": "Supervisor compiled and validated the deterministic execution plan.",
+                        "activity": "validation",
+                    })
+                    owner.emit_event(
+                        f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
+                        "Deterministic plan compiled; dispatching bounded specialist work.",
+                        agent_name="hydro-orchestrator", response_id=response_id,
+                        trace=list(owner.chief_trace),
                     )
-                    response_id = response.response_id
-                    response_text = response.text
-                    model_round_count = sum(message.role == "assistant" for message in response.messages)
-                    journal.save(f"supervisor_output:{response_id}", {"text": response_text})
-                    if owner.orchestration_plan is None:
-                        raise SourceFailure("Supervisor did not produce a validated orchestration plan.")
-                    if not response_id:
-                        raise SourceFailure("Supervisor has no service response identity.")
                     turn = SupervisorTurn(
                         text=response_text, response_id=response_id,
                         version=versions["supervisor"].version, duration_ms=elapsed,
                         model_round_count=model_round_count,
                         evidence=tuple(owner.evidence.values()), specialists=tuple(owner.specialists),
-                        plan=owner.orchestration_plan.model_dump(mode="json", by_alias=True),
+                        plan=plan.model_dump(mode="json", by_alias=True),
                         request_digest=request_digest,
                     )
                     journal.save("supervisor_turn", turn.model_dump(mode="json"))
@@ -3141,13 +3216,13 @@ class FoundrySupervisor:
                             "id": f"{request.run_id}:skip:{self.index + 1}",
                             "timestamp": int(utc_now().timestamp() * 1000),
                             "source": "application",
-                            "label": f"Chief skipped {delegation.specialist}: {reason}.",
+                            "label": f"Supervisor skipped {delegation.specialist}: {reason}.",
                             "activity": "delegation-return",
                         })
                         owner.emit_event(
-                            f"{request.run_id}:chief", "supervisor", "running", "Chief",
+                            f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
                             f"A conditional specialist step was skipped because {reason}.",
-                            agent_name=versions["supervisor"].name, trace=list(owner.chief_trace),
+                            agent_name="hydro-orchestrator", trace=list(owner.chief_trace),
                         )
                     else:
                         prior_evidence_ids = set(owner.evidence)
@@ -3208,13 +3283,13 @@ class FoundrySupervisor:
                             "id": f"{request.run_id}:evidence-verification",
                             "timestamp": verified_at,
                             "source": "application",
-                            "label": "Chief accepted the deterministic evidence and specialist-contract validation.",
+                            "label": "Supervisor accepted deterministic evidence and specialist-contract validation.",
                             "activity": "validation",
                         })
                         owner.emit_event(
-                            f"{request.run_id}:chief", "supervisor", "running", "Chief",
+                            f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
                             "Deterministic evidence verification completed; no additional model call was used.",
-                            agent_name=versions["supervisor"].name, trace=list(owner.chief_trace),
+                            agent_name="hydro-orchestrator", trace=list(owner.chief_trace),
                         )
                     verified = turn.model_copy(update={
                         "verified": True, "evidence": tuple(owner.evidence.values()),
@@ -3301,9 +3376,9 @@ class FoundrySupervisor:
             })
             journal.save("answer", answer.model_dump(mode="json"))
             self.emit_event(
-                f"{request.run_id}:chief", "supervisor", "completed", "Chief",
+                f"{request.run_id}:chief", "supervisor", "completed", "Supervisor",
                 "Verified answer committed with source and specialist receipts.",
-                agent_name=versions["supervisor"].name,
+                agent_name="hydro-orchestrator",
                 response_id=prepared.supervisor_response_id, trace=list(self.chief_trace),
             )
             return answer

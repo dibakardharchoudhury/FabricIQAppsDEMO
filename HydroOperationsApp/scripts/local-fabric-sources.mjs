@@ -47,11 +47,12 @@ export function requiredEvidenceKinds(question) {
   }
   if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
-  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)) {
+  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work)\b/i.test(text)
+      || /\bwork\b[^.!?;\n]{0,40}\b(?:already\s+)?open\b/i.test(text)) {
     kinds.add('work_orders')
   }
   if (requestedWorkBacklogGroup(text)) kinds.add('work_backlog')
-  if (/\b(?:list facility instances|direct asset|asset records?)\b|\bfacility[- ]level\b/i.test(text)
+  if (/\b(?:list facility instances|direct asset|asset records?)\b/i.test(text)
       || /\bresolve\b[^.!?;\n]{0,120}\bfacilit(?:y|ies)\b/i.test(text)) {
     kinds.add('facilities')
   }
@@ -87,7 +88,8 @@ export function permittedEvidenceKinds(question) {
   }
   if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
-  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)) {
+  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)
+      || /\bwork\b[^.!?;\n]{0,40}\b(?:already\s+)?open\b/i.test(text)) {
     kinds.add('work_orders')
   }
   if (requestedWorkBacklogGroup(text)) kinds.add('work_backlog')
@@ -132,6 +134,11 @@ export function analyticalEvidencePlan(question, answerKinds) {
   if (kinds.has('station_power')) {
     const arguments_ = { ...(lookback ? { lookback } : {}) }
     plan.push({ kind: 'station_power', tool: 'query_station_power',
+      arguments: arguments_, match_arguments: arguments_ })
+  }
+  if (kinds.has('telemetry')) {
+    const arguments_ = { ...(lookback ? { lookback } : {}), aggregation: 'latest' }
+    plan.push({ kind: 'telemetry', tool: 'query_telemetry',
       arguments: arguments_, match_arguments: arguments_ })
   }
   if (kinds.has('work_backlog')) {
@@ -274,6 +281,142 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
     throw new Error('Compiled answer contract exceeds its bounded size.')
   }
   return { version: DOMAIN_CONTRACT_VERSION, requirements, views }
+}
+
+function sourceClause(question, source) {
+  const matcher = source === 'data-agent' ? /\bdata[\s-]+agent\b/i : /\bontology\b/i
+  return positiveActionClauses(question)
+    .split(/(?<=[.!?;\n])/)
+    .map(value => value.trim())
+    .find(value => matcher.test(value))
+    ?? `Use the requested ${source === 'data-agent' ? 'Fabric Data Agent' : 'ontology'} source.`
+}
+
+function requiresFinalQa(question) {
+  const text = positiveActionClauses(question)
+  const verification = /\b(?:finally\s*,?\s*)?independently\s+(?:check|verify|reconcile)\b/i.exec(text)
+  if (!verification) return false
+  if (/^\s*finally\b/i.test(verification[0])) return true
+  const priorWork = [...text.matchAll(/\b(?:investigate|diagnose|prepare|propose|draft)\b/gi)]
+    .some(match => (match.index ?? text.length) < (verification.index ?? 0))
+  return priorWork
+}
+
+function requiresVerifiedIssueGate(question) {
+  const text = positiveActionClauses(question)
+  return /\b(?:only\s+(?:for|if|when)|unless)\b[^.!?;\n]{0,180}\b(?:evidence[- ]backed|demonstrated|specific|verified|supported|warranted|uncovered)\b[^.!?;\n]{0,120}\b(?:gap|issue|work|draft|warrant)/i.test(text)
+    || /\b(?:prepare|propose|draft)\b[^.!?;\n]{0,180}\bonly\s+if\b[^.!?;\n]{0,180}\b(?:warrant|support|verify|confirm|establish)/i.test(text)
+}
+
+function partitionEvidenceKinds(kinds, count) {
+  const groups = Array.from({ length: count }, () => [])
+  kinds.forEach((kind, index) => groups[index % count].push(kind))
+  return groups
+}
+
+export function compileOrchestrationPlan(question, intent = chatIntent(question)) {
+  if (!intent || typeof intent !== 'object'
+      || !Array.isArray(intent.required_specialists)
+      || !intent.required_specialist_steps || typeof intent.required_specialist_steps !== 'object'
+      || !Array.isArray(intent.native_sources)
+      || !Array.isArray(intent.required_evidence_kinds)
+      || typeof intent.charts_requested !== 'boolean') {
+    throw new Error('Orchestration compilation requires one governed chat intent.')
+  }
+  const requiredKinds = [...intent.required_evidence_kinds]
+  if (intent.native_sources.length && !requiredKinds.includes('native_claims')) {
+    requiredKinds.push('native_claims')
+  }
+  if (!requiredKinds.length && intent.required_specialists.includes('rca')) requiredKinds.push('telemetry')
+  if (!requiredKinds.length && intent.required_specialists.includes('work-order')) {
+    requiredKinds.push('equipment', 'work_orders')
+  }
+  if (!requiredKinds.length && intent.required_specialists.includes('qa')) requiredKinds.push('telemetry')
+  const directKinds = requiredKinds.filter(kind => kind !== 'native_claims')
+  const reconciliationKind = /\breconcil(?:e|iation)\b/i.test(positiveActionClauses(question))
+    && intent.native_sources.length
+    ? directKinds.find(kind => defaultEvidenceScope(kind, question) === 'population')
+    : undefined
+  const seedContract = {
+    version: DOMAIN_CONTRACT_VERSION,
+    requirements: [],
+    views: reconciliationKind ? [{
+      id: 'source-reconciliation',
+      title: 'Source reconciliation',
+      kind: reconciliationKind,
+      scope: defaultEvidenceScope(reconciliationKind, question),
+      presentation: 'reconciliation_table',
+    }] : [],
+  }
+  const answerContract = compileAnswerContract(
+    question, intent.charts_requested, requiredKinds, seedContract)
+  const qaCount = Number(intent.required_specialist_steps.qa
+    ?? (intent.required_specialists.includes('qa') ? 1 : 0))
+  const finalQa = qaCount > 0 && requiresFinalQa(question)
+  const initialQaCount = qaCount - (finalQa ? 1 : 0)
+  const qaGroups = partitionEvidenceKinds(directKinds, Math.max(1, initialQaCount))
+  const selectedFocus = Boolean(intent.equipment_selection)
+  const conditionalWork = requiresVerifiedIssueGate(question)
+  const steps = []
+  for (const source of intent.native_sources) {
+    steps.push({
+      specialist: 'fabric-iq',
+      question: sourceClause(question, source),
+      reason: `Read only the operator-requested ${source} facts using the bound native source.`,
+      native_source: source,
+      requires_selection: false,
+      requires_verified_issue: false,
+    })
+  }
+  for (let index = 0; index < initialQaCount; index += 1) {
+    const kinds = qaGroups[index]
+    steps.push({
+      specialist: 'qa',
+      question: `Read and verify the requested direct ${kinds.join(', ')} evidence with the operator's filters, time window, identities, and completeness requirements.`,
+      reason: initialQaCount > 1
+        ? `Verify independent direct evidence population ${index + 1} of ${initialQaCount}.`
+        : 'Read the requested current operational facts from governed direct sources.',
+      native_source: null,
+      requires_selection: false,
+      requires_verified_issue: false,
+    })
+  }
+  if (intent.required_specialists.includes('rca')) {
+    steps.push({
+      specialist: 'rca',
+      question: 'Investigate the requested condition using only current verified receipts and clearly separate observations, hypotheses, and missing evidence.',
+      reason: 'Perform the requested bounded source-referenced investigation.',
+      native_source: null,
+      requires_selection: selectedFocus,
+      requires_verified_issue: false,
+    })
+  }
+  if (intent.required_specialists.includes('work-order')) {
+    steps.push({
+      specialist: 'work-order',
+      question: conditionalWork
+        ? 'Review verified work coverage and stage an editable draft only for a verified uncovered equipment issue.'
+        : 'Review verified identity and work coverage, then prepare the explicitly requested editable draft.',
+      reason: 'Perform the requested governed work review without executing a production write.',
+      native_source: null,
+      requires_selection: conditionalWork,
+      requires_verified_issue: conditionalWork,
+    })
+  }
+  if (finalQa) {
+    steps.push({
+      specialist: 'qa',
+      question: 'Independently verify the selected equipment and signal identity, source coverage, and any proposed draft against the immutable receipts.',
+      reason: 'Perform the requested final independent verification after specialist work.',
+      native_source: null,
+      requires_selection: false,
+      requires_verified_issue: false,
+    })
+  }
+  if (!steps.length || steps.length > 8) {
+    throw new Error('Compiled orchestration plan must contain between one and eight bounded steps.')
+  }
+  return { steps, answer_contract: answerContract }
 }
 
 export function validatePlanRequirements(required, requiredSteps, steps, nativeSources,
@@ -928,6 +1071,9 @@ async function main() {
   if (request.action === 'compile_answer_contract') {
     return compileAnswerContract(
       request.question, request.charts_requested, request.required_evidence_kinds, request.answer_contract)
+  }
+  if (request.action === 'compile_orchestration_plan') {
+    return compileOrchestrationPlan(request.question, request.intent)
   }
   if (request.action === 'work_backlog_group') {
     return { group_by: requestedWorkBacklogGroup(request.question) ?? null }

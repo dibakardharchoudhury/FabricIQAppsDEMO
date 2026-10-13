@@ -212,7 +212,7 @@ test('ordinary parts queries cannot invent a native-source request; follow-ups r
   assert.match(nativeSourceError('Recheck that source discrepancy.', 'ontology', ['Ask the published Data Agent for open work.']) ?? '', /not direct Ontology/)
   assert.equal(nativeSourceError('Now use the selected ontology.', 'ontology', ['Ask the Data Agent for open work.']), undefined)
   assert.match(nativeSourceError('Recheck that source discrepancy.', 'data-agent', ['Ask the Data Agent.', 'Now use the ontology.']) ?? '', /not the Data Agent/)
-  assert.deepEqual(requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'), ['data-agent', 'ontology'])
+  assert.deepEqual(requestedNativeSources('Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work.'), ['ontology', 'data-agent'])
   assert.deepEqual(requestedNativeSources('Ask the Data Agent for open work. Do not use the ontology.'), ['data-agent'])
   assert.deepEqual(requestedNativeSources('What is the Data Agent?'), [])
 })

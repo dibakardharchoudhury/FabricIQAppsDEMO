@@ -8,7 +8,7 @@ import './AgentCrewTrace.css'
 import { CopilotHelper } from './CopilotHelper'
 
 const CREW = [
-  { role: 'supervisor', job: 'Supervisor', quip: 'One clipboard. One plan.', icon: GitBranch },
+  { role: 'supervisor', job: 'Deterministic orchestration', quip: 'Compile. Dispatch. Verify. Present.', icon: GitBranch },
   { role: 'qa', job: 'Q&A', quip: 'Facts, not vibes.', icon: Telescope },
   { role: 'work-order', job: 'Work orders', quip: 'You approve. Then we do.', icon: ClipboardCheck },
   { role: 'rca', job: 'Root cause', quip: 'Suspicious of coincidences.', icon: Search },
@@ -87,7 +87,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
           </g>
         })}
       </svg>
-      <span className="crew-wire-label">{currentCommunications.some(flow => flow.waiting) ? 'Task dispatched · awaiting specialist' : currentCommunications.some(flow => flow.failed) ? 'Specialist failure returned' : currentCommunications.length && currentCommunications.every(flow => flow.receivedAt !== undefined) ? 'Results returned through Supervisor' : status === 'running' ? 'Supervisor coordinating' : 'See execution receipts below'}</span>
+      <span className="crew-wire-label">{currentCommunications.some(flow => flow.waiting) ? 'Supervisor dispatched task · awaiting specialist' : currentCommunications.some(flow => flow.failed) ? 'Specialist failure returned to Supervisor' : currentCommunications.length && currentCommunications.every(flow => flow.receivedAt !== undefined) ? 'Supervisor verifying returned evidence' : status === 'running' ? 'Supervisor compiling and certifying' : 'See execution receipts below'}</span>
       {CREW.map(member => {
         const runs = currentEvents.filter(event => event.role === member.role)
         const event = runs[runs.length - 1]
