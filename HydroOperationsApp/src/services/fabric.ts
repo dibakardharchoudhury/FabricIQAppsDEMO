@@ -296,11 +296,12 @@ export async function hostedSourceTokens() {
   const config = await ensureConfig(false)
   const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
   if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
+  // A hosted run can remain active for ten minutes, so do not submit near-expiry cached leases.
   const [fabric, foundry, graphql, kusto] = await Promise.all([
-    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])]),
-    silentToken(FOUNDRY_AGENT_SCOPES),
-    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE]),
-    silentToken([kustoScope(cluster)]),
+    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], true),
+    silentToken(FOUNDRY_AGENT_SCOPES, true),
+    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], true),
+    silentToken([kustoScope(cluster)], true),
   ])
   if (!fabric || !foundry || !graphql || !kusto) {
     throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')
