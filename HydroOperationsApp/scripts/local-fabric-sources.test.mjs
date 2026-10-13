@@ -67,6 +67,10 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.deepEqual(
     chatIntent('Choose the equipment with the most open work orders, breaking ties by equipment ID.').equipment_selection,
     { metric: 'open_work_order_count', tie_break: 'equipment_id_asc' })
+  assert.deepEqual(
+    chatIntent('Which turbines have latest signal quality BAD, and what work orders are already open on each?')
+      .required_evidence_kinds.sort(),
+    ['signal_quality', 'work_backlog', 'work_orders'].sort())
   assert.deepEqual(chatIntent('Plot open work orders by equipment.').required_specialists, ['qa'])
   assert.deepEqual(chatIntent('Visualize turbine temperature by equipment.').required_specialists, ['qa'])
   assert.equal(chatIntent('Do not show a chart. Return the rows.').charts_requested, false)
@@ -134,8 +138,8 @@ test('all ten canonical prompts have one centralized routing and presentation co
       question: 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.',
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 2, rca: 1, 'work-order': 1 },
       native: [], chart: false, priority: 'Medium',
-      evidence: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_orders'],
-      required: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_orders'],
+      evidence: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_backlog', 'work_orders'],
+      required: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_backlog', 'work_orders'],
     },
     {
       question: "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
@@ -213,6 +217,26 @@ test('all ten canonical prompts have one centralized routing and presentation co
     assert.deepEqual(requiredEvidenceKinds(item.question).sort(), item.required.sort())
     assert.deepEqual(permittedEvidenceKinds(item.question).sort(), item.evidence.sort())
   }
+})
+
+test('prompt one accepts governed equipment backlog evidence at the plan boundary', () => {
+  const question = 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.'
+  const intent = chatIntent(question)
+  const requirements = validatePlanRequirements(
+    intent.required_specialists,
+    intent.required_specialist_steps,
+    [
+      { specialist: 'qa', native_source: null },
+      { specialist: 'rca', native_source: null },
+      { specialist: 'work-order', native_source: null },
+      { specialist: 'qa', native_source: null },
+    ],
+    intent.native_sources,
+    question,
+    intent.required_evidence_kinds,
+  )
+  assert.deepEqual(requirements.missing_evidence_kinds, [])
+  assert.deepEqual(requirements.unexpected_evidence_kinds, [])
 })
 
 test('Rayfin enables delegated external exchange without replacing existing Fabric SSO', async () => {

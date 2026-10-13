@@ -89,7 +89,7 @@ export function permittedEvidenceKinds(question) {
   if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)) {
     kinds.add('work_orders')
   }
-  if (/\b(?:backlog|orders?[- ]per[- ]equipment|facility[- ]level work)\b/i.test(text)) kinds.add('work_backlog')
+  if (requestedWorkBacklogGroup(text)) kinds.add('work_backlog')
   if (/\binspections\b|\binspection (?:evidence|history|records|results)\b/i.test(text)) kinds.add('inspections')
   if (/\bnotifications?\b/i.test(text)) kinds.add('notifications')
   if (/\b(?:spare parts?|parts stock|reorder level)\b/i.test(text)) kinds.add('spare_parts')

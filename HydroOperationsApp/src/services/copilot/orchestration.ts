@@ -131,7 +131,8 @@ export function requestedWorkBacklogGroup(question: string): 'facility' | 'equip
   const normalized = positiveActionClauses(question).toLowerCase().replace(/[\s_-]+/g, ' ')
   if (!/\b(?:work|orders?|backlog)\b/.test(normalized)) return undefined
   if (/\b(?:facility level|facility backlog|by facility|per facility)\b/.test(normalized)) return 'facility'
-  if (/\b(?:orders per equipment|work by equipment|(?:orders|backlog) by equipment|(?:orders|work|backlog) per equipment|most open orders)\b/.test(normalized)) {
+  if (/\b(?:orders per equipment|work by equipment|(?:orders|backlog) by equipment|(?:orders|work|backlog) per equipment|most open orders)\b/.test(normalized)
+      || /\b(?:what )?(?:open )?(?:work|orders?)\b[^.!?;\n]{0,40}\b(?:on|for) each(?: (?:equipment|turbine|unit))?\b/.test(normalized)) {
     return 'equipment'
   }
   return undefined
