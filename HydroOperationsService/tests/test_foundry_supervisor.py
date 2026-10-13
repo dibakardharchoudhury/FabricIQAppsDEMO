@@ -334,6 +334,38 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.owner.evidence), {"equipment-focus"})
         self.owner.contract_answer_plan(self.request)
 
+    async def test_missing_facility_population_is_fulfilled_deterministically(self):
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "facilities", "scope": "population", "authority": "direct",
+                "purpose": "identity",
+            }],
+            "views": [{
+                "id": "facilities", "title": "Facilities", "kind": "facilities",
+                "scope": "population", "presentation": "direct_records_table",
+            }],
+        })
+        arguments = {"entity": "facilities"}
+        expected = ToolEvidence(
+            id="facilities-population", source=SOURCE, tool="query_assets", arguments=arguments,
+            completed_at=utc_now(),
+            result={"rows": [{"facility_id": "FAC-01", "facility_name": "Foyers"}], "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="facilities", field="rows", authority="direct", scope="population",
+                complete=True, identity_fields=("facility_id",),
+            ),),
+        )
+        self.tools.execute = AsyncMock(return_value=expected)
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+
+        await self.owner.fulfill_catalog_requirements(self.request, journal)
+
+        self.tools.execute.assert_awaited_once_with("query_assets", arguments, self.request)
+        self.assertEqual(set(self.owner.evidence), {"facilities-population"})
+        self.owner.contract_answer_plan(self.request)
+
     def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
             "version": 3,

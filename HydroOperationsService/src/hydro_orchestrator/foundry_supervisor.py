@@ -1231,8 +1231,10 @@ class FoundrySupervisor:
         contract = self.answer_contract
         if contract is None:
             raise SourceFailure("Evidence fulfillment requires the Chief's validated answer contract.")
-        asset_entities = {"equipment", "instruments"}
-        operation_entities = {"work_orders", "inspections", "notifications", "asset_models"}
+        asset_entities = {"facilities", "equipment", "instruments"}
+        operation_entities = {
+            "work_orders", "inspections", "notifications", "spare_parts", "asset_models",
+        }
         for requirement in contract.requirements:
             if requirement.authority != "direct" or requirement.kind not in asset_entities | operation_entities:
                 continue
