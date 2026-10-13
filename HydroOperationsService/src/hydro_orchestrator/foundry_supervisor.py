@@ -328,19 +328,6 @@ def requires_rca_verified_issue(question: str) -> bool:
 
 
 
-def requested_work_backlog_group(question: str) -> Literal["facility", "equipment"] | None:
-    normalized = re.sub(r"[\s_-]+", " ", question.lower())
-    if not any(term in normalized for term in ("work", "order", "backlog")):
-        return None
-    if any(term in normalized for term in ("facility level", "facility backlog", "by facility", "per facility")):
-        return "facility"
-    if any(term in normalized for term in (
-        "orders per equipment", "work by equipment", "by equipment", "per equipment", "most open orders",
-    )):
-        return "equipment"
-    return None
-
-
 def safe_exception_signature(error: BaseException) -> str:
     signatures: list[str] = []
     current: BaseException | None = error
@@ -596,6 +583,7 @@ class ChatRequest(Contract):
     native_sources: tuple[NativeSource, ...] = ()
     proposal_priority: Literal["Low", "Medium", "High", "Critical"] = "Medium"
     equipment_selection: EquipmentSelection | None = None
+    required_evidence_kinds: tuple[str, ...] = ()
     required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
     required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
@@ -610,6 +598,11 @@ class ChatRequest(Contract):
             raise ValueError("Requested native sources must be distinct.")
         if len(self.required_specialists) != len(set(self.required_specialists)):
             raise ValueError("Required specialists must be distinct.")
+        if (
+            len(self.required_evidence_kinds) != len(set(self.required_evidence_kinds))
+            or any(not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", kind) for kind in self.required_evidence_kinds)
+        ):
+            raise ValueError("Required evidence kinds must be distinct governed identifiers.")
         if (any(role not in self.required_specialists for role in self.required_specialist_steps)
                 or any(count < 1 or count > 8 for count in self.required_specialist_steps.values())):
             raise ValueError("Required specialist step counts must be bounded and match required specialists.")
@@ -1231,6 +1224,109 @@ class FoundrySupervisor:
         contract = self.answer_contract
         if contract is None:
             raise SourceFailure("Evidence fulfillment requires the Chief's validated answer contract.")
+        catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+
+        async def execute_required(
+            name: str, arguments: dict[str, object], kind: str, scope: Literal["population", "focus"],
+        ) -> None:
+            specification = next((tool for tool in catalog.tools if tool.name == name), None)
+            if specification is None:
+                raise SourceFailure(f"Required evidence reader {name} is unavailable.")
+            if list(
+                Draft202012Validator(specification.parameters).iter_errors(
+                    json.loads(_encoded(arguments))
+                )
+            ):
+                raise SourceFailure(
+                    f"Deterministic {kind} evidence arguments violate the governed source catalog."
+                )
+            key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
+            saved = journal.read(key)
+            if saved is None:
+                async with self.tool_lock:
+                    self.tool_calls += 1
+                    if self.tool_calls > 40:
+                        raise SourceFailure("The per-run source-tool budget was exceeded.")
+                supplied = await self.tools.execute(name, arguments, request)
+                result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
+                journal.save(key, result.model_dump(mode="json"))
+            else:
+                result = ToolEvidence.model_validate(saved)
+            self.healthy(request)
+            if (
+                result.source != request.source
+                or result.tool != name
+                or result.arguments != arguments
+                or result.completed_at > utc_now()
+                or result.completed_at < request.requested_at
+            ):
+                raise SourceFailure("Deterministic evidence changed its source, query, or read clock.")
+            if not any(
+                dataset.kind == kind
+                and dataset.scope == scope
+                and dataset.authority == "direct"
+                and dataset.role != "audit"
+                and dataset.complete
+                for dataset in result.datasets
+            ):
+                raise SourceFailure(
+                    f"Deterministic {name} read did not satisfy {kind} {scope} evidence."
+                )
+            prior = self.evidence.get(result.id)
+            if prior is not None and prior != result:
+                raise SourceFailure("Evidence identity was reused for a different source result.")
+            self.evidence[result.id] = result
+
+        direct_requirements = {
+            (item.kind, item.scope)
+            for item in contract.requirements
+            if item.authority == "direct"
+        }
+        answer_kinds = sorted({kind for kind, _scope in direct_requirements})
+        analytical_contract = await self.bridge.call({
+            "action": "analytical_evidence_plan",
+            "question": request.question,
+            "answer_kinds": answer_kinds,
+        })
+        if set(analytical_contract) != {"entries"} or not isinstance(analytical_contract["entries"], list):
+            raise SourceFailure("Analytical evidence planning returned an unsupported contract.")
+        analytical_tools = {
+            "signal_quality": "query_signal_quality_snapshot",
+            "temperature": "query_turbine_temperature_snapshot",
+            "station_power": "query_station_power",
+            "work_backlog": "query_work_backlog",
+        }
+        for item in analytical_contract["entries"]:
+            if not isinstance(item, dict) or set(item) != {
+                "kind", "tool", "arguments", "match_arguments",
+            }:
+                raise SourceFailure("Analytical evidence planning returned an unsupported entry.")
+            kind, name = item["kind"], item["tool"]
+            arguments, match_arguments = item["arguments"], item["match_arguments"]
+            if (
+                not isinstance(kind, str)
+                or not isinstance(name, str)
+                or not isinstance(arguments, dict)
+                or not isinstance(match_arguments, dict)
+                or analytical_tools.get(kind) != name
+                or (kind, "population") not in direct_requirements
+                or any(key not in arguments or arguments[key] != value
+                       for key, value in match_arguments.items())
+            ):
+                raise SourceFailure("Analytical evidence planning crossed the governed answer contract.")
+            if any(
+                receipt.tool == name
+                and all(receipt.arguments.get(key) == value for key, value in match_arguments.items())
+                and any(
+                    dataset.kind == kind and dataset.scope == "population"
+                    and dataset.authority == "direct" and dataset.role != "audit" and dataset.complete
+                    for dataset in receipt.datasets
+                )
+                for receipt in self.evidence.values()
+            ):
+                continue
+            await execute_required(name, arguments, kind, "population")
+
         asset_entities = {"facilities", "equipment", "instruments"}
         operation_entities = {
             "work_orders", "inspections", "notifications", "spare_parts", "asset_models",
@@ -1263,55 +1359,7 @@ class FoundrySupervisor:
                     "op": "in",
                     "value": sorted(self.selected_equipment_ids),
                 }]
-            catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
-            specification = next((tool for tool in catalog.tools if tool.name == name), None)
-            if specification is None:
-                raise SourceFailure(f"Required catalog reader {name} is unavailable.")
-            if list(
-                Draft202012Validator(specification.parameters).iter_errors(
-                    json.loads(_encoded(arguments))
-                )
-            ):
-                raise SourceFailure(
-                    f"Deterministic {requirement.kind} evidence arguments violate the governed source catalog."
-                )
-            key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
-            saved = journal.read(key)
-            if saved is None:
-                async with self.tool_lock:
-                    self.tool_calls += 1
-                    if self.tool_calls > 40:
-                        raise SourceFailure("The per-run source-tool budget was exceeded.")
-                supplied = await self.tools.execute(name, arguments, request)
-                result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
-                journal.save(key, result.model_dump(mode="json"))
-            else:
-                result = ToolEvidence.model_validate(saved)
-            self.healthy(request)
-            if (
-                result.source != request.source
-                or result.tool != name
-                or result.arguments != arguments
-                or result.completed_at > utc_now()
-                or result.completed_at < request.requested_at
-            ):
-                raise SourceFailure("Deterministic catalog evidence changed its source, query, or read clock.")
-            if not any(
-                dataset.kind == requirement.kind
-                and dataset.scope == requirement.scope
-                and dataset.authority == "direct"
-                and dataset.role != "audit"
-                and dataset.complete
-                for dataset in result.datasets
-            ):
-                raise SourceFailure(
-                    f"Deterministic catalog read did not satisfy {requirement.kind} "
-                    f"{requirement.scope} evidence."
-                )
-            prior = self.evidence.get(result.id)
-            if prior is not None and prior != result:
-                raise SourceFailure("Evidence identity was reused for a different source result.")
-            self.evidence[result.id] = result
+            await execute_required(name, arguments, requirement.kind, requirement.scope)
 
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
@@ -1512,6 +1560,11 @@ class FoundrySupervisor:
                     for receipt in handoff.evidence:
                         if receipt.source != request.source:
                             raise SourceFailure("Recovered handoff belongs to a different source.")
+                        prior = self.evidence.get(receipt.id)
+                        if prior is not None and prior != receipt:
+                            raise SourceFailure(
+                                "Recovered handoff attempted to replace an immutable evidence receipt."
+                            )
                         self.evidence[receipt.id] = receipt
                     if result.report is not None:
                         await self.bridge.call({
@@ -1846,6 +1899,9 @@ class FoundrySupervisor:
                 delegations.append(delegation)
             requirements = await self.bridge.call({
                 "action": "validate_plan_requirements",
+                "question": request.question,
+                "answer_kinds": sorted(requested_kinds),
+                "required_evidence_kinds": list(request.required_evidence_kinds),
                 "required_specialists": list(request.required_specialists),
                 "required_specialist_steps": request.required_specialist_steps,
                 "steps": [{
@@ -1854,9 +1910,36 @@ class FoundrySupervisor:
                 } for item in delegations],
                 "native_sources": list(request.native_sources),
             })
+            if set(requirements) != {
+                "missing_specialists", "missing_specialist_steps",
+                "missing_native_sources", "missing_evidence_kinds", "unexpected_evidence_kinds",
+            }:
+                raise SourceFailure("Plan requirement validation returned an unsupported contract.")
             missing_specialists = requirements.get("missing_specialists")
             missing_specialist_steps = requirements.get("missing_specialist_steps")
             missing_native_sources = requirements.get("missing_native_sources")
+            missing_evidence_kinds = requirements.get("missing_evidence_kinds")
+            unexpected_evidence_kinds = requirements.get("unexpected_evidence_kinds")
+            if (
+                not isinstance(missing_specialists, list)
+                or not isinstance(missing_specialist_steps, dict)
+                or not isinstance(missing_native_sources, list)
+                or not isinstance(missing_evidence_kinds, list)
+                or not isinstance(unexpected_evidence_kinds, list)
+            ):
+                raise SourceFailure("Plan requirement validation returned invalid field shapes.")
+            if unexpected_evidence_kinds:
+                raise ToolInputError(
+                    "The answer contract requested evidence unrelated to the operator's request: "
+                    + ", ".join(str(item) for item in unexpected_evidence_kinds)
+                    + ". Remove those requirements and views; do not broaden the operator's question."
+                )
+            if missing_evidence_kinds:
+                raise ToolInputError(
+                    "The answer contract omitted evidence explicitly required by the operator: "
+                    + ", ".join(str(item) for item in missing_evidence_kinds)
+                    + ". Add matching requirements and views without removing other requested evidence."
+                )
             if missing_specialists or missing_specialist_steps or missing_native_sources:
                 missing = [
                     *(missing_specialists if isinstance(missing_specialists, list) else []),
@@ -1903,7 +1986,14 @@ class FoundrySupervisor:
 
             functions.append(FunctionTool(name=name, func=bind(name, callback), input_model=parameters))
         proposal_authorized = requests_new_work_order_proposal(request.question)
-        required_backlog_group = requested_work_backlog_group(request.question)
+        backlog_contract = await self.bridge.call({
+            "action": "work_backlog_group", "question": request.question,
+        })
+        if set(backlog_contract) != {"group_by"} or backlog_contract["group_by"] not in (
+            None, "facility", "equipment",
+        ):
+            raise SourceFailure("Grouped-backlog intent returned an unsupported contract.")
+        required_backlog_group = backlog_contract["group_by"]
         permitted_catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
         if not proposal_authorized:
             permitted_catalog = permitted_catalog.model_copy(update={
@@ -2801,7 +2891,7 @@ class FoundrySupervisor:
                 intent = await self.bridge.call({"action": "chat_intent", "question": request.question})
                 if set(intent) != {
                     "charts_requested", "native_sources", "proposal_priority", "equipment_selection",
-                    "required_specialists",
+                    "required_evidence_kinds", "required_specialists",
                     "required_specialist_steps",
                 }:
                     raise SourceFailure("Executor intent recovery returned an unsupported contract.")

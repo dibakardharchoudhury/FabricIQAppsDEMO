@@ -153,7 +153,20 @@ sentences and 600 instructed characters.
 
 Chief now exposes one strict `plan_orchestration` tool. It returns one complete
 ordered plan of one to eight specialist steps; the backend validates and executes
-those steps serially and propagates immutable evidence and completed reports. Final certification
+those steps serially and propagates immutable evidence and completed reports.
+Ingress persists a centralized `required_evidence_kinds` manifest derived by the
+TypeScript domain semantics. Chief contracts that omit those primary datasets or
+add unrelated datasets receive one bounded, actionable correction before any
+specialist or source executes. The same TypeScript boundary produces strict
+object-enveloped analytical execution plans for signal-quality, temperature,
+station-power and grouped-backlog evidence. Verification reuses existing receipts
+when they satisfy the operator's explicit quality, window, rank, equipment-type
+and grouping constraints; otherwise it performs the missing governed read
+deterministically without another model conversation. Catalog requirements remain
+deterministically fulfilled through their governed readers. Cached handoffs cannot
+replace an already restored evidence identity with a different receipt.
+
+Final certification
 after RCA/work review is deterministic application validation over attested receipts
 and validated specialist contracts; it does not add a latency-prone duplicate model
 call or claim that another agent ran. Prompt-specific

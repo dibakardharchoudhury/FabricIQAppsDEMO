@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, governedToolResult, parseKustoPayload, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -54,10 +54,12 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   assert.deepEqual(chatIntent('Which turbines are running bad right now?'),
     { charts_requested: false, native_sources: [], proposal_priority: 'Medium',
       equipment_selection: null,
+      required_evidence_kinds: ['signal_quality'],
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.deepEqual(chatIntent('Chart average power output per station over the last 24 hours.'),
     { charts_requested: true, native_sources: [], proposal_priority: 'Medium',
       equipment_selection: null,
+      required_evidence_kinds: ['station_power'],
       required_specialists: ['qa'], required_specialist_steps: { qa: 1 } })
   assert.deepEqual(
     chatIntent('Select the turbine with the most BAD signals, breaking ties by equipment ID.').equipment_selection,
@@ -83,6 +85,8 @@ test('backend intent reuses canonical chart, native and human-priority semantics
   ], ['ontology']), {
     missing_specialists: ['qa', 'rca', 'work-order'],
     missing_specialist_steps: { qa: 2, rca: 1, 'work-order': 1 }, missing_native_sources: [],
+    missing_evidence_kinds: [],
+    unexpected_evidence_kinds: [],
   })
   assert.deepEqual(validatePlanRequirements(['qa', 'rca', 'work-order'],
     { qa: 2, rca: 1, 'work-order': 1 }, [
@@ -91,7 +95,37 @@ test('backend intent reuses canonical chart, native and human-priority semantics
     { specialist: 'qa', native_source: null },
     { specialist: 'rca', native_source: null },
     { specialist: 'work-order', native_source: null },
-  ], ['ontology']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [] })
+  ], ['ontology']), { missing_specialists: [], missing_specialist_steps: {}, missing_native_sources: [],
+    missing_evidence_kinds: [],
+    unexpected_evidence_kinds: [] })
+  assert.deepEqual(permittedEvidenceKinds(compound).sort(),
+    ['equipment', 'native_claims', 'telemetry', 'work_orders'].sort())
+  assert.deepEqual(validatePlanRequirements(['qa'], { qa: 1 }, [
+    { specialist: 'fabric-iq', native_source: 'ontology' },
+    { specialist: 'qa', native_source: null },
+  ], ['ontology'], compound, ['native_claims', 'equipment', 'telemetry', 'work_orders', 'signal_quality'])
+    .unexpected_evidence_kinds, ['signal_quality'])
+  assert.deepEqual(
+    analyticalEvidencePlan(
+      'Verify BAD and UNCERTAIN signal quality and the five hottest turbines in the last six hours, '
+      + 'facility-level backlog, and average station power.',
+      ['signal_quality', 'temperature', 'work_backlog', 'station_power'],
+    ),
+    [
+      { kind: 'signal_quality', tool: 'query_signal_quality_snapshot',
+        arguments: { quality: 'BAD', lookback: '6h', equipment_type: 'turbine' },
+        match_arguments: { quality: 'BAD', lookback: '6h', equipment_type: 'turbine' } },
+      { kind: 'signal_quality', tool: 'query_signal_quality_snapshot',
+        arguments: { quality: 'UNCERTAIN', lookback: '6h', equipment_type: 'turbine' },
+        match_arguments: { quality: 'UNCERTAIN', lookback: '6h', equipment_type: 'turbine' } },
+      { kind: 'temperature', tool: 'query_turbine_temperature_snapshot',
+        arguments: { lookback: '6h', limit: 5 }, match_arguments: { lookback: '6h', limit: 5 } },
+      { kind: 'station_power', tool: 'query_station_power',
+        arguments: { lookback: '6h' }, match_arguments: { lookback: '6h' } },
+      { kind: 'work_backlog', tool: 'query_work_backlog',
+        arguments: { group_by: 'facility' }, match_arguments: { group_by: 'facility' } },
+    ],
+  )
 })
 
 test('all ten canonical prompts have one centralized routing and presentation contract', () => {
@@ -100,51 +134,71 @@ test('all ten canonical prompts have one centralized routing and presentation co
       question: 'Which turbines have latest signal quality BAD today (UTC), and what work is already open on each? Select the turbine with the most BAD signals, breaking ties by equipment ID. Investigate it using available telemetry, inspections and existing work, separating facts from hypotheses. Prepare an editable inspection draft only for an evidence-backed gap not already covered by open work. Finally, independently check the selected equipment/signal identity and existing-work coverage, and summarize any changes needed to the draft. Show a findings table and distinguish stale readings from current conditions. Do not save a work order.',
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 2, rca: 1, 'work-order': 1 },
       native: [], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_orders'],
+      required: ['equipment', 'inspections', 'instruments', 'signal_quality', 'telemetry', 'work_orders'],
     },
     {
       question: "Use the selected ontology directly to resolve T005's equipment identity, facility and available relationships; return actual instance values, not just schema. Using those verified IDs, inspect its latest raw telemetry within the last six hours and all open SQL work. Investigate any supported concerns and prepare an editable inspection draft only if a specific uncovered issue warrants one. Show the ontology context, evidence timestamps, work coverage and uncertainty in separate sections. Do not create a SQL record.",
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
       native: ['ontology'], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'facilities', 'native_claims', 'telemetry', 'work_orders'],
+      required: ['equipment', 'facilities', 'native_claims', 'telemetry', 'work_orders'],
     },
     {
       question: 'Ask the published Fabric Data Agent for every open operational SQL work order, including equipment ID, order number, title, priority and status. Verify that inventory against direct SQL reads, without treating SQL as a work category. Choose the equipment with the most open orders, breaking ties by equipment ID, and investigate whether its recent telemetry and inspections justify additional work. Prepare an editable follow-up draft only for a demonstrated coverage gap; otherwise explain why no new order is justified. Include a backlog table and orders-per-equipment chart. Do not save anything.',
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
       native: ['data-agent'], chart: true, priority: 'Medium',
+      evidence: ['equipment', 'inspections', 'native_claims', 'telemetry', 'work_backlog', 'work_orders'],
+      required: ['inspections', 'native_claims', 'telemetry', 'work_backlog', 'work_orders'],
     },
     {
       question: 'Ask the published Fabric Data Agent which turbines have latest signal quality BAD today (UTC), the five hottest turbines from latest raw temperature readings today, and all open work on those turbines. Independently verify both sets using direct telemetry snapshots and SQL work records. Investigate any disagreement: distinguish signal quality from temperature, same-signal from equipment-level work, averaging from latest raw readings, and stale from current data. Return a reconciliation table showing source claims, verified evidence and unresolved differences. Do not silently prefer an answer or propose new work.',
       specialists: ['qa', 'rca'], steps: { qa: 2, rca: 1 },
       native: ['data-agent'], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'native_claims', 'signal_quality', 'telemetry', 'temperature', 'work_orders'],
+      required: ['native_claims', 'signal_quality', 'temperature', 'work_orders'],
     },
     {
       question: 'Use the selected ontology directly to list facility instances. Ask the published Fabric Data Agent for open operational SQL work by equipment. Reconcile those results with direct asset and work-order records, then show a facility-level backlog table and chart. Preserve unmatched IDs and source limitations instead of guessing relationships. This turn is read-only.',
       specialists: ['qa'], steps: { qa: 1 },
       native: ['data-agent', 'ontology'], chart: true, priority: 'Medium',
+      evidence: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
+      required: ['equipment', 'facilities', 'native_claims', 'work_backlog', 'work_orders'],
     },
     {
       question: 'List spare parts at or below reorder level and related open maintenance work. Investigate whether the evidence supports a parts-related risk; prepare an editable inspection draft only for a verified uncovered equipment issue. Do not order parts or save work.',
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
       native: [], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'spare_parts', 'telemetry', 'work_orders'],
+      required: ['spare_parts', 'work_orders'],
     },
     {
       question: "Inspect T005's recent telemetry and open work, then investigate whether downtime can actually be established from those sources. Separate sensor quality from loss of production; do not infer an outage from BAD alone.",
       specialists: ['qa', 'rca'], steps: { qa: 1, rca: 1 },
       native: [], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'signal_quality', 'telemetry', 'work_orders'],
+      required: ['signal_quality', 'telemetry', 'work_orders'],
     },
     {
       question: 'Read maintenance notifications and open work for T005. Investigate inconsistencies and prepare an editable inspection draft only if an uncovered issue is supported. Do not save or send a notification.',
       specialists: ['qa', 'rca', 'work-order'], steps: { qa: 1, rca: 1, 'work-order': 1 },
       native: [], chart: false, priority: 'Medium',
+      evidence: ['equipment', 'notifications', 'telemetry', 'work_orders'],
+      required: ['notifications', 'work_orders'],
     },
     {
       question: 'Chart average power output per station over the last 24 hours. Investigate whether the returned data support a change in equipment condition. Keep observations, competing explanations and missing evidence separate.',
       specialists: ['qa', 'rca'], steps: { qa: 1, rca: 1 },
       native: [], chart: true, priority: 'Medium',
+      evidence: ['equipment', 'station_power', 'telemetry'],
+      required: ['station_power'],
     },
     {
       question: 'Check T005 identity and all existing open work. Prepare one editable Low-priority inspection work-order draft titled Acceptance review T005 DO NOT DISPATCH, with no claimed fault. Independently verify coverage. Do not save.',
       specialists: ['qa', 'work-order'], steps: { qa: 1, 'work-order': 1 },
       native: [], chart: false, priority: 'Low',
+      evidence: ['equipment', 'work_orders'],
+      required: ['equipment', 'work_orders'],
     },
   ]
   assert.equal(cases.length, 10)
@@ -155,6 +209,9 @@ test('all ten canonical prompts have one centralized routing and presentation co
     assert.deepEqual(intent.native_sources, item.native)
     assert.equal(intent.charts_requested, item.chart)
     assert.equal(intent.proposal_priority, item.priority)
+    assert.deepEqual(intent.required_evidence_kinds.sort(), item.required.sort())
+    assert.deepEqual(requiredEvidenceKinds(item.question).sort(), item.required.sort())
+    assert.deepEqual(permittedEvidenceKinds(item.question).sort(), item.evidence.sort())
   }
 })
 

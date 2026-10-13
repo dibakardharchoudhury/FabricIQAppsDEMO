@@ -118,6 +118,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_intent_fills_only_omitted_options_and_cannot_change_the_question(self):
         intent = {"charts_requested": True, "native_sources": ["ontology"], "proposal_priority": "High",
                   "equipment_selection": None,
+                  "required_evidence_kinds": ["native_claims"],
                   "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}}
         chat = ChatInput(question="Show a chart.")
         normalized = normalized_chat_input(chat, intent)
@@ -130,7 +131,9 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                              native_sources=("data-agent",), proposal_priority="Low")
         self.assertEqual(
             normalized_chat_input(explicit, intent),
-            explicit.model_copy(update={"required_specialists": ("qa",), "required_specialist_steps": {"qa": 1}}),
+            explicit.model_copy(update={"required_evidence_kinds": ("native_claims",),
+                                        "required_specialists": ("qa",),
+                                        "required_specialist_steps": {"qa": 1}}),
         )
         for invalid in ({**intent, "question": "Changed"}, {**intent, "charts_requested": "true"}, {}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
@@ -780,6 +783,7 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 bridge.call.side_effect = [
                     {"charts_requested": False, "native_sources": [], "proposal_priority": "Medium",
                      "equipment_selection": None,
+                     "required_evidence_kinds": [],
                      "required_specialists": ["qa"], "required_specialist_steps": {"qa": 1}},
                     {"tenant_id": str(TENANT), "configuration_digest": source.configuration_digest},
                     {"source": actual.model_dump(mode="json"), "cluster": "https://cluster.test", "database": "test"},

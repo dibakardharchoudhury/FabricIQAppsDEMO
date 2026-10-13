@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -18,15 +19,16 @@ from pydantic import ValidationError
 
 from hydro_orchestrator.contracts import ResolvedIdentity, ResolvedScope, WorkOrderDraft, utc_now
 from hydro_orchestrator.foundry_supervisor import (
-    AgentVersion, AnswerPlan, BoundedAIProjectClient, ChatRequest, EquipmentSelection, EvidenceDataset,
+    AgentVersion, AnswerPlan, BoundedAIProjectClient, CachedHandoff, ChatRequest, Delegation,
+    EquipmentSelection, EvidenceDataset,
     FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS,
     FoundryAgent, FoundrySupervisor, HistoricalContext, NativeBinding, OperatorAnswerContract, RunJournal,
     SpecialistResult, ToolEvidence,
     operation_skill_guidance,
-    rca_answer_limitations, rca_reference_examples, requested_work_backlog_group, safe_exception_signature,
+    rca_answer_limitations, rca_reference_examples, safe_exception_signature,
     transient_native_failure,
     canonical_source_arguments,
-    _bounded_citation_fragments, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
+    _bounded_citation_fragments, _encoded, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
     governed_datasets, requests_new_work_order_proposal, requests_unsent_message, selected_equipment_from_evidence,
     updated_equipment_selection,
@@ -365,6 +367,41 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.tools.execute.assert_awaited_once_with("query_assets", arguments, self.request)
         self.assertEqual(set(self.owner.evidence), {"facilities-population"})
         self.owner.contract_answer_plan(self.request)
+
+    async def test_missing_analytical_population_is_fulfilled_from_central_execution_plan(self):
+        request = self.request.model_copy(update={
+            "question": "Which turbines have latest signal quality BAD today?",
+        })
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "signal_quality", "scope": "population", "authority": "direct",
+                "purpose": "facts",
+            }],
+            "views": [{
+                "id": "quality", "title": "Signal quality", "kind": "signal_quality",
+                "scope": "population", "presentation": "direct_records_table",
+            }],
+        })
+        arguments = {"quality": "BAD", "lookback": "today", "equipment_type": "turbine"}
+        expected = ToolEvidence(
+            id="quality-population", source=SOURCE, tool="query_signal_quality_snapshot",
+            arguments=arguments, completed_at=utc_now(),
+            result={"rows": [], "row_count": 0, "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="signal_quality", field="rows", authority="direct", scope="population",
+                complete=True, identity_fields=("opcua_node_id", "event_time"),
+            ),),
+        )
+        self.tools.execute = AsyncMock(return_value=expected)
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+
+        await self.owner.fulfill_catalog_requirements(request, journal)
+
+        self.tools.execute.assert_awaited_once_with("query_signal_quality_snapshot", arguments, request)
+        self.assertEqual(set(self.owner.evidence), {"quality-population"})
+        self.owner.contract_answer_plan(request)
 
     def test_reconciliation_compiles_direct_and_native_rows_without_inferred_matches(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
@@ -974,6 +1011,14 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 "quality_snapshot", "empty_quality_snapshot", "independent_empty",
                 "conditional_empty", "conditional_empty_with_supporting_rows",
             ):
+                kind, authority, view_mode, group_by, chart = (
+                    "signal_quality", "direct", "records", None, None,
+                )
+            elif self.mode == "irrelevant_evidence_repair" and round_number == 0:
+                kind, authority, view_mode, group_by, chart = (
+                    "signal_quality", "direct", "records", None, None,
+                )
+            elif self.mode == "missing_evidence_repair" and round_number > 0:
                 kind, authority, view_mode, group_by, chart = (
                     "signal_quality", "direct", "records", None, None,
                 )
@@ -1794,16 +1839,24 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("group_by=facility", json.dumps(repair["input"]))
 
-    def test_grouped_work_backlog_intent_is_centralized(self):
+    async def test_grouped_work_backlog_intent_is_centralized(self):
         self.assertEqual(
-            requested_work_backlog_group("Show a facility-level backlog table and chart."),
+            (await self.bridge.call({
+                "action": "work_backlog_group",
+                "question": "Show a facility-level backlog table and chart.",
+            }))["group_by"],
             "facility",
         )
         self.assertEqual(
-            requested_work_backlog_group("Choose equipment with the most open orders and chart orders-per-equipment."),
+            (await self.bridge.call({
+                "action": "work_backlog_group",
+                "question": "Choose equipment with the most open orders and chart orders-per-equipment.",
+            }))["group_by"],
             "equipment",
         )
-        self.assertIsNone(requested_work_backlog_group("Read open work for T005."))
+        self.assertIsNone((await self.bridge.call({
+            "action": "work_backlog_group", "question": "Read open work for T005.",
+        }))["group_by"])
 
     async def test_native_connection_metadata_is_not_accepted_as_domain_evidence(self):
         self.mode = "native_connection_only"
@@ -1892,6 +1945,47 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls, before)
         self.assertEqual(self.tools.calls, 1)
 
+    async def test_cached_handoff_cannot_replace_an_immutable_evidence_receipt(self):
+        evidence = ToolEvidence(
+            id="immutable-reading", source=SOURCE, tool="query_telemetry",
+            arguments={"equipment_id": "TEST_T005"}, completed_at=utc_now(),
+            result={"rows": [{"equipment_id": "TEST_T005", "value": 75.0}], "truncated": False},
+            datasets=(EvidenceDataset(
+                kind="telemetry", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("opcua_node_id", "event_time"),
+            ),),
+        )
+        self.owner.evidence[evidence.id] = evidence
+        self.owner.run_id = self.request.run_id
+        delegation = Delegation(
+            specialist="qa", question="Verify T005 telemetry.", reason="Verify evidence.",
+        )
+        handoff_context = {
+            "evidence": [evidence.receipt()],
+            "completed_specialists": [],
+        }
+        key = "delegate:" + _encoded({
+            "role": "qa", "question": delegation.question, "native": None,
+            "context_digest": sha256(_encoded(handoff_context)).hexdigest(),
+            "targeted_context": False,
+            "maintenance_gate_required": False,
+        }).decode()
+        conflicting = evidence.model_copy(update={
+            "result": {"rows": [{"equipment_id": "TEST_T005", "value": 76.0}], "truncated": False},
+        })
+        specialist = SpecialistResult(
+            role="qa", agent_name=self.versions["qa"].name, version=self.versions["qa"].version,
+            response_id="cached-response", duration_ms=1, model_round_count=1,
+            input_digest="0" * 64, text="cached",
+        )
+        journal = RunJournal(self.root / str(self.request.run_id) / "receipts")
+        journal.save(key, CachedHandoff(
+            specialist=specialist, evidence=(conflicting,),
+        ).model_dump(mode="json"))
+
+        with self.assertRaisesRegex(SourceFailure, "replace an immutable evidence receipt"):
+            await self.owner.handoff(delegation, self.request, journal, self.versions)
+
     async def test_one_schema_correction_precedes_source_execution_and_preserves_real_values(self):
         self.mode = "repair"
         with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING"):
@@ -1914,6 +2008,46 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "Every answer view must have a matching evidence requirement",
             json.dumps(self.payloads),
         )
+
+    async def test_irrelevant_evidence_contract_is_corrected_before_source_or_specialist_execution(self):
+        self.mode = "irrelevant_evidence_repair"
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Which turbines have unusual telemetry, and what work is already open?",
+        })
+        self.seed(request)
+
+        answer = await self.owner.run(request)
+
+        self.assertEqual(answer.tables[0].rows[0].values["value"], 75.0)
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertEqual(self.tools.calls, 1)
+        self.assertIn(
+            "evidence unrelated to the operator's request: signal_quality",
+            json.dumps(self.payloads),
+        )
+
+    async def test_missing_required_evidence_is_corrected_before_source_or_specialist_execution(self):
+        self.mode = "missing_evidence_repair"
+        self.tools.quality_snapshot = True
+        request = self.request.model_copy(update={
+            "run_id": uuid4(),
+            "question": "Which turbines have latest signal quality BAD today?",
+            "required_evidence_kinds": ("signal_quality",),
+        })
+        self.seed(request)
+
+        answer = await self.owner.run(request)
+
+        self.assertEqual(self.calls["hydro-supervisor-agent"], 2)
+        self.assertTrue(any(
+            item.tool == "query_signal_quality_snapshot" for item in self.owner.evidence.values()
+        ))
+        self.assertIn(
+            "omitted evidence explicitly required by the operator: signal_quality",
+            json.dumps(self.payloads),
+        )
+        self.assertEqual(answer.proposals, ())
 
     async def test_repeated_invalid_arguments_stop_without_touching_sources(self):
         self.mode = "repeat_invalid"
@@ -2165,7 +2299,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.tools.include_identity = True
         request = self.request.model_copy(update={
             "run_id": uuid4(),
-            "question": "Independently verify both requested populations.",
+            "question": "Independently verify the signal-quality population and the selected equipment telemetry.",
             "required_specialists": ("qa",),
             "required_specialist_steps": {"qa": 2},
         })

@@ -1,5 +1,5 @@
 import { readAnswerDatasets, type AnswerDataset } from './answerPresentation.ts'
-import { positiveActionClauses } from './orchestration.ts'
+import { positiveActionClauses, requestedLookback, requestedRankLimit } from './orchestration.ts'
 import { cell, type EvidenceReceipt } from './rcaEvidence.ts'
 import { readingFreshness } from './query.ts'
 
@@ -16,12 +16,9 @@ export function fleetComparisonScope(question: string): FleetComparisonScope | u
     || !/\b(?:which turbines|all turbines|fleet|hottest turbines)\b/i.test(text)) return undefined
   const quality = /\bBAD\b/i.test(text)
   const temperature = /\b(?:hot|hottest|temperature|temperatures)\b/i.test(text)
-  const window = text.match(/\btoday\b|\b(?:last|past)\s+(\d+)\s*(minutes?|hours?|days?|m|h|d)\b/i)
-  const count = text.match(/\btop\s+(\d+|five|ten)\b|\b(\d+|five|ten)\s+(?:hottest|highest)\b/i)
-  const rank = (count?.[1] ?? count?.[2])?.toLowerCase()
   return quality || temperature ? { quality, temperature,
-    ...(window ? { lookback: window[0].toLowerCase() === 'today' ? 'today' : `${window[1]}${window[2][0].toLowerCase()}` } : {}),
-    ...(rank ? { temperatureLimit: rank === 'five' ? 5 : rank === 'ten' ? 10 : Number(rank) } : {}),
+    ...(requestedLookback(text) ? { lookback: requestedLookback(text) } : {}),
+    ...(requestedRankLimit(text) !== undefined ? { temperatureLimit: requestedRankLimit(text) } : {}),
   } : undefined
 }
 

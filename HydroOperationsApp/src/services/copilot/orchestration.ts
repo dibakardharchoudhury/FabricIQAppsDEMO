@@ -107,6 +107,36 @@ export function requiredIndependentQaSteps(question: string): number {
   return Math.max(finalIndependentPhase ? 2 : 1, counts[quantified] ?? Number(quantified))
 }
 
+export function requestedLookback(question: string): string | undefined {
+  const match = positiveActionClauses(question)
+    .match(/\btoday\b|\b(?:last|past|within the last)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(minutes?|hours?|days?|m|h|d)\b/i)
+  if (!match) return undefined
+  const counts: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5,
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  }
+  return match[0].toLowerCase() === 'today'
+    ? 'today'
+    : `${counts[match[1].toLowerCase()] ?? Number(match[1])}${match[2][0].toLowerCase()}`
+}
+
+export function requestedRankLimit(question: string): number | undefined {
+  const match = positiveActionClauses(question)
+    .match(/\btop\s+(\d+|five|ten)\b|\b(\d+|five|ten)\s+(?:hottest|highest)\b/i)
+  const rank = (match?.[1] ?? match?.[2])?.toLowerCase()
+  return rank === 'five' ? 5 : rank === 'ten' ? 10 : rank ? Number(rank) : undefined
+}
+
+export function requestedWorkBacklogGroup(question: string): 'facility' | 'equipment' | undefined {
+  const normalized = positiveActionClauses(question).toLowerCase().replace(/[\s_-]+/g, ' ')
+  if (!/\b(?:work|orders?|backlog)\b/.test(normalized)) return undefined
+  if (/\b(?:facility level|facility backlog|by facility|per facility)\b/.test(normalized)) return 'facility'
+  if (/\b(?:orders per equipment|work by equipment|(?:orders|backlog) by equipment|(?:orders|work|backlog) per equipment|most open orders)\b/.test(normalized)) {
+    return 'equipment'
+  }
+  return undefined
+}
+
 export type EquipmentSelection = {
   metric: 'signal_quality_count' | 'open_work_order_count'
   quality?: 'BAD' | 'UNCERTAIN'

@@ -9,7 +9,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedRankLimit, requestedWorkBacklogGroup, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -29,15 +29,123 @@ export function chatIntent(question) {
   return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
+    required_evidence_kinds: requiredEvidenceKinds(question),
     required_specialists: specialists,
     required_specialist_steps: Object.fromEntries(specialists.map(role => [
       role, role === 'qa' ? requiredIndependentQaSteps(question) : 1,
     ])) }
 }
 
-export function validatePlanRequirements(required, requiredSteps, steps, nativeSources) {
+export function requiredEvidenceKinds(question) {
+  const text = positiveActionClauses(question)
+  const kinds = new Set()
+  if (requestedNativeSources(text).length) kinds.add('native_claims')
+  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|running bad)\b/i.test(text)
+      || /\bquality\b/i.test(text) && /\b(?:BAD|GOOD|UNCERTAIN)\b/i.test(text)) {
+    kinds.add('signal_quality')
+  }
+  if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
+  if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
+  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)) {
+    kinds.add('work_orders')
+  }
+  if (requestedWorkBacklogGroup(text)) kinds.add('work_backlog')
+  if (/\b(?:list facility instances|direct asset|asset records?)\b|\bfacility[- ]level\b/i.test(text)
+      || /\bresolve\b[^.!?;\n]{0,120}\bfacilit(?:y|ies)\b/i.test(text)) {
+    kinds.add('facilities')
+  }
+  if (/\b(?:resolve|check)\b[^.!?;\n]{0,100}\b(?:equipment )?identity\b|\bdirect (?:asset|equipment)\b/i.test(text)) {
+    kinds.add('equipment')
+  }
+  if (/\b(?:signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
+  if (!/\btelemetry snapshots?\b/i.test(text)
+      && /\b(?:inspect|investigate|read|query|verify|using|use)\b[^.!?;\n]{0,180}\b(?:telemetry|raw readings?)\b/i.test(text)) {
+    kinds.add('telemetry')
+  }
+  if (/\binspections\b|\binspection (?:evidence|history|records|results)\b/i.test(text)) kinds.add('inspections')
+  if (/\bread\b[^.!?;\n]{0,80}\bnotifications?\b/i.test(text)) kinds.add('notifications')
+  if (/\blist\b[^.!?;\n]{0,80}\bspare parts?\b/i.test(text)) kinds.add('spare_parts')
+  if (/\b(?:show|read|list)\b[^.!?;\n]{0,80}\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
+  return [...kinds]
+}
+
+export function permittedEvidenceKinds(question) {
+  const text = positiveActionClauses(question)
+  const kinds = new Set()
+  if (requestedNativeSources(text).length) kinds.add('native_claims')
+  if (/\bfacilit(?:y|ies)\b/i.test(text)) kinds.add('facilities')
+  if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{3})\b/i.test(text)) kinds.add('equipment')
+  if (/\b(?:instrument|signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
+  if (/\b(?:telemetry|readings?|signals?|power|temperature|quality)\b/i.test(text)) kinds.add('telemetry')
+  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone)\b/i.test(text)
+      || /\bquality\b/i.test(text) && /\b(?:BAD|GOOD|UNCERTAIN)\b/i.test(text)) {
+    kinds.add('signal_quality')
+  }
+  if (/\b(?:RCA|investigate|diagnos(?:e|is)|physical fault|equipment condition|downtime)\b/i.test(text)) {
+    kinds.add('telemetry')
+  }
+  if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
+  if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
+  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)) {
+    kinds.add('work_orders')
+  }
+  if (/\b(?:backlog|orders?[- ]per[- ]equipment|facility[- ]level work)\b/i.test(text)) kinds.add('work_backlog')
+  if (/\binspections\b|\binspection (?:evidence|history|records|results)\b/i.test(text)) kinds.add('inspections')
+  if (/\bnotifications?\b/i.test(text)) kinds.add('notifications')
+  if (/\b(?:spare parts?|parts stock|reorder level)\b/i.test(text)) kinds.add('spare_parts')
+  if (/\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
+  return [...kinds]
+}
+
+export function analyticalEvidencePlan(question, answerKinds) {
+  if (typeof question !== 'string' || !Array.isArray(answerKinds)) {
+    throw new Error('Analytical evidence planning requires a question and evidence kinds.')
+  }
+  const kinds = new Set(answerKinds)
+  const text = positiveActionClauses(question)
+  const lookback = requestedLookback(question)
+  const plan = []
+  if (kinds.has('signal_quality')) {
+    const qualities = [...new Set(
+      [...text.matchAll(/\b(BAD|GOOD|UNCERTAIN)\b/gi)]
+        .map(match => match[1].toUpperCase()),
+    )]
+    for (const quality of qualities.length ? qualities : ['BAD']) {
+      const arguments_ = { quality, ...(lookback ? { lookback } : {}),
+        ...(/\bturbines?\b/i.test(text) ? { equipment_type: 'turbine' } : {}) }
+      plan.push({ kind: 'signal_quality', tool: 'query_signal_quality_snapshot',
+        arguments: arguments_,
+        match_arguments: {
+          ...(qualities.length ? { quality } : {}),
+          ...(lookback ? { lookback } : {}),
+          ...(/\bturbines?\b/i.test(text) ? { equipment_type: 'turbine' } : {}),
+        } })
+    }
+  }
+  if (kinds.has('temperature')) {
+    const limit = requestedRankLimit(question)
+    const arguments_ = { ...(lookback ? { lookback } : {}), ...(limit === undefined ? {} : { limit }) }
+    plan.push({ kind: 'temperature', tool: 'query_turbine_temperature_snapshot',
+      arguments: arguments_, match_arguments: arguments_ })
+  }
+  if (kinds.has('station_power')) {
+    const arguments_ = { ...(lookback ? { lookback } : {}) }
+    plan.push({ kind: 'station_power', tool: 'query_station_power',
+      arguments: arguments_, match_arguments: arguments_ })
+  }
+  if (kinds.has('work_backlog')) {
+    const group = requestedWorkBacklogGroup(question)
+    if (group) plan.push({ kind: 'work_backlog', tool: 'query_work_backlog',
+      arguments: { group_by: group }, match_arguments: { group_by: group } })
+  }
+  return plan
+}
+
+export function validatePlanRequirements(required, requiredSteps, steps, nativeSources,
+  question = '', answerKinds = [], requiredEvidenceKinds_ = []) {
   if (!Array.isArray(required) || !requiredSteps || typeof requiredSteps !== 'object'
       || Array.isArray(requiredSteps) || !Array.isArray(steps) || !Array.isArray(nativeSources)
+      || typeof question !== 'string' || !Array.isArray(answerKinds) || !Array.isArray(requiredEvidenceKinds_)
       || required.some(role => !['qa', 'rca', 'work-order'].includes(role))) {
     throw new Error('Plan requirements need verified required specialists, steps and native sources.')
   }
@@ -54,6 +162,10 @@ export function validatePlanRequirements(required, requiredSteps, steps, nativeS
     missing_specialists: required.filter(role => !roles.includes(role)),
     missing_specialist_steps: missingSteps,
     missing_native_sources: nativeSources.filter(source => !plannedNative.has(source)),
+    missing_evidence_kinds: requiredEvidenceKinds_.filter(kind => !answerKinds.includes(kind)),
+    unexpected_evidence_kinds: answerKinds.filter(kind =>
+      !(kind === 'native_claims' && nativeSources.length)
+      && !permittedEvidenceKinds(question).includes(kind)),
   }
 }
 
@@ -675,9 +787,16 @@ async function main() {
   }
   const request = JSON.parse(input)
   if (request.action === 'chat_intent') return chatIntent(request.question)
+  if (request.action === 'analytical_evidence_plan') {
+    return { entries: analyticalEvidencePlan(request.question, request.answer_kinds) }
+  }
+  if (request.action === 'work_backlog_group') {
+    return { group_by: requestedWorkBacklogGroup(request.question) ?? null }
+  }
   if (request.action === 'validate_plan_requirements') {
     return validatePlanRequirements(
-      request.required_specialists, request.required_specialist_steps, request.steps, request.native_sources)
+      request.required_specialists, request.required_specialist_steps, request.steps, request.native_sources,
+      request.question, request.answer_kinds, request.required_evidence_kinds)
   }
   if (request.action === 'source_contracts') return sourceToolContracts()
   if (request.action === 'rca_contract') return { tool: RCA_REPORT_TOOL }
