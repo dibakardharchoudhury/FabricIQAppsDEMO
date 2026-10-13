@@ -30,6 +30,7 @@ from hydro_orchestrator.foundry_supervisor import (
     canonical_source_arguments,
     _bounded_citation_fragments, _encoded, _native_equipment_ids, _native_count_chart_metadata, _native_markdown_tables,
     _native_markdown_tables_from_payload, initial_equipment_selection, normalize_filter_conjunctions,
+    repair_evidence_row_descendant_paths,
     governed_datasets, requests_new_work_order_proposal, requests_unsent_message, selected_equipment_from_evidence,
     updated_equipment_selection,
     with_production_write_status,
@@ -1144,6 +1145,8 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             ref = {"evidence_id": "reading-1", "path": "/rows/0"}
             if self.mode == "rca_duplicated_evidence_suffix":
                 ref["evidence_id"] = "reading-1ing-1"
+            if self.mode == "rca_missing_optional_field":
+                ref["path"] = "/rows/0/instrumentId"
             report = {"observations": [ref], "hypotheses": [
                 {"category": "sensor_or_ingestion", "supporting": [ref], "contradicting": [],
                  "missing": ["independent_measurement"]},
@@ -1418,6 +1421,26 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             "evidence_id": "reading-1", "path": "/rows/0",
         }])
         self.assertTrue(any("duplicated a terminal evidence-ID suffix" in line for line in logs.output))
+
+    async def test_rca_repairs_missing_row_descendant_to_verified_row(self):
+        self.mode = "rca_missing_optional_field"
+        with self.assertLogs("hydro_orchestrator.foundry_supervisor", level="WARNING") as logs:
+            result = await self.owner.run(self.request)
+        rca = next(item for item in result.specialists if item.role == "rca")
+        self.assertEqual(rca.report["observations"], [{
+            "evidence_id": "reading-1", "path": "/rows/0",
+        }])
+        self.assertTrue(any("missing row descendant fields" in line for line in logs.output))
+
+    async def test_row_descendant_repair_does_not_accept_missing_rows(self):
+        receipt = ToolEvidence(
+            id="reading-1", source=SOURCE, tool="query_telemetry", arguments={},
+            completed_at=utc_now(), result={"rows": [{"equipment_id": "TEST_T005"}]},
+        )
+        report = {"evidence_id": "reading-1", "path": "/rows/1/instrumentId"}
+        repaired, count = repair_evidence_row_descendant_paths(report, {receipt.id: receipt})
+        self.assertEqual(repaired, report)
+        self.assertEqual(count, 0)
 
     async def test_actual_framework_fixer_stages_source_bound_human_approval_card_without_sql(self):
         self.mode = "proposal"

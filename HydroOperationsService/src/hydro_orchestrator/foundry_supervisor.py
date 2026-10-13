@@ -1081,6 +1081,52 @@ def repair_duplicated_evidence_id_suffixes(
     return visit(value), repairs
 
 
+def repair_evidence_row_descendant_paths(
+    value: object, evidence: dict[str, ToolEvidence],
+) -> tuple[object, int]:
+    repairs = 0
+
+    def path_exists(result: dict[str, object], path: str) -> bool:
+        current: object = result
+        for encoded in path.removeprefix("/").split("/"):
+            segment = encoded.replace("~1", "/").replace("~0", "~")
+            if isinstance(current, dict) and segment in current:
+                current = current[segment]
+            elif isinstance(current, list) and segment.isascii() and segment.isdecimal():
+                index = int(segment)
+                if index >= len(current):
+                    return False
+                current = current[index]
+            else:
+                return False
+        return True
+
+    def visit(item: object) -> object:
+        nonlocal repairs
+        if isinstance(item, dict):
+            repaired = {key: visit(child) for key, child in item.items()}
+            evidence_id, path = repaired.get("evidence_id"), repaired.get("path")
+            if isinstance(evidence_id, str) and isinstance(path, str):
+                receipt = evidence.get(evidence_id)
+                row_match = re.fullmatch(r"(/rows/[0-9]+)(?:/.+)", path)
+                if (
+                    receipt is not None
+                    and row_match is not None
+                    and not path_exists(receipt.result, path)
+                    and path_exists(receipt.result, row_match.group(1))
+                ):
+                    repaired["path"] = row_match.group(1)
+                    repairs += 1
+            return repaired
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        if isinstance(item, tuple):
+            return tuple(visit(child) for child in item)
+        return item
+
+    return visit(value), repairs
+
+
 def with_production_write_status(summary: str, write_reviewed: bool) -> str:
     value = summary.strip()
     if write_reviewed and "production write" not in value.lower():
@@ -1780,6 +1826,14 @@ class FoundrySupervisor:
                     logger.warning(
                         "Foundry rca completion duplicated a terminal evidence-ID suffix; "
                         "repaired %s exact run-scoped reference(s) before validation.",
+                        repair_count,
+                    )
+                repaired, repair_count = repair_evidence_row_descendant_paths(kwargs, self.evidence)
+                kwargs = cast(dict[str, object], repaired)
+                if repair_count:
+                    logger.warning(
+                        "Foundry rca completion referenced missing row descendant fields; "
+                        "repaired %s reference(s) to their existing verified rows before validation.",
                         repair_count,
                     )
             if role == "rca" and not maintenance_gate_required:
