@@ -2601,7 +2601,7 @@ class FoundrySupervisor:
                     source=request.source,
                     tool="reconcile_evidence",
                     arguments={"view_id": view.id},
-                    completed_at=utc_now(),
+                    completed_at=max(receipt.completed_at for receipt, _dataset in source_matches),
                     result={"reconciliation_rows": reconciled_rows},
                     limitations=tuple(dict.fromkeys(reconciled_limitations))[:8],
                     datasets=(EvidenceDataset(
@@ -2613,6 +2613,13 @@ class FoundrySupervisor:
                         identity_fields=("_source_evidence_id", "_source_path"),
                     ),),
                 )
+                existing = self.evidence.get(derived.id)
+                if existing is not None and existing != derived:
+                    raise SourceFailure(
+                        f"Reconciliation view {view.id} conflicts with its immutable derived evidence."
+                    )
+                self.evidence[derived.id] = existing or derived
+                derived = self.evidence[derived.id]
                 matches = [(derived, derived.datasets[0])]
             else:
                 matches = [

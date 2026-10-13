@@ -517,6 +517,10 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(plan.tables[0].rows), 2)
         self.assertIn("_source_authority", {column.key for column in plan.tables[0].columns})
         self.assertTrue(any("does not infer matches" in item for item in plan.limitations))
+        self.assertIn("reconciliation:quality-reconciliation", self.owner.evidence)
+        answer = self.owner.answer(self.request, plan, use_projected_summary=True)
+        self.assertEqual(len(answer.tables[0].rows), 2)
+        self.assertEqual(self.owner.contract_answer_plan(self.request), plan)
 
     def test_nested_only_native_rows_remain_in_audit_without_empty_answer_rows(self):
         self.owner.answer_contract = OperatorAnswerContract.model_validate({
