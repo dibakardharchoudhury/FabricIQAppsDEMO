@@ -458,7 +458,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             }],
             "views": [{
                 "id": "telemetry", "title": "Selected telemetry", "kind": "telemetry",
-                "scope": "focus", "presentation": "direct_records_table",
+                "scope": "focus", "presentation": "direct_records_line",
             }],
         })
         self.owner.selected_equipment_ids = {"EQUIP_RTI_T014"}
@@ -485,6 +485,11 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
         self.tools.execute.assert_not_awaited()
         self.assertEqual(set(self.owner.evidence), {"telemetry-series"})
+        plan = self.owner.contract_answer_plan(request)
+        self.assertEqual(
+            [(chart.kind, chart.x_key, chart.y_keys) for chart in plan.charts],
+            [("line", "event_time", ("value",))],
+        )
 
     async def test_missing_analytical_population_is_fulfilled_from_central_execution_plan(self):
         request = self.request.model_copy(update={

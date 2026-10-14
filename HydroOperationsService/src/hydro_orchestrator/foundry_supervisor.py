@@ -2939,6 +2939,9 @@ class FoundrySupervisor:
             if view.chart is not None:
                 x_candidates = [
                     view.group_by,
+                    # A line is a trend over time, so a timestamp column is its axis before any identity field.
+                    *((column.key for column in columns if column.kind == "timestamp")
+                      if view.chart == "line" else ()),
                     *(field for field in matches[0][1].identity_fields),
                     *(column.key for column in columns if column.kind in ("text", "timestamp")),
                 ]
