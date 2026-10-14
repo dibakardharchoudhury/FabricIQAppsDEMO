@@ -149,9 +149,12 @@ the [acceptance report](AGENT-ACCEPTANCE.md) distinguishes current changes from 
 
 ### Persistent Foundry agents
 
-The canonical Python orchestrator also provisions the five Hydro Prompt Agents from
+The canonical Python orchestrator also provisions the four Hydro specialist Prompt Agents
+(`hydro-qa-agent`, `hydro-rca-agent`, `hydro-work-order-agent`, `hydro-fabric-iq-agent`) from
 `src/services/copilot/agentDefinitions.ts` and verifies definition readback before publishing
-the SPA. It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
+the SPA. The Supervisor is the `hydro-orchestrator` Hosted Agent, which the same orchestrator builds in
+ACR and publishes with azd when the packaged source or deployment target changed, then verifies; see
+[Foundry deployment and multi-agent setup](../docs/foundry-deployment-and-multi-agent-setup.md). It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
 (or the saved public project endpoint); discovery must find one matching project in the
 current subscription. `HYDRO_FOUNDRY_MODEL` selects an existing model deployment, defaulting
 to `gpt-5.6-sol`. In measured specialist tool-selection steps it was faster than `gpt-5-mini`

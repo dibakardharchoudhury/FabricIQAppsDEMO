@@ -301,7 +301,9 @@ hosting checks passed, but these API/model results do not certify interactive ap
 [`HydroOperationsApp/DEPLOY.md`](HydroOperationsApp/DEPLOY.md).
 
 Start with that guide's interface chooser: the local deployment web app and the
-operator/agent command line use the same deployment orchestrator. Manual portal work
+operator/agent command line use the same deployment orchestrator. For the Foundry
+multi-agent setup and its one-step deployment (including the Hosted Agent), see
+[`docs/foundry-deployment-and-multi-agent-setup.md`](docs/foundry-deployment-and-multi-agent-setup.md). Manual portal work
 is limited to documented access/setup prerequisites and ontology-managed graph materialization.
 For agent responsibilities, routing, evidence-based RCA, proposed maintenance specialists,
 and the ten-flow acceptance status, see

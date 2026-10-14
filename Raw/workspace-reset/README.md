@@ -349,6 +349,14 @@ tenant and workspace selected in the sidebar:
   current capacity. A workspace/capacity/tenant mismatch moves only the three Rayfin state files
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
+   Still in this phase, before Rayfin publishes the app, the deployer converges the **Foundry** side: the
+   Fabric IQ connections, the four specialist prompt agents, and the `hydro-orchestrator` Hosted Agent. The
+   Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
+   published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
+   Set `HYDRO_FOUNDRY_PROJECT_ENDPOINT` (and optionally `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
+   `HYDRO_PRODUCTION_WRITES_ENABLED`) in the environment that launches this app. Requires `azd` with the
+   `azure.ai.agents` and `microsoft.foundry` extensions. See
+   [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, apply the generated hosting origin to backend auth, then always
    reapply AppBackend runtime/CORS settings and the DAB/SQL configuration. This also runs for an

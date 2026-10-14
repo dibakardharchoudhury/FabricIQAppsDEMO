@@ -1826,6 +1826,40 @@ def validate_spa_redirect_preservation(
     )
 
 
+APPBACKEND_IDENTITY_KEYS = (
+    "RAYFIN_PUBLIC_ITEM_ID", "RAYFIN_PUBLIC_API_URL", "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
+)
+
+
+def appbackend_identity_present() -> bool:
+    values, _ = current_rayfin_target()
+    return all(_public_config_value(values, key) for key in APPBACKEND_IDENTITY_KEYS)
+
+
+def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
+    """The Hosted Agent is configured from the AppBackend's identity, which Rayfin writes when it provisions.
+
+    A target that has no AppBackend yet would otherwise stop at Foundry provisioning, so create the backend (without
+    static hosting) first. Existing targets already carry the identity and skip this entirely."""
+    if appbackend_identity_present():
+        return
+    print(
+        "No AppBackend exists for this target yet; creating it (without static hosting) so the Hosted Agent "
+        "can be configured against its identity.",
+        flush=True,
+    )
+    ensure_rayfin_login(tenant)
+    run_rayfin_deployment(
+        rayfin24("up", "--workspace-id", workspace_id, "--exclude-services", "staticHosting", "--yes"), tenant,
+    )
+    if not appbackend_identity_present():
+        raise DeployError(
+            "Rayfin created the backend but did not record its identity (RAYFIN_PUBLIC_ITEM_ID, "
+            "RAYFIN_PUBLIC_API_URL, RAYFIN_PUBLIC_PUBLISHABLE_KEY) in rayfin/.env; the Hosted Agent cannot be "
+            "configured. Stop and report this output."
+        )
+
+
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
     foundry_spec = importlib.util.spec_from_file_location(
@@ -1883,6 +1917,7 @@ def deploy(args: argparse.Namespace) -> None:
         args.tenant, workspace_id, workspace_name, capacity_id, client_id
     )
     ensure_deploy_dependencies()
+    ensure_appbackend_identity(args.tenant, workspace_id)
     provision_foundry_agents(args.tenant, workspace_id)
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)

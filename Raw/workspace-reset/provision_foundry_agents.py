@@ -1,15 +1,18 @@
 """Provision persistent Hydro agents from the app's versioned source definitions.
 
-Called by deploy_fabric_app.py, never a separate app deployment path.
+Called by deploy_fabric_app.py, never a separate app deployment path. The Hosted Agent is converged by
+deploy_hosted_agent.py immediately before its final verification below.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -284,7 +287,36 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Foundry definition readback failed for {name}.")
         print(f"Verified persistent Foundry agent {name}:{live['version']}", flush=True)
 
-    hosted = request("GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", agent_headers).json()
+    kql = request(
+        "GET", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/kqlDatabases/{public_values['RAYFIN_PUBLIC_KQL_DATABASE_ID']}",
+        fabric_headers,
+    ).json()
+    query_uri = urlparse(kql.get("properties", {}).get("queryServiceUri", ""))
+    if query_uri.scheme != "https" or not query_uri.netloc:
+        raise deploy.DeployError("The selected KQL database has no verifiable query service URI.")
+
+    def get_agent():
+        response = request_with_read_retry(
+            "GET", f"{endpoint}/agents/hydro-orchestrator?api-version=v1", headers=agent_headers, timeout=60,
+        )
+        if response.status_code == 404:
+            return None
+        if not response.ok:
+            raise deploy.DeployError(f"Cannot read the hosted agent: HTTP {response.status_code}: {response.text[:400]}")
+        return response.json()
+
+    hosted_spec = importlib.util.spec_from_file_location(
+        "deploy_hosted_agent", Path(__file__).with_name("deploy_hosted_agent.py"),
+    )
+    hosted_module = importlib.util.module_from_spec(hosted_spec)
+    hosted_spec.loader.exec_module(hosted_module)
+    hosted = hosted_module.ensure_hosted_agent(
+        deploy, get_agent=get_agent, endpoint=endpoint, project_id=project_id, model=model, tenant=tenant,
+        workspace=workspace, ontology=ontology,
+        spa_client_id=deploy._public_config_value(values, "RAYFIN_PUBLIC_AAD_CLIENT_ID"),
+        values=public_values, source_digest=source_digest, kusto_origin=f"https://{query_uri.netloc}",
+        connections=connections,
+    )
     try:
         invocations_url = hosted_invocations_url(hosted, endpoint)
         runtime_version, runtime_image_digest = hosted_runtime_identity(hosted)
