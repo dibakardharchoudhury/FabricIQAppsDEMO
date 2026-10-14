@@ -211,7 +211,13 @@ function chartRequestedForKind(kind, chartsRequested, question) {
   }
   if (kind === 'station_power') return /\b(?:station power|power output per station)\b/i.test(chartText)
   if (kind === 'temperature') return /\b(?:temperature|temperatures|hot|hottest)\b/i.test(chartText)
-  if (kind === 'telemetry') return /\b(?:telemetry|readings?|signals?)\b/i.test(chartText)
+  if (kind === 'telemetry') {
+    // A chart request names a measure ("power output", "vibration", ...) rather than the word telemetry, so the
+    // series is charted unless the clause belongs to another governed chartable dataset.
+    const claimedElsewhere = ['work_backlog', 'station_power', 'temperature']
+      .some(other => other !== kind && chartRequestedForKind(other, chartsRequested, question))
+    return Boolean(chartText.trim()) && !claimedElsewhere
+  }
   return false
 }
 
@@ -703,6 +709,36 @@ export async function readTelemetryQuery(metadata, query, token, fetcher = fetch
   const rows = kustoRowsToObjects(columns, table.Rows)
   return { rows, row_count: rows.length, truncated: false,
     read_completed_at_utc: new Date().toISOString() }
+}
+
+/** Raw telemetry carries no unit. Attach the registered instrument unit to each row whose node maps to exactly one
+ *  instrument with a nonempty unit; rows that cannot be attested are left untouched. */
+export function attachInstrumentUnits(rows, instruments) {
+  const units = new Map()
+  const ambiguous = new Set()
+  for (const instrument of instruments) {
+    const node = instrument?.opcua_node_id
+    if (typeof node !== 'string' || !node) continue
+    if (units.has(node)) ambiguous.add(node)
+    const unit = typeof instrument.unit === 'string' ? instrument.unit.trim() : ''
+    if (unit) units.set(node, unit)
+  }
+  return rows.map(row => {
+    const node = row?.opcua_node_id
+    const unit = typeof node === 'string' && !ambiguous.has(node) ? units.get(node) : undefined
+    return unit && !Object.hasOwn(row, 'unit') ? { ...row, unit } : row
+  })
+}
+
+export async function readTelemetryWithUnits(config, metadata, query, tokens, fetcher = fetch) {
+  const [reading, instruments] = await Promise.allSettled([
+    readTelemetryQuery(metadata, query, tokens.kusto, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql, fetcher),
+  ])
+  if (reading.status === 'rejected') throw reading.reason
+  // Unit metadata is enrichment: a failed metadata read leaves the series valid but unattested.
+  if (instruments.status === 'rejected') return reading.value
+  return { ...reading.value, rows: attachInstrumentUnits(reading.value.rows, instruments.value) }
 }
 
 export async function readStationPower(metadata, args, token, fetcher = fetch) {
@@ -1223,7 +1259,7 @@ export async function handle(request, deps = {}) {
         break
       case 'query_telemetry':
         if (request.cluster !== metadata.cluster) throw new Error('The KQL endpoint changed.')
-        result = await readTelemetryQuery(metadata, buildTelemetryQuery(args), request.tokens.kusto)
+        result = await readTelemetryWithUnits(config, metadata, buildTelemetryQuery(args), request.tokens)
         break
       case 'query_station_power':
         if (request.cluster !== metadata.cluster) throw new Error('The KQL endpoint changed.')

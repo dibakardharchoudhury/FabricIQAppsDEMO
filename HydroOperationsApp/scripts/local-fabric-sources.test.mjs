@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
@@ -1086,6 +1086,18 @@ const nonAdvisoryPhrasings = [
   'Do not raise any work orders; just list the telemetry.',
 ]
 
+test('a chart of any equipment measure compiles one governed telemetry line view, not a table', () => {
+  for (const question of [
+    'Chart power output for T05 for the past 2 hours',
+    'Plot the vibration of the main unit over the last day',
+  ]) {
+    const intent = chatIntent(question)
+    assert.equal(intent.charts_requested, true, question)
+    const views = compileOrchestrationPlan(question, intent).answer_contract.views
+    assert.deepEqual(views.map(view => [view.kind, view.presentation]), [['telemetry', 'direct_records_line']], question)
+  }
+})
+
 test('advice about which work needs raising is detected by concept, not phrasing, and compiles a coherent plan', () => {
   for (const question of advisoryPhrasings) {
     assert.equal(requestsWorkOrderNeedAssessment(question), true, question)
@@ -1294,6 +1306,22 @@ test('Kusto rejects partial errors, warning status, duplicate/missing ordinals a
     alter(payload)
     assert.throws(() => parseKustoPayload(payload), /KQL/)
   }
+})
+
+test('telemetry rows gain only registered, unambiguous instrument units', () => {
+  const rows = [
+    { opcua_node_id: 'a', value: 1 }, { opcua_node_id: 'b', value: 2 }, { opcua_node_id: 'c', value: 3 },
+    { opcua_node_id: 'd', value: 4, unit: 'kept' }, { value: 5 },
+  ]
+  const instruments = [
+    { opcua_node_id: 'a', unit: 'MW' }, { opcua_node_id: 'b', unit: ' ' },
+    { opcua_node_id: 'c', unit: 'bar' }, { opcua_node_id: 'c', unit: 'psi' },
+    { opcua_node_id: 'd', unit: 'MW' },
+  ]
+  assert.deepEqual(attachInstrumentUnits(rows, instruments), [
+    { opcua_node_id: 'a', value: 1, unit: 'MW' }, rows[1], rows[2], rows[3], rows[4],
+  ])
+  assert.equal(rows[0].unit, undefined)
 })
 
 test('generic telemetry reads preserve source columns and reject ambiguous or over-bound results', async () => {

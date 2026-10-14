@@ -504,6 +504,26 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SourceFailure, "unavailable"):
             await tools.execute("query_station_power", {}, request)
 
+    async def test_telemetry_series_attests_a_unit_only_when_every_row_shares_one(self):
+        sources = reader()
+        request = self.chat(sources)
+        tools = FabricBackendTools(sources)
+        base = {"opcua_node_id": "ns=2;s=T005.power_output", "event_time": "2026-10-10T01:00:00Z", "value": 1.5}
+
+        async def read(rows):
+            sources.bridge.call.return_value = {
+                "source": request.source.model_dump(mode="json"), "completed_at": utc_now().isoformat(),
+                "result": {"rows": rows, "row_count": len(rows), "truncated": False},
+            }
+            return await tools.execute("query_telemetry", {"equipment_id": "T005"}, request)
+
+        evidence = await read([{**base, "unit": "MW"}, {**base, "value": 2.0, "unit": "MW"}])
+        self.assertEqual(evidence.column_units, {"value": "MW"})
+        self.assertIn("graphql", sources.bridge.call.call_args.args[0]["tokens"])
+        for rows in ([{**base, "unit": "MW"}, {**base, "unit": "bar"}], [{**base, "unit": "MW"}, base],
+                     [base], [], [{**base, "unit": " "}]):
+            self.assertEqual((await read(rows)).column_units, {})
+
     async def test_backend_source_mismatch_or_unimplemented_tool_blocks_before_authentication(self):
         sources = reader()
         request = self.chat(sources)

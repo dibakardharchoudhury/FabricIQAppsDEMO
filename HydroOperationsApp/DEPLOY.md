@@ -402,6 +402,16 @@ operator is already looking at, not from a second, different read of rapidly cha
 - If the question does not point back, needs data the earlier answer lacks, or would still need a reader (for
   example an independent verification), it is planned and read fresh exactly as a standalone question.
 
+### Charts of telemetry
+
+A chart request (chart/plot/graph/visualize of any measure, e.g. "Chart power output for T05 for the past 2
+hours") compiles one governed telemetry line view and is read as a factual question whatever the measure is.
+Raw telemetry rows carry no unit, so the Node source reader attaches each instrument's registered unit
+(unambiguous, nonempty) to its rows, and the backend attests a chart unit only when every row shares one.
+A chart is otherwise withheld with the exact reason. When a requested series already satisfies the focus
+telemetry requirement, no second all-signal read is merged beside it, so unrelated measures and units never
+share a chartable table. A failed or ambiguous metadata read leaves the series valid but unattested.
+
 ### Grounded briefing (reasoning, justification, recommendations)
 
 After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the

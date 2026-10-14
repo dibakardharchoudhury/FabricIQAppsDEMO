@@ -446,6 +446,46 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.owner.evidence), {"instrument-focus", "telemetry-focus"})
         self.owner.contract_answer_plan(request)
 
+    async def test_requested_chart_series_satisfies_focus_telemetry_without_a_second_all_signal_read(self):
+        request = self.request.model_copy(update={
+            "question": "Chart power output for the selected turbine for the past 2 hours.",
+            "charts_requested": True,
+        })
+        self.owner.answer_contract = OperatorAnswerContract.model_validate({
+            "version": 3,
+            "requirements": [{
+                "kind": "telemetry", "scope": "focus", "authority": "direct", "purpose": "facts",
+            }],
+            "views": [{
+                "id": "telemetry", "title": "Selected telemetry", "kind": "telemetry",
+                "scope": "focus", "presentation": "direct_records_table",
+            }],
+        })
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T014"}
+        series = ToolEvidence(
+            id="telemetry-series", source=SOURCE, tool="query_telemetry",
+            arguments={"lookback": "2h", "aggregation": "avg", "opcua_node_ids": ["ns=2;s=T014.power_output"]},
+            completed_at=utc_now(),
+            result={"rows": [{
+                "opcua_node_id": "ns=2;s=T014.power_output", "event_time": "2026-10-13T16:00:00Z",
+                "value": 12.5, "unit": "MW",
+            }], "truncated": False},
+            column_units={"value": "MW"},
+            datasets=(EvidenceDataset(
+                kind="telemetry", field="rows", authority="direct", scope="focus",
+                complete=True, identity_fields=("opcua_node_id", "event_time"),
+            ),),
+        )
+        self.owner.evidence = {series.id: series}
+        self.tools.execute = AsyncMock()
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+
+        await self.owner.fulfill_catalog_requirements(request, journal)
+
+        self.tools.execute.assert_not_awaited()
+        self.assertEqual(set(self.owner.evidence), {"telemetry-series"})
+
     async def test_missing_analytical_population_is_fulfilled_from_central_execution_plan(self):
         request = self.request.model_copy(update={
             "question": "Which turbines have latest signal quality BAD today?",

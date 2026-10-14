@@ -86,7 +86,7 @@ export const positiveActionClauses = (question: string) => question
 
 export function requiresChartOutput(question: string): boolean {
   const positive = positiveActionClauses(question)
-  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|visualize)\b|\b(?:include|show|produce|return|provide|draw|create|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|histogram|dashboard)\b/i.test(positive)
+  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|graph|visuali[sz]e)\b|\b(?:include|show|produce|return|provide|draw|create|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|graph|histogram|dashboard)\b/i.test(positive)
     || /\b(?:this|that|it|the (?:answer|output|result)) (?:is|was) not (?:a |the )?chart\b(?!\s+(?:request|question))|\b(?:no charts?|no dashboards?)\b[^.!?;\n]{0,100}\b(?:csv|dump)\b/i.test(positive)
 }
 
@@ -286,7 +286,8 @@ export function isNotificationDraftRequest(question: string): boolean {
 
 export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
   const positive = positiveActionClauses(question)
-  const factualRead = /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|chart|plot|visualize|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|wos?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
+  // A chart can only be drawn from source data, so any requested chart is a factual read whatever the measure.
+  const factualRead = requiresChartOutput(question) || /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|chart|plot|visualize|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|wos?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
   const downstreamRead = requiresDirectSourceVerification(question)
     || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
     || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)

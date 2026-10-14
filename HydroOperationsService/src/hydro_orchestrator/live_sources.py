@@ -376,7 +376,7 @@ class FabricBackendTools:
             raise SourceFailure("This source tool has no configured backend implementation.")
         credential, discovery = self.sources.credential, self.sources.discovery
         tokens = {"fabric": (await credential.get_token("https://api.fabric.microsoft.com/.default")).token}
-        if name in ("query_assets", "query_operations", "query_work_backlog",
+        if name in ("query_assets", "query_operations", "query_work_backlog", "query_telemetry",
                     "propose_work_order") or name in self.snapshot_tools:
             tokens["graphql"] = (await credential.get_token("https://analysis.windows.net/powerbi/api/.default")).token
         if name in ("query_telemetry", "query_station_power", "run_kql") or name in self.snapshot_tools:
@@ -399,6 +399,8 @@ class FabricBackendTools:
             column_units, resolved, work_coverage, limitations = self._snapshot_attestation(result.result)
         elif name == "query_work_backlog":
             column_units, resolved, work_coverage, limitations = self._work_backlog_attestation(result.result)
+        elif name == "query_telemetry":
+            column_units = self._telemetry_attestation(result.result)
         elif name == "query_station_power":
             column_units = self._station_power_attestation(result.result)
             semantics = result.result.get("semantics")
@@ -600,6 +602,18 @@ class FabricBackendTools:
             identities,
             limitations,
         )
+
+    @staticmethod
+    def _telemetry_attestation(result: dict[str, object]) -> dict[str, str]:
+        # A series is chartable only when every row carries the same registered instrument unit.
+        rows = result.get("rows")
+        if not isinstance(rows, list) or not rows:
+            return {}
+        units = {row.get("unit") for row in rows if isinstance(row, dict)}
+        if len(units) != 1 or not all(isinstance(row, dict) for row in rows):
+            return {}
+        unit = next(iter(units))
+        return {"value": unit.strip()} if isinstance(unit, str) and unit.strip() else {}
 
     @staticmethod
     def _snapshot_attestation(

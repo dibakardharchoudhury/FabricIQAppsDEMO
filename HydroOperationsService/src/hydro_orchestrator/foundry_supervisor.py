@@ -1577,7 +1577,10 @@ class FoundrySupervisor:
                 continue
             if any(
                 receipt.tool == name
-                and all(receipt.arguments.get(key) == value for key, value in match_arguments.items())
+                and (request.charts_requested
+                     # A requested series is itself the focus telemetry; a second all-signal read would mix
+                     # unrelated measures and units into the chartable table.
+                     or all(receipt.arguments.get(key) == value for key, value in match_arguments.items()))
                 and any(
                     dataset.kind == "telemetry" and dataset.scope == "focus"
                     and dataset.authority == "direct" and dataset.role != "audit" and dataset.complete
