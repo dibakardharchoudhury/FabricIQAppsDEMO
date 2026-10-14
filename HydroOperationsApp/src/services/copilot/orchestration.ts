@@ -86,7 +86,9 @@ export const positiveActionClauses = (question: string) => question
 
 export function requiresChartOutput(question: string): boolean {
   const positive = positiveActionClauses(question)
-  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|graph|visuali[sz]e)\b|\b(?:include|show|produce|return|provide|draw|create|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|graph|histogram|dashboard)\b/i.test(positive)
+  return /(?:^|[.!?]\s*)(?:please\s+)?(?:chart|plot|graph|dashboard|visuali[sz]e)\b|\b(?:include|show|produce|return|provide|give|draw|create|build|make|display)\b[^.!?;\n]{0,160}\b(?:chart|plot|graph|histogram|dashboard)\b/i.test(positive)
+    || /\b(?:need|want|request|require|get)\b[^.!?;\n]{0,160}\b(?:time[\s-]*series\s+)?(?:chart|plot|graph|histogram|dashboard)\b/i.test(positive)
+    || /\btime[\s-]*series\s+(?:chart|plot|graph)\b/i.test(positive)
     || /\b(?:this|that|it|the (?:answer|output|result)) (?:is|was) not (?:a |the )?chart\b(?!\s+(?:request|question))|\b(?:no charts?|no dashboards?)\b[^.!?;\n]{0,100}\b(?:csv|dump)\b/i.test(positive)
 }
 

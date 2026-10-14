@@ -7,7 +7,11 @@ import { buildQualitySnapshotQuery, buildTemperatureSnapshotQuery, rankTemperatu
 
 test('chart completion applies to requested output, not discussion or prohibited charts', () => {
   for (const prompt of ['Chart average power per station.', 'Show a backlog table and chart.',
-    'Read work orders, then include a chart.', 'Do not create work orders, but show a chart.']) {
+    'Read work orders, then include a chart.', 'Do not create work orders, but show a chart.',
+    'Need a timeseries chart for power output for T09 for the past 48 hours.',
+    'Build a dashboard for inlet pressure across the selected facility.',
+    'Can I get a graph of any selected signal for this asset?',
+    'Dashboard vibration for all turbines in the facility.']) {
     assert.equal(requiresChartOutput(prompt), true, prompt)
   }
   for (const prompt of ['Explain the previous chart.', 'Check the chart values against the source.',

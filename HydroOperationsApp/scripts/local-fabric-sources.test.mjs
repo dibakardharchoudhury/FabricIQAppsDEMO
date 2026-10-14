@@ -1090,6 +1090,8 @@ test('a chart of any equipment measure compiles one governed telemetry line view
   for (const question of [
     'Chart power output for T05 for the past 2 hours',
     'Plot the vibration of the main unit over the last day',
+    'Need a timeseries chart for power output for T09 for the past 48 hours',
+    'Build a dashboard for inlet pressure on the selected asset',
   ]) {
     const intent = chatIntent(question)
     assert.equal(intent.charts_requested, true, question)

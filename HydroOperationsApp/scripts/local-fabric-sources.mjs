@@ -204,7 +204,7 @@ function chartRequestedForKind(kind, chartsRequested, question) {
   if (!chartsRequested) return false
   const chartText = positiveActionClauses(question)
     .split(/[.!?;\n]+/)
-    .filter(clause => /\b(?:chart|plot|graph|visuali[sz]e)\b/i.test(clause))
+    .filter(clause => /\b(?:chart|plot|graph|histogram|dashboard|visuali[sz]e)\b/i.test(clause))
     .join(' ')
   if (kind === 'work_backlog') {
     return /\b(?:backlog|orders?[- ]per[- ]equipment|facility[- ]level)\b/i.test(chartText)
