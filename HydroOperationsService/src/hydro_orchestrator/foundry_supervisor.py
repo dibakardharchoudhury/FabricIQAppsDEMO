@@ -24,7 +24,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from filelock import FileLock
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, APITimeoutError
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, ValidationError, model_validator
 
 from .contracts import Contract, EvidenceReference, ResolvedScope, SourceIdentity, WorkOrderDraft, utc_now
 from .live_sources import Bridge, SourceFailure
@@ -910,7 +910,7 @@ Write like a senior maintenance planner briefing a colleague: direct, specific, 
 - "answer": one to three sentences that answer the operator's actual question first. Name the equipment, work-order numbers and key values. State plainly when the answer is "none" or "nothing needs doing".
 - "findings": the concrete facts that matter, each citing equipment IDs, signal names, work-order numbers and source values (with units and timestamps where supplied). Prefer a short ranked list over restating whole tables.
 - "reasoning": explain HOW you got from the data to the answer. For a question about which work orders to open or create, compare every affected equipment (BAD signal quality, highest temperatures, whatever the question targets) with open_work_by_equipment. Say which equipment is already covered and by which work order, judging from its title, status and priority whether it plausibly addresses the concern, and which has no cover. Say why a gap matters now.
-- "recommendations": one entry per equipment or decision. Use create_work_order only for a verified gap with no plausibly covering open work (priority required, equipment_id required). Use covered_by_open_work when an open work order already addresses it and cite that number in the justification. Use monitor when evidence is thin, stale or only a single weak signal. Use no_action when nothing is wrong. Use needs_clarification when identity or scope is ambiguous. Give each a short actionable title (for a work order a ready-to-use inspection title) and a justification that cites the evidence. Set priority relative to the evidence (multiple affected signals, hottest-ranked, no cover, stale data) and say that the priority is a suggestion for the operator to adjust.
+- "recommendations": one entry per equipment or decision, never more than eight: when more equipment is affected, keep individual entries for the most significant and cover the rest in one entry whose equipment_id is null and whose title names them. Leave the list empty when the operator only asked to list or show data and nothing in the evidence calls for action. Use create_work_order only for a verified gap with no plausibly covering open work (priority required, equipment_id required). Use covered_by_open_work when an open work order already addresses it and cite that number in the justification. Use monitor when evidence is thin, stale or only a single weak signal. Use no_action when nothing is wrong. Use needs_clarification when identity or scope is ambiguous. Give each a short actionable title (for a work order a ready-to-use inspection title) and a justification that cites the evidence. Set priority relative to the evidence (multiple affected signals, hottest-ranked, no cover, stale data) and say that the priority is a suggestion for the operator to adjust.
 - If a draft is staged (staged_drafts), say which equipment it targets, why it is justified, and tell the operator to review and approve it in the card below. Never claim it was created.
 - carried_evidence lists datasets that were read earlier in the conversation and reused, not re-read. When it is non-empty, say in one short clause which data was reused and when it was read (now_utc is the current time), so the operator can judge how current it is. Draft-coverage checks for staged drafts are fresh.
 - "caveats": only real limits that change how far the operator can trust the conclusion (stale readings, truncated rows, missing sources, specialist limitations, anything listed in root_cause_evidence.unavailable_sources). Do not pad.
@@ -923,6 +923,7 @@ Root-cause analysis. When the input has root_cause_evidence the operator asked f
 - The "answer" for an RCA names the most probable cause per affected equipment in plain language and what to do about it.
 
 Hard rules:
+- Size limits: at most 8 findings, 6 reasoning items, 8 probable causes, 8 recommendations and 5 caveats. Group related equipment or signals into one item instead of exceeding a limit.
 - Use only identifiers, numbers, timestamps and statuses that appear in the input. Quote values exactly; never compute averages, sums or new numbers except simple counts of listed items. Never invent equipment, signals, work-order numbers, thresholds, limits, baselines, probabilities or numeric confidence figures.
 - BAD or UNCERTAIN is a signal-quality state, not proof of a physical fault. In an RCA you may name the most probable cause as an assessment, always labelled probable with its likelihood and the evidence that would confirm it. Never present it as confirmed, and never state that a repair or replacement is needed unless an inspection or open work in the data says so. Without root_cause_evidence, recommend verifying the signal or instrument and say the cause is undetermined.
 - Say if a table has more rows than shown. Treat specialist prose as unverified notes; only the datasets are verified facts.
@@ -3340,7 +3341,14 @@ class FoundrySupervisor:
                         try:
                             report = parse(response.output_text)
                         except ValueError as error:
-                            feedback = f"it did not match the required structure ({type(error).__name__})"
+                            details = "; ".join(
+                                f"{'.'.join(str(part) for part in issue['loc']) or 'report'}: {issue['msg']}"
+                                for issue in (error.errors() if isinstance(error, ValidationError) else ())[:4]
+                            )
+                            feedback = (
+                                f"it did not match the required structure ({type(error).__name__}"
+                                f"{': ' + details if details else ''})"
+                            )
                             continue
                         violations = violations_of(report)
                         if violations:

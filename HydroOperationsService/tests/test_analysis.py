@@ -184,6 +184,17 @@ class AnalysisTests(AnalysisHarness):
         self.assertEqual(len(self.inputs), 3)
         self.assertIsNone(self.owner.analysis_rejection)
 
+    async def test_an_oversized_briefing_is_told_which_limit_it_broke_and_can_be_repaired(self):
+        crowded = briefing(findings=[f"EQUIP_RTI_T006 note {index}." for index in range(9)])
+        self.replies = [crowded, briefing()]
+        report = await self.owner.analysis_for(self.request, self.answer, self.journal)
+        self.assertIsNotNone(report)
+        retry = self.inputs[1]["input"]
+        self.assertIn("findings", retry)
+        self.assertIn("at most 8 items", retry)
+        self.assertIn("at most 8 findings", ANALYST_INSTRUCTIONS)
+        self.assertIsNone(self.owner.analysis_rejection)
+
     async def test_upstream_failure_or_unconfigured_model_degrades_to_tables_only(self):
         self.replies = [httpx.Response(500, json={"error": {"message": "boom"}})]
         self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
