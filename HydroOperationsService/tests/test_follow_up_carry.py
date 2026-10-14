@@ -13,7 +13,7 @@ from hydro_orchestrator.foundry_supervisor import (
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge
 from hydro_orchestrator.service import (
-    CARRY_MAX_AGE, carriable_receipts, reusable_kinds, select_carried_ids,
+    CARRY_MAX_AGE, ChatInput, carriable_receipts, follow_up_intent, reusable_kinds, select_carried_ids,
 )
 from hydro_orchestrator.contracts import SourceIdentity, utc_now
 from test_durable_service import SOURCE
@@ -181,9 +181,54 @@ class SupervisorCarryTests(unittest.IsolatedAsyncioTestCase):
 class FollowUpIntentBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.bridge = NodeSourceBridge()
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
 
     async def asyncTearDown(self):
         await self.bridge.aclose()
+        self.temp.cleanup()
+
+    async def ingress(self, question, previous_receipts, *, previous=None):
+        previous = previous or uuid4()
+        if previous_receipts:
+            write_previous_run(self.root, previous, previous_receipts)
+        chat = ChatInput(question=question, previous_run_id=previous)
+        return await follow_up_intent(self.bridge, self.root, SOURCE, chat)
+
+    async def test_ingress_carries_exactly_the_receipts_the_follow_up_needs(self):
+        run = "22222222-2222-4222-8222-222222222222"
+        quality = receipt("query_signal_quality_snapshot", "signal_quality", suffix="q", run=run)
+        work = receipt("query_operations", "work_orders", suffix="w", run=run)
+        power = receipt("query_station_power", "station_power", suffix="p", run=run)
+        chat, carried = await self.ingress(
+            "Based on this data, tell me which WOs need to be created and help me with the drafts.",
+            [quality, work, power],
+        )
+        self.assertEqual(carried, (quality.id, work.id))
+        self.assertEqual(chat.required_specialists, ("work-order",))
+        self.assertEqual(set(chat.required_evidence_kinds), {"signal_quality", "work_orders"})
+
+    async def test_ingress_reads_fresh_when_nothing_points_back_or_nothing_is_held(self):
+        run = "33333333-3333-4333-8333-333333333333"
+        held = [receipt("query_signal_quality_snapshot", "signal_quality", suffix="q", run=run),
+                receipt("query_operations", "work_orders", suffix="w", run=run)]
+        for question, receipts in (
+            ("Which WOs need to be created and help me with the drafts?", held),
+            ("Based on this data, tell me which WOs need to be created and draft them.", []),
+        ):
+            with self.subTest(question=question):
+                chat, carried = await self.ingress(question, receipts)
+                self.assertEqual(carried, ())
+                self.assertIn("qa", chat.required_specialists)
+                self.assertIn("temperature", chat.required_evidence_kinds)
+
+    async def test_a_stale_previous_answer_is_never_reused(self):
+        run = "44444444-4444-4444-8444-444444444444"
+        old = [receipt("query_signal_quality_snapshot", "signal_quality", suffix="q", run=run,
+                       age=CARRY_MAX_AGE + timedelta(minutes=2)),
+               receipt("query_operations", "work_orders", suffix="w", run=run, age=CARRY_MAX_AGE + timedelta(minutes=2))]
+        _chat, carried = await self.ingress("Based on this data, which WOs need to be created? Draft them.", old)
+        self.assertEqual(carried, ())
 
     async def intent(self, question, carried):
         return await self.bridge.call({"action": "chat_intent", "question": question, "carried_kinds": carried})

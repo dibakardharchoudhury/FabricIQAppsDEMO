@@ -219,6 +219,28 @@ def select_carried_ids(receipts: list[ToolEvidence], needed: set[str]) -> tuple[
     return tuple(chosen[:MAX_CARRIED_RECEIPTS])
 
 
+async def follow_up_intent(
+    bridge: Bridge, state: Path, source: SourceIdentity, chat: ChatInput,
+) -> tuple[ChatInput, tuple[str, ...]]:
+    """Normalize a question into its governed intent and decide which of the preceding run's verified receipts it
+    reuses. Reuse requires the question to point back at held data, every kind it needs to be held, and no reader
+    step to remain; anything else is planned and read fresh, exactly like a standalone question."""
+    receipts = carriable_receipts(state, source, chat.previous_run_id)
+    if receipts:
+        kinds = sorted({kind for receipt in receipts for kind in reusable_kinds(receipt)})
+        intent = dict(await bridge.call({
+            "action": "chat_intent", "question": chat.question, "carried_kinds": kinds,
+        }))
+        reuse = intent.pop("reuse_prior_evidence", False) is True
+        normalized = normalized_chat_input(chat, intent)
+        if reuse:
+            carried = select_carried_ids(receipts, set(normalized.required_evidence_kinds))
+            if carried:
+                return normalized, carried
+    normalized = normalized_chat_input(chat, await bridge.call({"action": "chat_intent", "question": chat.question}))
+    return normalized, ()
+
+
 def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID | None) -> HistoricalContext | None:
     if previous_run_id is None:
         return None
@@ -804,25 +826,7 @@ def create_fabric_delegated_app(
     async def normalize_chat(
         chat: ChatInput, credential: DelegatedCredential, state: Path,
     ) -> tuple[ChatInput, tuple[str, ...]]:
-        receipts = carriable_receipts(state, source, chat.previous_run_id)
-        carried_ids: tuple[str, ...] = ()
-        if receipts:
-            kinds = sorted({kind for receipt in receipts for kind in reusable_kinds(receipt)})
-            intent = dict(await bridge.call({
-                "action": "chat_intent", "question": chat.question, "carried_kinds": kinds,
-            }))
-            reuse = intent.pop("reuse_prior_evidence", False) is True
-            normalized = normalized_chat_input(chat, intent)
-            if reuse:
-                carried_ids = select_carried_ids(receipts, set(normalized.required_evidence_kinds))
-                if not carried_ids:
-                    reuse = False
-            if not reuse:
-                intent = await bridge.call({"action": "chat_intent", "question": chat.question})
-                normalized = normalized_chat_input(chat, intent)
-        else:
-            intent = await bridge.call({"action": "chat_intent", "question": chat.question})
-            normalized = normalized_chat_input(chat, intent)
+        normalized, carried_ids = await follow_up_intent(bridge, state, source, chat)
         if not re.search(
             r"\b(?:EQUIP_RTI_T0*\d+|FACILITY_RTI_0*\d+|T0*\d+|"
             r"(?:turbine|equipment|asset|facility|station|power\s+plant)\s*"

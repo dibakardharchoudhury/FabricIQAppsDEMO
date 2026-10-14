@@ -37,7 +37,7 @@ from hydro_orchestrator.foundry_supervisor import (
     with_production_write_status,
 )
 from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
-from hydro_orchestrator.service import create_app
+from hydro_orchestrator.service import ChatInput, create_app, follow_up_intent
 from test_durable_service import SOURCE, HEADERS, TOKEN
 
 ENDPOINT = "https://test.services.ai.azure.com/api/projects/test"
@@ -1419,6 +1419,59 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         before = dict(self.calls)
         restarted = await self.make_owner().run(self.request)
         self.assertEqual(restarted, result)
+        self.assertEqual(self.calls, before)
+
+    async def test_follow_up_runs_only_the_draft_specialist_on_the_carried_dataset(self):
+        self.mode = "quality_snapshot"
+        self.tools.quality_snapshot = True
+        self.tools.stage = True
+        first = self.request.model_copy(update={
+            "run_id": uuid4(), "question": "Which turbines had BAD or UNCERTAIN telemetry quality in the last 6 hours?",
+        })
+        self.seed(first)
+        await self.owner.run(first)
+        reads_after_first, qa_runs = self.tools.calls, self.calls["hydro-qa-agent"]
+
+        chat = ChatInput(
+            question="Based on this data, prepare an inspection draft for the BAD turbine signals.",
+            previous_run_id=first.run_id,
+        )
+        normalized, carried = await follow_up_intent(self.bridge, self.root, SOURCE, chat)
+        self.assertTrue(carried)
+        self.assertEqual(normalized.required_specialists, ("work-order",))
+
+        self.mode = "proposal"
+        now = utc_now()
+        second = ChatRequest.model_validate({
+            **self.request.model_dump(mode="python"), "run_id": uuid4(), "requested_at": now,
+            "deadline": now + timedelta(minutes=3), "carried_from": first.run_id,
+            "carried_evidence_ids": carried, **normalized.model_dump(),
+        })
+        events: list[dict[str, object]] = []
+        follow_up = self.make_owner()
+        follow_up.set_event_sink(events.append)
+        self.seed(second)
+        result = await follow_up.run(second)
+
+        self.assertEqual([item.role for item in result.specialists], ["work-order"])
+        self.assertEqual(self.calls["hydro-qa-agent"], qa_runs, "Gauge must not be asked the previous question again")
+        self.assertEqual(self.tools.calls, reads_after_first + 1, "only the draft's own source call may run")
+        self.assertEqual(len(result.proposals), 1)
+        self.assertEqual(result.tables[0].title, "Signal Quality")
+        self.assertTrue(any("Reused evidence" in item for item in result.limitations))
+        self.assertTrue(any("Reusing the verified evidence" in str(event["detail"]) for event in events))
+
+        fixer = next(payload for payload in self.payloads
+                     if payload.get("agent_reference", {}).get("name") == "hydro-work-order-agent"
+                     and json.loads(payload["input"][0]["content"][0]["text"]).get("carried_evidence"))
+        context = json.loads(fixer["input"][0]["content"][0]["text"])
+        self.assertEqual({item["id"] for item in context["carried_evidence"]}, set(carried))
+        self.assertTrue(set(carried) <= {item["id"] for item in context["evidence"]})
+        self.assertIn("do not re-read", context["carried_evidence_policy"])
+
+        before = dict(self.calls)
+        again = await self.make_owner().run(second)
+        self.assertEqual(again, result)
         self.assertEqual(self.calls, before)
 
     async def test_source_failure_cannot_become_a_successful_supervisor_answer(self):
