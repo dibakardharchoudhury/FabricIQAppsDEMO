@@ -811,6 +811,7 @@ AnalysisAction = Literal["create_work_order", "covered_by_open_work", "monitor",
 ANALYSIS_ID_PATTERN = re.compile(r"\b(?:EQUIP_RTI_[A-Z0-9_]+|FACILITY_RTI_\d+|INST_[A-Z0-9_]+|WO-\d+|T\d{3})\b")
 ANALYSIS_DECIMAL_PATTERN = re.compile(r"(?<![\w.])-?\d+\.\d+(?!\w|\.\d)")
 ANALYSIS_TIMEOUT_SECONDS = 90.0
+ANALYSIS_ATTEMPTS = 3
 ANALYSIS_MAX_ROWS_PER_TABLE = 80
 CLOSED_WORK_STATUSES = frozenset({"completed", "cancelled", "canceled", "closed"})
 
@@ -1328,6 +1329,7 @@ class FoundrySupervisor:
         self.delegation_lock = asyncio.Lock()
         self.run_id: UUID | None = None
         self.carried_ids: set[str] = set()
+        self.analysis_rejection: str | None = None
         self.selected_equipment_ids: set[str] = set()
         self.answer_contract: OperatorAnswerContract | None = None
         self.orchestration_plan: OrchestrationPlan | None = None
@@ -3091,19 +3093,21 @@ class FoundrySupervisor:
             return None
         started = perf_counter()
         feedback: str | None = None
+        self.analysis_rejection = None
         try:
-            async with asyncio.timeout(2 * ANALYSIS_TIMEOUT_SECONDS + 5):
+            async with asyncio.timeout(ANALYSIS_ATTEMPTS * ANALYSIS_TIMEOUT_SECONDS + 5):
                 async with BoundedAIProjectClient(
                     endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
                 ) as project_client:
                     openai_client = project_client.get_openai_client()
-                    for _attempt in range(2):
+                    for _attempt in range(ANALYSIS_ATTEMPTS):
                         self.healthy(request)
                         response = await openai_client.responses.create(
                             model=self.analysis_model, instructions=ANALYST_INSTRUCTIONS,
                             input=context_text if feedback is None else (
                                 f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
-                                "Rewrite it using only values present in the input."),
+                                "Rewrite it using only values present in the input, and keep every other part "
+                                "of the briefing."),
                             max_output_tokens=3500, reasoning={"effort": "low"}, store=False,
                             text={"format": {"type": "json_schema", "name": "hydro_briefing",
                                              "schema": ANALYSIS_SCHEMA, "strict": True}},
@@ -3131,8 +3135,10 @@ class FoundrySupervisor:
             raise
         except (APIStatusError, APITimeoutError, AgentFrameworkException, TimeoutError, OSError, ValueError) as error:
             logger.error("Grounded analysis was unavailable (%s).", type(error).__name__)
+            self.analysis_rejection = f"the briefing service was unavailable ({type(error).__name__})"
             return None
         logger.error("Grounded analysis was rejected after verification: %s", feedback)
+        self.analysis_rejection = (feedback or "no acceptable briefing was returned")[:240]
         return None
 
     def answer(
@@ -3712,8 +3718,9 @@ class FoundrySupervisor:
                     elif owner.analysis_model and result.tables:
                         plan = plan.model_copy(update={"limitations": (
                             *plan.limitations,
-                            "The written briefing could not be verified against the evidence for this run, so only "
-                            "the verified tables are shown.",
+                            "The written briefing could not be verified against the evidence for this run"
+                            + (f" ({owner.analysis_rejection})" if owner.analysis_rejection else "")
+                            + ", so only the verified tables are shown.",
                         )[:20]})
                         result = owner.answer(request, plan, use_projected_summary=True)
                     journal.save("prepared_answer", PreparedAnswer(

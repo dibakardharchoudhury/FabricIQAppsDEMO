@@ -150,29 +150,40 @@ class AnalysisTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(fragment, retry)
         self.assertIn("previous briefing was rejected", retry)
 
-    async def test_two_ungrounded_attempts_yield_no_briefing_and_nothing_is_saved(self):
-        self.replies = [briefing(answer="EQUIP_RTI_T099 is hot."), briefing(answer="EQUIP_RTI_T098 is hot.")]
+    async def test_three_ungrounded_attempts_yield_no_briefing_with_a_visible_reason_and_nothing_saved(self):
+        self.replies = [briefing(answer="EQUIP_RTI_T099 is hot."), briefing(answer="EQUIP_RTI_T098 is hot."),
+                        briefing(answer="EQUIP_RTI_T097 is hot.")]
         self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
         self.assertIsNone(self.journal.read("answer_analysis"))
-        self.assertEqual(len(self.inputs), 2)
+        self.assertEqual(len(self.inputs), 3)
+        self.assertIn("EQUIP_RTI_T097", self.owner.analysis_rejection or "")
 
     async def test_work_order_recommendations_must_account_for_existing_open_work(self):
-        self.replies = [
-            briefing(recommendations=[{
-                "action": "create_work_order", "equipment_id": "EQUIP_RTI_T006", "priority": "High",
-                "title": "Inspect EQUIP_RTI_T006", "justification": "BAD signal at 13.992.",
-            }]),
-            briefing(recommendations=[{
-                "action": "covered_by_open_work", "equipment_id": "EQUIP_RTI_T006", "priority": None,
-                "title": "No new work order", "justification": "Covered by an open check.",
-            }]),
-        ]
+        covered = briefing(recommendations=[{
+            "action": "covered_by_open_work", "equipment_id": "EQUIP_RTI_T006", "priority": None,
+            "title": "No new work order", "justification": "Covered by an open check.",
+        }])
+        uncited = briefing(recommendations=[{
+            "action": "create_work_order", "equipment_id": "EQUIP_RTI_T006", "priority": "High",
+            "title": "Inspect EQUIP_RTI_T006", "justification": "BAD signal at 13.992.",
+        }])
+        self.replies = [uncited, covered, uncited]
         self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
         self.assertIn("WO-2848", self.inputs[1]["input"])
+        self.assertIn("WO-2848", self.owner.analysis_rejection or "")
+
+    async def test_a_third_attempt_can_still_repair_a_rejected_briefing(self):
+        bad = briefing(answer="EQUIP_RTI_T099 is hot.")
+        self.replies = [bad, bad, briefing()]
+        report = await self.owner.analysis_for(self.request, self.answer, self.journal)
+        self.assertIsNotNone(report)
+        self.assertEqual(len(self.inputs), 3)
+        self.assertIsNone(self.owner.analysis_rejection)
 
     async def test_upstream_failure_or_unconfigured_model_degrades_to_tables_only(self):
         self.replies = [httpx.Response(500, json={"error": {"message": "boom"}})]
         self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
+        self.assertIn("unavailable", self.owner.analysis_rejection or "")
         unconfigured = FoundrySupervisor(
             ENDPOINT, self.owner.credential, NodeSourceBridge(), AsyncMock(), SOURCE, self.root,
         )
