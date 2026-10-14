@@ -231,7 +231,21 @@ export function stationPowerSummary(rows: StationPowerRow[], lookback: string, r
 const AGGREGATIONS: Record<string, string> = {
   avg: 'avg(value)', min: 'min(value)', max: 'max(value)', sum: 'sum(value)', count: 'count()',
 }
-export const TELEMETRY_AGGREGATIONS = ['none', 'latest', ...Object.keys(AGGREGATIONS)]
+export const TELEMETRY_AGGREGATIONS = ['none', 'latest', 'quality', ...Object.keys(AGGREGATIONS)]
+
+/** One row per signal summarising its sample quality over the window, for root-cause analysis of BAD/UNCERTAIN
+ *  signals: how often, when it started and stopped, how many hours were affected, and the GOOD-sample value range. */
+function qualitySummaryShape(): string {
+  const state = (name: string) => `toupper(quality) == '${name}'`
+  const hourly = (name: string) => `dcountif(bin(event_time, 1h), ${state(name)})`
+  return `| summarize samples = count(), good = countif(${state('GOOD')}), uncertain = countif(${state('UNCERTAIN')}), bad = countif(${state('BAD')}),
+    first_event_time = min(event_time), last_event_time = max(event_time),
+    first_bad_time = minif(event_time, ${state('BAD')}), last_bad_time = maxif(event_time, ${state('BAD')}),
+    first_uncertain_time = minif(event_time, ${state('UNCERTAIN')}), last_uncertain_time = maxif(event_time, ${state('UNCERTAIN')}),
+    hours_with_data = dcount(bin(event_time, 1h)), hours_with_bad = ${hourly('BAD')}, hours_with_uncertain = ${hourly('UNCERTAIN')},
+    good_value_min = minif(value, ${state('GOOD')}), good_value_max = maxif(value, ${state('GOOD')}), good_value_avg = avgif(value, ${state('GOOD')})
+    by opcua_node_id`
+}
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -301,7 +315,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           opcua_node_ids: { type: 'array', items: { type: 'string' }, description: 'Signals to include. Omit for all signals.' },
           lookback: { type: 'string', description: 'Window ending now: today (since midnight UTC) or a positive duration such as 30m, 6h, 7d. Default 24h.' },
           bin: { type: 'string', description: 'Bucket size when aggregating, e.g. 30s, 5m, 1h. Default 5m. Ignored when aggregation is "none" or "latest".' },
-          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings or "latest" for the latest raw value, event_time and quality per opcua_node_id in the window, without averaging or quality filtering.' },
+          aggregation: { type: 'string', enum: TELEMETRY_AGGREGATIONS, description: 'Default avg. Use "none" for individual readings, "latest" for the latest raw value, event_time and quality per opcua_node_id in the window, without averaging or quality filtering, or "quality" for one row per signal with its GOOD/UNCERTAIN/BAD sample counts, first/last BAD and UNCERTAIN times, affected hours and GOOD-sample value range over the window (use it for quality history and root-cause analysis).' },
           limit: { type: 'integer', description: `How many of the most recent rows to return (default ${MAX_ROWS}, max ${MAX_ROWS}).` },
         },
       },
@@ -637,6 +651,13 @@ export function buildTelemetryQuery(args: TelemetryQueryArgs): string {
   const nodeFilter = nodes.length
     ? `\n| where opcua_node_id in (${nodes.map(node => `'${escapeKqlString(node)}'`).join(', ')})`
     : ''
+  if (aggregation === 'quality') {
+    return `OPCUAEvents
+| where event_time ${lookbackStart(lookback)} and event_time <= now()${nodeFilter}
+${qualitySummaryShape()}
+| order by opcua_node_id asc
+| take ${limit}`
+  }
   let shape = '| project event_time, opcua_node_id, value, quality'
   if (aggregation === 'latest') {
     shape = '| summarize arg_max(event_time, value, quality) by opcua_node_id'

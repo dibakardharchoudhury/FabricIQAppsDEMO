@@ -10,7 +10,7 @@ from hashlib import sha256
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast, get_args
 from uuid import UUID
 
 import httpx
@@ -808,6 +808,15 @@ class NarrativeProjection(Contract):
 
 
 AnalysisAction = Literal["create_work_order", "covered_by_open_work", "monitor", "no_action", "needs_clarification"]
+AnalysisCauseCategory = Literal[
+    "instrument_or_sensor", "communication_or_ingestion", "operating_conditions", "equipment_condition",
+    "insufficient_evidence",
+]
+RCA_HISTORY_LOOKBACK = "48h"
+RCA_MAX_EQUIPMENT = 8
+RCA_MAX_SIGNALS_PER_EQUIPMENT = 12
+RCA_MAX_RECORDS_PER_KIND = 6
+RCA_MAX_PARTS_PER_EQUIPMENT = 12
 ANALYSIS_ID_PATTERN = re.compile(r"\b(?:EQUIP_RTI_[A-Z0-9_]+|FACILITY_RTI_\d+|INST_[A-Z0-9_]+|WO-\d+|T\d{3})\b")
 ANALYSIS_DECIMAL_PATTERN = re.compile(r"(?<![\w.])-?\d+\.\d+(?!\w|\.\d)")
 ANALYSIS_TIMEOUT_SECONDS = 90.0
@@ -824,10 +833,20 @@ class AnalysisRecommendation(Contract):
     justification: str = Field(min_length=1, max_length=700)
 
 
+class AnalysisCause(Contract):
+    equipment_id: str | None = Field(default=None, max_length=80)
+    category: AnalysisCauseCategory
+    cause: str = Field(min_length=1, max_length=240)
+    likelihood: Literal["High", "Medium", "Low"]
+    evidence: str = Field(min_length=1, max_length=700)
+    to_confirm: str = Field(min_length=1, max_length=400)
+
+
 class AnalysisReport(Contract):
     answer: str = Field(min_length=1, max_length=800)
     findings: tuple[str, ...] = Field(max_length=8)
     reasoning: tuple[str, ...] = Field(max_length=6)
+    probable_causes: tuple[AnalysisCause, ...] = Field(default=(), max_length=8)
     recommendations: tuple[AnalysisRecommendation, ...] = Field(max_length=8)
     caveats: tuple[str, ...] = Field(max_length=5)
 
@@ -843,11 +862,23 @@ class AnalysisReport(Contract):
 
 ANALYSIS_SCHEMA: dict[str, object] = {
     "type": "object", "additionalProperties": False,
-    "required": ["answer", "findings", "reasoning", "recommendations", "caveats"],
+    "required": ["answer", "findings", "reasoning", "probable_causes", "recommendations", "caveats"],
     "properties": {
         "answer": {"type": "string"},
         "findings": {"type": "array", "items": {"type": "string"}},
         "reasoning": {"type": "array", "items": {"type": "string"}},
+        "probable_causes": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["equipment_id", "category", "cause", "likelihood", "evidence", "to_confirm"],
+            "properties": {
+                "equipment_id": {"type": ["string", "null"]},
+                "category": {"type": "string", "enum": list(get_args(AnalysisCauseCategory))},
+                "cause": {"type": "string"},
+                "likelihood": {"type": "string", "enum": ["High", "Medium", "Low"]},
+                "evidence": {"type": "string"},
+                "to_confirm": {"type": "string"},
+            },
+        }},
         "recommendations": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["action", "equipment_id", "priority", "title", "justification"],
@@ -874,11 +905,17 @@ Write like a senior maintenance planner briefing a colleague: direct, specific, 
 - "recommendations": one entry per equipment or decision. Use create_work_order only for a verified gap with no plausibly covering open work (priority required, equipment_id required). Use covered_by_open_work when an open work order already addresses it and cite that number in the justification. Use monitor when evidence is thin, stale or only a single weak signal. Use no_action when nothing is wrong. Use needs_clarification when identity or scope is ambiguous. Give each a short actionable title (for a work order a ready-to-use inspection title) and a justification that cites the evidence. Set priority relative to the evidence (multiple affected signals, hottest-ranked, no cover, stale data) and say that the priority is a suggestion for the operator to adjust.
 - If a draft is staged (staged_drafts), say which equipment it targets, why it is justified, and tell the operator to review and approve it in the card below. Never claim it was created.
 - carried_evidence lists datasets that were read earlier in the conversation and reused, not re-read. When it is non-empty, say in one short clause which data was reused and when it was read (now_utc is the current time), so the operator can judge how current it is. Draft-coverage checks for staged drafts are fresh.
-- "caveats": only real limits that change how far the operator can trust the conclusion (stale readings, truncated rows, missing sources, specialist limitations). Do not pad.
+- "caveats": only real limits that change how far the operator can trust the conclusion (stale readings, truncated rows, missing sources, specialist limitations, anything listed in root_cause_evidence.unavailable_sources). Do not pad.
+
+Root-cause analysis. When the input has root_cause_evidence the operator asked for an RCA, so do one from it; otherwise return an empty probable_causes list. root_cause_evidence holds, per affected equipment over the stated window, every signal's quality history (samples, good, uncertain, bad, first/last bad and uncertain times, hours_with_data, hours_with_bad, hours_with_uncertain, good_value_min/max/avg), its inspections, maintenance notifications and the spare parts compatible with its equipment type.
+- Read the pattern before naming a cause. One signal affected while the equipment's other signals stay GOOD points to that instrument or its wiring. Several signals of one equipment degrading in the same hours point to communication, ingestion or a shared cause. The share of samples that are bad or uncertain, hours_with_bad against hours_with_data (persistent, intermittent or a single burst), and last_bad_time against now_utc (still happening or stopped) tell you how serious and how current it is. Stable GOOD readings inside a plausible range support an instrumentation problem; erratic or drifting GOOD readings point to a process or equipment cause. Existing inspections and notifications on the same equipment or signal either support or contradict a hypothesis: cite them. Open work in open_work_by_equipment says whether it is already being handled.
+- "probable_causes": per affected equipment, one to three competing explanations ranked from most to least likely, each with a category (instrument_or_sensor, communication_or_ingestion, operating_conditions, equipment_condition or insufficient_evidence), a likelihood (High, Medium or Low) judged from the pattern above, the evidence for it (and against it where something contradicts it) citing the actual counts, times and records, and what measurement or inspection would confirm or rule it out. Use insufficient_evidence when the data cannot separate the explanations, and say what is missing.
+- Use compatible_spare_parts to say whether a replacement part is in stock (quantityOnHand against reorderLevel) and where it is kept, and put that in the recommendation for the equipment. A work-order recommendation for an RCA should name the signal, the suspected cause and the first check.
+- The "answer" for an RCA names the most probable cause per affected equipment in plain language and what to do about it.
 
 Hard rules:
-- Use only identifiers, numbers, timestamps and statuses that appear in the input. Quote values exactly; never compute averages, sums or new numbers except simple counts of listed items. Never invent equipment, signals, work-order numbers, thresholds, limits, baselines, probabilities or confidence figures.
-- BAD or UNCERTAIN is a signal-quality state, not proof of a physical fault. Recommend verifying or inspecting the signal or instrument and its equipment; never state a cause, a failure or a repair. Cause remains undetermined unless the specialist notes establish otherwise.
+- Use only identifiers, numbers, timestamps and statuses that appear in the input. Quote values exactly; never compute averages, sums or new numbers except simple counts of listed items. Never invent equipment, signals, work-order numbers, thresholds, limits, baselines, probabilities or numeric confidence figures.
+- BAD or UNCERTAIN is a signal-quality state, not proof of a physical fault. In an RCA you may name the most probable cause as an assessment, always labelled probable with its likelihood and the evidence that would confirm it. Never present it as confirmed, and never state that a repair or replacement is needed unless an inspection or open work in the data says so. Without root_cause_evidence, recommend verifying the signal or instrument and say the cause is undetermined.
 - Say if a table has more rows than shown. Treat specialist prose as unverified notes; only the datasets are verified facts.
 - You write advice only. Nothing is created or approved by you, and production writes are never executed.
 - Be concise: no filler, no restating the question, no markdown, no tables (they are shown separately)."""
@@ -1259,9 +1296,9 @@ def rca_answer_limitations(specialists: list[SpecialistResult]) -> tuple[str, ..
             missing.update(gaps)
     if not has_rca:
         return ()
-    result = ["No physical fault is established by the returned evidence; cause remains undetermined."]
+    result = ["Probable causes are assessed from the data patterns and records above; none is confirmed by a physical measurement or inspection."]
     if missing:
-        result.append("RCA evidence gaps: " + "; ".join(RCA_GAP_LABELS[key] for key in sorted(missing)) + ".")
+        result.append("To confirm a cause you would also need: " + "; ".join(RCA_GAP_LABELS[key] for key in sorted(missing)) + ".")
     return tuple(result)
 
 
@@ -1412,6 +1449,45 @@ class FoundrySupervisor:
             "instead of being re-read. Ask for a fresh read to refresh it.",
         )
 
+    async def governed_read(
+        self, request: ChatRequest, journal: RunJournal, catalog: SourceCatalog,
+        name: str, arguments: dict[str, object], kind: str,
+    ) -> ToolEvidence:
+        """One journaled, budgeted, catalog-validated source read whose identity and clock are verified."""
+        specification = next((tool for tool in catalog.tools if tool.name == name), None)
+        if specification is None:
+            raise SourceFailure(f"Required evidence reader {name} is unavailable.")
+        if list(
+            Draft202012Validator(specification.parameters).iter_errors(
+                json.loads(_encoded(arguments))
+            )
+        ):
+            raise SourceFailure(
+                f"Deterministic {kind} evidence arguments violate the governed source catalog."
+            )
+        key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
+        saved = journal.read(key)
+        if saved is None:
+            async with self.tool_lock:
+                self.tool_calls += 1
+                if self.tool_calls > 40:
+                    raise SourceFailure("The per-run source-tool budget was exceeded.")
+            supplied = await self.tools.execute(name, arguments, request)
+            result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
+            journal.save(key, result.model_dump(mode="json"))
+        else:
+            result = ToolEvidence.model_validate(saved)
+        self.healthy(request)
+        if (
+            result.source != request.source
+            or result.tool != name
+            or result.arguments != arguments
+            or result.completed_at > utc_now()
+            or result.completed_at < request.requested_at
+        ):
+            raise SourceFailure("Deterministic evidence changed its source, query, or read clock.")
+        return result
+
     async def fulfill_catalog_requirements(
         self, request: ChatRequest, journal: RunJournal,
     ) -> None:
@@ -1424,38 +1500,7 @@ class FoundrySupervisor:
             name: str, arguments: dict[str, object], kind: str, scope: Literal["population", "focus"],
             *, publish: bool = True,
         ) -> ToolEvidence:
-            specification = next((tool for tool in catalog.tools if tool.name == name), None)
-            if specification is None:
-                raise SourceFailure(f"Required evidence reader {name} is unavailable.")
-            if list(
-                Draft202012Validator(specification.parameters).iter_errors(
-                    json.loads(_encoded(arguments))
-                )
-            ):
-                raise SourceFailure(
-                    f"Deterministic {kind} evidence arguments violate the governed source catalog."
-                )
-            key = "tool:" + _encoded({"name": name, "arguments": arguments}).decode()
-            saved = journal.read(key)
-            if saved is None:
-                async with self.tool_lock:
-                    self.tool_calls += 1
-                    if self.tool_calls > 40:
-                        raise SourceFailure("The per-run source-tool budget was exceeded.")
-                supplied = await self.tools.execute(name, arguments, request)
-                result = ToolEvidence.model_validate(supplied.model_dump(mode="json"))
-                journal.save(key, result.model_dump(mode="json"))
-            else:
-                result = ToolEvidence.model_validate(saved)
-            self.healthy(request)
-            if (
-                result.source != request.source
-                or result.tool != name
-                or result.arguments != arguments
-                or result.completed_at > utc_now()
-                or result.completed_at < request.requested_at
-            ):
-                raise SourceFailure("Deterministic evidence changed its source, query, or read clock.")
+            result = await self.governed_read(request, journal, catalog, name, arguments, kind)
             if not any(
                 dataset.kind == kind
                 and dataset.scope == scope
@@ -3016,7 +3061,106 @@ class FoundrySupervisor:
                     }
         return {equipment: list(orders.values()) for equipment, orders in sorted(found.items())}
 
-    def analysis_context(self, request: ChatRequest, answer: ChatAnswer) -> dict[str, object]:
+    def affected_equipment_ids(self) -> list[str]:
+        found = set(self.selected_equipment_ids)
+        for receipt in self.evidence.values():
+            if receipt.tool not in ("query_signal_quality_snapshot", "query_turbine_temperature_snapshot"):
+                continue
+            rows = receipt.result.get("rows")
+            for row in rows if isinstance(rows, list) else ():
+                equipment = row.get("equipment_id") if isinstance(row, dict) else None
+                if isinstance(equipment, str) and equipment:
+                    found.add(equipment)
+        return sorted(found)[:RCA_MAX_EQUIPMENT]
+
+    async def root_cause_evidence(self, request: ChatRequest, journal: RunJournal) -> dict[str, object] | None:
+        """The history an RCA needs, read once per run for the affected equipment: every signal's quality over the
+        window, inspections, maintenance notifications and compatible spare parts. Enrichment only: a source that
+        cannot be read is reported to the briefing instead of being treated as empty."""
+        if not any(item.role == "rca" for item in self.specialists):
+            return None
+        equipment_ids = self.affected_equipment_ids()
+        if not equipment_ids:
+            return None
+        catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
+        unavailable: list[str] = []
+
+        async def read(label: str, name: str, arguments: dict[str, object], kind: str) -> list[dict[str, object]]:
+            try:
+                receipt = await self.governed_read(request, journal, catalog, name, arguments, kind)
+            except SourceFailure as error:
+                logger.warning("Root-cause %s read was unavailable: %s", label, error)
+                unavailable.append(f"{label} could not be read for this analysis.")
+                return []
+            rows = receipt.result.get("rows")
+            if receipt.result.get("truncated") is not False or not isinstance(rows, list):
+                unavailable.append(f"{label} output was truncated or incomplete.")
+            return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+        def scoped(column: str) -> list[dict[str, object]]:
+            return [{"column": column, "op": "in", "value": equipment_ids}]
+
+        equipment, instruments, inspections, notifications, parts = await asyncio.gather(
+            read("Equipment metadata", "query_assets", {"entity": "equipment", "where": scoped("equipment_id")}, "equipment"),
+            read("Signal metadata", "query_assets", {"entity": "instruments", "where": scoped("equipment_id")}, "instruments"),
+            read("Inspection records", "query_operations", {"entity": "inspections", "where": scoped("equipmentId")}, "inspections"),
+            read("Maintenance notifications", "query_operations", {"entity": "notifications", "where": scoped("equipmentId")}, "notifications"),
+            read("Spare part stock", "query_operations", {"entity": "spare_parts"}, "spare_parts"),
+        )
+        signals = [row for row in instruments if row.get("is_active") is not False
+                   and isinstance(row.get("opcua_node_id"), str) and row.get("equipment_id") in equipment_ids]
+        nodes = sorted({str(row["opcua_node_id"]) for row in signals})
+        history: dict[str, dict[str, object]] = {}
+        if nodes:
+            for row in await read(
+                f"{RCA_HISTORY_LOOKBACK} signal quality history", "query_telemetry",
+                {"opcua_node_ids": nodes, "lookback": RCA_HISTORY_LOOKBACK, "aggregation": "quality"},
+                "telemetry",
+            ):
+                node = row.get("opcua_node_id")
+                if isinstance(node, str):
+                    history[node] = {key: value for key, value in row.items() if key not in ("opcua_node_id", "unit")}
+
+        def text(row: dict[str, object], keys: tuple[str, ...], limit: int = 300) -> dict[str, object]:
+            return {key: (value[:limit] if isinstance(value, str) else value)
+                    for key in keys if (value := row.get(key)) is not None}
+
+        def recent(rows: list[dict[str, object]], column: str) -> list[dict[str, object]]:
+            return sorted(rows, key=lambda row: str(row.get(column) or ""), reverse=True)[:RCA_MAX_RECORDS_PER_KIND]
+
+        def affected_samples(row: dict[str, object]) -> int:
+            summary = history.get(str(row["opcua_node_id"]), {})
+            return sum(value for key in ("bad", "uncertain") if isinstance(value := summary.get(key), int))
+
+        metadata = {str(row.get("equipment_id")): row for row in equipment}
+        result: list[dict[str, object]] = []
+        for equipment_id in equipment_ids:
+            profile = metadata.get(equipment_id, {})
+            mine = sorted((row for row in signals if row.get("equipment_id") == equipment_id), key=lambda row: -affected_samples(row))
+            kinds = {str(profile.get(key, "")).strip().lower() for key in ("equipment_type_code", "equipment_type_name")} - {""}
+            result.append({
+                "equipment_id": equipment_id,
+                **text(profile, ("tag", "equipment_type_name", "manufacturer", "model", "criticality", "status")),
+                "signals": [{
+                    "opcua_node_id": row["opcua_node_id"],
+                    **text(row, ("instrument_id", "tag", "instrument_type", "unit")),
+                    "quality_history": history.get(str(row["opcua_node_id"]), "no samples in the window"),
+                } for row in mine[:RCA_MAX_SIGNALS_PER_EQUIPMENT]],
+                "signals_omitted": max(0, len(mine) - RCA_MAX_SIGNALS_PER_EQUIPMENT),
+                "inspections": [text(row, ("id", "inspectionType", "result", "findings", "inspectedAt", "nextDueAt", "opcuaNodeId"))
+                                for row in recent([r for r in inspections if r.get("equipmentId") == equipment_id], "inspectedAt")],
+                "notifications": [text(row, ("id", "summary", "severity", "status", "reportedAt", "opcuaNodeId"))
+                                  for row in recent([r for r in notifications if r.get("equipmentId") == equipment_id], "reportedAt")],
+                "compatible_spare_parts": [
+                    text(row, ("partNumber", "name", "category", "quantityOnHand", "reorderLevel", "storageLocation"))
+                    for row in parts if str(row.get("equipmentType", "")).strip().lower() in kinds
+                ][:RCA_MAX_PARTS_PER_EQUIPMENT],
+            })
+        return {"window": RCA_HISTORY_LOOKBACK, "equipment": result, "unavailable_sources": unavailable}
+
+    def analysis_context(
+        self, request: ChatRequest, answer: ChatAnswer, root_cause: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         datasets = [{
             "title": table.title,
             "columns": {column.key: column.label for column in table.columns},
@@ -3044,6 +3188,7 @@ class FoundrySupervisor:
             "now_utc": utc_now().isoformat(),
             "datasets": datasets,
             "open_work_by_equipment": self.open_work_by_equipment(),
+            **({"root_cause_evidence": root_cause} if root_cause is not None else {}),
             "source_limitations": list(answer.limitations),
             "specialist_notes": notes,
             "staged_drafts": drafts,
@@ -3058,9 +3203,14 @@ class FoundrySupervisor:
         known_numbers = [float(value) for value in ANALYSIS_DECIMAL_PATTERN.findall(context_text)]
         open_work = self.open_work_by_equipment()
         statements = [report.answer, *report.findings, *report.reasoning, *report.caveats]
+        for cause in report.probable_causes:
+            statements.extend((cause.cause, cause.evidence, cause.to_confirm))
         for item in report.recommendations:
             statements.extend((item.title, item.justification))
         violations: list[str] = []
+        for cause in report.probable_causes:
+            if cause.equipment_id is not None and cause.equipment_id not in allowed:
+                violations.append(f"cause equipment {cause.equipment_id} is not in the supplied data")
         for statement in statements:
             for identifier in ANALYSIS_ID_PATTERN.findall(statement):
                 if identifier not in allowed:
@@ -3091,8 +3241,9 @@ class FoundrySupervisor:
             return AnalysisReport.model_validate(saved["analysis"])
         if not self.analysis_model or not answer.tables:
             return None
+        root_cause = await self.root_cause_evidence(request, journal)
         context_text = json.dumps(
-            self.analysis_context(request, answer), sort_keys=True, default=str, ensure_ascii=False,
+            self.analysis_context(request, answer, root_cause), sort_keys=True, default=str, ensure_ascii=False,
         )
         if len(context_text) > 200000:
             logger.warning("Analysis context exceeds its bounded size; the grounded narrative is skipped.")
@@ -3114,7 +3265,7 @@ class FoundrySupervisor:
                                 f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
                                 "Rewrite it using only values present in the input, and keep every other part "
                                 "of the briefing."),
-                            max_output_tokens=3500, reasoning={"effort": "low"}, store=False,
+                            max_output_tokens=6000, reasoning={"effort": "low"}, store=False,
                             text={"format": {"type": "json_schema", "name": "hydro_briefing",
                                              "schema": ANALYSIS_SCHEMA, "strict": True}},
                         )

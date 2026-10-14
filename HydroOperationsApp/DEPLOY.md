@@ -412,6 +412,25 @@ A chart is otherwise withheld with the exact reason. When a requested series alr
 telemetry requirement, no second all-signal read is merged beside it, so unrelated measures and units never
 share a chartable table. A failed or ambiguous metadata read leaves the series valid but unattested.
 
+### Root-cause analysis
+
+When the question asks for an RCA, the Supervisor does not stop at "cause undetermined". After the specialists
+finish it reads, once and journaled, the history an RCA needs for every affected equipment (the equipment in the
+signal-quality or temperature evidence, plus any selected one): every signal's 48 h quality history
+(`query_telemetry` with `aggregation: "quality"`: samples, GOOD/UNCERTAIN/BAD counts, first/last BAD and UNCERTAIN
+times, affected hours, GOOD value range), its inspections, maintenance notifications and the spare parts for its
+equipment type. These feed the briefing as `root_cause_evidence`; they are analysis support (an `audit`-role
+dataset), never an answer table or a substitute for raw telemetry. A source that cannot be read is named in the
+briefing's caveats instead of being treated as empty.
+
+The briefing then ranks competing causes per equipment (instrument or sensor, communication or ingestion,
+operating conditions, equipment condition, insufficient evidence) with a High/Medium/Low likelihood, the evidence
+for and against, and what would confirm it, reading the pattern (one signal versus several, persistent versus
+intermittent, still active versus stopped, GOOD values stable versus erratic, existing inspections and notifications,
+open work) and whether a replacement part is in stock. Causes are always labelled probable, never confirmed; every
+identifier and decimal is still checked against the supplied data, and no thresholds or numeric confidence are
+invented.
+
 ### Grounded briefing (reasoning, justification, recommendations)
 
 After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the

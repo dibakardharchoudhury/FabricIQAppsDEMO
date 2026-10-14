@@ -13,10 +13,10 @@ from openai import AsyncOpenAI
 
 from hydro_orchestrator.contracts import EvidenceReference
 from hydro_orchestrator.foundry_supervisor import (
-    ANALYST_INSTRUCTIONS, AnalysisReport, ChatRequest, FoundrySupervisor, RunJournal,
+    ANALYST_INSTRUCTIONS, AnalysisReport, ChatRequest, FoundrySupervisor, RunJournal, SpecialistResult, ToolEvidence,
 )
 from hydro_orchestrator.contracts import utc_now
-from hydro_orchestrator.live_sources import NodeSourceBridge
+from hydro_orchestrator.live_sources import NodeSourceBridge, SourceFailure
 from hydro_orchestrator.presentation import AnswerColumn, AnswerRow, AnswerTable, client_presentation
 from test_durable_service import SOURCE
 
@@ -72,7 +72,7 @@ def briefing(**changes):
     return value
 
 
-class AnalysisTests(unittest.IsolatedAsyncioTestCase):
+class AnalysisHarness(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -124,6 +124,8 @@ class AnalysisTests(unittest.IsolatedAsyncioTestCase):
         await self.openai.close()
         self.temp.cleanup()
 
+
+class AnalysisTests(AnalysisHarness):
     async def test_verified_briefing_is_returned_saved_and_reused_without_a_second_model_call(self):
         self.replies = [briefing()]
         report = await self.owner.analysis_for(self.request, self.answer, self.journal)
@@ -222,6 +224,150 @@ class AnalysisTests(unittest.IsolatedAsyncioTestCase):
         text = client_presentation(answer).text
         self.assertTrue(text.startswith("Signal quality: 2 verified records returned."))
         self.assertNotIn("## Answer", text)
+
+
+def cause_briefing(**changes):
+    return briefing(
+        probable_causes=[{
+            "equipment_id": "EQUIP_RTI_T014", "category": "instrument_or_sensor", "likelihood": "High",
+            "cause": "Instrument fault on ns=2;s=T014.vibration_a",
+            "evidence": "bad 60 of 96 samples across 12 hours, while the inspection on 2026-10-10 found a loose cable gland.",
+            "to_confirm": "Check the sensor wiring and compare with an independent reading.",
+        }],
+        **changes,
+    )
+
+
+def rca_specialist():
+    return SpecialistResult(
+        role="rca", agent_name="hydro-rca-agent", version="1", response_id="r1", duration_ms=1,
+        input_digest="0" * 64, text="", report={"hypotheses": []},
+    )
+
+
+class RootCauseEvidenceTests(AnalysisHarness):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.journal.save("tool_catalog", await self.owner.bridge.call({"action": "source_contracts"}))
+        self.owner.specialists = [rca_specialist()]
+        self.calls = []
+        self.fail = set()
+        self.owner.evidence = {"snapshot": self.evidence_for("query_signal_quality_snapshot", {"quality": "BAD"}, [
+            {"equipment_id": "EQUIP_RTI_T014", "opcua_node_id": "ns=2;s=T014.vibration_a", "quality": "BAD"},
+        ])}
+        self.owner.tools.execute = AsyncMock(side_effect=self.read)
+
+    def evidence_for(self, tool, arguments, rows):
+        return ToolEvidence(
+            id=f"{tool}-{len(rows)}", source=SOURCE, tool=tool, arguments=arguments, completed_at=utc_now(),
+            result={"rows": rows, "truncated": False}, datasets=(),
+        )
+
+    async def read(self, name, arguments, _request):
+        self.calls.append((name, arguments))
+        entity = arguments.get("entity", arguments.get("aggregation"))
+        if entity in self.fail:
+            raise SourceFailure(f"{entity} unavailable")
+        rows = {
+            "equipment": [{"equipment_id": "EQUIP_RTI_T014", "tag": "T014", "equipment_type_code": "TURBINE",
+                           "equipment_type_name": "Turbine", "criticality": 5}],
+            "instruments": [
+                {"instrument_id": "INST_T014_VIBRATION_A", "equipment_id": "EQUIP_RTI_T014", "is_active": True,
+                 "opcua_node_id": "ns=2;s=T014.vibration_a", "tag": "Vibration A", "unit": "mm/s"},
+                {"instrument_id": "INST_T014_SPEED", "equipment_id": "EQUIP_RTI_T014", "is_active": True,
+                 "opcua_node_id": "ns=2;s=T014.speed", "tag": "Speed", "unit": "rpm"},
+            ],
+            "inspections": [{"id": "i1", "equipmentId": "EQUIP_RTI_T014", "inspectionType": "Visual",
+                             "result": "Pass", "findings": "Cable gland loose", "inspectedAt": "2026-10-10T08:00:00Z"}],
+            "notifications": [{"id": "n1", "equipmentId": "EQUIP_RTI_T014", "summary": "Intermittent reading",
+                               "severity": "Low", "status": "Open", "reportedAt": "2026-10-13T08:00:00Z"}],
+            "spare_parts": [
+                {"partNumber": "SNS-1", "name": "Vibration probe", "category": "Sensor", "equipmentType": "Turbine",
+                 "quantityOnHand": 3, "reorderLevel": 2, "storageLocation": "Bay 4"},
+                {"partNumber": "PMP-9", "name": "Pump seal", "category": "Seal", "equipmentType": "Pump",
+                 "quantityOnHand": 9, "reorderLevel": 1, "storageLocation": "Bay 1"},
+            ],
+            "quality": [{"opcua_node_id": "ns=2;s=T014.vibration_a", "unit": "mm/s", "samples": 96, "good": 36,
+                         "uncertain": 0, "bad": 60, "hours_with_data": 12, "hours_with_bad": 12,
+                         "first_bad_time": "2026-10-13T20:00:00Z", "last_bad_time": "2026-10-14T08:00:00Z"}],
+        }[entity]
+        return self.evidence_for(name, arguments, rows)
+
+    async def test_rca_reads_the_history_of_every_affected_equipment_once(self):
+        context = await self.owner.root_cause_evidence(self.request, self.journal)
+        by_name = {(name, arguments.get("entity", arguments.get("aggregation"))): arguments
+                   for name, arguments in self.calls}
+        self.assertEqual(set(by_name), {
+            ("query_assets", "equipment"), ("query_assets", "instruments"), ("query_operations", "inspections"),
+            ("query_operations", "notifications"), ("query_operations", "spare_parts"),
+            ("query_telemetry", "quality"),
+        })
+        history = by_name[("query_telemetry", "quality")]
+        self.assertEqual(history["lookback"], "48h")
+        self.assertEqual(history["opcua_node_ids"], ["ns=2;s=T014.speed", "ns=2;s=T014.vibration_a"])
+        self.assertEqual(by_name[("query_operations", "inspections")]["where"][0]["value"], ["EQUIP_RTI_T014"])
+        [equipment] = context["equipment"]
+        self.assertEqual(equipment["equipment_id"], "EQUIP_RTI_T014")
+        self.assertEqual([signal["opcua_node_id"] for signal in equipment["signals"]],
+                         ["ns=2;s=T014.vibration_a", "ns=2;s=T014.speed"])
+        self.assertEqual(equipment["signals"][0]["quality_history"]["bad"], 60)
+        self.assertEqual(equipment["signals"][1]["quality_history"], "no samples in the window")
+        self.assertEqual(equipment["signals"][0]["unit"], "mm/s")
+        self.assertEqual(equipment["inspections"][0]["findings"], "Cable gland loose")
+        self.assertEqual([part["partNumber"] for part in equipment["compatible_spare_parts"]], ["SNS-1"])
+        self.assertEqual(context["unavailable_sources"], [])
+        self.calls.clear()
+        await self.owner.root_cause_evidence(self.request, self.journal)
+        self.assertEqual(self.calls, [])
+
+    async def test_an_unreadable_source_is_reported_not_treated_as_empty(self):
+        self.fail = {"inspections"}
+        context = await self.owner.root_cause_evidence(self.request, self.journal)
+        self.assertEqual(context["unavailable_sources"], ["Inspection records could not be read for this analysis."])
+        self.assertEqual(context["equipment"][0]["inspections"], [])
+        self.assertTrue(context["equipment"][0]["compatible_spare_parts"])
+
+    async def test_no_root_cause_reads_without_an_rca_specialist_or_affected_equipment(self):
+        self.owner.specialists = []
+        self.assertIsNone(await self.owner.root_cause_evidence(self.request, self.journal))
+        self.owner.specialists = [rca_specialist()]
+        self.owner.evidence = {}
+        self.assertIsNone(await self.owner.root_cause_evidence(self.request, self.journal))
+        self.assertEqual(self.calls, [])
+
+    async def test_briefing_receives_the_history_and_its_probable_causes_are_grounded(self):
+        self.answer.specialists = (rca_specialist(),)
+        self.replies = [cause_briefing()]
+        report = await self.owner.analysis_for(self.request, self.answer, self.journal)
+        sent = json.loads(self.inputs[0]["input"])
+        self.assertEqual(sent["root_cause_evidence"]["window"], "48h")
+        [cause] = report.probable_causes
+        self.assertEqual((cause.category, cause.likelihood), ("instrument_or_sensor", "High"))
+
+    async def test_a_cause_naming_unknown_equipment_is_rejected(self):
+        invented = cause_briefing()
+        invented["probable_causes"][0]["equipment_id"] = "EQUIP_RTI_T099"
+        self.replies = [invented, invented, invented]
+        self.assertIsNone(await self.owner.analysis_for(self.request, self.answer, self.journal))
+        self.assertIn("EQUIP_RTI_T099", self.owner.analysis_rejection or "")
+
+    async def test_non_rca_questions_send_no_root_cause_section_and_may_return_no_causes(self):
+        self.owner.specialists = []
+        self.replies = [briefing(probable_causes=[])]
+        report = await self.owner.analysis_for(self.request, self.answer, self.journal)
+        self.assertNotIn("root_cause_evidence", json.loads(self.inputs[0]["input"]))
+        self.assertEqual(report.probable_causes, ())
+
+    def test_presentation_lists_probable_causes_between_reasoning_and_actions(self):
+        report = AnalysisReport.model_validate(cause_briefing())
+        answer = SimpleNamespace(
+            analysis=report, summary="s", tables=(QUALITY,), limitations=(), charts=(), specialists=(), run_id=uuid4(),
+        )
+        text = client_presentation(answer).text
+        order = [text.index(marker) for marker in ("## Why", "## Probable causes", "## Recommended actions")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("instrument or sensor, High likelihood", text)
+        self.assertIn("To confirm: Check the sensor wiring", text)
 
 
 if __name__ == "__main__":

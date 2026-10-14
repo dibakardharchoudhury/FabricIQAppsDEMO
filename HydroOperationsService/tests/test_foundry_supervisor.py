@@ -778,7 +778,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
 
 
-    def test_rca_answer_limitations_expose_no_fault_conclusion_and_evidence_gaps(self):
+    def test_rca_answer_limitations_state_an_assessment_not_a_confirmation_and_list_what_would_confirm_it(self):
         specialist = SpecialistResult(
             role="rca", agent_name="hydro-rca-agent", version="12", response_id="response-1",
             duration_ms=10, model_round_count=1, input_digest="0" * 64, text="", report={
@@ -792,7 +792,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         limitations = rca_answer_limitations([specialist])
-        self.assertIn("No physical fault is established", limitations[0])
+        self.assertIn("none is confirmed by a physical measurement", limitations[0])
+        self.assertNotIn("undetermined", limitations[0])
+        self.assertIn("To confirm a cause you would also need", limitations[1])
         self.assertIn("an independently obtained measurement", limitations[1])
         self.assertIn("qualified inspection evidence", limitations[1])
 

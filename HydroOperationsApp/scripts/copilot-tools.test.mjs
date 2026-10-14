@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyFilter, validateFilters, QueryInputValidationError, buildStationPowerQuery, stationPowerEvidence, stationPowerSummary, buildTelemetryQuery, escapeKqlString, kustoRowsToObjects, projectColumns, validateKql } from '../src/services/copilot/query.ts'
+import { describeToolEvidence } from '../src/services/copilot/domainContract.ts'
 
 test('low-stock column comparisons include equality and exclude above-threshold and missing quantities', () => {
   const rows = [
@@ -151,6 +152,21 @@ test('latest telemetry returns raw values per node without binning or quality ex
   assert.match(query, /\| top 100 by event_time desc/)
   assert.doesNotMatch(query, /avg\(|bin\(|where.*quality/)
   assert.doesNotThrow(() => validateKql(query))
+})
+
+test('quality history summarises each signal once over the window for root-cause analysis', () => {
+  const query = buildTelemetryQuery({ opcua_node_ids: ['ns=2;s=T014.vibration_a'], lookback: '48h', aggregation: 'quality' })
+  assert.match(query, /event_time > ago\(48h\) and event_time <= now\(\)/)
+  assert.match(query, /opcua_node_id in \('ns=2;s=T014.vibration_a'\)/)
+  for (const column of ['samples = count()', 'good = countif', 'uncertain = countif', 'bad = countif',
+    'first_bad_time = minif', 'last_bad_time = maxif', 'hours_with_bad = dcountif', 'hours_with_data = dcount',
+    'good_value_min = minif', 'good_value_avg = avgif']) assert.ok(query.includes(column), column)
+  assert.match(query, /by opcua_node_id\n\| order by opcua_node_id asc\n\| take 500/)
+  assert.doesNotMatch(query, /top \d+ by event_time/)
+  assert.doesNotThrow(() => validateKql(query))
+  assert.deepEqual(describeToolEvidence('query_telemetry', { aggregation: 'quality' }, { rows: [], truncated: false })
+    .map(({ kind, role, scope, complete, identity_fields }) => ({ kind, role, scope, complete, identity_fields })),
+  [{ kind: 'telemetry', role: 'audit', scope: 'focus', complete: true, identity_fields: ['opcua_node_id'] }])
 })
 
 test('the reproduced missing enriched node-column filter is rejected before source execution', () => {

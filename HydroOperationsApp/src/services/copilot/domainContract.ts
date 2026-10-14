@@ -143,6 +143,10 @@ export function describeToolEvidence(
       }),
     ]
   }
+  if (tool === 'query_telemetry' && args.aggregation === 'quality') {
+    // Per-signal quality summary: analysis support, never an answer view or a substitute for raw telemetry.
+    return [describe('telemetry', 'rows', { role: 'audit', identity_fields: ['opcua_node_id'] })]
+  }
   if (tool === 'query_telemetry' || tool === 'run_kql') return [describe('telemetry')]
   if (tool === 'query_station_power') {
     return [describe('station_power', 'rows', {

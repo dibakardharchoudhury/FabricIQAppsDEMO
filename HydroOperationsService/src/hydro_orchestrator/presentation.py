@@ -47,6 +47,14 @@ ANALYSIS_ACTION_LABELS = {
     "needs_clarification": "Needs clarification",
 }
 
+ANALYSIS_CATEGORY_LABELS = {
+    "instrument_or_sensor": "instrument or sensor",
+    "communication_or_ingestion": "communication or ingestion",
+    "operating_conditions": "operating conditions",
+    "equipment_condition": "equipment condition",
+    "insufficient_evidence": "insufficient evidence",
+}
+
 
 def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
     def literal(value: object) -> str:
@@ -64,6 +72,16 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             sections.append("## What the data shows\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.findings))
         if analysis.reasoning:
             sections.append("## Why\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.reasoning))
+        if analysis.probable_causes:
+            lines = []
+            for cause in analysis.probable_causes:
+                subject = f"{literal(cause.equipment_id)}: " if cause.equipment_id else ""
+                lines.append(
+                    f"- **{subject}{literal(cause.cause)}** ({ANALYSIS_CATEGORY_LABELS[cause.category]}, "
+                    f"{literal(cause.likelihood)} likelihood). Evidence: {literal(cause.evidence)} "
+                    f"To confirm: {literal(cause.to_confirm)}"
+                )
+            sections.append("## Probable causes\n\n" + "\n".join(lines))
         if analysis.recommendations:
             lines = []
             for item in analysis.recommendations:
