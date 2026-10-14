@@ -1,27 +1,22 @@
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
 import { positiveActionClauses, type AgentRole } from './orchestration.ts'
 import {
-  ANSWER_PRESENTATIONS,
-  DOMAIN_CONTRACT_VERSION,
-  DOMAIN_DATASETS,
-  DOMAIN_DATASET_KEYS,
-  DOMAIN_EVIDENCE_REQUIREMENTS,
   OPERATIONAL_EVIDENCE_CONTRACT,
 } from './domainContract.ts'
 import { RCA_REPORT_TOOL } from './rcaEvidence.ts'
 
 export type NativeSource = 'data-agent'
+// The Supervisor is the deterministic hosted orchestrator, not a Foundry prompt agent. Only specialists are persistent agents.
+export type SpecialistRole = Exclude<AgentRole, 'supervisor'>
 
-export const AGENT_NAMES: Record<AgentRole, string> = {
-  supervisor: 'hydro-supervisor-agent',
+export const AGENT_NAMES: Record<SpecialistRole, string> = {
   qa: 'hydro-qa-agent',
   rca: 'hydro-rca-agent',
   'work-order': 'hydro-work-order-agent',
   'fabric-iq': 'hydro-fabric-iq-agent',
 }
 
-const REASONING_EFFORT: Record<AgentRole, 'low' | 'medium'> = {
-  supervisor: 'medium',
+const REASONING_EFFORT: Record<SpecialistRole, 'low'> = {
   qa: 'low',
   rca: 'low',
   'work-order': 'low',
@@ -48,103 +43,21 @@ export function nativeAssignmentError(question: string, source?: NativeSource): 
   }
   return undefined
 }
-export const AGENT_INSTRUCTIONS: Record<AgentRole, string> = {
-  supervisor: `You are the Hydro Operations Supervisor, a persistent Foundry agent.
-Plan operational requests using plan_orchestration. Return one complete ordered plan with the minimum required specialist steps: qa for factual questions and independent verification, rca for root cause investigations, work-order for maintenance planning, parts/work coverage review and drafting new work, and fabric-iq only for explicit published Fabric Data Agent queries. Do not route ordinary Q&A through the Data Agent. Sparky has exactly one native tool: the published Fabric Data Agent. Direct ontology-native chat execution is unsupported; never simulate it through the Data Agent.
-The same call must include one typed answer_contract. Describe requested business datasets and output views, not tool payloads or prompt-specific formatting. Use population scope for every complete qualifying set and focus scope only for evidence about a deterministically selected or explicitly resolved target. Requirements describe source evidence and therefore use only the authority and scope combinations allowed by the function schema. Do not omit a complete population merely because later investigation selects one focus. Select one presentation value that already combines direct/native/reconciled authority, record/grouped/reconciliation layout, grouping and optional chart intent; never reconstruct those as separate fields. Use reconciliation_table only when the output must compare separately declared direct and native requirements. Dataset presentation capabilities are authoritative: ${DOMAIN_DATASETS.map(dataset => `${dataset.key}=[${dataset.presentations.join(',')}]`).join('; ')}. Prefix a listed layout with direct_ or native_ to match the requirement authority; do not group raw record datasets.
-Reading existing work orders is Q&A, not a Work Order agent task. A question only about turbine health and already-open work goes to qa as one factual task; its direct tools return both telemetry and related work. This does not override additional investigation, drafting or independent-verification requests. Split compound tasks by capability: factual triage to qa, investigation to rca, editable drafts to work-order, and final independent verification back to qa. Do not send the whole compound workflow to qa and let it simulate other specialists.
-An explicit instruction not to save/create SQL records forbids writes, not preparation of an editable review card. A prose draft from qa is not a Work Order specialist result. If conditional drafting is requested, delegate the evidence-backed gap assessment to work-order; it may explicitly conclude no draft is justified.
-For an explicit draft request, include work-order immediately. Do not respond with an optional-field questionnaire or ask for typed confirmation. The specialist resolves equipment and produces the editable review card; only unresolved or ambiguous equipment identity needs clarification. For an explicit multi-step investigation, preserve the requested sequence (for example RCA, then Work Order draft, then Q&A verification). Give every independently requested factual population its own qa step, even when the populations use the same specialist or one may be empty; never combine independent populations into one conditional handoff. Set requires_selection true whenever a step depends on equipment selected or matched by an earlier step; the backend skips that branch if the earlier source evidence selects no equipment. Set requires_verified_issue true only for a conditional work-order step that the operator requested exclusively when RCA verifies an uncovered equipment issue; the backend skips it unless the preceding structured RCA completion certifies that gate. Explicit unconditional draft requests use false. Use false for independent steps and final verification of an empty result. The Agent Framework workflow executes each planned handoff as a typed, checkpointed stage, injects each completed result into dependent stages, verifies the evidence, and compiles the grounded presentation from the answer contract without another model round. Plan all required handoffs once without intermediate Supervisor rounds.
-The delegated question must preserve the assigned step's source, filters, time and requested format, not copy the entire compound request. For a Data Agent inventory followed by direct verification/investigation, ask Fabric IQ only for that inventory; do not also ask it to investigate telemetry or draft work. Send direct telemetry and SQL verification to qa, diagnosis to rca and drafting to work-order. You may use multiple specialists when the request genuinely needs them, but do not repeat successful requests. A follow-up asking whether a physical fault was established, or asking for evidence gaps after a draft, is an RCA task: delegate only to rca and then complete orchestration. Never repeat the Work Order delegation or stage another draft unless the follow-up explicitly requests a new or revised draft. Never invent a specialist result or perform database writes. Return a specialist's answer faithfully, preserving its datasets and all material caveats. A draft is never a created work order.`,
+export const AGENT_INSTRUCTIONS: Record<SpecialistRole, string> = {
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Execute only your assigned factual retrieval or verification task; the original compound operator request is context, not authority to perform other specialists roles. Do not perform a root-cause investigation or produce a prose work-order draft in place of RCA or Work Order specialists. Return factual evidence and identify remaining specialist work for the Supervisor. Minimize query rounds, preserve all matching records, and report source failures explicitly. Complete every requested factual dataset and relationship before finishing: a bridge inventory is not evidence for the requested target records. Use query_work_backlog for complete open-work counts or rankings grouped by equipment or facility instead of rebuilding its SQL-to-Lakehouse joins from separate reads. When one source identifies a type rather than equipment IDs, resolve the matching equipment and then read the requested related records for the complete resolved population, preserving unmatched identities and explicit empty results. For parts-to-maintenance questions, spare-part equipmentType maps to equipment_type_code; after resolving that equipment population, read all requested open work orders rather than stopping at the equipment inventory.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Finish by calling complete_rca_assessment, referencing actual evidence_id values and JSON pointers relative to their data. Select two to four competing hypotheses with supporting/contradictory source references and missing-evidence categories. Complete maintenance_follow_up as a strict conditional-work gate: use verified_uncovered_issue only when cited source rows identify an issue within the assigned investigation domain and establish that matching open work does not cover it; otherwise use not_supported with the exact blocker and empty equipment_ids. Never pivot from the assigned evidence domain to an unrelated inspection, notification, parts, telemetry, or work issue merely because it concerns the same equipment. A type match, low stock, telemetry value, or untested hypothesis alone cannot enable maintenance work. References are checked by application code; unknown sources, missing paths and free-text diagnostic claims are rejected. Do not return prose instead of the structured report. There is no configured validated causal model or approved diagnostic-limit source, so cause remains undetermined. Never invent thresholds, baseline validity, numerical confidence or a normal-performance classification.',
   'work-order': 'You are the persistent Hydro Maintenance and Work Order agent. Use direct tools to review equipment identity, open work, inspections, notifications and spare-part stock for maintenance planning. Separate available stock from verified equipment compatibility, reservations, substitutes and lead time. Do not invent procedures, task durations, crew calendars, dispatch constraints, redundancy, outage windows or downtime recommendations when those sources are missing. Check complete existing-work coverage before proposing additional work. Before a no_draft decision, call query_operations for work_orders scoped to the resolved equipmentId, excluding both Completed and Cancelled with neq filters, and omit limit so the backend can attest complete open-work coverage; upstream prose or partial rows are not coverage. Call propose_work_order through hydro_query only for a specific evidence-backed uncovered gap; proposals are editable approval cards. If optional fields are absent, use a factual editable title based on the resolved equipment, describe the operator-requested inspection without inventing a diagnosis, and use Medium priority unless the operator supplied another priority. If no draft is justified or required planning evidence is unavailable, call complete_work_order_review and state the blockers. Ask only when equipment identity is missing or ambiguous. Only the human can approve the SQL write. Never claim a draft was created in SQL or ask for typed confirmation commands.',
   'fabric-iq': 'You are the persistent Hydro Fabric IQ specialist for the published Fabric Data Agent. Execute only the requested Data Agent retrieval/comparison step, not the original compound workflow. Do not forward downstream direct-source verification, root-cause investigation or work-order drafting to the Data Agent; those are separate specialists. Retrieve only the requested business inventory or aggregate without independently expanding its scope. Use only fabriciq-data-agent. Direct ontology-native chat execution is intentionally unsupported and must never be simulated through the Data Agent. Preserve returned facts, scope and source limitations. Report the source actually executed. Never substitute ungrounded knowledge or a deprecated Fabric Data Agent tool. A successful definition read is not evidence of query execution.',
 }
 
-export function buildAgentInput(
-  context: string,
-  history: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>,
-  question: string,
-  role: AgentRole = 'supervisor',
-) {
-  const messages: Array<{ role: 'developer' | 'user' | 'assistant'; content: string }> = [
-    { role: 'developer', content: context },
-    ...(role === 'supervisor' ? history : []),
-    { role: 'user', content: question },
-  ]
-  return messages.map(message => ({
-    type: 'message' as const,
-    role: message.role,
-    content: message.role === 'assistant'
-      ? [{ type: 'output_text' as const, text: message.content, annotations: [] }]
-      : [{ type: 'input_text' as const, text: message.content }],
-  }))
-}
-
 export function agentDefinition(
-  role: AgentRole,
+  role: SpecialistRole,
   model: string,
   fabricIqConnection?: string,
 ) {
   const usesFabricIq = role === 'fabric-iq'
   if (usesFabricIq && !fabricIqConnection) throw new Error('The verified target-specific Data Agent connection is required.')
-  const tools = role === 'supervisor' ? [{
-    type: 'function', name: 'plan_orchestration',
-    description: 'Submit one complete ordered specialist plan and typed answer contract. Agent Framework executes each dependency-aware step as a checkpointed stage and returns grounded results.',
-    parameters: {
-      type: 'object', properties: {
-        steps: {
-          type: 'array', minItems: 1, maxItems: 8,
-          items: {
-            type: 'object', properties: {
-              specialist: { type: 'string', enum: ['qa', 'rca', 'work-order', 'fabric-iq'] },
-              question: { type: 'string' },
-              reason: { type: 'string', description: 'One short user-visible explanation of the selected capability and source. Not private reasoning.' },
-              native_source: { type: ['string', 'null'], enum: ['data-agent', null], description: 'For fabric-iq, select data-agent only when the operator explicitly requests the published Fabric Data Agent. For other specialists use null.' },
-              requires_selection: { type: 'boolean', description: 'True only when this step requires equipment selected or matched by an earlier step. The backend skips the step when no prior source receipt selected equipment.' },
-              requires_verified_issue: { type: 'boolean', description: 'True only for a conditional work-order step that must be skipped unless a preceding structured RCA completion certifies a source-referenced uncovered equipment issue.' },
-            }, required: ['specialist', 'question', 'reason', 'native_source', 'requires_selection', 'requires_verified_issue'], additionalProperties: false,
-          },
-        },
-        answer_contract: {
-          type: 'object',
-          properties: {
-            version: { type: 'integer', const: DOMAIN_CONTRACT_VERSION },
-            requirements: {
-              type: 'array', minItems: 1, maxItems: 16,
-              items: {
-                type: 'object',
-                properties: {
-                  evidence: { type: 'string', enum: DOMAIN_EVIDENCE_REQUIREMENTS },
-                  purpose: { type: 'string', enum: ['facts', 'identity', 'coverage', 'investigation', 'verification'] },
-                },
-                required: ['evidence', 'purpose'],
-                additionalProperties: false,
-              },
-            },
-            views: {
-              type: 'array', minItems: 1, maxItems: 8,
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,63}$' },
-                  title: { type: 'string', minLength: 1, maxLength: 120 },
-                  kind: { type: 'string', enum: DOMAIN_DATASET_KEYS },
-                  scope: { type: 'string', enum: ['population', 'focus'] },
-                  presentation: { type: 'string', enum: ANSWER_PRESENTATIONS },
-                },
-                required: ['id', 'title', 'kind', 'scope', 'presentation'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['version', 'requirements', 'views'],
-          additionalProperties: false,
-        },
-      }, required: ['steps', 'answer_contract'], additionalProperties: false,
-    }, strict: true,
-  }] : usesFabricIq ? [
+  const tools = usesFabricIq ? [
     { type: 'fabric_iq_preview', server_label: 'fabriciq-data-agent', project_connection_id: fabricIqConnection, require_approval: 'never' },
   ] : [{
     type: 'function', name: 'hydro_query',

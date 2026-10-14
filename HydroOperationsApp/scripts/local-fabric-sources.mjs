@@ -1134,7 +1134,7 @@ export async function handle(request) {
   if (request.action === 'validate_work_review') return parseWorkOrderReview(request.report)
   if (request.action === 'agent_contracts') return {
     names: AGENT_NAMES,
-    tools: Object.fromEntries(['supervisor', 'qa', 'rca', 'work-order']
+    tools: Object.fromEntries(['qa', 'rca', 'work-order']
       .map(role => [role, agentDefinition(role, 'contract-only').tools])),
   }
   if (request.action === 'validate_delegation') return parseDelegation(request.report)

@@ -114,7 +114,7 @@ test('a pointer containing JSON separators receives actual sibling paths, withou
 
 test('only Sleuth can submit the structured RCA completion tool', () => {
   assert.match(JSON.stringify(agentDefinition('rca', 'test').tools), /complete_rca_assessment/)
-  for (const role of ['qa', 'work-order', 'supervisor'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_rca_assessment/)
+  for (const role of ['qa', 'work-order'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_rca_assessment/)
 })
 
 test('work-order priority comes from an explicit operator directive or defaults to Medium', () => {

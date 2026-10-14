@@ -151,13 +151,13 @@ limitations instead of returning HTTP 409; every factual follow-up still require
 fresh source reads. Narrative summaries are limited to three to five complete
 sentences and 600 instructed characters.
 
-Chief now exposes one strict `plan_orchestration` tool. It returns one complete
-ordered plan of one to eight specialist steps; the backend validates and executes
+The Supervisor no longer exposes a planning tool. A deterministic TypeScript compiler derives the ordered
+plan of one to eight specialist steps from the question; the backend validates and executes
 those steps serially and propagates immutable evidence and completed reports.
 Ingress persists centralized `required_evidence_kinds` and
 `permitted_evidence_kinds` manifests derived by the TypeScript domain semantics,
 validates that every required kind is permitted, and supplies both immutable sets
-to Chief before its single planning call. A deterministic TypeScript compiler adds
+to the compiler before execution. The compiler adds
 any omitted required requirement and compatible view before execution, while
 unrelated datasets and malformed or unsupported contracts still fail closed with
 one bounded correction. The same TypeScript boundary produces strict

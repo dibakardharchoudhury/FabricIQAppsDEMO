@@ -819,6 +819,9 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 {"type": "fabric_iq_preview", "server_label": "fabriciq-data-agent", "project_connection_id": "native-data"},
             ]))) for role, name in contracts["names"].items()
         }
+        self.versions["supervisor"] = AgentVersion(
+            name="hydro-orchestrator", version="1", model="test", tools=(),
+        )
         self.request = ChatRequest(
             run_id=uuid4(), source=SOURCE,
             question=(
@@ -892,9 +895,6 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
             plan["tables"][0]["rows"][0]["cells"].append(copy.deepcopy(plan["tables"][0]["rows"][0]["cells"][0]))
         elif self.mode == "mixed_rows":
             plan["tables"][0]["rows"][0]["cells"][1]["source"]["path"] = "/rows/1/unit"
-        elif self.mode in ("alias_once", "projection_incomplete") and self.calls.get("hydro-supervisor-agent") == 5:
-            plan["tables"][0]["columns"][0]["key"] = "temperature"
-            plan["tables"][0]["rows"][0]["cells"][0]["key"] = "temperature"
         elif self.mode in ("chart", "bad_axis"):
             plan["charts"] = [{"table_id": "measurements", "kind": "bar", "x_key": "unit",
                                "y_keys": ["unit" if self.mode == "bad_axis" else "value"]}]
@@ -967,7 +967,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trusted_operation_skills", json.dumps(payload["input"]))
         self.assertFalse(payload["store"])
         name = reference["name"]
-        self.assertEqual(payload["max_output_tokens"], 8192 if name == "hydro-supervisor-agent" else 4096)
+        self.assertEqual(payload["max_output_tokens"], 4096)
         round_number = self.calls.get(name, 0)
         self.calls[name] = round_number + 1
         if self.mode == "native_timeout_once" and name == "hydro-fabric-iq-agent" and round_number == 0:
@@ -989,183 +989,7 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 response=response,
                 body={"code": "server_error", "type": "server_error"},
             )
-        if name == "hydro-supervisor-agent":
-            if self.mode == "supervisor_no_plan":
-                output = [self.message("I will coordinate the requested work.")]
-                return httpx.Response(200, json={
-                    "id": f"resp_{name}_{round_number}", "object": "response", "created_at": 1,
-                    "model": "test", "status": "completed", "output": output,
-                    "parallel_tool_calls": False,
-                    "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
-                })
-            if self.mode == "plan_repair":
-                roles = ["qa"] if round_number == 0 else ["qa", "rca", "work-order"]
-                steps = [{
-                    "specialist": specialist,
-                    "question": f"Execute the requested {specialist} capability.",
-                    "reason": "Cover the explicit operator capability.",
-                    "native_source": None,
-                    "requires_selection": False,
-                    "requires_verified_issue": False,
-                } for specialist in roles]
-            elif self.mode == "independent_empty":
-                steps = [{
-                    "specialist": "qa",
-                    "question": question,
-                    "reason": "Verify one independently requested factual population.",
-                    "native_source": None,
-                    "requires_selection": False,
-                    "requires_verified_issue": False,
-                } for question in (
-                    ["Read population A."]
-                    if round_number == 0 else ["Read population A.", "Read population B."]
-                )]
-            elif self.mode in ("native_handoff", "native_handoff_no_identity"):
-                steps = [
-                    {
-                        "specialist": "fabric-iq", "question": "Use the Data Agent to resolve the equipment.",
-                        "reason": "Use the explicitly selected native source.", "native_source": "data-agent",
-                        "requires_selection": False, "requires_verified_issue": False,
-                    },
-                    {
-                        "specialist": "qa", "question": "Read the selected equipment.",
-                        "reason": "Verify the selected equipment directly.", "native_source": None,
-                        "requires_selection": True, "requires_verified_issue": False,
-                    },
-                ]
-            elif self.mode.startswith("native"):
-                steps = [{
-                    "specialist": "fabric-iq", "question": "Use the Data Agent to return the requested rows as JSON.",
-                    "reason": "Use the explicitly selected native source.", "native_source": "data-agent",
-                }]
-            elif self.mode == "direct_rca":
-                steps = [{
-                    "specialist": "rca", "question": self.request.question,
-                    "reason": "Investigate the requested equipment.", "native_source": None,
-                }]
-            elif self.mode in ("quality_snapshot", "empty_quality_snapshot"):
-                steps = [{
-                    "specialist": "qa",
-                    "question": "Read BAD and UNCERTAIN turbine quality snapshots for the requested six-hour window.",
-                    "reason": "Retrieve the requested factual fleet state.", "native_source": None,
-                }]
-            elif self.mode == "standalone_station_chart":
-                steps = [{
-                    "specialist": "qa",
-                    "question": "Read average station power for the requested 24-hour window.",
-                    "reason": "Retrieve the factual dataset required by the requested chart.",
-                    "native_source": None,
-                    "requires_selection": False,
-                    "requires_verified_issue": False,
-                }]
-            elif self.mode == "backlog_capability_omitted_once":
-                steps = [{
-                    "specialist": "qa",
-                    "question": "Return the complete facility-level work backlog and chart.",
-                    "reason": "Reconcile the requested complete grouped backlog.",
-                    "native_source": None,
-                    "requires_selection": False,
-                    "requires_verified_issue": False,
-                }]
-            elif self.mode in ("conditional_empty", "conditional_empty_with_supporting_rows"):
-                steps = [
-                    {"specialist": "qa", "question": "Read the qualifying fleet.", "reason": "Find matches.",
-                     "native_source": None, "requires_selection": False},
-                    {"specialist": "rca", "question": "Investigate the selected equipment.", "reason": "Investigate.",
-                     "native_source": None, "requires_selection": True},
-                    {"specialist": "work-order", "question": "Review work for the selected equipment.",
-                     "reason": "Review work.", "native_source": None, "requires_selection": True},
-                    {"specialist": "qa", "question": "Verify the empty result.", "reason": "Verify.",
-                     "native_source": None, "requires_selection": False},
-                ]
-            elif self.mode in ("conditional_no_issue", "conditional_verified_issue"):
-                steps = [
-                    {"specialist": "qa", "question": "Read the selected equipment.", "reason": "Find matches.",
-                     "native_source": None, "requires_selection": False, "requires_verified_issue": False},
-                    {"specialist": "rca", "question": "Investigate the selected equipment.", "reason": "Investigate.",
-                     "native_source": None, "requires_selection": True, "requires_verified_issue": False},
-                    {"specialist": "work-order", "question": "Conditionally draft uncovered work.",
-                     "reason": "Review verified gaps.", "native_source": None, "requires_selection": True,
-                     "requires_verified_issue": True},
-                    {"specialist": "qa", "question": "Verify the result.", "reason": "Verify.",
-                     "native_source": None, "requires_selection": False, "requires_verified_issue": False},
-                ]
-            else:
-                roles = ["qa", "rca", "work-order"] if self.mode == "skip_verify" else [
-                    "qa", "rca", "work-order", "qa",
-                ]
-                questions = ["Read and verify quality.", "Investigate quality.", "Review existing work.",
-                             "Read and verify quality."]
-                steps = [{
-                    "specialist": role, "question": questions[index],
-                    "reason": "Execute the assigned capability.", "native_source": None,
-                } for index, role in enumerate(roles)]
-            if self.mode == "gap_review_invalid_gate":
-                next(step for step in steps if step["specialist"] == "work-order")[
-                    "requires_verified_issue"
-                ] = True
-            if self.mode == "standalone_station_chart":
-                kind, authority, view_mode, group_by, chart = "station_power", "direct", "records", None, "bar"
-            elif self.mode == "backlog_capability_omitted_once":
-                kind, authority, view_mode, group_by, chart = (
-                    "work_backlog", "direct", "grouped", "facility_id", "bar",
-                )
-            elif self.mode.startswith("native"):
-                kind, authority, view_mode, group_by, chart = (
-                    "native_claims", "native", "records", None, None,
-                )
-            elif self.mode in (
-                "quality_snapshot", "empty_quality_snapshot", "independent_empty",
-                "conditional_empty", "conditional_empty_with_supporting_rows",
-            ):
-                kind, authority, view_mode, group_by, chart = (
-                    "signal_quality", "direct", "records", None, None,
-                )
-            elif self.mode == "irrelevant_evidence_repair" and round_number == 0:
-                kind, authority, view_mode, group_by, chart = (
-                    "signal_quality", "direct", "records", None, None,
-                )
-            elif self.mode == "missing_evidence_repair" and round_number > 0:
-                kind, authority, view_mode, group_by, chart = (
-                    "signal_quality", "direct", "records", None, None,
-                )
-            else:
-                kind, authority, view_mode, group_by, chart = (
-                    "telemetry", "direct", "records", None, None,
-                )
-            scope = "population" if kind in (
-                "signal_quality", "station_power", "work_backlog", "native_claims",
-            ) else "focus"
-            answer_contract = {
-                "version": 3,
-                "requirements": [{
-                    "kind": kind, "scope": scope, "authority": authority, "purpose": "facts",
-                }],
-                "views": [{
-                    "id": "primary-evidence", "title": "Primary evidence", "kind": kind,
-                    "scope": scope,
-                    "presentation": (
-                        f"{authority}_grouped_by_{'facility' if group_by == 'facility_id' else 'equipment'}_{chart or 'table'}"
-                        if view_mode == "grouped"
-                        else "reconciliation_table" if view_mode == "reconciliation"
-                        else f"{authority}_records_{chart or 'table'}"
-                    ),
-                }],
-            }
-            if self.mode == "answer_contract_repair" and round_number == 0:
-                answer_contract["views"][0]["kind"] = "equipment"
-            if self.mode == "independent_empty":
-                answer_contract["requirements"].append({
-                    "kind": "telemetry", "scope": "focus", "authority": "direct", "purpose": "facts",
-                })
-                answer_contract["views"].append({
-                    "id": "supporting-evidence", "title": "Supporting evidence", "kind": "telemetry",
-                    "scope": "focus", "presentation": "direct_records_table",
-                })
-            output = [self.function("plan_orchestration", {
-                "steps": steps, "answer_contract": answer_contract,
-            })]
-        elif name == "hydro-qa-agent":
+        if name == "hydro-qa-agent":
             if self.mode == "backlog_capability_omitted_once":
                 if round_number == 0:
                     output = [self.function("hydro_query", {

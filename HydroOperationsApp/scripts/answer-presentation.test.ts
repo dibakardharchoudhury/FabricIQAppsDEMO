@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, draftAnswerParts, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
-import { agentDefinition, buildAgentInput, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
+import { agentDefinition, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
 import { createWorkOrderProposal, delegationOrderError, failedExecutionEvents, isWorkOrderRequest, missingRequestedSpecialists, uncertifiedFailureMessage } from '../src/services/copilot/orchestration.ts'
 import { readResponsesStream } from '../src/services/copilot/chatStream.ts'
@@ -25,19 +25,11 @@ test('transport failures terminate active crew state and explicitly fail certifi
   assert.equal(empty[0].status, 'error')
 })
 
-test('Chief routes post-draft physical-fault follow-ups only to RCA', () => {
-  const instructions = agentDefinition('supervisor', 'test-model').instructions
-  assert.match(instructions, /physical fault was established.*delegate only to rca/is)
-  assert.match(instructions, /Never repeat the Work Order delegation or stage another draft/is)
-})
-
 test('agent definitions use role-specific reasoning and least-privilege tools', () => {
-  const chief = agentDefinition('supervisor', 'test-model')
   const gauge = agentDefinition('qa', 'test-model')
   const sleuth = agentDefinition('rca', 'test-model')
   const fixer = agentDefinition('work-order', 'test-model')
   const sparky = agentDefinition('fabric-iq', 'test-model', 'data-agent-iq')
-  assert.equal(chief.reasoning.effort, 'medium')
   assert.equal(gauge.reasoning.effort, 'low')
   assert.equal(sleuth.reasoning.effort, 'low')
   assert.equal(fixer.reasoning.effort, 'low')
@@ -47,7 +39,6 @@ test('agent definitions use role-specific reasoning and least-privilege tools', 
   assert.match(gauge.instructions, /read all requested open work orders/)
   assert.match(fixer.instructions, /Before a no_draft decision, call query_operations/)
   assert.match(fixer.instructions, /omit limit/)
-  assert.deepEqual(chief.tools.map(tool => tool.name), ['plan_orchestration'])
   assert.deepEqual(gauge.tools.map(tool => tool.name), ['hydro_query'])
   assert.deepEqual(sleuth.tools.map(tool => tool.name), ['hydro_query', 'complete_rca_assessment'])
   assert.deepEqual(fixer.tools.map(tool => tool.name), ['hydro_query', 'complete_work_order_review'])
@@ -306,7 +297,7 @@ test('only Work Orders can record a structured no-draft review, never a pretend 
   assert.throws(() => parseWorkOrderReview('{"decision":"staged","reason":"Prose draft"}'), /explicit decision/)
   assert.throws(() => parseWorkOrderReview('{"decision":"no_draft","reason":""}'), /explicit decision/)
   assert.match(JSON.stringify(agentDefinition('work-order', 'test').tools), /complete_work_order_review/)
-  for (const role of ['supervisor', 'qa', 'rca'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_work_order_review/)
+  for (const role of ['qa', 'rca'] as const) assert.doesNotMatch(JSON.stringify(agentDefinition(role, 'test').tools), /complete_work_order_review/)
 })
 
 test('hyphenated work-order prompts and generated draft suggestions reach the approval workflow', () => {
@@ -344,27 +335,6 @@ test('compound summaries preserve omitted snapshot work without inventing or dup
   assert.equal(appendOmittedSnapshotWork('No results.', [{ ...step, status: 'error' }]), 'No results.')
   assert.equal(appendOmittedSnapshotWork('No results.', [{ ...step, result: '{"rows":[]}' }]), 'No results.')
   assert.throws(() => appendOmittedSnapshotWork('Incomplete', [{ ...step, result: '{}' }]), /no rows array/)
-})
-
-test('every Foundry input message has explicit item and content types, including history', () => {
-  const input = buildAgentInput('policy', [
-    { role: 'user', content: 'previous question' },
-    { role: 'assistant', content: 'previous answer' },
-  ], 'current question')
-  assert.deepEqual(input, [
-    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'policy' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'previous question' }] },
-    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'previous answer', annotations: [] }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'current question' }] },
-  ])
-  assert.equal(buildAgentInput('policy', [], 'question').length, 2)
-  const history = [{ role: 'user' as const, content: 'Unrelated old inventory'.repeat(100) }]
-  for (const role of ['qa', 'rca', 'work-order', 'fabric-iq'] as const) {
-    const scoped = buildAgentInput('policy', history, 'Assigned task with verified equipment ID', role)
-    assert.equal(scoped.length, 2)
-    assert.doesNotMatch(JSON.stringify(scoped), /Unrelated old inventory/)
-    assert.match(JSON.stringify(scoped), /verified equipment ID/)
-  }
 })
 
 test('native continuation preserves output items and actual response identity', async () => {
@@ -497,14 +467,7 @@ test('a draft from an incomplete workflow is withdrawn, not treated as human rej
   assert.throws(() => store.withdraw(proposal.id), /Only a pending/)
 })
 
-test('Supervisor requests visible routing and conditional-selection contracts', () => {
-  const schema = JSON.stringify(agentDefinition('supervisor', 'test').tools)
-  assert.match(schema, /"required":\["specialist","question","reason","native_source","requires_selection","requires_verified_issue"\]/)
-  assert.match(schema, /"version":\{"type":"integer","const":3\}/)
-  assert.match(schema, /"evidence":\{"type":"string","enum":\["facilities_population_direct"/)
-  assert.doesNotMatch(schema, /"oneOf"/)
-  assert.match(schema, /"presentation":\{"type":"string","enum":\["direct_records_table"/)
-  assert.doesNotMatch(schema, /"group_by"/)
+test('delegation steps carry visible routing and conditional-selection contracts', () => {
   const delegation = parseDelegation('{"specialist":"fabric-iq","question":"Read ontology instances","reason":"Ontology-native instance data","requires_selection":false,"requires_verified_issue":false}')
   assert.equal(delegation.reason, 'Ontology-native instance data')
   assert.equal(delegation.requiresSelection, false)
@@ -554,7 +517,7 @@ test('persistent agents share source semantics, complete equipment work and real
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /older than 60 seconds as stale/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /read_completed_at_utc/)
   assert.match(OPERATIONAL_EVIDENCE_CONTRACT, /received after request start does not establish source clock skew/)
-  for (const role of ['supervisor', 'qa', 'rca', 'work-order', 'fabric-iq'] as const) {
+  for (const role of ['qa', 'rca', 'work-order', 'fabric-iq'] as const) {
     assert.ok(agentDefinition(role, 'test', 'data').instructions.includes(OPERATIONAL_EVIDENCE_CONTRACT))
   }
 })

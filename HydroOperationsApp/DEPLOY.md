@@ -372,18 +372,42 @@ facility instances, and a correct standalone native Data Agent hottest-five resu
 Foundry's HOT request still failed on model-generated KQL. The later user-reported
 BAD-today and `let` failures are not covered by those successful cases.
 
+### Grounded briefing (reasoning, justification, recommendations)
+
+After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the
+retrieved datasets, the open work per equipment, specialist notes and any staged draft: a direct answer,
+the findings, the reasoning from data to conclusion, recommended actions (create a work order, already
+covered by open work, monitor, no action, needs clarification) and real caveats. It uses the model
+deployment named by `AZURE_AI_MODEL_DEPLOYMENT_NAME` (`gpt-5.6-sol`) with strict structured output.
+
+The briefing is advice, never a source of facts, and is enforced in code:
+
+- Every equipment, signal and work-order identifier and every decimal it states must appear in the data it
+  was given. A violation triggers one corrective retry; a second failure drops the briefing.
+- A work-order recommendation for equipment that already has open work must explain why that work does not
+  cover it; an "already covered" recommendation must cite the covering work order.
+- If the model is unavailable or the briefing cannot be verified, the answer falls back to the verified
+  tables with an explicit limitation. A briefing failure never fails or alters certified evidence.
+- No work order exists until a human approves a staged draft; production writes are unchanged.
+
+Questions that ask the system to decide which work or which equipment needs action are recognised by
+concept (an identify/decide cue, an advisory modal and a work or maintenance term in the same clause),
+not by phrase. They automatically add the condition evidence (signal quality and temperature unless the
+question narrows it) and the open-work cover. A draft is staged only when one is asked for; when no
+equipment is named the work-order specialist chooses the target from the verified evidence.
+
 ### Supervisor routing and visible crew identities
 
-These are persistent Foundry prompt agents, not a hosted Agent Framework workflow.
-The Supervisor selects a structured delegation using its instructions; the browser
-executes that delegation and returns the specialist result. Routing intent is
-model-selected, **not a deterministic guarantee**. The requested routing reason is
-shown in the Supervisor's execution receipts; it is a short capability explanation,
-not private model reasoning.
+The **Supervisor is the hosted orchestrator** (`hydro-orchestrator`), a deterministic control plane that
+compiles the evidence contract, dispatches specialists in order, verifies their receipts, writes the grounded
+briefing and presents the answer. It is **not** a Foundry prompt agent: the former `hydro-supervisor-agent`
+planner was removed. The four specialists below are the only persistent Foundry prompt agents.
+Routing is derived by code from the question, so it is reproducible; each step's reason is a short
+capability explanation, not private model reasoning.
 
 | Visible name and role | Foundry agent | Routing rule and source |
 |---|---|---|
-| Chief - Supervisor | `hydro-supervisor-agent` | Coordinates the request, preserves explicit source/scope/format, combines grounded results. Only this agent can delegate. |
+| Supervisor - deterministic orchestration | hosted `hydro-orchestrator` (no prompt agent) | Compiles the contract, dispatches bounded specialists, verifies evidence, writes the briefing. Only the orchestrator delegates. |
 | Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
 | Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
 | Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |

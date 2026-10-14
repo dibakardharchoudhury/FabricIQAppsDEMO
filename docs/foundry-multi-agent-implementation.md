@@ -919,14 +919,14 @@ or broader permission was introduced by this correction.
 
 ## 3. Which agents exist, when do they run, and how?
 
-The five definitions below were read back during the latest recorded deployment.
-They are **Prompt Agents**: persisted model configuration, instructions and tool
+The four specialist definitions below are read back on each deployment. The Supervisor is the hosted
+orchestrator, not a prompt agent. They are **Prompt Agents**: persisted model configuration, instructions and tool
 definitions, invoked through Foundry Responses. They are not continuously running
 workers or five Agent Framework-hosted processes.
 
 | Agent / deployed version | Invoke for | Tools and knowledge | Authority |
 |---|---|---|---|
-| **Chief**, `hydro-supervisor-agent`, v9 | Decompose a Foundry request; sequence required capabilities and review completeness | `delegate_to_agent`, conversation context, shared evidence policy, specialist results | Coordinates; no database write authority |
+| **Supervisor**, hosted `hydro-orchestrator` (not a prompt agent) | Compile, sequence and verify the request; write the grounded briefing | Deterministic control plane, shared evidence policy, specialist receipts | Coordinates; no database write authority |
 | **Gauge**, `hydro-qa-agent`, v11 | Facts, telemetry, existing work, inventory, charts and requested factual verification | `hydro_query` with catalog-governed STID/SQL reads, KQL templates and validation, station-power/quality snapshots and presentation tools | Read/visualize, not create work |
 | **Sleuth**, `hydro-rca-agent`, v13 | Investigation, diagnosis review and RCA follow-ups | Read tools plus `complete_rca_assessment`; evidence references, competing hypotheses and missing-evidence rules | Proposes explanations, not proven causes or operational control actions |
 | **Fixer**, `hydro-work-order-agent`, v11 | Explicit or conditional new-work review | Identity/coverage reads, `propose_work_order`, `complete_work_order_review` | Editable proposal or explicit no-draft/clarification result; no model-issued SQL write |

@@ -1058,7 +1058,7 @@ it does not run a supervisor or specialist tool loop.
 
 | Display name / deployed name | Responsibility and triggers | Actual tools and knowledge |
 |---|---|---|
-| **Chief / hydro-supervisor-agent** | Produce one complete minimal ordered plan while preserving requested source and scope | `plan_orchestration` only; one to eight validated `qa`, `rca`, `work-order` or `fabric-iq` steps. No source or database write tool. |
+| **Supervisor / hosted `hydro-orchestrator`** | Deterministically compile one ordered plan of one to eight `qa`, `rca`, `work-order` or `fabric-iq` steps, verify evidence and write the grounded briefing | Code-owned control plane with no Foundry prompt agent and no source or database write tool; the briefing is one tool-less structured model call validated against the evidence. |
 | **Gauge / hydro-qa-agent** | Factual retrieval, current health, existing work, stock lists, charts, independent factual verification | `hydro_query`: catalog-governed asset/operations reads, KQL and telemetry templates, canonical BAD/HOT snapshots, station-power chart, visualization and 3D model retrieval. |
 | **Sleuth / hydro-rca-agent** | Explicit investigation, diagnosis or root-cause analysis | The same read-only data tools; assigned evidence and scientific RCA instructions. No validated OEM manual retrieval corpus or numerical causal model is currently attached. |
 | **Fixer / hydro-work-order-agent** | Explicit or conditional requests for editable new work | Read tools plus `propose_work_order` (in-memory card only) and `complete_work_order_review` (no-draft/clarification decision). SQL creation belongs to the human-approved application path, not the agent. |

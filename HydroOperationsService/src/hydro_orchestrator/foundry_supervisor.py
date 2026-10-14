@@ -37,6 +37,10 @@ Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
 NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
+# The Supervisor is this hosted orchestrator's deterministic control plane, not a Foundry prompt agent. Its pinned
+# identity is the control-plane contract revision; bump it when the orchestration contract changes incompatibly.
+CONTROL_PLANE_AGENT = "hydro-orchestrator"
+CONTROL_PLANE_VERSION = "1"
 MAX_CHAT_RUN_DURATION = timedelta(minutes=10)
 ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "supervisor": ("source-reconciliation", "grounded-presentation"),
@@ -1691,13 +1695,20 @@ class FoundrySupervisor:
         if not isinstance(names, dict) or not isinstance(expected, dict):
             raise SourceFailure("Shared deployed-agent contracts are unavailable.")
         saved = journal.read("agent_versions")
+        control_plane = AgentVersion(
+            name=CONTROL_PLANE_AGENT, version=CONTROL_PLANE_VERSION,
+            model=self.analysis_model or "deterministic", tools=(),
+        )
         if saved is not None:
-            if set(saved) != set(names):
+            if set(saved) != {*names, "supervisor"}:
                 raise SourceFailure("Recovered agent manifest does not contain exactly the configured roles.")
-            versions = {role: AgentVersion.model_validate(saved[role]) for role in names}
-            if any(version.name != names[role] for role, version in versions.items()):
+            versions = {role: AgentVersion.model_validate(saved[role]) for role in saved}
+            if any(versions[role].name != name for role, name in names.items()):
                 raise SourceFailure("Recovered agent manifest changed the configured agent identities.")
-            return versions
+            recovered_plane = versions["supervisor"]
+            if (recovered_plane.name, recovered_plane.version) != (CONTROL_PLANE_AGENT, CONTROL_PLANE_VERSION):
+                raise SourceFailure("Recovered agent manifest belongs to a different control-plane revision.")
+            return cast(dict[Role, AgentVersion], versions)
         token = await self.credential.get_token("https://ai.azure.com/.default")
 
         async def read(role: Role, name: str, client: httpx.AsyncClient) -> tuple[Role, AgentVersion]:
@@ -1736,6 +1747,7 @@ class FoundrySupervisor:
         async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             values = await asyncio.gather(*(read(role, name, client) for role, name in names.items()))
         versions = dict(values)
+        versions["supervisor"] = control_plane
         journal.save("agent_versions", {role: version.model_dump(mode="json") for role, version in versions.items()})
         return versions
 

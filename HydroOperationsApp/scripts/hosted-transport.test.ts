@@ -66,7 +66,7 @@ test('streaming transport paints only backend execution events and returns the c
   const snapshots: Array<Array<{ id: string; status: string }>> = []
   let body: Record<string, unknown> | undefined
   const chief = { id: 'run-1:chief', role: 'supervisor', status: 'running', label: 'Chief',
-    detail: 'Coordinating.', timestamp: 1, agentName: 'hydro-supervisor-agent', trace: [] }
+    detail: 'Coordinating.', timestamp: 1, agentName: 'hydro-orchestrator', trace: [] }
   const gauge = { id: 'run-1:gauge', role: 'qa', status: 'running', label: 'Gauge',
     detail: 'Verifying.', timestamp: 2, agentName: 'hydro-qa-agent',
     parentId: chief.id, parentCallId: 'call-1' }
