@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, draftAnswerParts, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
+import { readAnswerDatasets, datasetVisualizations, answerVisualizations, hideRenderedCsv, hideRenderedData, formatEvidenceCell, appendOmittedSnapshotWork, answerSections, draftAnswerParts, draftDetailParts, operatorNarrative, operatorDatasets, showRequestedCharts, OPERATIONAL_EVIDENCE_CONTRACT, ANSWER_PRESENTATION_CONTRACT } from '../src/services/copilot/answerPresentation.ts'
 import { relatedSuggestions } from '../src/services/copilot/suggestions.ts'
 import { agentDefinition, nativeSourceError, requestedNativeSources, parseDelegation, parseHydroQuery, parseWorkOrderReview } from '../src/services/copilot/agentDefinitions.ts'
 import { APPROVAL_PHASE_TIMEOUT_MS, createApprovalStore } from '../src/services/copilot/approvalStore.ts'
@@ -78,6 +78,42 @@ Receipt 1.`,
     summary: 'No matching work was returned.',
     details: '',
   })
+})
+
+test('a staged draft keeps the briefing reasoning visible and moves tables and source limits behind the toggle', () => {
+  const parts = draftDetailParts(`## What the data shows
+
+T008 has 60 BAD samples.
+
+## Why
+
+Several signals degraded together.
+
+## Probable causes
+
+- Shared acquisition path.
+
+## Recommended actions
+
+- Inspect it.
+
+## Caveats
+
+- Not confirmed.
+
+## Signal Quality
+
+| a |
+| --- |
+
+## Source limitations
+
+- Limit.`)
+  assert.match(parts.narrative, /What the data shows[\s\S]*Why[\s\S]*Probable causes[\s\S]*Recommended actions[\s\S]*Caveats/)
+  assert.doesNotMatch(parts.narrative, /Signal Quality|Source limitations/)
+  assert.match(parts.support, /Signal Quality[\s\S]*Source limitations/)
+  assert.doesNotMatch(parts.support, /Probable causes/)
+  assert.deepEqual(draftDetailParts('## Sources\n\nReceipt 1.'), { narrative: '', support: '## Sources\n\nReceipt 1.' })
 })
 
 test('table-only requests override charts and routine numeric questions do not request them', () => {

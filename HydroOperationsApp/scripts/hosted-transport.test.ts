@@ -363,20 +363,27 @@ test('reset cannot change session affinity during credential renewal or a human 
   assert.doesNotThrow(() => client.reset())
 })
 
-test('only accepted answers provide follow-up run IDs; failure and reset clear historical context', async () => {
+test('a failed turn keeps the conversation; an unusable earlier run or a reset clears it', async () => {
   const bodies: Array<{ chat: Record<string, unknown> }> = []
   const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (_input, init) => {
     bodies.push(JSON.parse(String(init?.body)))
-    return response(bodies.length === 2 ? { ...reply(), production_write_executed: true } : reply())
+    if (bodies.length === 2) return response({ ...reply(), production_write_executed: true })
+    if (bodies.length === 4) return response({ detail: 'No preceding completed conversation.' }, 404)
+    return response(reply())
   })
   await client.run({ question: 'First.' })
   await assert.rejects(client.run({ question: 'Follow up.' }))
   assert.equal(bodies[1].chat.previous_run_id, 'run-1')
   await client.run({ question: 'After failure.' })
-  assert.equal(bodies[2].chat.previous_run_id, undefined)
+  assert.equal(bodies[2].chat.previous_run_id, 'run-1')
+  await assert.rejects(client.run({ question: 'Earlier run is gone.' }), error =>
+    error instanceof HostedInvocationError && error.status === 404)
+  assert.equal(bodies[3].chat.previous_run_id, 'run-1')
+  await client.run({ question: 'After the lost context.' })
+  assert.equal(bodies[4].chat.previous_run_id, undefined)
   client.reset()
   await client.run({ question: 'New chat.' })
-  assert.equal(bodies[3].chat.previous_run_id, undefined)
+  assert.equal(bodies[5].chat.previous_run_id, undefined)
 })
 
 test('specialist display preserves server response identities and rejects invented execution roles', async () => {

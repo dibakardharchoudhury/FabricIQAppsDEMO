@@ -10,7 +10,7 @@ from hashlib import sha256
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal, Protocol, cast, get_args
+from typing import Any, Literal, Protocol, TypeVar, cast, get_args
 from uuid import UUID
 
 import httpx
@@ -33,6 +33,7 @@ from .presentation import AnswerColumn, AnswerRow, AnswerTable, ClientPresentati
 from .workflow import RequiredCheckpointStorage
 
 logger = logging.getLogger(__name__)
+_Report = TypeVar("_Report", bound=Contract)
 Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
 NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
@@ -437,6 +438,12 @@ def governed_datasets(context: dict[str, object]) -> dict[str, DomainDatasetDefi
     return {item.key: item for item in values}
 
 
+class HistoricalTurn(Contract):
+    question: str = Field(min_length=1, max_length=2000)
+    conclusion: str = Field(min_length=1, max_length=1500)
+    requested_at: AwareDatetime
+
+
 class HistoricalContext(Contract):
     run_id: UUID
     source: SourceIdentity
@@ -444,6 +451,7 @@ class HistoricalContext(Contract):
     rendered_answer: str = Field(max_length=16000)
     requested_at: AwareDatetime
     proposal_ids: tuple[UUID, ...] = Field(default=(), max_length=8)
+    earlier_turns: tuple[HistoricalTurn, ...] = Field(default=(), max_length=5)
 
 
 class EquipmentSelection(Contract):
@@ -845,9 +853,9 @@ class AnalysisCause(Contract):
 class AnalysisReport(Contract):
     answer: str = Field(min_length=1, max_length=800)
     findings: tuple[str, ...] = Field(max_length=8)
-    reasoning: tuple[str, ...] = Field(max_length=6)
+    reasoning: tuple[str, ...] = Field(default=(), max_length=6)
     probable_causes: tuple[AnalysisCause, ...] = Field(default=(), max_length=8)
-    recommendations: tuple[AnalysisRecommendation, ...] = Field(max_length=8)
+    recommendations: tuple[AnalysisRecommendation, ...] = Field(default=(), max_length=8)
     caveats: tuple[str, ...] = Field(max_length=5)
 
     @model_validator(mode="after")
@@ -920,6 +928,38 @@ Hard rules:
 - Say if a table has more rows than shown. Treat specialist prose as unverified notes; only the datasets are verified facts.
 - You write advice only. Nothing is created or approved by you, and production writes are never executed.
 - Be concise: no filler, no restating the question, no markdown, no tables (they are shown separately)."""
+
+CONVERSATION_INSTRUCTIONS = """You are the Hydro Operations Supervisor answering inside an ongoing chat. This turn reads no live data. The JSON input holds the operator's message, the conversation so far (earlier_turns, then previous_turn with its full answer) and now_utc. It is your only source of facts.
+
+- "answer": one to three sentences that answer the message directly from the conversation: summarise, recall, explain what was decided and why, or clarify. Name equipment, signals, work-order numbers, values and times exactly as they appear. Say plainly when something was not discussed.
+- "findings": the short bullets that structure the answer, such as one per decision or topic in order. Leave empty when one sentence is enough.
+- If the message needs current plant data the conversation does not contain, say what you would need to read and give one short example question that would fetch it. Do not guess values.
+- If there is no conversation yet, say so in one sentence and offer two example questions.
+- "caveats": only real limits, for example that earlier readings may be stale (compare now_utc with each turn's requested_at).
+
+Hard rules: use only identifiers, numbers and timestamps that appear in the input and quote them exactly; never invent any. No markdown and no tables. Nothing is created or approved by you."""
+
+CONVERSATION_SCHEMA: dict[str, object] = {
+    "type": "object", "additionalProperties": False,
+    "required": ["answer", "findings", "caveats"],
+    "properties": {
+        "answer": {"type": "string"},
+        "findings": {"type": "array", "items": {"type": "string"}},
+        "caveats": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+def previous_receipts(root: Path, previous_run_id: UUID | None) -> list[object]:
+    """The raw verified receipts the preceding run committed; a missing or unreadable journal means none."""
+    if previous_run_id is None:
+        return []
+    try:
+        saved = RunJournal(root / str(previous_run_id) / "receipts").read("evidence")
+    except (OSError, ValueError, SourceFailure):
+        return []
+    receipts = saved.get("receipts") if isinstance(saved, dict) else None
+    return list(receipts) if isinstance(receipts, list) else []
 
 
 class SpecialistResult(Contract):
@@ -3263,6 +3303,60 @@ class FoundrySupervisor:
                     f"{sorted(covering)} does not already cover it")
         return list(dict.fromkeys(violations))[:8]
 
+    async def verified_model_report(
+        self, request: ChatRequest, *, instructions: str, schema_name: str, schema: dict[str, object],
+        context_text: str, parse: Callable[[str], _Report], violations_of: Callable[[_Report], list[str]],
+    ) -> tuple[_Report, str] | None:
+        """One tool-less structured model call whose output is accepted only after code verifies it against the
+        input; a rejection is fed back for up to ANALYSIS_ATTEMPTS tries. None means no acceptable report, with
+        the reason in analysis_rejection."""
+        feedback: str | None = None
+        self.analysis_rejection = None
+        model = self.analysis_model
+        if not model:
+            self.analysis_rejection = "the briefing model is not configured"
+            return None
+        try:
+            async with asyncio.timeout(ANALYSIS_ATTEMPTS * ANALYSIS_TIMEOUT_SECONDS + 5):
+                async with BoundedAIProjectClient(
+                    endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
+                ) as project_client:
+                    openai_client = project_client.get_openai_client()
+                    for _attempt in range(ANALYSIS_ATTEMPTS):
+                        self.healthy(request)
+                        response = await openai_client.responses.create(
+                            model=model, instructions=instructions,
+                            input=context_text if feedback is None else (
+                                f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
+                                "Rewrite it using only values present in the input, and keep every other part "
+                                "of the briefing."),
+                            max_output_tokens=6000, reasoning={"effort": "low"}, store=False,
+                            text={"format": {"type": "json_schema", "name": schema_name,
+                                             "schema": schema, "strict": True}},
+                        )
+                        if getattr(response, "status", "completed") != "completed":
+                            feedback = "the response was incomplete; be more concise"
+                            continue
+                        try:
+                            report = parse(response.output_text)
+                        except ValueError as error:
+                            feedback = f"it did not match the required structure ({type(error).__name__})"
+                            continue
+                        violations = violations_of(report)
+                        if violations:
+                            feedback = "; ".join(violations)
+                            continue
+                        return report, response.id
+        except SourceFailure:
+            raise
+        except (APIStatusError, APITimeoutError, AgentFrameworkException, TimeoutError, OSError, ValueError) as error:
+            logger.error("Grounded analysis was unavailable (%s).", type(error).__name__)
+            self.analysis_rejection = f"the briefing service was unavailable ({type(error).__name__})"
+            return None
+        logger.error("Grounded analysis was rejected after verification: %s", feedback)
+        self.analysis_rejection = (feedback or "no acceptable briefing was returned")[:240]
+        return None
+
     async def analysis_for(
         self, request: ChatRequest, answer: ChatAnswer, journal: RunJournal,
     ) -> AnalysisReport | None:
@@ -3282,54 +3376,71 @@ class FoundrySupervisor:
             logger.warning("Analysis context exceeds its bounded size; the grounded narrative is skipped.")
             return None
         started = perf_counter()
-        feedback: str | None = None
-        self.analysis_rejection = None
-        try:
-            async with asyncio.timeout(ANALYSIS_ATTEMPTS * ANALYSIS_TIMEOUT_SECONDS + 5):
-                async with BoundedAIProjectClient(
-                    endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
-                ) as project_client:
-                    openai_client = project_client.get_openai_client()
-                    for _attempt in range(ANALYSIS_ATTEMPTS):
-                        self.healthy(request)
-                        response = await openai_client.responses.create(
-                            model=self.analysis_model, instructions=ANALYST_INSTRUCTIONS,
-                            input=context_text if feedback is None else (
-                                f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
-                                "Rewrite it using only values present in the input, and keep every other part "
-                                "of the briefing."),
-                            max_output_tokens=6000, reasoning={"effort": "low"}, store=False,
-                            text={"format": {"type": "json_schema", "name": "hydro_briefing",
-                                             "schema": ANALYSIS_SCHEMA, "strict": True}},
-                        )
-                        if getattr(response, "status", "completed") != "completed":
-                            feedback = "the response was incomplete; be more concise"
-                            continue
-                        try:
-                            report = AnalysisReport.model_validate_json(response.output_text)
-                        except ValueError as error:
-                            feedback = f"it did not match the required structure ({type(error).__name__})"
-                            continue
-                        violations = self.analysis_violations(report, context_text)
-                        if violations:
-                            feedback = "; ".join(violations)
-                            continue
-                        journal.save("answer_analysis", {
-                            "analysis": report.model_dump(mode="json"), "response_id": response.id,
-                            "model": self.analysis_model,
-                            "duration_ms": (perf_counter() - started) * 1000,
-                            "input_digest": sha256(context_text.encode()).hexdigest(),
-                        })
-                        return report
-        except SourceFailure:
-            raise
-        except (APIStatusError, APITimeoutError, AgentFrameworkException, TimeoutError, OSError, ValueError) as error:
-            logger.error("Grounded analysis was unavailable (%s).", type(error).__name__)
-            self.analysis_rejection = f"the briefing service was unavailable ({type(error).__name__})"
+        accepted = await self.verified_model_report(
+            request, instructions=ANALYST_INSTRUCTIONS, schema_name="hydro_briefing", schema=ANALYSIS_SCHEMA,
+            context_text=context_text, parse=AnalysisReport.model_validate_json,
+            violations_of=lambda report: self.analysis_violations(report, context_text),
+        )
+        if accepted is None:
             return None
-        logger.error("Grounded analysis was rejected after verification: %s", feedback)
-        self.analysis_rejection = (feedback or "no acceptable briefing was returned")[:240]
-        return None
+        report, response_id = accepted
+        journal.save("answer_analysis", {
+            "analysis": report.model_dump(mode="json"), "response_id": response_id,
+            "model": self.analysis_model,
+            "duration_ms": (perf_counter() - started) * 1000,
+            "input_digest": sha256(context_text.encode()).hexdigest(),
+        })
+        return report
+
+    def conversation_context(self, request: ChatRequest) -> dict[str, object]:
+        history = request.historical_context
+        return {
+            "operator_message": request.question,
+            "now_utc": utc_now().isoformat(),
+            "earlier_turns": [turn.model_dump(mode="json") for turn in history.earlier_turns] if history else [],
+            "previous_turn": {
+                "question": history.question, "requested_at": history.requested_at.isoformat(),
+                "answer": history.rendered_answer,
+            } if history else None,
+        }
+
+    async def converse(self, request: ChatRequest, journal: RunJournal) -> ChatAnswer:
+        """A turn that asks for no source read (a summary of the chat, a recall, a clarification) is answered from
+        the conversation itself. Earlier verified receipts are forwarded untouched so later turns can still reuse
+        them; nothing here is new evidence."""
+        self.emit_event(
+            f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
+            "Answering from the conversation so far; no source read is needed.",
+            agent_name="hydro-orchestrator", trace=list(self.chief_trace),
+        )
+        context_text = json.dumps(self.conversation_context(request), sort_keys=True, default=str, ensure_ascii=False)
+        accepted = (
+            await self.verified_model_report(
+                request, instructions=CONVERSATION_INSTRUCTIONS, schema_name="hydro_conversation",
+                schema=CONVERSATION_SCHEMA, context_text=context_text, parse=AnalysisReport.model_validate_json,
+                violations_of=lambda report: self.analysis_violations(report, context_text),
+            ) if self.analysis_model else None
+        )
+        report = accepted[0] if accepted is not None else AnalysisReport(
+            answer="I could not verify an answer from this conversation. Ask again naming the equipment or data "
+                   "you want me to read.",
+            findings=(), reasoning=(), recommendations=(),
+            caveats=((self.analysis_rejection or "the conversation briefing was not configured"),),
+        )
+        forwarded = previous_receipts(self.root, request.previous_run_id)
+        answer = ChatAnswer(
+            run_id=request.run_id, source=request.source, requested_at=request.requested_at,
+            source_read_times=(), summary=report.answer, tables=(), charts=(), limitations=(), cell_sources=(),
+            specialists=(), audit_url=f"/chat/runs/{request.run_id}/evidence", analysis=report,
+        )
+        journal.save("evidence", {"receipts": forwarded, "conversation_only": True})
+        journal.save("answer", answer.model_dump(mode="json"))
+        self.emit_event(
+            f"{request.run_id}:chief", "supervisor", "completed", "Supervisor",
+            "Answered from the conversation; no new source evidence was needed.",
+            agent_name="hydro-orchestrator", trace=list(self.chief_trace),
+        )
+        return answer
 
     def answer(
         self, request: ChatRequest, plan: AnswerPlan, *, use_projected_summary: bool = False,
@@ -3610,6 +3721,8 @@ class FoundrySupervisor:
             if committed is not None:
                 return ChatAnswer.model_validate(committed)
             self.healthy(request)
+            if not request.required_specialists and not request.required_evidence_kinds and not request.native_sources:
+                return await self.converse(request, journal)
             versions = await self.versions(journal)
             self.emit_event(
                 f"{request.run_id}:chief", "supervisor", "running", "Supervisor",

@@ -69,7 +69,10 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
     if analysis is not None:
         sections.append("## Answer\n\n" + literal(analysis.answer))
         if analysis.findings:
-            sections.append("## What the data shows\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.findings))
+            sections.append(
+                f"## {'What the data shows' if answer.tables else 'From this conversation'}\n\n"
+                + "\n".join(f"- {literal(item)}" for item in analysis.findings)
+            )
         if analysis.reasoning:
             sections.append("## Why\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.reasoning))
         if analysis.probable_causes:
@@ -94,10 +97,11 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             sections.append("## Recommended actions\n\n" + "\n".join(lines))
         if analysis.caveats:
             sections.append("## Caveats\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.caveats))
-        sections.append(
-            "Recommendations are advice written from the verified evidence below. No work order exists until you "
-            "approve a staged draft. " + literal(answer.summary)
-        )
+        if answer.tables:
+            sections.append(
+                "Recommendations are advice written from the verified evidence below. No work order exists until you "
+                "approve a staged draft. " + literal(answer.summary)
+            )
     else:
         sections.append(literal(answer.summary))
     for table in answer.tables:

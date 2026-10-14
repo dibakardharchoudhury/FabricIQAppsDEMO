@@ -507,7 +507,8 @@ class SourceAuthTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(denied.status_code, 404)
                 self.assertNotIn(first["chat"]["question"], denied.text)
                 with patch("hydro_orchestrator.service.utc_now", return_value=utc_now() + timedelta(minutes=31)):
-                    self.assertEqual((await client.post("/invocations", json=followup)).status_code, 409)
+                    later = await client.post("/invocations", json=followup)
+                    self.assertEqual(later.status_code, 200, later.text)
                 fresh = await client.post("/invocations", json=first)
                 self.assertEqual(fresh.status_code, 200)
                 saved = RunJournal(namespaces[-1] / fresh.json()["run_id"] / "receipts").read("request")

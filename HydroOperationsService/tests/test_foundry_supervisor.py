@@ -1759,11 +1759,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
 
 
 
-    async def test_deterministic_supervisor_without_actionable_manifest_fails_closed(self):
+    async def test_a_message_without_an_actionable_manifest_is_answered_as_conversation_not_failed(self):
         self.mode = "supervisor_no_plan"
         request = self.request.model_copy(update={"question": "Hello."})
-        with self.assertRaisesRegex(SourceFailure, "between one and eight bounded steps"):
-            await self.owner.run(request)
+        result = await self.owner.run(request)
+        self.assertEqual((result.tables, result.specialists, result.source_read_times), ((), (), ()))
+        self.assertIn("could not verify an answer from this conversation", result.summary)
+        self.assertEqual(sum(self.calls.values()), 0)
 
     def test_native_markdown_identity_projection_is_field_bounded(self):
         self.assertEqual(

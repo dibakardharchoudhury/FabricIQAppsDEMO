@@ -79,12 +79,13 @@ class AnalysisHarness(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temp.name)
         self.replies = []
         self.inputs = []
+        self.instructions = ANALYST_INSTRUCTIONS
 
         def respond(request):
             payload = json.loads(request.content)
             self.inputs.append(payload)
             self.assertEqual(payload["model"], "test-model")
-            self.assertEqual(payload["instructions"], ANALYST_INSTRUCTIONS)
+            self.assertEqual(payload["instructions"], self.instructions)
             self.assertFalse(payload["store"])
             self.assertNotIn("tools", payload)
             self.assertEqual(payload["text"]["format"]["type"], "json_schema")

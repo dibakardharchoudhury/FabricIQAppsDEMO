@@ -22,6 +22,19 @@ export function draftAnswerParts(text: string): { summary: string; details: stri
   }
 }
 
+const BRIEFING_HEADINGS = /^(?:What the data shows|Why|Probable causes|Recommended actions|Caveats)$/i
+
+/** The reasoning an operator must read beside a staged draft stays visible; raw tables and source limitations
+ *  remain behind the supporting-sources toggle. */
+export function draftDetailParts(details: string): { narrative: string; support: string } {
+  const narrative: string[] = []
+  const support: string[] = []
+  for (const section of answerSections(details)) {
+    (section.title !== undefined && BRIEFING_HEADINGS.test(section.title) ? narrative : support).push(section.markdown)
+  }
+  return { narrative: narrative.join('\n\n'), support: support.join('\n\n') }
+}
+
 export function showRequestedCharts(question: string): boolean {
   return !/\b(?:table[- ]only|only (?:a |the )?table|no charts?|without charts?)\b/i.test(question)
     && requiresChartOutput(question)

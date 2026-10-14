@@ -25,8 +25,8 @@ from .contracts import (
     WorkOrderDecision, utc_now,
 )
 from .foundry_supervisor import (
-    ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource,
-    RunJournal, ToolEvidence,
+    ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, HistoricalTurn, NativeBinding,
+    NativeSource, RunJournal, ToolEvidence, previous_receipts,
 )
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
@@ -183,18 +183,9 @@ MAX_CARRIED_RECEIPTS = 16
 def carriable_receipts(state: Path, source: SourceIdentity, previous_run_id: UUID | None) -> list[ToolEvidence]:
     """Verified receipts of the preceding run that a follow-up may reuse. Staged drafts, other sources and
     receipts older than the conversation window are never reused; a missing or unreadable journal means none."""
-    if previous_run_id is None:
-        return []
-    try:
-        saved = RunJournal(state / str(previous_run_id) / "receipts").read("evidence")
-    except (OSError, ValueError, SourceFailure):
-        return []
-    raw_receipts = saved.get("receipts") if isinstance(saved, dict) else None
-    if not isinstance(raw_receipts, list):
-        return []
     now = utc_now()
     receipts: list[ToolEvidence] = []
-    for raw in raw_receipts:
+    for raw in previous_receipts(state, previous_run_id):
         try:
             receipt = ToolEvidence.model_validate(raw)
         except ValueError:
@@ -241,7 +232,19 @@ async def follow_up_intent(
     return normalized, ()
 
 
+MAX_EARLIER_TURNS = 5
+
+
+def turn_conclusion(rendered_answer: str) -> str:
+    """The head of a rendered answer (its direct answer), without the supporting sections."""
+    text = re.sub(r"^#{1,6}\s+Answer\s*\n+", "", rendered_answer.strip())
+    return (re.split(r"\n#{1,6}\s", text, maxsplit=1)[0].strip() or rendered_answer.strip())[:1500] or "No answer text."
+
+
 def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID | None) -> HistoricalContext | None:
+    """The conversation so far as the preceding run saw it, plus that run's own memory of earlier turns, so a chat
+    keeps its context for as long as the signed-in user continues it. It is conversational context only: current
+    facts are still read fresh or reused from verified receipts within their own age limit."""
     if previous_run_id is None:
         return None
     journal = RunJournal(state / str(previous_run_id) / "receipts")
@@ -251,8 +254,6 @@ def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID
     answer, request = ChatAnswer.model_validate(saved_answer), ChatRequest.model_validate(saved_request)
     if answer.source != source or request.source != source or answer.run_id != previous_run_id or request.run_id != previous_run_id:
         raise HTTPException(409, "The preceding conversation has a different source identity.")
-    if utc_now() - answer.requested_at > timedelta(minutes=30):
-        raise HTTPException(409, "The preceding conversation expired; start a new chat with an explicit target.")
     text = client_presentation(answer).text
     if len(text) > 16000:
         limitations = "\n".join(f"- {item}" for item in answer.limitations)
@@ -262,9 +263,15 @@ def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID
             "The previous supporting tables exceeded the bounded conversation context and are intentionally omitted. "
             "Historical content is context only; re-read current sources for any factual follow-up."
         )
+    earlier = request.historical_context
+    turns = (
+        *(earlier.earlier_turns if earlier else ()),
+        *((HistoricalTurn(question=earlier.question[:2000], conclusion=turn_conclusion(earlier.rendered_answer),
+                          requested_at=earlier.requested_at),) if earlier else ()),
+    )[-MAX_EARLIER_TURNS:]
     return HistoricalContext(run_id=previous_run_id, source=source, question=request.question,
                              rendered_answer=text, requested_at=answer.requested_at,
-                             proposal_ids=tuple(item.id for item in answer.proposals))
+                             proposal_ids=tuple(item.id for item in answer.proposals), earlier_turns=turns)
 
 
 class RuntimeConfiguration(Contract):

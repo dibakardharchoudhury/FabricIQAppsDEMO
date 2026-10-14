@@ -9,7 +9,7 @@ import type { OrchestrationEvent, WorkOrderProposal } from '../services/copilot/
 import { WorkOrderApprovalCard } from './WorkOrderApprovalCard'
 import { AgentCrewTrace } from './AgentCrewTrace'
 import { relatedSuggestions, stripOptionsMarker, suggestionLabel } from '../services/copilot/suggestions'
-import { answerSections, draftAnswerParts, operatorNarrative } from '../services/copilot/answerPresentation'
+import { answerSections, draftAnswerParts, draftDetailParts, operatorNarrative } from '../services/copilot/answerPresentation'
 import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
@@ -191,8 +191,8 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftParts.summary}</ReactMarkdown>
     : <AnswerText text={draftParts.summary} streaming={false} />)
   const draftDetails = draftParts?.details && (message.backendOwned
-    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftParts.details}</ReactMarkdown>
-    : <AnswerText text={draftParts.details} streaming={false} />)
+    ? <DraftDetails details={draftParts.details} />
+    : <details className="v2-answer-support"><summary>Supporting findings and sources</summary><AnswerText text={draftParts.details} streaming={false} /></details>)
   return <>
     {showCrew && <AgentCrewTrace events={message.orchestrationEvents} proposals={message.proposals} />}
     {draftReady && message.proposals?.map(proposal => <WorkOrderApprovalCard key={proposal.id} proposal={proposal} />)}
@@ -203,7 +203,7 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     </p>}
     {draftReady && draftSummary}
     {draftReady
-      ? draftDetails && <details className="v2-answer-support"><summary>Supporting findings and sources</summary>{draftDetails}</details>
+      ? draftDetails
       : answer}
     {message.artifacts?.map(artifact => artifact.kind === 'image' && artifact.url
       ? <img className="v2-agent-image" src={artifact.url} alt={artifact.name} key={artifact.fileId} />
@@ -212,6 +212,14 @@ function AgentMessage({ message, streaming, question, showCrew }: { message: Cop
     {!streaming && !message.failed && message.backendOwned && message.visualizations?.map((spec, index) => <AgentVisualizationView spec={spec} key={index} />)}
     {message.models?.map(model => <AgentModel key={`${model.id}-${model.modelUrl}`} model={model} />)}
     {streaming && message.text && <CopilotStreamCursor />}
+  </>
+}
+
+function DraftDetails({ details }: { details: string }) {
+  const { narrative, support } = draftDetailParts(details)
+  return <>
+    {narrative && <ReactMarkdown remarkPlugins={[remarkGfm]}>{narrative}</ReactMarkdown>}
+    {support && <details className="v2-answer-support"><summary>Supporting findings and sources</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{support}</ReactMarkdown></details>}
   </>
 }
 

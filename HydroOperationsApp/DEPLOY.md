@@ -412,16 +412,33 @@ A chart is otherwise withheld with the exact reason. When a requested series alr
 telemetry requirement, no second all-signal read is merged beside it, so unrelated measures and units never
 share a chartable table. A failed or ambiguous metadata read leaves the series valid but unattested.
 
+### Conversation memory (single chat session)
+
+A chat keeps its context for as long as the signed-in user continues it in the same tab:
+
+- Each question carries the preceding run (`previous_run_id`). The backend rebuilds the conversation from the
+  runs' own journals: the previous turn in full plus up to five earlier turns (question and direct answer), so a
+  third or tenth question still sees the first. It is conversational context only; current facts are re-read or
+  reused from verified receipts inside their own 30-minute limit, so there is no hard chat expiry.
+- A question that asks for no source read (a summary of the chat, a recall, a clarification) is answered from the
+  conversation by the Supervisor's grounded model call, with the same identifier and number verification as the
+  briefing. It never fails the run. Earlier receipts are forwarded, so the next data question can still reuse them.
+- A failed turn does not erase the chat. The client drops its link only when the backend reports the earlier run
+  unusable (HTTP 404 or 409), or on New chat.
+
 ### Root-cause analysis
 
-When the question asks for an RCA, the Supervisor does not stop at "cause undetermined". After the specialists
-finish it reads, once and journaled, the history an RCA needs for every affected equipment (the equipment in the
-signal-quality or temperature evidence, plus any selected one): every signal's 48 h quality history
-(`query_telemetry` with `aggregation: "quality"`: samples, GOOD/UNCERTAIN/BAD counts, first/last BAD and UNCERTAIN
-times, affected hours, GOOD value range), its inspections, maintenance notifications and the spare parts for its
-equipment type. These feed the briefing as `root_cause_evidence`; they are analysis support (an `audit`-role
+When the question asks for an RCA, the Supervisor does not stop at "cause undetermined". Before the RCA specialist
+runs it reads, once and journaled, the history an RCA needs for exactly the equipment behind the requested
+signal-quality or temperature evidence (else the named or selected equipment; at most eight, the rest reported):
+every signal's 48 h quality history (`query_telemetry` with `aggregation: "quality"`: samples, GOOD/UNCERTAIN/BAD
+counts, first/last BAD and UNCERTAIN times, affected hours, GOOD value range), its inspections, maintenance
+notifications and the spare parts for its equipment type. The receipts are published so the RCA and work-order
+specialists can cite them, the RCA step's equipment selection is pinned to this scope so a draft cannot target
+other equipment, and they feed the briefing as `root_cause_evidence`. They are analysis support (an `audit`-role
 dataset), never an answer table or a substitute for raw telemetry. A source that cannot be read is named in the
-briefing's caveats instead of being treated as empty.
+briefing's caveats instead of being treated as empty. A staged draft's reasoning stays visible beside its card;
+only the raw tables and source limitations sit behind the supporting-sources toggle.
 
 The briefing then ranks competing causes per equipment (instrument or sensor, communication or ingestion,
 operating conditions, equipment condition, insufficient evidence) with a High/Medium/Low likelihood, the evidence

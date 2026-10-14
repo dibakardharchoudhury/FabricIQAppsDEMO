@@ -35,8 +35,10 @@ export type HostedAnswer = {
 
 export class HostedInvocationError extends Error {
   readonly detail: Record<string, unknown> | undefined
+  readonly status: number
   constructor(status: number, detail?: Record<string, unknown>) {
     super(`Hosted invocation failed (HTTP ${status}). No answer or write outcome is certified.`)
+    this.status = status
     this.detail = detail
   }
 }
@@ -410,7 +412,9 @@ export class HostedTransport {
       this.interruptedRunId = undefined
       return { runId, text: presentation.text, proposals, visualizations, executionEvents, receipt: reply }
     } catch (error) {
-      this.previousRunId = undefined
+      // A failed turn must not erase the conversation. Only an unusable earlier run (the backend answers 404/409
+      // for it) is dropped, so the next question does not keep failing on it.
+      if (error instanceof HostedInvocationError && (error.status === 404 || error.status === 409)) this.previousRunId = undefined
       throw error
     } finally { this.running = false }
   }
