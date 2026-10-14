@@ -192,6 +192,34 @@ const IDENTIFY_CUE = String.raw`(?:which|what|who|where|any|are there|is there|d
 const OBJECT_MODAL = String.raw`(?:need(?:s|ed)?|require[sd]?|warrant(?:s|ed)?|deserve[sd]?|justif(?:y|ies|ied))`
 const clauseHas = (clause: string, term: string) => new RegExp(String.raw`\b${term}\b`, 'i').test(clause)
 
+type QualityState = 'BAD' | 'UNCERTAIN' | 'GOOD'
+// OPC UA quality states and the everyday words operators use for them.
+const QUALITY_STATE_WORDS: ReadonlyArray<readonly [QualityState, string]> = [
+  ['BAD', String.raw`(?:bad|poor|degraded|unreliable|faulty|invalid)`],
+  ['UNCERTAIN', String.raw`(?:uncertain|suspect|questionable|doubtful)`],
+  ['GOOD', String.raw`good`],
+]
+const MEASUREMENT_TERM = String.raw`(?:telemetry|signals?|readings?|sensors?|instruments?|measurements?|data(?:\s+points?)?|samples?|quality)`
+
+/** Quality states named in clauses that talk about measurements, so "bad signals" and "good readings" count but
+ *  "good morning" does not. */
+export function requestedQualityStates(question: string): QualityState[] {
+  const found = new Set<QualityState>()
+  for (const clause of positiveActionClauses(question).split(/[.!?;\n]+/)) {
+    if (!clauseHas(clause, MEASUREMENT_TERM)) continue
+    for (const [state, words] of QUALITY_STATE_WORDS) if (clauseHas(clause, words)) found.add(state)
+  }
+  return [...found]
+}
+
+/** True when the operator asks about the quality state of signals, telemetry or readings, in any wording. */
+export function requestsSignalQuality(question: string): boolean {
+  const text = positiveActionClauses(question)
+  return requestedQualityStates(question).length > 0
+    || /\b(?:signal|sensor)[\s-]+quality\b/i.test(text)
+    || /\brunning bad\b/i.test(text)
+}
+
 /** True when the operator asks the system to decide which work (or which equipment) needs maintenance action, as
  *  opposed to listing existing records or creating a named one. Such a question is answered by comparing condition
  *  evidence with the existing open-work cover. */

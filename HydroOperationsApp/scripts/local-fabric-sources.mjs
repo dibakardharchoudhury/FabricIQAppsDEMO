@@ -9,7 +9,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedRankLimit, requestedWorkBacklogGroup, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -26,6 +26,8 @@ export function chatIntent(question) {
   }
   const nativeSources = requestedNativeSources(question)
   const specialists = requiredSpecialists(question, nativeSources.length > 0)
+  // Required evidence always needs a reader: never compile an empty plan for a question that asks for data.
+  if (!specialists.length && requiredEvidenceKinds(question).some(kind => kind !== 'native_claims')) specialists.push('qa')
   return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
@@ -41,10 +43,7 @@ export function requiredEvidenceKinds(question) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
   if (requestedNativeSources(text).length) kinds.add('native_claims')
-  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|running bad)\b/i.test(text)
-      || /\bquality\b/i.test(text) && /\b(?:BAD|GOOD|UNCERTAIN)\b/i.test(text)) {
-    kinds.add('signal_quality')
-  }
+  if (requestsSignalQuality(question)) kinds.add('signal_quality')
   if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
   if (/\b(?:work[\s-]*orders?|wos?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work)\b/i.test(text)
@@ -86,8 +85,8 @@ export function permittedEvidenceKinds(question) {
   if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{1,3})\b/i.test(text)) kinds.add('equipment')
   if (/\b(?:instrument|signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
   if (/\b(?:telemetry|readings?|signals?|power|temperature|quality)\b/i.test(text)) kinds.add('telemetry')
-  if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone|running bad)\b/i.test(text)
-      || /\bquality\b/i.test(text) && /\b(?:BAD|GOOD|UNCERTAIN)\b/i.test(text)) {
+  if (requestsSignalQuality(question)
+      || /\b(?:quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone)\b/i.test(text)) {
     kinds.add('signal_quality')
   }
   if (/\b(?:RCA|investigate|diagnos(?:e|is)|physical fault|equipment condition|downtime)\b/i.test(text)) {
@@ -124,10 +123,10 @@ export function analyticalEvidencePlan(question, answerKinds) {
   const lookback = requestedLookback(question)
   const plan = []
   if (kinds.has('signal_quality')) {
-    const qualities = [...new Set(
-      [...text.matchAll(/\b(BAD|GOOD|UNCERTAIN)\b/gi)]
-        .map(match => match[1].toUpperCase()),
-    )]
+    const qualities = [...new Set([
+      ...requestedQualityStates(question),
+      ...[...text.matchAll(/\b(BAD|GOOD|UNCERTAIN)\b/gi)].map(match => match[1].toUpperCase()),
+    ])]
     for (const quality of qualities.length ? qualities : ['BAD']) {
       const arguments_ = { quality, ...(lookback ? { lookback } : {}),
         ...(/\bturbines?\b/i.test(text) ? { equipment_type: 'turbine' } : {}) }

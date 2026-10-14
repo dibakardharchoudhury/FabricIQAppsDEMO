@@ -1121,6 +1121,28 @@ test('advice detection does not fire for listings, named creations, analytics or
   }
 })
 
+test('quality-state wording selects signal quality for any phrasing of a measurement, and only then', () => {
+  const cases = [
+    ['Which turbines are emitting bad telemetry today?', 'BAD'],
+    ['Any unreliable sensor readings on the fleet?', 'BAD'],
+    ['Show the uncertain signals from the last 3 hours.', 'UNCERTAIN'],
+    ['List instruments reporting poor data right now.', 'BAD'],
+    ['Which units have good measurements today?', 'GOOD'],
+    ['Which turbines had BAD telemetry quality in the last 6 hours?', 'BAD'],
+  ]
+  for (const [question, state] of cases) {
+    const intent = chatIntent(question)
+    assert.ok(intent.required_evidence_kinds.includes('signal_quality'), question)
+    assert.ok(intent.permitted_evidence_kinds.includes('signal_quality'), question)
+    const plan = compileOrchestrationPlan(question, intent)
+    const reads = analyticalEvidencePlan(question, plan.answer_contract.views.map(view => view.kind))
+    assert.ok(reads.some(entry => entry.tool === 'query_signal_quality_snapshot' && entry.arguments.quality === state), `${question}: ${JSON.stringify(reads)}`)
+  }
+  for (const question of ['Good morning, which turbines are hot?', 'List the open work orders.', 'What is the bad weather forecast?']) {
+    assert.equal(chatIntent(question).required_evidence_kinds.includes('signal_quality'), false, question)
+  }
+})
+
 test('a draft for explicitly named equipment keeps its direct identity-and-coverage review', () => {
   const plan = compileOrchestrationPlan('Please draft a work order for T7.')
   const work = plan.steps.find(step => step.specialist === 'work-order')
