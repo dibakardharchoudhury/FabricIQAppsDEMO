@@ -13,7 +13,10 @@ export function VoiceInput({ disabled, resetKey, onTranscript }: {
   const [error, setError] = useState('')
   const session = useRef<ReturnType<typeof startDictation>>(undefined)
   const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition
-  const supported = window.isSecureContext && Boolean(Recognition)
+  // Electron-based hosts (for example VS Code's embedded browser) expose the API but ship no speech backend, so
+  // every attempt would fail with a "network" error. Say so up front instead of offering a button that cannot work.
+  const embedded = /\bElectron\//i.test(navigator.userAgent)
+  const supported = window.isSecureContext && Boolean(Recognition) && !embedded
 
   useEffect(() => () => { session.current?.cancel() }, [disabled, resetKey])
 
@@ -39,7 +42,9 @@ export function VoiceInput({ disabled, resetKey, onTranscript }: {
     {(notice || listening || error) && <div className="voice-input-notice">
       {notice && <p>{supported
         ? 'Browser dictation may send audio to your browser vendor for speech recognition. Microphone permission is required. Review the transcript, then press Send. Voice never approves work orders.'
-        : 'Voice input is not supported in this browser or embedded page. Use a supported browser over HTTPS with microphone access, or type your question.'}</p>}
+        : embedded
+          ? 'Voice input does not work in this embedded browser: Electron-based hosts such as VS Code have no speech-recognition service. Open this app in Microsoft Edge or Chrome over HTTPS to dictate, or type your question.'
+          : 'Voice input is not supported in this browser or embedded page. Use a supported browser over HTTPS with microphone access, or type your question.'}</p>}
       {listening && <p className="voice-input-status" role="status">{interim ? `Hearing: ${interim}` : 'Listening... Speak your question.'}</p>}
       {error && <p className="voice-input-error" role="alert">{error}</p>}
       {supported && !listening && <button type="button" disabled={disabled} onClick={start}>Start browser dictation</button>}

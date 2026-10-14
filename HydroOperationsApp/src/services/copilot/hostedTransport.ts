@@ -153,8 +153,9 @@ export class HostedTransport {
     this.credentials = credentials
     this.fetcher = fetcher
     this.streamLivenessMs = streamLivenessMs
-    // Only an opaque container-session id is kept (per tab and engine) so a reload reuses the warm hosted container.
-    // No answer, telemetry, token or other analytical data is ever stored.
+    // Only an opaque container-session id is kept (per tab, engine and app build) so a reload reuses the warm hosted
+    // container. Hosted sessions stay pinned to the agent version they started on, so a new build must not inherit
+    // an old session. No answer, telemetry, token or other analytical data is ever stored.
     this.sessionKey = sessionScope ? `hydro.hosted.session.${sessionScope}` : undefined
     this.sessionId = this.restoreSession() ?? this.newSession()
   }

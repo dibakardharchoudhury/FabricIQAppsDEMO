@@ -1106,7 +1106,8 @@ function discoverCached(config, token) {
   return promise
 }
 
-export async function handle(request) {
+export async function handle(request, deps = {}) {
+  const submitApproved = deps.submitApprovedWorkOrder ?? submitApprovedWorkOrder
   if (request.action === 'chat_intent') return chatIntent(request.question)
   if (request.action === 'analytical_evidence_plan') {
     return { entries: analyticalEvidencePlan(request.question, request.answer_kinds) }
@@ -1171,11 +1172,11 @@ export async function handle(request) {
   }
   if (request.action === 'approve_work_order') {
     if (request.human_approved !== true) throw new Error('A human approval is required outside agent tool execution.')
-    const result = await submitApprovedWorkOrder(config, request.draft, request.edits, request.principal_id,
+    const result = await submitApproved(config, request.draft, request.edits, request.principal_id,
       request.creation_id, request.tokens, request.allow_create)
     return {
       source: metadata.source,
-      result: governedToolResult(request.tool, args, result),
+      result,
       completed_at: result.read_completed_at_utc,
     }
   }

@@ -1164,6 +1164,44 @@ test('abbreviations and short identifiers are equivalent to their long forms', (
   }
 })
 
+test('the approval action returns the committed write result after a successful or reconciled write', async () => {
+  const runtime = {
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+  }
+  const digest = runtimeConfiguration(runtime).configuration_digest
+  const originalConfig = process.env.HYDRO_FABRIC_SOURCE_CONFIG
+  const originalFetch = globalThis.fetch
+  process.env.HYDRO_FABRIC_SOURCE_CONFIG = JSON.stringify(runtime)
+  globalThis.fetch = async (url, options) => discoveryFetch()(url, options)
+  const creationId = '22222222-2222-4222-8222-222222222222'
+  try {
+    for (const reconciled of [false, true]) {
+      const calls = []
+      const written = await handle({
+        action: 'approve_work_order', human_approved: true, configuration_digest: digest,
+        draft: { equipment_id: 'EQUIP_RTI_T005' }, edits: { title: 'Inspect', description: 'Inspect', priority: 'Medium' },
+        principal_id: id, creation_id: creationId, allow_create: !reconciled, tokens: { fabric: 'f', graphql: 'g' },
+      }, { submitApprovedWorkOrder: async (...args) => {
+        calls.push(args)
+        return { record: { id: creationId, workOrderNumber: `WO-${creationId}` }, reconciled,
+          read_completed_at_utc: '2026-10-14T12:00:00.000Z' }
+      } })
+      assert.equal(calls.length, 1)
+      assert.equal(written.completed_at, '2026-10-14T12:00:00.000Z')
+      assert.equal(written.result.record.workOrderNumber, `WO-${creationId}`)
+      assert.equal(written.result.reconciled, reconciled)
+      assert.equal(written.source.generation, 2)
+    }
+    await assert.rejects(handle({ action: 'approve_work_order', configuration_digest: digest, tokens: { fabric: 'f' } },
+      { submitApprovedWorkOrder: async () => { throw new Error('must not run without a human approval') } }), /human approval/)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalConfig === undefined) delete process.env.HYDRO_FABRIC_SOURCE_CONFIG
+    else process.env.HYDRO_FABRIC_SOURCE_CONFIG = originalConfig
+  }
+})
+
 test('transport rejects non-success status and does not follow redirects', async () => {
   await assert.rejects(requestJson('https://api.fabric.microsoft.com/test', 'secret', undefined, async (_url, options) => {
     assert.equal(options.redirect, 'error')

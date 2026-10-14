@@ -27,7 +27,7 @@ const ERRORS: Record<string, string> = {
   'service-not-allowed': 'Browser speech recognition is unavailable or blocked by policy. Type your question instead.',
   'audio-capture': 'No usable microphone was found. Check the connected input device.',
   'no-speech': 'No speech was detected. Try dictation again or type your question.',
-  network: 'The browser speech service could not be reached. Your typed text is unchanged.',
+  network: 'The browser speech service could not be reached. Embedded browsers (such as the one in VS Code) have no speech service, and some networks block it. Open the app in Microsoft Edge or Chrome to dictate, or type your question. Your typed text is unchanged.',
   aborted: 'Dictation was interrupted. Review the text already captured before sending.',
 }
 

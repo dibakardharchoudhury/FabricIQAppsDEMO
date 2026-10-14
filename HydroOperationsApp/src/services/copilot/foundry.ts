@@ -59,7 +59,7 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
           throw new Error('The selected Foundry project changed. Request fresh evidence before approving work.')
         }
         return (await import('../fabric.ts')).hostedSourceTokens()
-      }, undefined, undefined, engine) }
+      }, undefined, undefined, `${engine}.${__APP_VERSION__}`) }
     clients.set(engine, cached)
   }
   return cached.client
