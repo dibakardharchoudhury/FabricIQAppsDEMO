@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,19 @@ def load(name):
 hosted = load("deploy_hosted_agent")
 provision = load("provision_foundry_agents")
 DEPLOY = load("deploy_fabric_app")
+project = load("deploy_foundry_project")
+
+_STATE = tempfile.TemporaryDirectory()
+
+
+def setUpModule():
+    # Generated azd projects and the Foundry project folder live under the per-user state root; keep tests out of it.
+    os.environ["HYDRO_STATE_DIR"] = _STATE.name
+
+
+def tearDownModule():
+    os.environ.pop("HYDRO_STATE_DIR", None)
+    _STATE.cleanup()
 
 GUIDS = {name: f"{index:08x}-0000-0000-0000-{index:012x}" for index, name in enumerate(
     ("tenant", "workspace", "ontology", "eventhouse", "database", "graphql", "appbackend", "spa"), start=1)}
@@ -68,11 +82,15 @@ class FakeDeploy:
     class DeployError(RuntimeError):
         pass
 
-    def __init__(self, registry_tags=None, azd_environments=("hydro-orchestrator",), azd_signed_in=True):
+    def __init__(self, registry_tags=None, azd_environments=("hydro-orchestrator",), azd_signed_in=True,
+                 extensions=(), azd_values=""):
         self.tags = dict(registry_tags or {})
         self.azd_environments = list(azd_environments)
         self.azd_signed_in = azd_signed_in
+        self.extensions = list(extensions)
+        self.azd_values = azd_values
         self.log = []
+        self.cwds = []
 
     def az(self, *args):
         return ["az", *args]
@@ -82,6 +100,7 @@ class FakeDeploy:
 
     def run_capture(self, argv, cwd=None):
         self.log.append(argv)
+        self.cwds.append((argv, cwd))
         if argv[:3] == ["az", "acr", "repository"]:
             tag = argv[argv.index("--image") + 1].split(":", 1)[1]
             if tag not in self.tags:
@@ -89,10 +108,16 @@ class FakeDeploy:
             return self.tags[tag]
         if argv[:4] == ["azd", "auth", "login", "--check-status"] and not self.azd_signed_in:
             raise self.DeployError("Not logged in")
+        if argv[:3] == ["azd", "extension", "list"]:
+            return json.dumps([{"id": item} for item in self.extensions])
+        if argv[:3] == ["azd", "env", "get-values"]:
+            return self.azd_values
         if argv[:3] == ["azd", "env", "list"]:
             return json.dumps([{"Name": name} for name in self.azd_environments])
         if argv[:3] == ["azd", "env", "new"]:
             self.azd_environments.append(argv[3])
+        if argv[:3] == ["az", "account", "show"]:
+            return "sub-1"
         if argv[:3] == ["az", "resource", "show"]:
             return "swedencentral"
         if argv[:3] == ["az", "acr", "show"]:
@@ -310,6 +335,144 @@ class ConvergenceTests(unittest.TestCase):
                 return super().run_capture(argv, cwd)
         with self.assertRaisesRegex(FakeDeploy.DeployError, "AuthorizationFailed"):
             run(Denied(), [agent()])
+
+
+class ProjectRoutingTests(unittest.TestCase):
+    """Which azd project a publish runs from, and azd readiness."""
+
+    def test_the_pinned_project_publishes_from_the_repository_itself(self):
+        pinned = hosted.PINNED_ENDPOINT_RE.search((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))["value"]
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), pinned + "/"), REPO_ROOT)
+
+    def test_another_project_gets_a_generated_untracked_azd_project_never_a_repo_edit(self):
+        before = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+        directory = hosted.azd_project_dir(FakeDeploy(), ENDPOINT)
+        self.assertNotEqual(directory, REPO_ROOT)
+        self.assertTrue(str(directory).startswith(os.environ["HYDRO_STATE_DIR"]))
+        generated = (directory / "azure.yaml").read_text(encoding="utf-8")
+        self.assertIn(f"endpoint: {ENDPOINT}", generated)
+        self.assertEqual(generated.replace(ENDPOINT, "X"), hosted.PINNED_ENDPOINT_RE.sub(
+            lambda match: match["head"] + "X", before, count=1))
+        self.assertEqual((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"), before)
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), directory)
+
+    def test_publishing_to_another_project_runs_every_azd_command_in_its_generated_project(self):
+        fake = FakeDeploy()
+        run(fake, [agent(DIGEST_A, version=7), agent(DIGEST_A, version=7), agent(DIGEST_B, version=8)])
+        azd_cwds = {cwd for argv, cwd in fake.cwds if argv[0] == "azd" and argv[1] in ("env",)}
+        self.assertTrue(azd_cwds)
+        self.assertTrue(all(cwd != REPO_ROOT and str(cwd).startswith(os.environ["HYDRO_STATE_DIR"]) for cwd in azd_cwds))
+
+    def test_missing_azd_extensions_are_installed_and_present_ones_are_not(self):
+        fake = FakeDeploy(extensions=["azure.ai.agents"])
+        hosted.ensure_azd_ready(fake, "tenant")
+        self.assertEqual(fake.commands("azd", "extension", "install"), [["azd", "extension", "install", "microsoft.foundry"]])
+        both = FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS))
+        hosted.ensure_azd_ready(both, "tenant")
+        self.assertEqual(both.commands("azd", "extension", "install"), [])
+        self.assertEqual(set(hosted.REQUIRED_EXTENSIONS), {"azure.ai.agents", "microsoft.foundry"})
+
+
+class ProjectCreationTests(unittest.TestCase):
+    ENDPOINT = "https://new-res.services.ai.azure.com/api/projects/new-proj"
+
+    def create(self, fake, **overrides):
+        arguments = dict(tenant="tenant.example", workspace="ws", location="swedencentral", model="model-x",
+                         check_access=lambda _endpoint: True, sleep=lambda _seconds: None)
+        arguments.update(overrides)
+        return project.ensure_foundry_project(fake, hosted, **arguments)
+
+    def fake(self, endpoint=None):
+        values = f'AZURE_AI_PROJECT_ENDPOINT="{self.ENDPOINT if endpoint is None else endpoint}"\n'
+        return FakeDeploy(extensions=list(hosted.REQUIRED_EXTENSIONS), azd_values=values)
+
+    def test_creation_is_opt_in(self):
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": ""}):
+            self.assertFalse(project.enabled())
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "true"}):
+            self.assertTrue(project.enabled())
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_CREATE": "yes"}):
+            self.assertFalse(project.enabled())
+
+    def test_deployments_json_survives_the_templates_quoted_parameter_file(self):
+        parameter = project.deployments_parameter("model-x")
+        # The template embeds the value inside quotes in a JSON parameters file.
+        embedded = json.loads('{"value": "' + parameter + '"}')["value"]
+        self.assertEqual(json.loads(embedded), [{
+            "name": "model-x", "model": {"name": "model-x", "format": "OpenAI", "version": "2026-07-09"},
+            "sku": {"name": "GlobalStandard", "capacity": 500},
+        }])
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_VERSION": "v2", "HYDRO_FOUNDRY_MODEL_SKU": "Standard",
+                                      "HYDRO_FOUNDRY_MODEL_CAPACITY": "50"}):
+            again = json.loads(json.loads('{"value": "' + project.deployments_parameter("m") + '"}')["value"])[0]
+        self.assertEqual((again["model"]["version"], again["sku"]), ("v2", {"name": "Standard", "capacity": 50}))
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": "lots"}):
+            with self.assertRaisesRegex(ValueError, "whole number"):
+                project.deployments_parameter("m")
+
+    def test_the_parameter_survives_windows_command_line_quoting_into_a_child_process(self):
+        import subprocess, sys
+        parameter = project.deployments_parameter("model-x")
+        out = subprocess.run([sys.executable, "-c", "import sys; print(sys.argv[1], end='')", parameter],
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual(out, parameter)
+
+    def test_names_and_locations_are_stable_and_normalized(self):
+        self.assertEqual(project.normalize_location("Sweden Central"), "swedencentral")
+        self.assertEqual(project.environment_name("T", "W"), project.environment_name("t", "w"))
+        self.assertNotEqual(project.environment_name("t", "w1"), project.environment_name("t", "w2"))
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_NAME": "my-name"}):
+            self.assertEqual(project.environment_name("t", "w"), "my-name")
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_NAME": "bad name!"}):
+            with self.assertRaises(ValueError):
+                project.environment_name("t", "w")
+
+    def test_a_new_project_is_initialized_configured_provisioned_and_read_back_in_order(self):
+        fake = self.fake()
+        self.assertEqual(self.create(fake), self.ENDPOINT)
+        init = fake.commands("azd", "init")[0]
+        self.assertEqual(init[init.index("-t") + 1], project.TEMPLATE)
+        name = init[init.index("-e") + 1]
+        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        self.assertEqual({key: sets[key] for key in (
+            "AZURE_SUBSCRIPTION_ID", "AZURE_LOCATION", "AZURE_AI_DEPLOYMENTS_LOCATION", "ENABLE_HOSTED_AGENTS",
+            "ENABLE_CAPABILITY_HOST", "ENABLE_MONITORING")}, {
+            "AZURE_SUBSCRIPTION_ID": "sub-1", "AZURE_LOCATION": "swedencentral",
+            "AZURE_AI_DEPLOYMENTS_LOCATION": "swedencentral", "ENABLE_HOSTED_AGENTS": "true",
+            "ENABLE_CAPABILITY_HOST": "false", "ENABLE_MONITORING": "true"})
+        self.assertEqual(sets["AI_PROJECT_DEPLOYMENTS"], project.deployments_parameter("model-x"))
+        self.assertEqual(fake.commands("azd", "provision"), [["azd", "provision", "--environment", name, "--no-prompt"]])
+        order = [argv[:3] for argv in fake.log if argv[:2] == ["azd", "init"] or argv[:3] in (
+            ["azd", "env", "set"], ["azd", "provision", "--environment"], ["azd", "env", "get-values"])]
+        self.assertEqual(order[0][:2], ["azd", "init"])
+        self.assertEqual(order[-1], ["azd", "env", "get-values"])
+        self.assertLess(order.index(["azd", "provision", "--environment"]), order.index(["azd", "env", "get-values"]))
+
+    def test_an_already_initialized_folder_is_reused_not_reinitialized(self):
+        fake = self.fake()
+        folder = hosted.state_root() / "foundry-project" / project.environment_name("tenant.example", "ws")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "azure.yaml").write_text("name: x\n")
+        self.create(fake)
+        self.assertEqual(fake.commands("azd", "init"), [])
+        self.assertEqual(len(fake.commands("azd", "provision")), 1)
+
+    def test_it_waits_for_role_assignments_to_take_effect(self):
+        answers, sleeps = iter([False, False, True]), []
+        self.assertEqual(self.create(self.fake(), check_access=lambda _e: next(answers), sleep=sleeps.append), self.ENDPOINT)
+        self.assertEqual(sleeps, [project.ACCESS_POLL_S] * 2)
+
+    def test_a_project_that_never_becomes_usable_fails_with_the_endpoint(self):
+        clock = iter([0, 0, 10_000, 20_000])
+        with patch.object(project.time, "monotonic", side_effect=lambda: next(clock)):
+            with self.assertRaisesRegex(FakeDeploy.DeployError, "new-proj.*not yet usable"):
+                self.create(self.fake(), check_access=lambda _e: False)
+
+    def test_an_invalid_endpoint_from_provisioning_is_rejected(self):
+        for bad in ("http://x.services.ai.azure.com/api/projects/p", "https://evil.example/api/projects/p", ""):
+            with self.subTest(bad):
+                with self.assertRaisesRegex(FakeDeploy.DeployError, "no valid Foundry project endpoint"):
+                    self.create(self.fake(bad))
 
 
 class BackendBootstrapTests(unittest.TestCase):

@@ -6,18 +6,20 @@ action**: the local deploy app or one command. Both run the same engine,
 
 ## Deploy in 60 seconds
 
-**One-time setup** (Section 3 has the full checklist): sign in with `az login`, install the Azure Developer CLI
-(`azd`) and its two Foundry extensions, and make sure the Foundry project, model and registry exist.
+**One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
+The Foundry extensions are installed for you. Everything else, including the Foundry project itself, can be created
+by the deploy when you tick **Create the Foundry project if none exists**.
 
 | | Local deploy app | Command line |
 |---|---|---|
-| 1 | Optional: set the project (skip if you have exactly one Foundry project)<br>`$env:HYDRO_FOUNDRY_PROJECT_ENDPOINT = 'https://<res>.services.ai.azure.com/api/projects/<proj>'` | same |
-| 2 | Double-click [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) | |
-| 3 | Pick tenant + workspace, press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
+| 1 | Double-click [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) | |
+| 2 | Pick tenant + workspace. In the **Foundry** block leave fields blank (discovered) or fill them in; tick *Create the Foundry project* only if none exists | Optional env vars, Section 6 |
+| 3 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
 | 4 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
 
-That single run now does everything on the Foundry side: connections, the four prompt agents, the **Hosted Agent
-image build and publish**, and the final verification. Nothing needs to be run by hand.
+That single run does everything on the Foundry side: the project (only if you opted in), connections, the four
+prompt agents, the **Hosted Agent image build and publish**, and the final verification. Nothing needs to be run by
+hand. **It deploys into the selected Fabric workspace**, exactly as before; pick the target deliberately.
 
 ## 1. The multi-agent setup
 
@@ -80,13 +82,16 @@ Phase 3 of the deployer's eight phases ([`provision_foundry_agents.py`](../Raw/w
 | Step | Behaviour | Skipped when |
 |---|---|---|
 | 0. Backend identity | If the target has no AppBackend yet, creates it first (without static hosting) so the Hosted Agent can be configured against its identity | The target already has one |
-| 1. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
-| 2. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
-| 3. Prompt agents | Exports the four definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
-| 4. Image | Fingerprints every file the [Dockerfile](../HydroOperationsService/Dockerfile) packages; builds `hydro-orchestrator:src-<fingerprint>` in the project's ACR with `az acr build` | that tag already exists |
-| 5. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
-| 6. Publish | Sets the azd environment and runs `azd deploy hydro-orchestrator`; waits until the active version has the exact image digest and configuration | live agent already matches |
-| 7. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
+| 1. Foundry project | Finds the one Foundry project. If none exists **and you opted in**, creates it with the Azure Developer CLI template `Azure-Samples/azd-ai-starter-basic`: resource group, Foundry account and project, the model deployment, a container registry with its project connection, Application Insights with its connection, Log Analytics. Waits for your role assignments to take effect | A project exists, or you did not opt in |
+| 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
+| 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
+| 4. Prompt agents | Exports the four definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
+| 5. Image | Fingerprints every file the [Dockerfile](../HydroOperationsService/Dockerfile) packages; builds `hydro-orchestrator:src-<fingerprint>` in the project's ACR with `az acr build` | that tag already exists |
+| 6. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
+| 7. Publish | Sets the azd environment and runs `azd deploy hydro-orchestrator`; waits until the active version has the exact image digest and configuration | live agent already matches |
+| 8. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
+
+The local app shows these as separate progress stages: *Foundry project*, *Foundry agents*, *Hosted Agent*.
 
 Consequences:
 
@@ -95,8 +100,15 @@ Consequences:
   deploy; an unchanged tree costs a single registry lookup.
 - **Target changes redeploy the agent.** A new workspace, capacity, AppBackend, ontology or publishable key changes the
   configuration, so the agent is republished with fresh values (never copied from another target).
+- **The right Foundry project is always the one published to.** `azure.yaml` pins one project. When that is your
+  target, the repository is the azd project. For any other target (including a project the deploy just created) a
+  generated, untracked azd project under `~/.fabric-demo/hosted-agent/` carries the same file with the target's
+  endpoint. No tracked file is edited and a deploy can never reach the wrong project.
+- **Creation is opt-in and repeatable.** The new project lives in `~/.fabric-demo/foundry-project/<name>`, where the name
+  is derived from the tenant and workspace, so a rerun reuses the same resources instead of creating duplicates.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
-  `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` to change it deliberately. A brand-new agent defaults to `false`.
+  `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` (or the form's *Work-order writes*) to change it deliberately. A
+  brand-new agent defaults to `false`.
 - **Versions are never deleted.** Each publish is a new immutable version.
 - The first run after pulling this feature builds and publishes once, because no fingerprint-tagged image exists yet.
 
@@ -105,34 +117,51 @@ Consequences:
 **Tools**
 
 - Python 3.11+, Azure CLI, and the Azure Developer CLI `azd >= 1.35.0` (Node 24 is downloaded by the deployer).
-- `azd extension install azure.ai.agents` and `azd extension install microsoft.foundry`
-  (versions are pinned in [`azure.yaml`](../azure.yaml)).
+- The azd extensions `azure.ai.agents` and `microsoft.foundry` are installed automatically when missing.
 - `az login --tenant <tenant>`. If `azd` is signed out, the deployer opens its sign-in for you.
 - No local Docker: images build remotely in ACR.
 
-**Must already exist** (no infrastructure-as-code ships in this repository)
+**Permissions**
+
+- To **create** a Foundry project: Owner or Contributor on the subscription (the template creates a resource group and
+  role assignments).
+- To publish into an **existing** project: rights to create agent versions in it, and to run builds in its registry
+  (for example Contributor on the registry). Chat users need **Foundry User** on the project.
+
+**Either already exists, or you tick *Create the Foundry project* (Section 4)**
 
 - A Foundry resource and project in the **same Entra tenant as the Fabric workspace**, in the capacity's region, with
   **public network access** (the browser calls it directly).
-- A ready model deployment (default `gpt-5.6-sol`) and **exactly one** linked Application Insights resource.
-- An Azure Container Registry connected to the project as a `ContainerRegistry` connection, and permission for your
-  identity to run builds in it (for example Contributor on the registry).
-- Your identity needs Foundry rights to create agent versions; chat users need **Foundry User** on the project.
+- A ready model deployment (default `gpt-5.6-sol`), **exactly one** linked Application Insights resource, and an Azure
+  Container Registry connected to the project as a `ContainerRegistry` connection.
+
+**Always required (not created by this deploy)**
+
 - A generation-2 ontology with its graph materialized and `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` resolved
   ([knowledge-graph.md](knowledge-graph.md)), plus the published Data Agent `RTI_Demo_Agent_*`.
 
 ## 4. Local deploy app, step by step
 
-1. (Optional) Set `HYDRO_FOUNDRY_PROJECT_ENDPOINT` in the shell that launches the app. With one Foundry project it is
-   discovered; with several it is required. Optionally set `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME` or
-   `HYDRO_PRODUCTION_WRITES_ENABLED` (Section 6).
-2. Launch [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) (`python launch.py` on any OS).
+1. Launch [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) (`python launch.py` on any OS).
    It installs missing Python packages, signs in to Azure and opens `http://127.0.0.1:5000`.
-3. Choose the tenant and workspace. Add a **SPA client id** only if discovery is ambiguous or you were given one.
-4. Fresh data environment: run the **full workflow** (GitHub sync, `01_Pipe_Setup`, deploy), or run those first.
+2. Choose the tenant and workspace. Add a **SPA client id** only if discovery is ambiguous or you were given one.
+3. **Deploy app** tab (or the same fields in the **Full workflow** tab), *Foundry* block. All fields are optional:
+
+   | Field | Use it when |
+   |---|---|
+   | Foundry project endpoint | You have several Foundry projects, or want a specific one |
+   | Model deployment | Not `gpt-5.6-sol` |
+   | Container registry | The project has several registry connections |
+   | Work-order writes | You want to enable or disable the human-approved write (default: keep the current setting) |
+   | **Create the Foundry project if none exists** | You have no Foundry project. This **creates billable Azure resources** (account, project, model deployment, container registry, Application Insights) |
+   | Region for the new project | Only when creating; default is the Fabric capacity's region |
+
+   Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
+   collected. Blank fields fall back to the environment the app was launched with, then to discovery.
+4. Fresh data environment: use the **Full workflow** tab (GitHub sync, `01_Pipe_Setup`, deploy), or run those first.
    An ordinary update needs none of that.
-5. Press **Deploy app** and watch the log. Expect extra minutes in phase 3 when the image builds (the job limit is
-   45 minutes). The UI never passes `--push-config`, so commit `rayfin/rayfin.yml` yourself.
+5. Press **Deploy app** and watch the stages. Expect extra minutes when the project is created (about 10) or the image
+   builds. The job limit is 90 minutes. The UI never passes `--push-config`, so commit `rayfin/rayfin.yml` yourself.
 6. Finish when you see `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
 
 ## 5. Command line
@@ -166,7 +195,14 @@ preserved configuration (Appendix A, steps 2 to 4), then rerun the deployer.
 | `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | `gpt-5.6-sol` |
 | `HYDRO_ACR_NAME` | Registry to build in | The project's only `ContainerRegistry` connection |
 | `HYDRO_PRODUCTION_WRITES_ENABLED` | Allow the human-approved work-order write | Preserved from the live agent; `false` for a new one |
+| `HYDRO_FOUNDRY_CREATE` | `true` creates a Foundry project when none exists (billable) | off |
+| `HYDRO_FOUNDRY_LOCATION` | Azure region of the new project | The Fabric capacity's region |
+| `HYDRO_FOUNDRY_PROJECT_NAME` | Name of the new project's azd environment | `hydro-foundry-<hash of tenant and workspace>` |
+| `HYDRO_FOUNDRY_MODEL_VERSION` / `_SKU` / `_CAPACITY` | Model deployment details when creating | `2026-07-09` / `GlobalStandard` / `500` (the values of the working deployment) |
+| `HYDRO_STATE_DIR` | Where generated azd projects live | `~/.fabric-demo` |
 | `HYDRO_SPA_DISPLAY_NAME` | SPA discovery/creation name | `Hydro Operations Fabric Client` |
+
+The local app sets the first six for you from its form; it does not read secrets.
 
 Runtime configuration is generated, never edited by hand. `HYDRO_ORCHESTRATOR_CONFIG` carries `source`,
 `authorization`, `project_endpoint`, `native_binding` and `production_writes_enabled` (`source.generation` must be `2`;
@@ -179,7 +215,10 @@ the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFI
 
 | Message | Meaning and fix |
 |---|---|
-| `Select exactly one existing Foundry project…` | Several or no projects match. Set `HYDRO_FOUNDRY_PROJECT_ENDPOINT`. |
+| `Select exactly one existing Foundry project…` | Several or no projects match. Set the project endpoint, or tick *Create the Foundry project* (`HYDRO_FOUNDRY_CREATE=true`) if there is none. |
+| `Set HYDRO_FOUNDRY_LOCATION to the Azure region…` | Creating a project, but the Fabric capacity region could not be read. Enter the region (for example `swedencentral`). |
+| `azd provision` fails on the model deployment | The model, version, SKU or quota is unavailable in that region. Set `HYDRO_FOUNDRY_MODEL_VERSION`, `_SKU` or `_CAPACITY`, or another region, then rerun; the same azd environment is reused. |
+| `The new Foundry project … is not yet usable by the signed-in user…` | Role assignments are still propagating. Wait a few minutes and rerun. |
 | `The selected Foundry model deployment is not ready.` | Fix the model deployment or set `HYDRO_FOUNDRY_MODEL`. |
 | `…must have one linked Application Insights resource` | Link exactly one; it is never inferred by name. |
 | `Live numeric Ontology generation 2 is required…` | The selected ontology is not a live v2 item. No fallback exists. |
@@ -197,13 +236,24 @@ the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFI
 
 ## 8. Known limits
 
-- **Not yet run end to end against Azure.** The logic is unit-tested (20 tests), and its decisions were checked
-  read-only against the live project, registry and Hosted Agent: the composed configuration is identical to the
-  deployed one and the registry is resolved correctly. The build and `azd deploy` calls themselves have not been
-  executed by this feature. Treat the first run as a supervised deployment.
-- **Two paths have not been exercised live:** the fresh-target backend bootstrap (`rayfin up --exclude-services
-  staticHosting` before Foundry provisioning) and creating the azd environment on a machine that has none.
-- `azure.yaml` pins the `ai-project` endpoint; edit it when targeting a different Foundry project.
+**No deployment of this feature has been run.** It was verified by unit tests (fakes only; no cloud calls) and by
+read-only checks:
+
+| Verified | How |
+|---|---|
+| The configuration the deployer would publish is identical to the deployed one | Composed from current state and compared (read-only) |
+| Registry, Eventhouse origin and Hosted Agent shape are read correctly | Read-only calls to the live project |
+| The Foundry project template and parameters are accepted by Azure | `azd provision --preview` (what-if; creates nothing) |
+| `azd` accepts a generated project with a different endpoint | `azd package` in a scratch folder |
+| The model-deployment parameter survives the template's quoting and Windows argument passing | Unit tests plus the preview |
+| The launcher validates and forwards the Foundry fields and shows the new stages | Unit tests and a look at the running page (no job started) |
+
+**Not exercised, so treat the first real run as supervised:** `az acr build`, `azd deploy`, `azd provision` (actual
+creation), the fresh-target AppBackend bootstrap (`rayfin up --exclude-services staticHosting`), and creating the azd
+environment on a machine that has none.
+
+- Creating a project provisions billable resources and is irreversible from this tool; remove them with `azd down` in
+  `~/.fabric-demo/foundry-project/<name>` (this deletes everything in that environment).
 - `az acr build` needs network access to the registry; private-only registries need a different build route.
 - Hosting readiness is not agent execution readiness; interactive acceptance remains a separate check.
 

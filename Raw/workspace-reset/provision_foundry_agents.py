@@ -152,22 +152,77 @@ def verify_hosted_source(agent: dict, tenant: str, workspace: str, ontology: str
         raise RuntimeError("The active hosted runtime must retain only the verified Data Agent native binding.")
 
 
+def _load_sibling(name: str):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
     endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip() or values.get("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "").strip()
-    projects = json.loads(deploy.run_capture(deploy.az(
-        "resource", "list", "--resource-type", "Microsoft.CognitiveServices/accounts/projects", "-o", "json",
-    )))
-    candidates = []
-    for project in projects:
-        detail = json.loads(deploy.run_capture(deploy.az(
-            "resource", "show", "--ids", project["id"], "--api-version", "2025-06-01", "-o", "json",
+    print("Foundry: project - resolving the Foundry project.", flush=True)
+
+    def discover(wanted: str) -> list[tuple[str, str]]:
+        projects = json.loads(deploy.run_capture(deploy.az(
+            "resource", "list", "--resource-type", "Microsoft.CognitiveServices/accounts/projects", "-o", "json",
         )))
-        url = detail.get("properties", {}).get("endpoints", {}).get("AI Foundry API", "").rstrip("/")
-        if url and (not endpoint or url == endpoint.rstrip("/")):
-            candidates.append((detail["id"], url))
+        found = []
+        for project in projects:
+            detail = json.loads(deploy.run_capture(deploy.az(
+                "resource", "show", "--ids", project["id"], "--api-version", "2025-06-01", "-o", "json",
+            )))
+            url = detail.get("properties", {}).get("endpoints", {}).get("AI Foundry API", "").rstrip("/")
+            if url and (not wanted or url == wanted.rstrip("/")):
+                found.append((detail["id"], url))
+        return found
+
+    candidates = discover(endpoint)
+    project_module = _load_sibling("deploy_foundry_project")
+    if not candidates and project_module.enabled():
+        hosted_module = _load_sibling("deploy_hosted_agent")
+
+        def target_location() -> str:
+            override = os.environ.get("HYDRO_FOUNDRY_LOCATION", "").strip()
+            if override:
+                return project_module.normalize_location(override)
+            headers = deploy.fabric_headers(tenant)
+            capacity_id = str(deploy.fabric_get(f"workspaces/{workspace}", headers).get("capacityId") or "").lower()
+            response = request_with_read_retry("GET", f"{deploy.FABRIC_BASE}/capacities", headers=headers, timeout=60)
+            region = next((
+                str(item.get("region") or "") for item in (response.json().get("value", []) if response.ok else [])
+                if str(item.get("id") or "").lower() == capacity_id
+            ), "")
+            if not region:
+                raise deploy.DeployError(
+                    "Set HYDRO_FOUNDRY_LOCATION to the Azure region for the new Foundry project; the Fabric "
+                    "capacity region could not be read."
+                )
+            return project_module.normalize_location(region)
+
+        def agent_access(project_endpoint: str) -> bool:
+            access = deploy.run_capture(deploy.az(
+                "account", "get-access-token", "--tenant", tenant, "--resource", "https://ai.azure.com",
+                "--query", "accessToken", "-o", "tsv",
+            ))
+            return request_with_read_retry(
+                "GET", f"{project_endpoint}/agents?api-version=v1", headers={"Authorization": f"Bearer {access}"},
+                timeout=60,
+            ).status_code == 200
+
+        print("Foundry: project - none found; creating one as requested.", flush=True)
+        created = project_module.ensure_foundry_project(
+            deploy, hosted_module, tenant=tenant, workspace=workspace, location=target_location(),
+            model=os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip() or "gpt-5.6-sol", check_access=agent_access,
+        )
+        candidates = discover(created)
     if len(candidates) != 1:
-        raise deploy.DeployError("Select exactly one existing Foundry project with HYDRO_FOUNDRY_PROJECT_ENDPOINT; automatic discovery is ambiguous or unavailable.")
+        raise deploy.DeployError(
+            "Select exactly one existing Foundry project with HYDRO_FOUNDRY_PROJECT_ENDPOINT; automatic discovery is ambiguous or unavailable."
+            + ("" if candidates else " To create one instead, enable 'Create the Foundry project if none exists' "
+               "in the local app (HYDRO_FOUNDRY_CREATE=true).")
+        )
     project_id, endpoint = candidates[0]
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.hostname.endswith(".services.ai.azure.com"):
@@ -274,6 +329,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     definitions = json.loads(deploy.run_capture(deploy.node24_script(
         deploy.APP_DIR / "scripts" / "export-agent-definitions.ts", model, iq_name,
     ), cwd=deploy.APP_DIR))
+    print("Foundry: agents - provisioning the specialist prompt agents.", flush=True)
     for name, definition in definitions.items():
         url = f"{endpoint}/agents/{name}"
         response = request_with_read_retry("GET", url + "?api-version=v1", headers=agent_headers, timeout=60)
@@ -305,11 +361,8 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Cannot read the hosted agent: HTTP {response.status_code}: {response.text[:400]}")
         return response.json()
 
-    hosted_spec = importlib.util.spec_from_file_location(
-        "deploy_hosted_agent", Path(__file__).with_name("deploy_hosted_agent.py"),
-    )
-    hosted_module = importlib.util.module_from_spec(hosted_spec)
-    hosted_spec.loader.exec_module(hosted_module)
+    hosted_module = _load_sibling("deploy_hosted_agent")
+    print("Foundry: Hosted Agent - converging hydro-orchestrator.", flush=True)
     hosted = hosted_module.ensure_hosted_agent(
         deploy, get_agent=get_agent, endpoint=endpoint, project_id=project_id, model=model, tenant=tenant,
         workspace=workspace, ontology=ontology,

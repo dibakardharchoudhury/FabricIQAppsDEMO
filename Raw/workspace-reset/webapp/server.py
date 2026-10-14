@@ -56,7 +56,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 SYNC_TIMEOUT_S = 1800
 DELETE_TIMEOUT_S = 600
 PIPELINE_TIMEOUT_S = 3 * 3600
-DEPLOY_TIMEOUT_S = 45 * 60
+DEPLOY_TIMEOUT_S = 90 * 60  # includes creating a Foundry project (~10 min) and building/publishing the Hosted Agent
 
 # Ordered phase labels + the substrings that mark reaching each phase. Index 0 is
 # the initial state; success jumps to the final phase.
@@ -94,6 +94,7 @@ PIPELINE_MARKERS: list[tuple[int, tuple[str, ...]]] = [
 
 DEPLOY_PHASES = [
     "Queued", "Checking prerequisites", "Resolving SPA", "Preparing state",
+    "Foundry project", "Foundry agents", "Hosted Agent",
     "Signing in", "Provisioning app", "Syncing backend settings", "Setting up sign-in",
     "Checking endpoint and CORS readiness", "Done",
 ]
@@ -101,11 +102,14 @@ DEPLOY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
     (1, ("[1/8]",)),
     (2, ("[2/8]",)),
     (3, ("[3/8]",)),
-    (4, ("[4/8]",)),
-    (5, ("[5/8]",)),
-    (6, ("[6/8]",)),
-    (7, ("[7/8]",)),
-    (8, ("[8/8]",)),
+    (4, ("Foundry: project",)),
+    (5, ("Foundry: agents",)),
+    (6, ("Foundry: Hosted Agent",)),
+    (7, ("[4/8]",)),
+    (8, ("[5/8]",)),
+    (9, ("[6/8]",)),
+    (10, ("[7/8]",)),
+    (11, ("[8/8]",)),
 ]
 
 WORKFLOW_PHASES = [
@@ -668,12 +672,58 @@ def api_deploy_app():
     data = request.get_json(silent=True) or {}
     try:
         argv = _deploy_invocation(data)
+        env = _deploy_environment(data)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     job_id = _start(
-        argv, None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
+        argv, env or None, DEPLOY_TIMEOUT_S, DEPLOY_PHASES, DEPLOY_MARKERS, exclusive=True
     )
     return job_response(job_id)
+
+
+FOUNDRY_ENDPOINT_RE = re.compile(r"^https://[a-z0-9-]+\.services\.ai\.azure\.com/api/projects/[A-Za-z0-9_.-]+/?$")
+FOUNDRY_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ACR_NAME_RE = re.compile(r"^[a-z0-9]{5,50}$")
+AZURE_LOCATION_RE = re.compile(r"^[A-Za-z][A-Za-z ]{2,39}$")
+
+
+def _deploy_environment(data: dict) -> dict[str, str]:
+    """Foundry settings for the deployer, from the form. Only whitelisted, validated, non-secret values are passed,
+    as environment variables the deployer already reads. Blank fields pass nothing, so the server's own environment
+    (and the deployer's discovery) still applies."""
+    def text(key: str) -> str:
+        value = data.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    env: dict[str, str] = {}
+    endpoint = text("foundryEndpoint")
+    if endpoint:
+        if not FOUNDRY_ENDPOINT_RE.fullmatch(endpoint):
+            raise ValueError("Foundry project endpoint must look like https://<resource>.services.ai.azure.com/api/projects/<project>.")
+        env["HYDRO_FOUNDRY_PROJECT_ENDPOINT"] = endpoint
+    model = text("foundryModel")
+    if model:
+        if not FOUNDRY_MODEL_RE.fullmatch(model):
+            raise ValueError("Foundry model deployment name may contain only letters, digits, '.', '_' and '-'.")
+        env["HYDRO_FOUNDRY_MODEL"] = model
+    registry = text("acrName")
+    if registry:
+        if not ACR_NAME_RE.fullmatch(registry):
+            raise ValueError("Container registry name must be 5-50 lowercase letters or digits.")
+        env["HYDRO_ACR_NAME"] = registry
+    location = text("foundryLocation")
+    if location:
+        if not AZURE_LOCATION_RE.fullmatch(location):
+            raise ValueError("Foundry location must be an Azure region such as swedencentral.")
+        env["HYDRO_FOUNDRY_LOCATION"] = location
+    if data.get("createFoundry") is True:
+        env["HYDRO_FOUNDRY_CREATE"] = "true"
+    writes = text("productionWrites").lower()
+    if writes:
+        if writes not in ("true", "false"):
+            raise ValueError("Work-order writes must be enabled or disabled, or left to keep the current setting.")
+        env["HYDRO_PRODUCTION_WRITES_ENABLED"] = writes
+    return env
 
 
 def _deploy_invocation(data: dict) -> list[str]:
@@ -709,6 +759,7 @@ def api_full_workflow():
         sync_argv, sync_env = _sync_invocation(data)
         pipeline_argv, pipeline_env = _pipeline_invocation(data)
         deploy_argv = _deploy_invocation(data)
+        deploy_env = _deploy_environment(data)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
@@ -726,7 +777,7 @@ def api_full_workflow():
             "phase_offset": pipeline_offset,
         },
         {
-            "name": "Fabric app deploy", "argv": deploy_argv, "env": None,
+            "name": "Fabric app deploy", "argv": deploy_argv, "env": deploy_env or None,
             "timeout": DEPLOY_TIMEOUT_S, "markers": DEPLOY_MARKERS,
             "phase_offset": deploy_offset,
         },

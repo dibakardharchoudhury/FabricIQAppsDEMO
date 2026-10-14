@@ -242,6 +242,122 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn("Syncing backend settings", SERVER.DEPLOY_PHASES)
         self.assertIn("Checking endpoint and CORS readiness", SERVER.DEPLOY_PHASES)
 
+    def test_deploy_progress_shows_each_foundry_stage_in_the_order_the_deployer_prints_them(self):
+        phases = SERVER.DEPLOY_PHASES
+        for name in ("Foundry project", "Foundry agents", "Hosted Agent"):
+            self.assertIn(name, phases)
+        indexes = [index for index, _markers in SERVER.DEPLOY_MARKERS]
+        self.assertEqual(indexes, sorted(set(indexes)))
+        self.assertLess(max(indexes), len(phases) - 1)
+        deployer_lines = [
+            "[1/8] Checking Azure tenant", "[2/8] Resolving the tenant SPA", "[3/8] Resetting local Rayfin deployment state",
+            "Foundry: project - resolving the Foundry project.", "Foundry: agents - provisioning the specialist prompt agents.",
+            "Foundry: Hosted Agent - converging hydro-orchestrator.", "[4/8] Authenticating Rayfin",
+            "[5/8] Provisioning backend", "[6/8] Adding the current app URL", "[7/8] Setting up browser sign-in",
+            "[8/8] Checking the hosted page",
+        ]
+        job, seen = SERVER.Job(phases), []
+        for line in deployer_lines:
+            for index, markers in SERVER.DEPLOY_MARKERS:
+                if index > job.phase_index and any(marker in line for marker in markers):
+                    job.phase_index = index
+            seen.append(phases[job.phase_index])
+        self.assertEqual(seen, [
+            "Checking prerequisites", "Resolving SPA", "Preparing state", "Foundry project", "Foundry agents",
+            "Hosted Agent", "Signing in", "Provisioning app", "Syncing backend settings", "Setting up sign-in",
+            "Checking endpoint and CORS readiness",
+        ])
+        # The markers must be lines the deployer really prints, not an assumption.
+        printed = (SERVER.SCRIPT_DIR / "provision_foundry_agents.py").read_text(encoding="utf-8")
+        for marker in ("Foundry: project", "Foundry: agents", "Foundry: Hosted Agent"):
+            self.assertIn(f'"{marker}', printed)
+
+    def test_deploy_job_limit_covers_project_creation_build_and_publish(self):
+        self.assertGreaterEqual(SERVER.DEPLOY_TIMEOUT_S, 75 * 60)
+
+    def test_deploy_environment_forwards_only_validated_foundry_settings(self):
+        env = SERVER._deploy_environment({
+            "foundryEndpoint": "https://res.services.ai.azure.com/api/projects/proj/",
+            "foundryModel": "gpt-5.6-sol", "acrName": "myreg12345", "foundryLocation": "Sweden Central",
+            "createFoundry": True, "productionWrites": "TRUE", "unexpected": "ignored",
+        })
+        self.assertEqual(env, {
+            "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "https://res.services.ai.azure.com/api/projects/proj/",
+            "HYDRO_FOUNDRY_MODEL": "gpt-5.6-sol", "HYDRO_ACR_NAME": "myreg12345",
+            "HYDRO_FOUNDRY_LOCATION": "Sweden Central", "HYDRO_FOUNDRY_CREATE": "true",
+            "HYDRO_PRODUCTION_WRITES_ENABLED": "true",
+        })
+        self.assertEqual(SERVER._deploy_environment({}), {})
+        self.assertEqual(SERVER._deploy_environment({
+            "foundryEndpoint": "  ", "createFoundry": False, "productionWrites": "", "foundryModel": None,
+        }), {})
+        self.assertEqual(SERVER._deploy_environment({"createFoundry": "true"}), {})  # only a real boolean opts in
+
+    def test_deploy_environment_rejects_unsafe_or_malformed_values(self):
+        bad = (
+            {"foundryEndpoint": "http://res.services.ai.azure.com/api/projects/p"},
+            {"foundryEndpoint": "https://evil.example/api/projects/p"},
+            {"foundryEndpoint": "https://res.services.ai.azure.com/api/projects/p; calc"},
+            {"foundryModel": "bad model"}, {"foundryModel": "x" * 80}, {"acrName": "UPPERCASE1"},
+            {"acrName": "abc"}, {"foundryLocation": "sweden;central"}, {"productionWrites": "maybe"},
+        )
+        for payload in bad:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                SERVER._deploy_environment(payload)
+
+    def test_deploy_app_passes_foundry_settings_to_the_job_environment(self):
+        payload = {"tenant": "tenant.example", "workspace": "Demo Workspace", "createFoundry": True,
+                   "foundryModel": "m1", "productionWrites": "false"}
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            response = self.client.post("/api/deploy-app", json=payload)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(start.call_args.args[1], {
+            "HYDRO_FOUNDRY_MODEL": "m1", "HYDRO_FOUNDRY_CREATE": "true", "HYDRO_PRODUCTION_WRITES_ENABLED": "false",
+        })
+        self.assertNotIn("m1", " ".join(start.call_args.args[0]))  # settings never ride on the command line
+        with patch.object(SERVER, "_start", return_value="job-id") as start:
+            self.client.post("/api/deploy-app", json={"tenant": "tenant.example", "workspace": "w"})
+        self.assertIsNone(start.call_args.args[1])  # nothing set: the server's own environment still applies
+
+    def test_invalid_foundry_settings_stop_the_request_before_any_job_starts(self):
+        with patch.object(SERVER, "_start") as start, patch.object(SERVER, "_start_workflow") as workflow:
+            deploy = self.client.post("/api/deploy-app", json={
+                "tenant": "tenant.example", "workspace": "w", "acrName": "BAD"})
+            full = self.client.post("/api/full-workflow", json={
+                "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes",
+                "parameters": {"key_vault_uri": "https://v.vault.azure.net/", "alert_email_to": "a@example.test"},
+                "productionWrites": "maybe"})
+        self.assertEqual((deploy.status_code, full.status_code), (400, 400))
+        self.assertIn("Container registry", deploy.get_json()["error"])
+        self.assertIn("Work-order writes", full.get_json()["error"])
+        start.assert_not_called()
+        workflow.assert_not_called()
+
+    def test_full_workflow_gives_foundry_settings_to_the_deploy_step_only(self):
+        payload = {
+            "tenant": "tenant.example", "workspace": "w", "repository": "o/r", "connectionId": "yes", "pat": "x",
+            "parameters": {"key_vault_uri": "https://v.vault.azure.net/", "alert_email_to": "a@example.test"},
+            "createFoundry": True, "foundryLocation": "swedencentral",
+        }
+        with patch.object(SERVER, "_start_workflow", return_value="id") as start:
+            response = self.client.post("/api/full-workflow", json=payload)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        steps = start.call_args.args[0]
+        self.assertEqual(steps[2]["env"], {"HYDRO_FOUNDRY_CREATE": "true", "HYDRO_FOUNDRY_LOCATION": "swedencentral"})
+        for step in steps[:2]:
+            self.assertNotIn("HYDRO_FOUNDRY_CREATE", step["env"] or {})
+
+    def test_both_deploy_forms_collect_foundry_settings_and_warn_about_cost(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        for prefix in ("deploy", "workflow"):
+            for suffix in ("FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites", "FoundryCreate", "FoundryLocation"):
+                self.assertIn(f'id="{prefix}{suffix}"', page)
+            self.assertIn(f'foundryPayload("{prefix}")', page)
+        self.assertIn("billable Azure resources", page)
+        self.assertIn('id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity\'s region" disabled', page)
+        handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
+        self.assertNotIn("workflow", handler)
+
     def test_full_workflow_progress_groups_detailed_phases(self):
         html = (MODULE_PATH.parent / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn('class="workflow-phase-groups"', html)

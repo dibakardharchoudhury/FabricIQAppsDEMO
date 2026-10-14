@@ -26,11 +26,43 @@ IMAGE_REPOSITORY = "hydro-orchestrator"
 AZD_ENVIRONMENT = "hydro-orchestrator"  # the `name` in azure.yaml
 DOCKERFILE = "HydroOperationsService/Dockerfile"
 DEFAULT_STATE_DIR = "/home/session/hydro"
+REQUIRED_EXTENSIONS = ("azure.ai.agents", "microsoft.foundry")  # pinned in azure.yaml requiredVersions
 ACTIVATION_TIMEOUT_S = 900
 ACTIVATION_POLL_S = 10
 IMAGE_DIGEST_RE = re.compile(r"^[^@\s]+@(?P<digest>sha256:[0-9a-f]{64})$")
 MISSING_RE = re.compile(r"does not exist|not found|unknown|404", re.IGNORECASE)
 JSON_VARIABLES = ("HYDRO_ORCHESTRATOR_CONFIG", "HYDRO_FABRIC_SOURCE_CONFIG")
+PINNED_ENDPOINT_RE = re.compile(r"^(?P<head>\s*endpoint:\s*)(?P<value>\S+)\s*$", re.MULTILINE)
+
+
+def state_root() -> Path:
+    """Per-user, untracked home for generated azd projects (override with HYDRO_STATE_DIR)."""
+    return Path(os.environ.get("HYDRO_STATE_DIR", "").strip() or Path.home() / ".fabric-demo")
+
+
+def azd_project_dir(deploy, endpoint: str) -> Path:
+    """The azd project to publish from.
+
+    azure.yaml pins one Foundry project. When that is the target, the repository itself is the azd project (the
+    proven path). For any other target a generated, untracked project carries the same azure.yaml with the target's
+    endpoint, so a deploy can never reach the wrong project and no tracked file is edited."""
+    root = deploy.REPO_ROOT
+    text = (root / "azure.yaml").read_text(encoding="utf-8")
+    pinned = PINNED_ENDPOINT_RE.search(text)
+    if not pinned:
+        raise deploy.DeployError("azure.yaml has no ai-project endpoint to retarget.")
+    wanted = endpoint.rstrip("/")
+    if pinned["value"].rstrip("/") == wanted:
+        return root
+    parsed = urlparse(wanted)
+    label = re.sub(r"[^a-z0-9-]", "-", f"{(parsed.hostname or 'project').split('.')[0]}-{parsed.path.rsplit('/', 1)[-1]}".lower())
+    directory = state_root() / "hosted-agent" / label
+    directory.mkdir(parents=True, exist_ok=True)
+    generated = PINNED_ENDPOINT_RE.sub(lambda match: match["head"] + wanted, text, count=1)
+    target = directory / "azure.yaml"
+    if not target.exists() or target.read_text(encoding="utf-8") != generated:
+        target.write_text(generated, encoding="utf-8", newline="\n")
+    return directory
 
 
 def packaged_sources(repo_root: Path) -> list[Path]:
@@ -207,6 +239,7 @@ def ensure_hosted_agent(
 
     ``values`` are the already-verified public deployment values (RAYFIN_PUBLIC_*), unquoted."""
     root = deploy.REPO_ROOT
+    project_dir = azd_project_dir(deploy, endpoint)
     existing = get_agent()
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
@@ -216,7 +249,7 @@ def ensure_hosted_agent(
         # Only an ambiguous project needs the azd environment to name the registry.
         try:
             azd_values = parse_azd_values(deploy.run_capture(
-                deploy.command_argv("azd", "env", "get-values", "--environment", AZD_ENVIRONMENT), cwd=root,
+                deploy.command_argv("azd", "env", "get-values", "--environment", AZD_ENVIRONMENT), cwd=project_dir,
             ))
             registry = registry_name(connections, override, azd_values)
         except (RuntimeError, deploy.DeployError) as error:
@@ -263,18 +296,19 @@ def ensure_hosted_agent(
         if digest is None:
             raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
 
-    _ensure_azd_login(deploy, tenant)
-    if AZD_ENVIRONMENT not in _azd_environment_names(deploy):
+    ensure_azd_ready(deploy, tenant)
+    if AZD_ENVIRONMENT not in _azd_environment_names(deploy, project_dir):
         _create_azd_environment(
-            deploy, project_id=project_id, endpoint=endpoint, tenant=tenant, registry=registry,
-            subscription=subscription, connections=connections,
+            deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,
+            registry=registry, subscription=subscription, connections=connections,
         )
     for key, value in {**environment, "HYDRO_ORCHESTRATOR_IMAGE": f"{registry}.azurecr.io/{IMAGE_REPOSITORY}@{digest}"}.items():
         deploy.run_capture(
-            deploy.command_argv("azd", "env", "set", key, value, "--environment", AZD_ENVIRONMENT), cwd=root,
+            deploy.command_argv("azd", "env", "set", key, value, "--environment", AZD_ENVIRONMENT), cwd=project_dir,
         )
     deploy.run_stream(
-        deploy.command_argv("azd", "deploy", AGENT_NAME, "--environment", AZD_ENVIRONMENT, "--no-prompt"), cwd=root,
+        deploy.command_argv("azd", "deploy", AGENT_NAME, "--environment", AZD_ENVIRONMENT, "--no-prompt"),
+        cwd=project_dir,
     )
 
     deadline = time.monotonic() + ACTIVATION_TIMEOUT_S
@@ -292,9 +326,9 @@ def ensure_hosted_agent(
         sleep(ACTIVATION_POLL_S)
 
 
-def _azd_environment_names(deploy) -> set[str]:
+def _azd_environment_names(deploy, project_dir: Path) -> set[str]:
     listing = json.loads(deploy.run_capture(
-        deploy.command_argv("azd", "env", "list", "--output", "json"), cwd=deploy.REPO_ROOT,
+        deploy.command_argv("azd", "env", "list", "--output", "json"), cwd=project_dir,
     ) or "[]")
     return {str(item.get("Name") or item.get("name")) for item in listing if isinstance(item, dict)}
 
@@ -314,19 +348,29 @@ def _registry_digest(deploy, registry: str, subscription: str, tag: str) -> str 
     return digest
 
 
-def _ensure_azd_login(deploy, tenant: str) -> None:
+def ensure_azd_ready(deploy, tenant: str) -> None:
+    """azd must be signed in and carry the Foundry extensions azure.yaml requires; install what is missing."""
     try:
         deploy.run_capture(deploy.command_argv("azd", "auth", "login", "--check-status"))
     except deploy.DeployError:
         print("azd is not signed in; opening sign-in for the target tenant.", flush=True)
         deploy.run_stream(deploy.command_argv("azd", "auth", "login", "--tenant-id", tenant))
+    listing = json.loads(deploy.run_capture(
+        deploy.command_argv("azd", "extension", "list", "--installed", "--output", "json"),
+    ) or "[]")
+    installed = {str(item.get("id")) for item in listing if isinstance(item, dict)}
+    for extension in REQUIRED_EXTENSIONS:
+        if extension not in installed:
+            print(f"Installing the azd extension {extension}.", flush=True)
+            deploy.run_stream(deploy.command_argv("azd", "extension", "install", extension))
 
 
 def _create_azd_environment(
-    deploy, *, project_id: str, endpoint: str, tenant: str, registry: str, subscription: str, connections: list[dict],
+    deploy, *, project_dir: Path, project_id: str, endpoint: str, tenant: str, registry: str, subscription: str,
+    connections: list[dict],
 ) -> None:
     """First deploy on this machine: create the azd environment from the live project (the folder is git-ignored)."""
-    root = deploy.REPO_ROOT
+    root = project_dir
     location = deploy.run_capture(deploy.az(
         "resource", "show", "--ids", project_id, "--api-version", "2025-06-01", "--query", "location", "-o", "tsv",
     ))

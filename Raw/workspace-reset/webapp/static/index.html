@@ -74,6 +74,13 @@
   input:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); background:#0c1531; }
   input:disabled { opacity:.45; cursor:not-allowed; }
   input[type=checkbox] { width:18px; height:18px; accent-color:var(--primary); }
+  select { background:var(--field); border:1px solid var(--border); color:var(--text); border-radius:10px; padding:.62rem .78rem;
+    font-size:.92rem; font-weight:400; text-transform:none; letter-spacing:normal; width:100%; min-width:0; }
+  select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.28); }
+  .foundry-block { margin-top:1.15rem; padding-top:1rem; border-top:1px solid var(--border); }
+  .foundry-block > strong { display:block; margin-bottom:.2rem; color:#fff; }
+  .foundry-block > .hint { margin:.1rem 0 .85rem; }
+  .foundry-block label.check { margin-top:.85rem; align-items:flex-start; }
   .card.danger input[type=checkbox] { accent-color:var(--destructive); }
 
   /* buttons */
@@ -363,10 +370,34 @@
           <div id="workflowPipelineFields" class="params"><p class="phelp">Loading parameters&hellip;</p></div>
         </section>
         <section class="workflow-config-section" aria-labelledby="workflowDeployHeading">
-          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Fabric app deployment</strong><span>The deployer discovers the tenant SPA automatically unless you provide its verified client ID.</span></div></div>
+          <div class="workflow-config-head"><div><strong id="workflowDeployHeading">3. Fabric app deployment</strong><span>The deployer discovers the tenant SPA automatically unless you provide its verified client ID. It also converges the Foundry agents and Hosted Agent.</span></div></div>
           <div class="grid">
             <label>SPA client id (optional)
               <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+          </div>
+          <div class="foundry-block">
+            <strong>Foundry (agents and Hosted Agent)</strong>
+            <p class="hint">All fields are optional; blank values are discovered. Requires the Azure Developer CLI (<code>azd</code>).</p>
+            <div class="grid">
+              <label>Foundry project endpoint
+                <input id="workflowFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+              <label>Model deployment
+                <input id="workflowFoundryModel" type="text" placeholder="gpt-5.6-sol" /></label>
+              <label>Container registry
+                <input id="workflowAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
+              <label>Work-order writes
+                <select id="workflowProductionWrites">
+                  <option value="">Keep the current setting (default)</option>
+                  <option value="true">Enabled (every write needs human approval)</option>
+                  <option value="false">Disabled</option>
+                </select></label>
+            </div>
+            <label class="check"><input id="workflowFoundryCreate" type="checkbox" />
+              <span>Create the Foundry project if none exists. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights.</span></label>
+            <div class="grid" style="margin-top:.85rem">
+              <label>Region for the new project (only when creating)
+                <input id="workflowFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+            </div>
           </div>
         </section>
       </div>
@@ -445,6 +476,30 @@
       <div class="grid">
         <label>SPA client id (optional)
           <input id="deployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+      </div>
+      <div class="foundry-block">
+        <strong>Foundry (agents and Hosted Agent)</strong>
+        <p class="hint">Every deploy also converges the Foundry side: connections, the four specialist agents and the <code>hydro-orchestrator</code> Hosted Agent (image built in ACR only when the source changed). All fields are optional; blank values are discovered. Requires the Azure Developer CLI (<code>azd</code>); its Foundry extensions are installed for you.</p>
+        <div class="grid">
+          <label>Foundry project endpoint
+            <input id="deployFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
+          <label>Model deployment
+            <input id="deployFoundryModel" type="text" placeholder="gpt-5.6-sol" /></label>
+          <label>Container registry
+            <input id="deployAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
+          <label>Work-order writes
+            <select id="deployProductionWrites">
+              <option value="">Keep the current setting (default)</option>
+              <option value="true">Enabled (every write needs human approval)</option>
+              <option value="false">Disabled</option>
+            </select></label>
+        </div>
+        <label class="check"><input id="deployFoundryCreate" type="checkbox" />
+          <span>Create the Foundry project if none exists. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights.</span></label>
+        <div class="grid" style="margin-top:.85rem">
+          <label>Region for the new project (only when creating)
+            <input id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+        </div>
       </div>
       <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
@@ -822,12 +877,30 @@ $("deleteBtn").addEventListener("click", async () => {
   }, $("deletePanel"), () => { $("confirmText").value = ""; refresh(); });
 });
 
+// Foundry settings of one deploy form (`deploy` or `workflow`); each form submits only its own fields.
+function foundryPayload(prefix) {
+  const value = (suffix) => $(prefix + suffix).value.trim();
+  return {
+    foundryEndpoint: value("FoundryEndpoint"),
+    foundryModel: value("FoundryModel"),
+    acrName: value("AcrName"),
+    foundryLocation: $(prefix + "FoundryCreate").checked ? value("FoundryLocation") : "",
+    productionWrites: value("ProductionWrites"),
+    createFoundry: $(prefix + "FoundryCreate").checked,
+  };
+}
+for (const prefix of ["deploy", "workflow"]) {
+  const create = $(prefix + "FoundryCreate");
+  create.addEventListener("change", () => { $(prefix + "FoundryLocation").disabled = !create.checked; });
+}
+
 $("deployBtn").addEventListener("click", async () => {
   $("deployBtn").disabled = true;
   await runJob("/api/deploy-app", {
     tenant: $("tenant").value,
     workspace: $("workspace").value,
     clientId: $("deployClientId").value,
+    ...foundryPayload("deploy"),
   }, $("deployPanel"), () => refresh());
 });
 
@@ -845,6 +918,7 @@ $("workflowBtn").addEventListener("click", async () => {
     pipeline: "01_Pipe_Setup",
     parameters: collectPipelineParams("wf_pp_"),
     clientId: $("workflowDeployClientId").value,
+    ...foundryPayload("workflow"),
   }, $("workflowPanel"), () => { $("workflowPat").value = ""; refresh(); });
 });
 
