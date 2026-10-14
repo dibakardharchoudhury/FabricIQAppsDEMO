@@ -114,7 +114,8 @@ function streamedExecutionEvent(value: unknown): OrchestrationEvent {
 }
 
 export class HostedTransport {
-  private sessionId = crypto.randomUUID()
+  private sessionId: string
+  private readonly sessionKey: string | undefined
   private running = false
   private inFlight = 0
   private readonly endpoint: URL
@@ -124,12 +125,14 @@ export class HostedTransport {
   private readonly streamLivenessMs: number
   private previousRunId: string | undefined
   private interruptedRunId: string | undefined
+  private warmed = false
 
   constructor(
     projectEndpoint: string, invocationUrl: string, source: HostedSource,
     credentials: () => Promise<SourceTokens>,
     fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init),
     streamLivenessMs = 45_000,
+    sessionScope?: string,
   ) {
     const project = new URL(projectEndpoint)
     const endpoint = new URL(invocationUrl)
@@ -150,13 +153,51 @@ export class HostedTransport {
     this.credentials = credentials
     this.fetcher = fetcher
     this.streamLivenessMs = streamLivenessMs
+    // Only an opaque container-session id is kept (per tab and engine) so a reload reuses the warm hosted container.
+    // No answer, telemetry, token or other analytical data is ever stored.
+    this.sessionKey = sessionScope ? `hydro.hosted.session.${sessionScope}` : undefined
+    this.sessionId = this.restoreSession() ?? this.newSession()
+  }
+
+  private restoreSession(): string | undefined {
+    if (!this.sessionKey) return undefined
+    try {
+      const stored = globalThis.sessionStorage?.getItem(this.sessionKey)
+      return stored && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(stored) ? stored : undefined
+    } catch { return undefined }
+  }
+
+  private newSession(): string {
+    const id = crypto.randomUUID()
+    if (this.sessionKey) {
+      try { globalThis.sessionStorage?.setItem(this.sessionKey, id) } catch { /* storage is optional */ }
+    }
+    return id
   }
 
   reset() {
     if (this.running || this.inFlight) throw new Error('Wait for the hosted request before resetting the conversation.')
-    this.sessionId = crypto.randomUUID()
+    this.sessionId = this.newSession()
+    this.warmed = false
     this.previousRunId = undefined
     this.interruptedRunId = undefined
+  }
+
+  /** Boots the hosted container for this session before the first question. The backend rejects the empty body
+   *  immediately, so no tokens are sent and no work runs; only the cold start is absorbed. */
+  async warm(): Promise<void> {
+    if (this.warmed || this.running || this.inFlight) return
+    this.warmed = true
+    try {
+      const token = (await this.credentials()).foundry
+      if (typeof token !== 'string' || !token) { this.warmed = false; return }
+      const endpoint = new URL(this.endpoint)
+      endpoint.searchParams.set('agent_session_id', this.sessionId)
+      await this.fetcher(endpoint, {
+        method: 'POST', redirect: 'error', cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
+      })
+    } catch { this.warmed = false }
   }
 
   private async invoke(

@@ -62,6 +62,69 @@ test('thin transport preserves backend output, renews leases and keeps session a
   assert.notEqual(calls[0].url.searchParams.get('agent_session_id'), calls[3].url.searchParams.get('agent_session_id'))
 })
 
+test('warm-up boots the session container without tokens, work or repeats, and is retried after failure', async () => {
+  const calls: Array<{ url: URL; body: string; auth: string }> = []
+  let failNext = false
+  const client = new HostedTransport(project, endpoint, source, async () => tokens(), async (input, init) => {
+    calls.push({ url: new URL(String(input)), body: String(init?.body),
+      auth: String((init?.headers as Record<string, string>).Authorization) })
+    if (failNext) throw new Error('network')
+    return response({ detail: 'Invalid invocation body.' }, 422)
+  })
+  await client.warm()
+  await client.warm()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].body, '{}')
+  assert.equal(calls[0].auth, 'Bearer test-foundry')
+  assert.doesNotMatch(JSON.stringify(calls[0]), /test-fabric|test-graphql|test-kusto/)
+  await client.run({ question: 'Real request.' }).catch(() => undefined)
+  assert.equal(calls[0].url.searchParams.get('agent_session_id'), calls[1].url.searchParams.get('agent_session_id'))
+  client.reset()
+  failNext = true
+  await client.warm()
+  failNext = false
+  await client.warm()
+  assert.equal(calls.length, 4)
+  assert.notEqual(calls[0].url.searchParams.get('agent_session_id'), calls[3].url.searchParams.get('agent_session_id'))
+})
+
+test('the container session id (only) is reused within a tab and engine, and replaced by reset', async () => {
+  const store = new Map<string, string>()
+  const original = globalThis.sessionStorage
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: {
+    getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value),
+  } })
+  const sessions: string[] = []
+  const make = (scope?: string) => new HostedTransport(project, endpoint, source, async () => tokens(), async input => {
+    sessions.push(new URL(String(input)).searchParams.get('agent_session_id') ?? '')
+    return response(reply())
+  }, undefined, scope)
+  try {
+    await make('foundry').run({ question: 'One.' })
+    await make('foundry').run({ question: 'Two after reload.' })
+    await make('data-agent').run({ question: 'Other engine.' })
+    assert.equal(sessions[0], sessions[1])
+    assert.notEqual(sessions[0], sessions[2])
+    const client = make('foundry')
+    client.reset()
+    await client.run({ question: 'Fresh chat.' })
+    assert.notEqual(sessions[1], sessions[3])
+    assert.deepEqual([...store.keys()].sort(), ['hydro.hosted.session.data-agent', 'hydro.hosted.session.foundry'])
+    assert.ok([...store.values()].every(value => /^[0-9a-f-]{36}$/.test(value)))
+    store.set('hydro.hosted.session.foundry', 'tampered value')
+    await make('foundry').run({ question: 'Invalid stored id is replaced.' })
+    assert.match(sessions[4], /^[0-9a-f-]{36}$/)
+    const unscoped = new HostedTransport(project, endpoint, source, async () => tokens(), async input => {
+      sessions.push(new URL(String(input)).searchParams.get('agent_session_id') ?? '')
+      return response(reply())
+    })
+    await unscoped.run({ question: 'No persistence without a scope.' })
+    assert.equal(store.size, 2)
+  } finally {
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: original })
+  }
+})
+
 test('streaming transport paints only backend execution events and returns the certified final answer', async () => {
   const snapshots: Array<Array<{ id: string; status: string }>> = []
   let body: Record<string, unknown> | undefined

@@ -59,10 +59,15 @@ function hostedClient(engine: 'foundry' | 'data-agent') {
           throw new Error('The selected Foundry project changed. Request fresh evidence before approving work.')
         }
         return (await import('../fabric.ts')).hostedSourceTokens()
-      }) }
+      }, undefined, undefined, engine) }
     clients.set(engine, cached)
   }
   return cached.client
+}
+
+/** Absorbs the hosted container's cold start while the operator is still reading or typing. */
+export function warmHostedCopilot(engine: 'foundry' | 'data-agent' = 'foundry') {
+  try { void hostedClient(engine).warm() } catch { /* an unconfigured or unauthenticated deployment simply is not warmed */ }
 }
 
 export async function askHostedCopilot(

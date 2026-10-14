@@ -372,6 +372,19 @@ facility instances, and a correct standalone native Data Agent hottest-five resu
 Foundry's HOT request still failed on model-generated KQL. The later user-reported
 BAD-today and `let` failures are not covered by those successful cases.
 
+### Latency design
+
+- **One persistent Node source worker** serves every contract and source call in the hosted container (about
+  0.7 ms per call after a one-off 0.4 s start, instead of a new process per call), and source-identity
+  verification is memoized for 60 s per configuration and token. Nothing analytical is cached.
+- **Container warm-up.** Opening Hydro Intelligence sends one token-less request that the backend rejects
+  immediately; it only boots the hosted session container (about 18 s cold) while the operator reads or types.
+  The browser keeps just the opaque session id per tab and engine, so a reload reuses the warm container.
+- **Tokens** are reused from the Entra cache while they outlive the bounded run (12 minutes) instead of being
+  force-refreshed for every question.
+- **Specialists run `gpt-5.6-sol` at low reasoning effort**, which was faster than `gpt-5-mini` in measured
+  tool-selection steps and avoids its redundant parallel calls.
+
 ### Grounded briefing (reasoning, justification, recommendations)
 
 After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the

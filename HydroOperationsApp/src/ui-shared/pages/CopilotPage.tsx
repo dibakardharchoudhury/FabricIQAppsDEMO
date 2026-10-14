@@ -1,5 +1,6 @@
-import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
 import { CopilotExperience } from '../../components/CopilotExperience'
+import { warmHostedCopilot } from '../../services/copilot/foundry'
 import { isAgentBattleEnabled, subscribeCopilotSettings } from '../../services/copilot/settings'
 import { useHydroOperationsData } from '../hooks/useHydroOperationsData'
 
@@ -10,6 +11,13 @@ export function CopilotPage() {
   const battleEnabled = useSyncExternalStore(subscribeCopilotSettings, isAgentBattleEnabled, isAgentBattleEnabled)
   const [view, setView] = useState<'chat' | 'battle'>('chat')
   const battleActive = battleEnabled && view === 'battle'
+  const foundryAvailable = data.foundryAvailable
+
+  useEffect(() => {
+    if (!foundryAvailable) return
+    warmHostedCopilot('foundry')
+    if (battleActive) warmHostedCopilot('data-agent')
+  }, [foundryAvailable, battleActive])
 
   if (battleActive) {
     return <Suspense fallback={<div className="v2-page-loading"><span />Loading agent comparison…</div>}>
