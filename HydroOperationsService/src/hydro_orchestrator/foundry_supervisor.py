@@ -911,6 +911,7 @@ Root-cause analysis. When the input has root_cause_evidence the operator asked f
 - Read the pattern before naming a cause. One signal affected while the equipment's other signals stay GOOD points to that instrument or its wiring. Several signals of one equipment degrading in the same hours point to communication, ingestion or a shared cause. The share of samples that are bad or uncertain, hours_with_bad against hours_with_data (persistent, intermittent or a single burst), and last_bad_time against now_utc (still happening or stopped) tell you how serious and how current it is. Stable GOOD readings inside a plausible range support an instrumentation problem; erratic or drifting GOOD readings point to a process or equipment cause. Existing inspections and notifications on the same equipment or signal either support or contradict a hypothesis: cite them. Open work in open_work_by_equipment says whether it is already being handled.
 - "probable_causes": per affected equipment, one to three competing explanations ranked from most to least likely, each with a category (instrument_or_sensor, communication_or_ingestion, operating_conditions, equipment_condition or insufficient_evidence), a likelihood (High, Medium or Low) judged from the pattern above, the evidence for it (and against it where something contradicts it) citing the actual counts, times and records, and what measurement or inspection would confirm or rule it out. Use insufficient_evidence when the data cannot separate the explanations, and say what is missing.
 - Use compatible_spare_parts to say whether a replacement part is in stock (quantityOnHand against reorderLevel) and where it is kept, and put that in the recommendation for the equipment. A work-order recommendation for an RCA should name the signal, the suspected cause and the first check.
+- When you recommend creating work orders for more equipment than there are staged_drafts, say that only the staged draft exists and that the operator can ask for a draft for each of the others by name.
 - The "answer" for an RCA names the most probable cause per affected equipment in plain language and what to do about it.
 
 Hard rules:
@@ -2364,6 +2365,15 @@ class FoundrySupervisor:
                 "reinterpret the original alias. Empty means the operator supplied no explicit identity mention."
             ),
             "selected_equipment_ids": sorted(self.selected_equipment_ids),
+            "root_cause_scope": (
+                {
+                    "equipment_ids": scope["equipment_ids"],
+                    "policy": "These are the affected equipment. Their 48-hour signal-quality history, inspections, "
+                              "maintenance notifications and spare-part stock are already in evidence: cite those "
+                              "receipts and read more only for these same equipment. Do not investigate any other "
+                              "equipment.",
+                } if role == "rca" and (scope := journal.read("root_cause_scope")) and scope["equipment_ids"] else None
+            ),
             "selected_equipment_policy": (
                 "When nonempty, these IDs are the backend-computed focus selected from verified source evidence "
                 "using the operator's metric and tie-break rule. Restrict this dependent assignment and any draft "
@@ -3061,29 +3071,45 @@ class FoundrySupervisor:
                     }
         return {equipment: list(orders.values()) for equipment, orders in sorted(found.items())}
 
-    def affected_equipment_ids(self) -> list[str]:
-        found = set(self.selected_equipment_ids)
-        for receipt in self.evidence.values():
-            if receipt.tool not in ("query_signal_quality_snapshot", "query_turbine_temperature_snapshot"):
-                continue
-            rows = receipt.result.get("rows")
-            for row in rows if isinstance(rows, list) else ():
-                equipment = row.get("equipment_id") if isinstance(row, dict) else None
-                if isinstance(equipment, str) and equipment:
-                    found.add(equipment)
-        return sorted(found)[:RCA_MAX_EQUIPMENT]
+    def root_cause_scope(self, request: ChatRequest, journal: RunJournal) -> dict[str, object]:
+        """The equipment an RCA covers, fixed once per run: the equipment behind the requested signal-quality or
+        temperature evidence, else the selected or named equipment. Journaled so every later stage agrees."""
+        saved = journal.read("root_cause_scope")
+        if saved is not None:
+            return saved
+        tools = {
+            ANALYTICAL_POPULATION_TOOLS[kind] for kind in request.required_evidence_kinds
+            if kind in ("signal_quality", "temperature")
+        }
+        found: set[str] = set()
+        if tools:
+            for receipt in self.evidence.values():
+                rows = receipt.result.get("rows")
+                if receipt.tool in tools and isinstance(rows, list):
+                    found.update(
+                        row["equipment_id"] for row in rows
+                        if isinstance(row, dict) and isinstance(row.get("equipment_id"), str) and row["equipment_id"]
+                    )
+        else:
+            found = set(self.selected_equipment_ids) | initial_equipment_selection(request)
+        ordered = sorted(found)
+        scope: dict[str, object] = {"equipment_ids": ordered[:RCA_MAX_EQUIPMENT], "omitted": max(0, len(ordered) - RCA_MAX_EQUIPMENT)}
+        journal.save("root_cause_scope", scope)
+        return scope
 
     async def root_cause_evidence(self, request: ChatRequest, journal: RunJournal) -> dict[str, object] | None:
-        """The history an RCA needs, read once per run for the affected equipment: every signal's quality over the
-        window, inspections, maintenance notifications and compatible spare parts. Enrichment only: a source that
-        cannot be read is reported to the briefing instead of being treated as empty."""
-        if not any(item.role == "rca" for item in self.specialists):
-            return None
-        equipment_ids = self.affected_equipment_ids()
+        """The history an RCA needs, read once per run (journaled) for the scoped equipment: every signal's quality
+        over the window, inspections, maintenance notifications and compatible spare parts. The receipts are
+        published so the specialists can cite them. A source that cannot be read is reported instead of being
+        treated as empty."""
+        scope = self.root_cause_scope(request, journal)
+        equipment_ids = cast(list[str], scope["equipment_ids"])
         if not equipment_ids:
             return None
         catalog = SourceCatalog.model_validate(journal.read("tool_catalog"))
         unavailable: list[str] = []
+        if scope["omitted"]:
+            unavailable.append(f"{scope['omitted']} further affected equipment were not analysed in detail.")
 
         async def read(label: str, name: str, arguments: dict[str, object], kind: str) -> list[dict[str, object]]:
             try:
@@ -3092,6 +3118,10 @@ class FoundrySupervisor:
                 logger.warning("Root-cause %s read was unavailable: %s", label, error)
                 unavailable.append(f"{label} could not be read for this analysis.")
                 return []
+            prior = self.evidence.get(receipt.id)
+            if prior is not None and prior != receipt:
+                raise SourceFailure("Evidence identity was reused for a different source result.")
+            self.evidence[receipt.id] = receipt
             rows = receipt.result.get("rows")
             if receipt.result.get("truncated") is not False or not isinstance(rows, list):
                 unavailable.append(f"{label} output was truncated or incomplete.")
@@ -3241,7 +3271,10 @@ class FoundrySupervisor:
             return AnalysisReport.model_validate(saved["analysis"])
         if not self.analysis_model or not answer.tables:
             return None
-        root_cause = await self.root_cause_evidence(request, journal)
+        root_cause = (
+            await self.root_cause_evidence(request, journal)
+            if any(item.role == "rca" for item in self.specialists) else None
+        )
         context_text = json.dumps(
             self.analysis_context(request, answer, root_cause), sort_keys=True, default=str, ensure_ascii=False,
         )
@@ -3754,6 +3787,9 @@ class FoundrySupervisor:
                             agent_name="hydro-orchestrator", trace=list(owner.chief_trace),
                         )
                     else:
+                        root_cause_scope: list[str] = []
+                        if delegation.specialist == "rca" and await owner.root_cause_evidence(request, journal) is not None:
+                            root_cause_scope = cast(list[str], owner.root_cause_scope(request, journal)["equipment_ids"])
                         prior_evidence_ids = set(owner.evidence)
                         maintenance_gate_required = (
                             delegation.specialist == "rca"
@@ -3778,6 +3814,7 @@ class FoundrySupervisor:
                         owner.selected_equipment_ids = (
                             set(deterministic)
                             if request.equipment_selection is not None
+                            else set(root_cause_scope) if root_cause_scope
                             else updated_equipment_selection(
                                 set(owner.selected_equipment_ids),
                                 grounded_ids,

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -248,6 +249,7 @@ def rca_specialist():
 class RootCauseEvidenceTests(AnalysisHarness):
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        self.request = self.request.model_copy(update={"required_evidence_kinds": ("signal_quality",)})
         self.journal.save("tool_catalog", await self.owner.bridge.call({"action": "source_contracts"}))
         self.owner.specialists = [rca_specialist()]
         self.calls = []
@@ -258,8 +260,9 @@ class RootCauseEvidenceTests(AnalysisHarness):
         self.owner.tools.execute = AsyncMock(side_effect=self.read)
 
     def evidence_for(self, tool, arguments, rows):
+        digest = hashlib.sha256(json.dumps([tool, arguments], sort_keys=True).encode()).hexdigest()[:12]
         return ToolEvidence(
-            id=f"{tool}-{len(rows)}", source=SOURCE, tool=tool, arguments=arguments, completed_at=utc_now(),
+            id=f"{tool}-{digest}", source=SOURCE, tool=tool, arguments=arguments, completed_at=utc_now(),
             result={"rows": rows, "truncated": False}, datasets=(),
         )
 
@@ -327,13 +330,34 @@ class RootCauseEvidenceTests(AnalysisHarness):
         self.assertEqual(context["equipment"][0]["inspections"], [])
         self.assertTrue(context["equipment"][0]["compatible_spare_parts"])
 
-    async def test_no_root_cause_reads_without_an_rca_specialist_or_affected_equipment(self):
-        self.owner.specialists = []
-        self.assertIsNone(await self.owner.root_cause_evidence(self.request, self.journal))
-        self.owner.specialists = [rca_specialist()]
+    async def test_no_root_cause_reads_without_affected_equipment(self):
         self.owner.evidence = {}
-        self.assertIsNone(await self.owner.root_cause_evidence(self.request, self.journal))
+        journal = RunJournal(self.root / "empty" / "receipts")
+        journal.save("tool_catalog", self.journal.read("tool_catalog"))
+        self.assertIsNone(await self.owner.root_cause_evidence(self.request, journal))
         self.assertEqual(self.calls, [])
+
+    async def test_scope_is_the_requested_bad_set_published_and_fixed_for_the_run(self):
+        broad = self.evidence_for("query_turbine_temperature_snapshot", {}, [
+            {"equipment_id": f"EQUIP_RTI_T{index:03d}", "opcua_node_id": f"ns=2;s=T{index:03d}.turbine_temp"}
+            for index in range(1, 12)
+        ])
+        self.owner.evidence["broad"] = broad
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T007"}
+        scope = self.owner.root_cause_scope(self.request, self.journal)
+        self.assertEqual(scope, {"equipment_ids": ["EQUIP_RTI_T014"], "omitted": 0})
+        self.owner.selected_equipment_ids = {"EQUIP_RTI_T003"}
+        self.assertEqual(self.owner.root_cause_scope(self.request, self.journal), scope)
+        await self.owner.root_cause_evidence(self.request, self.journal)
+        tools = {item.tool for item in self.owner.evidence.values()}
+        self.assertTrue({"query_assets", "query_operations", "query_telemetry"} <= tools)
+
+    async def test_scope_falls_back_to_the_named_equipment_and_caps_the_detail(self):
+        named = self.request.model_copy(update={"required_evidence_kinds": ()})
+        self.owner.selected_equipment_ids = {f"EQUIP_RTI_T{index:03d}" for index in range(1, 12)}
+        scope = self.owner.root_cause_scope(named, RunJournal(self.root / "named" / "receipts"))
+        self.assertEqual(len(scope["equipment_ids"]), 8)
+        self.assertEqual(scope["omitted"], 3)
 
     async def test_briefing_receives_the_history_and_its_probable_causes_are_grounded(self):
         self.answer.specialists = (rca_specialist(),)

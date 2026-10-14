@@ -423,7 +423,7 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
   if (intent.required_specialists.includes('rca')) {
     steps.push({
       specialist: 'rca',
-      question: 'Investigate the requested condition using only current verified receipts and clearly separate observations, hypotheses, and missing evidence.',
+      question: 'Investigate the requested condition for the equipment the verified evidence identifies. Use the supplied receipts first (signal-quality history, inspections, notifications, spare parts, open work), read more only for those same equipment, and clearly separate observations, hypotheses, and missing evidence.',
       reason: 'Perform the requested bounded source-referenced investigation.',
       native_source: null,
       requires_selection: selectedFocus,
