@@ -14,7 +14,6 @@ import type { CopilotEngine } from '../ui-shared/hooks/useHydroOperationsData'
 import { AnswerDashboard } from './AnswerDashboard'
 import { AgentVisualizationView } from './AgentVisualizationView'
 import { CopilotStreamCursor, CopilotThinking } from './CopilotThinking'
-import { VoiceInput } from './VoiceInput'
 import { useExpandedView } from '../ui-shared/hooks/useExpandedView'
 
 // Lazy so three.js / model-viewer only load when the agent actually renders a GLB.
@@ -144,7 +143,6 @@ export function CopilotExperience({ messages, busy, engine, foundryAvailable, ba
         {messages.length === 1 && <div className="v2-suggestions">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => send(prompt)}>{prompt}</button>)}</div>}
       </div>
       <footer><textarea ref={textareaRef} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="Ask about connected Fabric data" />
-        <VoiceInput key={messages.length} disabled={busy} resetKey={messages.length} onTranscript={text => setQuestion(current => `${current.trimEnd()} ${text}`.trimStart())} />
         <button type="button" title="Send" disabled={busy || !question.trim()} onClick={() => send()}><Send size={17} /></button></footer>
     </section>
   </div>

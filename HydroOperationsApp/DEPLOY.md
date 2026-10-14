@@ -537,17 +537,14 @@ Potential future specialists, **not provisioned by this change**: Evidence Verif
 Planning (outage windows, dependencies and skills), and Parts & Readiness (stock and
 work prerequisites). Authorization and approvals must remain code-enforced.
 
-### Voice input and presentation acceptance
+### Voice input removed
 
-Normal chat and Battle expose opt-in browser dictation. The notice explains that the
-browser vendor may process audio and that microphone permission is required. Final
-transcripts append to the editable input; interim speech is not sent. Sending remains
-an explicit action and voice never approves SQL work. No Speech resource, additional
-Entra scope or audio persistence is added. Unsupported/embedded browsers, policy or
-permission denials and speech-service failures display an explanation; typing remains
-available. Dictation is bounded to 60 seconds and cancelled on send/reset/unmount.
-This is browser-dependent dictation, not tenant-managed Azure Speech.
+Browser dictation (Web Speech API) was removed from normal chat and Battle: it depends on a browser-vendor speech
+service that is unreliable across browsers and networks, and a tenant speech-to-text model is not provisioned.
+Questions are typed. If voice returns, build it on a deployed Azure speech or transcription model with an
+authenticated backend endpoint rather than on the browser API.
 
+### Presentation acceptance
 Local validation for the subsequent correction passed 53 focused agent/presentation/
 consent/voice tests, 29 existing query/protocol tests, typecheck, lint and production
 build with the eager JavaScript below the 900 KB budget. An isolated synthetic browser

@@ -1141,8 +1141,7 @@ verification rather than inferring speed from reduced input construction.
     can be capacity-safe sequential or parallel. Recognized work-order requests use
     Foundry's approval flow on both sides, sequentially; that is **not** an independent
     Data Agent-versus-Foundry mutation comparison.
-16. **Voice:** opt-in dictation appends editable input. Manual Send is required.
-    Voice and typed acknowledgements never authorize SQL writes.
+16. **Voice:** removed (typed input only). Typed acknowledgements never authorize SQL writes.
 
 Open work excludes Completed/Cancelled. Exact signal/node/instrument matches are
 same-signal work; other open orders on the equipment remain equipment-level work.

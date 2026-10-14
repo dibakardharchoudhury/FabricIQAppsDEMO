@@ -2744,14 +2744,6 @@ button.v2-signal-row:hover,
 .v2-answer-raw { margin-top: 12px; font-size: 11px; }
 .v2-answer-raw summary { cursor: pointer; color: var(--cp-text-muted); }
 .v2-answer-raw pre { max-height: 240px; overflow: auto; }
-.voice-input { position: relative; display: flex; }
-.voice-input > button { width: 40px; min-height: 42px; display: grid; place-items: center; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--cp-accent-soft); color: var(--cp-accent-hover); cursor: pointer; }
-.voice-input > button.listening { background: var(--cp-danger); color: white; }
-.voice-input > button:disabled { opacity: .45; cursor: default; }
-.voice-input-notice { position: absolute; z-index: 5; right: 0; bottom: calc(100% + 8px); width: min(360px, 72vw); padding: 12px; border: 1px solid var(--cp-border); border-radius: 9px; background: var(--cp-surface); box-shadow: var(--cp-shadow-card); color: var(--cp-text); font-size: 11px; line-height: 1.5; }
-.voice-input-notice p { margin: 0 0 8px; }
-.voice-input-notice button { padding: 7px 10px; border: 0; border-radius: 6px; background: var(--cp-accent-hover); color: white; cursor: pointer; }
-.voice-input-error { color: var(--cp-danger); }
 .v2-answer-table { overflow-x: auto; margin-top: .8rem; }
 .v2-answer-table table { border-collapse: collapse; width: 100%; }
 .v2-answer-table { max-height: 26rem; border: 1px solid var(--cp-border, #ccd5df); border-radius: 8px; }
