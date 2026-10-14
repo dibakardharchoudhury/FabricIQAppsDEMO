@@ -793,6 +793,81 @@ class NarrativeProjection(Contract):
     chart_indexes: tuple[int, ...] = Field(max_length=4)
 
 
+AnalysisAction = Literal["create_work_order", "covered_by_open_work", "monitor", "no_action", "needs_clarification"]
+ANALYSIS_ID_PATTERN = re.compile(r"\b(?:EQUIP_RTI_[A-Z0-9_]+|FACILITY_RTI_\d+|INST_[A-Z0-9_]+|WO-\d+|T\d{3})\b")
+ANALYSIS_DECIMAL_PATTERN = re.compile(r"(?<![\w.])-?\d+\.\d+(?!\w|\.\d)")
+ANALYSIS_TIMEOUT_SECONDS = 90.0
+ANALYSIS_MAX_ROWS_PER_TABLE = 80
+CLOSED_WORK_STATUSES = frozenset({"completed", "cancelled", "canceled", "closed"})
+
+
+class AnalysisRecommendation(Contract):
+    action: AnalysisAction
+    equipment_id: str | None = Field(default=None, max_length=80)
+    priority: Literal["Low", "Medium", "High", "Critical"] | None = None
+    title: str = Field(min_length=1, max_length=200)
+    justification: str = Field(min_length=1, max_length=700)
+
+
+class AnalysisReport(Contract):
+    answer: str = Field(min_length=1, max_length=800)
+    findings: tuple[str, ...] = Field(max_length=8)
+    reasoning: tuple[str, ...] = Field(max_length=6)
+    recommendations: tuple[AnalysisRecommendation, ...] = Field(max_length=8)
+    caveats: tuple[str, ...] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def bounded_text(self) -> "AnalysisReport":
+        if any(len(item) > 700 for item in (*self.findings, *self.reasoning, *self.caveats)):
+            raise ValueError("Analysis statements must stay concise.")
+        for item in self.recommendations:
+            if item.action == "create_work_order" and (not item.equipment_id or item.priority is None):
+                raise ValueError("A work-order recommendation requires an equipment identity and a priority.")
+        return self
+
+
+ANALYSIS_SCHEMA: dict[str, object] = {
+    "type": "object", "additionalProperties": False,
+    "required": ["answer", "findings", "reasoning", "recommendations", "caveats"],
+    "properties": {
+        "answer": {"type": "string"},
+        "findings": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "array", "items": {"type": "string"}},
+        "recommendations": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["action", "equipment_id", "priority", "title", "justification"],
+            "properties": {
+                "action": {"type": "string", "enum": [
+                    "create_work_order", "covered_by_open_work", "monitor", "no_action", "needs_clarification"]},
+                "equipment_id": {"type": ["string", "null"]},
+                "priority": {"type": ["string", "null"], "enum": ["Low", "Medium", "High", "Critical", None]},
+                "title": {"type": "string"},
+                "justification": {"type": "string"},
+            },
+        }},
+        "caveats": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+ANALYST_INSTRUCTIONS = """You are the Hydro Operations Supervisor writing the operator's final briefing for a hydropower fleet.
+The JSON input holds the operator's question, the verified datasets already retrieved for it, the open work orders per equipment, specialist notes, any staged draft and source limitations. It is your only source of facts.
+
+Write like a senior maintenance planner briefing a colleague: direct, specific, reasoned.
+- "answer": one to three sentences that answer the operator's actual question first. Name the equipment, work-order numbers and key values. State plainly when the answer is "none" or "nothing needs doing".
+- "findings": the concrete facts that matter, each citing equipment IDs, signal names, work-order numbers and source values (with units and timestamps where supplied). Prefer a short ranked list over restating whole tables.
+- "reasoning": explain HOW you got from the data to the answer. For a question about which work orders to open or create, compare every affected equipment (BAD signal quality, highest temperatures, whatever the question targets) with open_work_by_equipment. Say which equipment is already covered and by which work order, judging from its title, status and priority whether it plausibly addresses the concern, and which has no cover. Say why a gap matters now.
+- "recommendations": one entry per equipment or decision. Use create_work_order only for a verified gap with no plausibly covering open work (priority required, equipment_id required). Use covered_by_open_work when an open work order already addresses it and cite that number in the justification. Use monitor when evidence is thin, stale or only a single weak signal. Use no_action when nothing is wrong. Use needs_clarification when identity or scope is ambiguous. Give each a short actionable title (for a work order a ready-to-use inspection title) and a justification that cites the evidence. Set priority relative to the evidence (multiple affected signals, hottest-ranked, no cover, stale data) and say that the priority is a suggestion for the operator to adjust.
+- If a draft is staged (staged_drafts), say which equipment it targets, why it is justified, and tell the operator to review and approve it in the card below. Never claim it was created.
+- "caveats": only real limits that change how far the operator can trust the conclusion (stale readings, truncated rows, missing sources, specialist limitations). Do not pad.
+
+Hard rules:
+- Use only identifiers, numbers, timestamps and statuses that appear in the input. Quote values exactly; never compute averages, sums or new numbers except simple counts of listed items. Never invent equipment, signals, work-order numbers, thresholds, limits, baselines, probabilities or confidence figures.
+- BAD or UNCERTAIN is a signal-quality state, not proof of a physical fault. Recommend verifying or inspecting the signal or instrument and its equipment; never state a cause, a failure or a repair. Cause remains undetermined unless the specialist notes establish otherwise.
+- Say if a table has more rows than shown. Treat specialist prose as unverified notes; only the datasets are verified facts.
+- You write advice only. Nothing is created or approved by you, and production writes are never executed.
+- Be concise: no filler, no restating the question, no markdown, no tables (they are shown separately)."""
+
+
 class SpecialistResult(Contract):
     role: Role
     agent_name: str
@@ -821,6 +896,7 @@ class ChatAnswer(Contract):
     proposal_digests: dict[str, str] = Field(default_factory=dict)
     production_write_executed: Literal[False] = False
     presentation: ClientPresentation | None = None
+    analysis: AnalysisReport | None = None
 
 
 class ProjectionReceipt(Contract):
@@ -1216,11 +1292,12 @@ class FoundrySupervisor:
     def __init__(
         self, endpoint: str, credential: AsyncTokenCredential, bridge: Bridge,
         tools: BackendTools, source: SourceIdentity, root: Path, *, max_delegations: int = 10,
-        native_binding: NativeBinding | None = None,
+        native_binding: NativeBinding | None = None, analysis_model: str | None = None,
     ):
         if not 1 <= max_delegations <= 20:
             raise ValueError("Delegation budget must be between 1 and 20.")
         self.endpoint, self.credential, self.bridge = verified_project_endpoint(endpoint), credential, bridge
+        self.analysis_model = (analysis_model or "").strip() or None
         self.tools, self.source, self.root = tools, source, root
         self.max_delegations = max_delegations
         if native_binding is not None and native_binding.source != source:
@@ -2825,7 +2902,155 @@ class FoundrySupervisor:
             limitations=tuple(limitations[:20]),
         )
 
-    def answer(self, request: ChatRequest, plan: AnswerPlan, *, use_projected_summary: bool = False) -> ChatAnswer:
+    def open_work_by_equipment(self) -> dict[str, list[dict[str, object]]]:
+        found: dict[str, dict[str, dict[str, object]]] = {}
+        for receipt in self.evidence.values():
+            for key in ("rows", "open_work_orders", "existing_work"):
+                rows = receipt.result.get(key)
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    number = row.get("workOrderNumber", row.get("work_order_number"))
+                    equipment = row.get("equipmentId", row.get("equipment_id"))
+                    if not isinstance(number, str) or not isinstance(equipment, str):
+                        continue
+                    if str(row.get("status", "")).strip().lower() in CLOSED_WORK_STATUSES:
+                        continue
+                    found.setdefault(equipment, {})[number] = {
+                        "work_order": number, "title": row.get("title"), "priority": row.get("priority"),
+                        "status": row.get("status"), "instrument": row.get("instrumentId", row.get("instrument_id")),
+                    }
+        return {equipment: list(orders.values()) for equipment, orders in sorted(found.items())}
+
+    def analysis_context(self, request: ChatRequest, answer: ChatAnswer) -> dict[str, object]:
+        datasets = [{
+            "title": table.title,
+            "columns": {column.key: column.label for column in table.columns},
+            "row_count": len(table.rows),
+            "rows_truncated": len(table.rows) > ANALYSIS_MAX_ROWS_PER_TABLE,
+            "rows": [dict(row.values) for row in table.rows[:ANALYSIS_MAX_ROWS_PER_TABLE]],
+        } for table in answer.tables]
+        notes = []
+        for item in answer.specialists:
+            if item.role not in ("rca", "work-order", "fabric-iq"):
+                continue
+            notes.append({
+                "role": item.role, "unverified_note": item.text[:1500],
+                "report": json.loads(json.dumps(item.report, default=str))
+                if item.report is not None and len(json.dumps(item.report, default=str)) <= 4000 else None,
+            })
+        drafts = []
+        for draft in answer.proposals:
+            value = draft.model_dump(mode="json")
+            drafts.append({key: value[key] for key in (
+                "equipment_id", "title", "description", "priority", "instrument_id", "opcua_node_id",
+            ) if key in value})
+        return {
+            "operator_question": request.question,
+            "now_utc": utc_now().isoformat(),
+            "datasets": datasets,
+            "open_work_by_equipment": self.open_work_by_equipment(),
+            "source_limitations": list(answer.limitations),
+            "specialist_notes": notes,
+            "staged_drafts": drafts,
+        }
+
+    def analysis_violations(self, report: AnalysisReport, context_text: str) -> list[str]:
+        allowed = set(ANALYSIS_ID_PATTERN.findall(context_text))
+        known_numbers = [float(value) for value in ANALYSIS_DECIMAL_PATTERN.findall(context_text)]
+        open_work = self.open_work_by_equipment()
+        statements = [report.answer, *report.findings, *report.reasoning, *report.caveats]
+        for item in report.recommendations:
+            statements.extend((item.title, item.justification))
+        violations: list[str] = []
+        for statement in statements:
+            for identifier in ANALYSIS_ID_PATTERN.findall(statement):
+                if identifier not in allowed:
+                    violations.append(f"{identifier} is not in the supplied data")
+            for raw in ANALYSIS_DECIMAL_PATTERN.findall(statement):
+                if not any(abs(float(raw) - known) <= 0.051 for known in known_numbers):
+                    violations.append(f"the number {raw} is not in the supplied data")
+        for item in report.recommendations:
+            if item.equipment_id is not None and item.equipment_id not in allowed:
+                violations.append(f"recommendation equipment {item.equipment_id} is not in the supplied data")
+            covering = {str(entry["work_order"]) for entry in open_work.get(item.equipment_id or "", [])}
+            cited = set(ANALYSIS_ID_PATTERN.findall(item.justification))
+            if item.action == "covered_by_open_work" and not covering.intersection(cited):
+                violations.append(
+                    f"covered_by_open_work for {item.equipment_id} must cite one of its open work orders "
+                    f"{sorted(covering) or 'none exist'}")
+            if item.action == "create_work_order" and covering and not covering.intersection(cited):
+                violations.append(
+                    f"create_work_order for {item.equipment_id} must explain why open work "
+                    f"{sorted(covering)} does not already cover it")
+        return list(dict.fromkeys(violations))[:8]
+
+    async def analysis_for(
+        self, request: ChatRequest, answer: ChatAnswer, journal: RunJournal,
+    ) -> AnalysisReport | None:
+        saved = journal.read("answer_analysis")
+        if saved is not None:
+            return AnalysisReport.model_validate(saved["analysis"])
+        if not self.analysis_model or not answer.tables:
+            return None
+        context_text = json.dumps(
+            self.analysis_context(request, answer), sort_keys=True, default=str, ensure_ascii=False,
+        )
+        if len(context_text) > 200000:
+            logger.warning("Analysis context exceeds its bounded size; the grounded narrative is skipped.")
+            return None
+        started = perf_counter()
+        feedback: str | None = None
+        try:
+            async with asyncio.timeout(2 * ANALYSIS_TIMEOUT_SECONDS + 5):
+                async with BoundedAIProjectClient(
+                    endpoint=self.endpoint, credential=self.credential, request_timeout=ANALYSIS_TIMEOUT_SECONDS,
+                ) as project_client:
+                    openai_client = project_client.get_openai_client()
+                    for _attempt in range(2):
+                        self.healthy(request)
+                        response = await openai_client.responses.create(
+                            model=self.analysis_model, instructions=ANALYST_INSTRUCTIONS,
+                            input=context_text if feedback is None else (
+                                f"{context_text}\n\nYour previous briefing was rejected: {feedback}. "
+                                "Rewrite it using only values present in the input."),
+                            max_output_tokens=3500, reasoning={"effort": "low"}, store=False,
+                            text={"format": {"type": "json_schema", "name": "hydro_briefing",
+                                             "schema": ANALYSIS_SCHEMA, "strict": True}},
+                        )
+                        if getattr(response, "status", "completed") != "completed":
+                            feedback = "the response was incomplete; be more concise"
+                            continue
+                        try:
+                            report = AnalysisReport.model_validate_json(response.output_text)
+                        except ValueError as error:
+                            feedback = f"it did not match the required structure ({type(error).__name__})"
+                            continue
+                        violations = self.analysis_violations(report, context_text)
+                        if violations:
+                            feedback = "; ".join(violations)
+                            continue
+                        journal.save("answer_analysis", {
+                            "analysis": report.model_dump(mode="json"), "response_id": response.id,
+                            "model": self.analysis_model,
+                            "duration_ms": (perf_counter() - started) * 1000,
+                            "input_digest": sha256(context_text.encode()).hexdigest(),
+                        })
+                        return report
+        except SourceFailure:
+            raise
+        except (APIStatusError, APITimeoutError, AgentFrameworkException, TimeoutError, OSError, ValueError) as error:
+            logger.error("Grounded analysis was unavailable (%s).", type(error).__name__)
+            return None
+        logger.error("Grounded analysis was rejected after verification: %s", feedback)
+        return None
+
+    def answer(
+        self, request: ChatRequest, plan: AnswerPlan, *, use_projected_summary: bool = False,
+        analysis: AnalysisReport | None = None,
+    ) -> ChatAnswer:
         if not self.evidence:
             raise SourceFailure("No executed source receipts exist; agent prose is not grounded data.")
         if plan.charts and not request.charts_requested:
@@ -3021,7 +3246,8 @@ class FoundrySupervisor:
                           tables=tuple(tables), charts=plan.charts, limitations=limitations,
                           cell_sources=plan.tables, specialists=tuple(self.specialists),
                           audit_url=f"/chat/runs/{request.run_id}/evidence", proposals=proposals,
-                          proposal_digests={str(draft.id): draft.digest() for draft in proposals})
+                          proposal_digests={str(draft.id): draft.digest() for draft in proposals},
+                          analysis=analysis)
 
     async def run(self, request: ChatRequest) -> ChatAnswer:
         try:
@@ -3149,6 +3375,7 @@ class FoundrySupervisor:
                         if owner.answer(
                             request, prepared.supervisor_output,
                             use_projected_summary=prepared.answer_projection is not None,
+                            analysis=prepared.answer.analysis,
                         ) != prepared.answer:
                             raise SourceFailure("Prepared answer differs from its immutable source projections.")
                         await ctx.send_message(SupervisorTurn(
@@ -3331,7 +3558,7 @@ class FoundrySupervisor:
                         })
                         owner.emit_event(
                             f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
-                            "Deterministic evidence verification completed; no additional model call was used.",
+                            "Deterministic evidence verification completed.",
                             agent_name="hydro-orchestrator", trace=list(owner.chief_trace),
                         )
                     verified = turn.model_copy(update={
@@ -3355,6 +3582,7 @@ class FoundrySupervisor:
                         if owner.answer(
                             request, turn.prepared.supervisor_output,
                             use_projected_summary=turn.prepared.answer_projection is not None,
+                            analysis=turn.prepared.answer.analysis,
                         ) != turn.prepared.answer:
                             raise SourceFailure("Recovered presentation differs from immutable source projections.")
                         await ctx.yield_output(turn.prepared.answer.model_dump_json())
@@ -3375,6 +3603,23 @@ class FoundrySupervisor:
                         **projection.model_dump(mode="json"),
                     })
                     result = owner.answer(request, plan, use_projected_summary=True)
+                    if owner.analysis_model:
+                        owner.emit_event(
+                            f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
+                            "Writing the grounded briefing: comparing the verified evidence with open work and "
+                            "reasoning to a recommendation.",
+                            agent_name="hydro-orchestrator", trace=list(owner.chief_trace),
+                        )
+                    analysis = await owner.analysis_for(request, result, journal)
+                    if analysis is not None:
+                        result = owner.answer(request, plan, use_projected_summary=True, analysis=analysis)
+                    elif owner.analysis_model and result.tables:
+                        plan = plan.model_copy(update={"limitations": (
+                            *plan.limitations,
+                            "The written briefing could not be verified against the evidence for this run, so only "
+                            "the verified tables are shown.",
+                        )[:20]})
+                        result = owner.answer(request, plan, use_projected_summary=True)
                     journal.save("prepared_answer", PreparedAnswer(
                         answer=result, evidence=tuple(owner.evidence.values()),
                         supervisor_response_id=turn.response_id, supervisor_version=turn.version,

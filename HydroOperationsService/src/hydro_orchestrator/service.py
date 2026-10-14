@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -730,7 +731,8 @@ def create_fabric_delegated_app(
             if sources.discovery.source != source:
                 raise SourceFailure("Live source discovery differs from the configured invocation identity.")
             yield FoundrySupervisor(endpoint, credential, bridge, FabricBackendTools(sources), source, state,
-                                    native_binding=native_binding)
+                                    native_binding=native_binding,
+                                    analysis_model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"))
         finally:
             await sources.close()
 

@@ -77,7 +77,11 @@ export type WorkOrderProposal = {
 }
 
 const MUTATION_INTENT = /\b(create|raise|submit|log|make|generate|prepare|propose)\b.{0,80}\b(work[\s-]*orders?|wos?|(?:inspection|maintenance|work)[ -]drafts?)\b|\b(work[\s-]*orders?|wos?)\b.{0,40}\b(create|raise|submit|log|make|generate|prepare|propose)\b|^\s*(?:please\s+)?(?:open|draft)\s+(?:(?:a|an|new)\s+)*(?:work[\s-]*orders?|wos?)\b|\bdraft\s+(?:a|an|new|the|these|those)\b.{0,40}\b(work[\s-]*orders?|wos?)\b/i
-export const positiveActionClauses = (question: string) => question.replace(
+// Single normalisation point: every detector reads the question through this function, so abbreviations resolve
+// once instead of in each pattern.
+export const positiveActionClauses = (question: string) => question
+  .replace(/\bWOs?\b(?!-\d)/gi, match => (match.toLowerCase() === 'wo' ? 'work order' : 'work orders'))
+  .replace(
   /\b(?:do not|don't|never)\s+(?:independently\s+)?(?:create|raise|submit|log|make|generate|prepare|propose|draft|investigate|diagnose|perform|verify|check|reassess|review|continue|read|query|retrieve|inspect|use|ask|show|display|chart|plot|visualize)\b(?:(?!\bbut\b)[^.!?;\n])*/gi, '')
 
 export function requiresChartOutput(question: string): boolean {
@@ -178,10 +182,36 @@ export function rcaAssignmentError(task: string): string | undefined {
   return undefined
 }
 
+// Surface vocabulary only. The concept detector below combines these terms per clause, in any order, so that no
+// operator phrasing is encoded.
+const WORK_ORDER_TERM = String.raw`(?:work[\s-]*orders?|wos?|maintenance\s+(?:tasks?|jobs?|requests?|orders?)|inspection\s+(?:orders?|tasks?|jobs?))`
+const EQUIPMENT_TERM = String.raw`(?:turbines?|equipment|units?|assets?|generators?|machines?|T\d{1,3}|EQUIP_RTI_T?\d+)`
+const ADVISORY_MODAL = String.raw`(?:need(?:s|ed)?|should|must|ought|have to|has to|require[sd]?|warrant(?:s|ed)?|call(?:s|ed)? for|worth|recommend(?:ed)?|advis(?:e|able)|appropriate|justified|deserve[sd]?)`
+const WORK_ACTION = String.raw`(?:open(?:ed)?|creat(?:e|ed|ion)|rais(?:e|ed)|submit(?:ted)?|log(?:ged)?|generat(?:e|ed)|initiat(?:e|ed)|schedul(?:e|ed)|issu(?:e|ed)|plann?(?:ed)?)`
+const IDENTIFY_CUE = String.raw`(?:which|what|who|where|any|are there|is there|do any|does any|identify|determine|decide|find|tell me|show me|list|check (?:if|whether)|assess|evaluate)`
+const OBJECT_MODAL = String.raw`(?:need(?:s|ed)?|require[sd]?|warrant(?:s|ed)?|deserve[sd]?|justif(?:y|ies|ied))`
+const clauseHas = (clause: string, term: string) => new RegExp(String.raw`\b${term}\b`, 'i').test(clause)
+
+/** True when the operator asks the system to decide which work (or which equipment) needs maintenance action, as
+ *  opposed to listing existing records or creating a named one. Such a question is answered by comparing condition
+ *  evidence with the existing open-work cover. */
+export function requestsWorkOrderNeedAssessment(question: string): boolean {
+  return positiveActionClauses(question).split(/[.!?;\n]+/).some(clause => {
+    if (!clauseHas(clause, IDENTIFY_CUE) || !clauseHas(clause, ADVISORY_MODAL)) return false
+    const aboutWork = clauseHas(clause, WORK_ORDER_TERM)
+      && (clauseHas(clause, WORK_ACTION) || clauseHas(clause, OBJECT_MODAL))
+    const aboutEquipment = clauseHas(clause, EQUIPMENT_TERM)
+      && /\b(?:maintenance|inspection|attention|servicing|repairs?)\b/i.test(clause)
+    return aboutWork || aboutEquipment
+  })
+}
+
 export function isWorkOrderRequest(question: string): boolean {
   const positiveClauses = positiveActionClauses(question).replace(
     /\b(?:prepare|generate|make)\s+(?:(?:a|an|the|new)\s+)?(?:table|chart|report|summary|list|dashboard|comparison)\b/gi,
     match => match.replace(/^\w+/, 'show'))
+  // A question asking WHICH work should be raised is advice; it only becomes a draft request when a draft is asked for.
+  if (requestsWorkOrderNeedAssessment(question)) return /\b(?:drafts?|stage|propose|prepare)\b/i.test(positiveClauses)
   return MUTATION_INTENT.test(positiveClauses)
     || (/\b(?:prepare|propose)\b.{0,80}\bdrafts?\b/i.test(positiveClauses) && /\bwork[\s-]*orders?\b/i.test(positiveClauses))
     || /\b(?:propose|prepare|create|stage)\b[^.!?;\n]{0,80}\b(?:inspection|maintenance)(?:\s+(?:work|task|follow-up))?\b/i.test(positiveClauses)
@@ -220,7 +250,7 @@ export function requiredSpecialists(question: string, hasNativeRequest = false):
     || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
     || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
   const required = missingRequestedSpecialists(question, [])
-  if (factualRead && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
+  if ((factualRead || requestsWorkOrderNeedAssessment(question)) && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
   return (['qa', 'rca', 'work-order'] as const).filter(role => required.includes(role))
 }
 

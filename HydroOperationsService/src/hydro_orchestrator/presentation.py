@@ -39,6 +39,15 @@ class ClientPresentation(Contract):
     execution_events: tuple[ClientExecutionEvent, ...] = ()
 
 
+ANALYSIS_ACTION_LABELS = {
+    "create_work_order": "Create a work order",
+    "covered_by_open_work": "Already covered by open work",
+    "monitor": "Monitor",
+    "no_action": "No action needed",
+    "needs_clarification": "Needs clarification",
+}
+
+
 def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
     def literal(value: object) -> str:
         text = "" if value is None else str(value)
@@ -47,7 +56,32 @@ def client_presentation(answer: "ChatAnswer") -> ClientPresentation:
             text = text.replace(character, "\\" + character)
         return text
 
-    sections = [literal(answer.summary)]
+    analysis = getattr(answer, "analysis", None)
+    sections: list[str] = []
+    if analysis is not None:
+        sections.append("## Answer\n\n" + literal(analysis.answer))
+        if analysis.findings:
+            sections.append("## What the data shows\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.findings))
+        if analysis.reasoning:
+            sections.append("## Why\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.reasoning))
+        if analysis.recommendations:
+            lines = []
+            for item in analysis.recommendations:
+                subject = f" {literal(item.equipment_id)}" if item.equipment_id else ""
+                priority = f" ({literal(item.priority)} priority, suggested)" if item.priority else ""
+                lines.append(
+                    f"- **{ANALYSIS_ACTION_LABELS[item.action]}**{subject}{priority}: {literal(item.title)}. "
+                    f"{literal(item.justification)}"
+                )
+            sections.append("## Recommended actions\n\n" + "\n".join(lines))
+        if analysis.caveats:
+            sections.append("## Caveats\n\n" + "\n".join(f"- {literal(item)}" for item in analysis.caveats))
+        sections.append(
+            "Recommendations are advice written from the verified evidence below. No work order exists until you "
+            "approve a staged draft. " + literal(answer.summary)
+        )
+    else:
+        sections.append(literal(answer.summary))
     for table in answer.tables:
         keys = [column.key for column in table.columns]
         lines = [f"## {literal(table.title)}", "",

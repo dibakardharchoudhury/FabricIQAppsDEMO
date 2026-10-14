@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
 import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { requestsWorkOrderNeedAssessment } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -1070,32 +1071,74 @@ test('serve mode answers id-tagged requests and isolates malformed input', () =>
   assert.equal(replies.length, 4)
 })
 
-test('WO/WOs and short turbine IDs compile to the same governed contract as their long forms', () => {
-  const pairs = [
-    ['Help me create a WO for T12', 'Help me create a work order for T012'],
-    ['Which WOs need to be opened now?', 'Which work orders need to be opened now?'],
-    ['Now, tell me which WOs need to be opened and help me with a draft.',
-      'Now, tell me which work orders need to be opened and help me with a draft.'],
-  ]
-  for (const [abbreviated, long] of pairs) {
-    const intent = chatIntent(abbreviated)
-    const reference = chatIntent(long)
-    assert.ok(intent.required_specialists.length > 0, abbreviated)
-    assert.deepEqual(intent.required_specialists, reference.required_specialists, abbreviated)
-    assert.deepEqual(intent.required_evidence_kinds, reference.required_evidence_kinds, abbreviated)
-    assert.deepEqual(intent.permitted_evidence_kinds, reference.permitted_evidence_kinds, abbreviated)
-    const plan = compileOrchestrationPlan(abbreviated, intent)
+const advisoryPhrasings = [
+  'Which work orders should we raise at the moment?',
+  'Do any units warrant a new WO right now?',
+  'Identify the equipment that needs maintenance attention and what is already open for it.',
+  'Decide whether a work order is justified for any turbine, based on current signal quality.',
+  'Tell me which assets require an inspection order and help me draft it.',
+]
+const nonAdvisoryPhrasings = [
+  'List the open work orders.',
+  'Create a work order for T7.',
+  'Show open work for every turbine.',
+  'What is the average temperature per station?',
+  'Do not raise any work orders; just list the telemetry.',
+]
+
+test('advice about which work needs raising is detected by concept, not phrasing, and compiles a coherent plan', () => {
+  for (const question of advisoryPhrasings) {
+    assert.equal(requestsWorkOrderNeedAssessment(question), true, question)
+    const intent = chatIntent(question)
+    for (const kind of ['work_orders']) {
+      assert.ok(intent.required_evidence_kinds.includes(kind) && intent.permitted_evidence_kinds.includes(kind), question)
+    }
+    assert.ok(intent.required_evidence_kinds.some(kind => ['signal_quality', 'temperature'].includes(kind)), question)
+    const plan = compileOrchestrationPlan(question, intent)
+    assert.ok(plan.answer_contract.views.some(view => view.kind === 'work_orders' && view.scope === 'population'), question)
     const kinds = [...new Set([
       ...plan.answer_contract.requirements.map(item => item.kind), ...plan.answer_contract.views.map(view => view.kind),
-    ])].filter(Boolean).sort()
+    ])].filter(Boolean)
     const defects = validatePlanRequirements(
       intent.required_specialists, intent.required_specialist_steps,
       plan.steps.map(step => ({ specialist: step.specialist, native_source: step.native_source ?? null })),
-      intent.native_sources, abbreviated, kinds, intent.required_evidence_kinds, intent.permitted_evidence_kinds)
-    assert.deepEqual(
-      [defects.missing_specialists, defects.missing_native_sources, defects.missing_evidence_kinds,
-        defects.unexpected_evidence_kinds, Object.keys(defects.missing_specialist_steps)],
-      [[], [], [], [], []], abbreviated)
+      intent.native_sources, question, kinds, intent.required_evidence_kinds, intent.permitted_evidence_kinds)
+    assert.deepEqual([defects.missing_specialists, defects.missing_evidence_kinds, defects.unexpected_evidence_kinds], [[], [], []], question)
+    const drafting = /draft/i.test(question)
+    assert.equal(plan.steps.some(step => step.specialist === 'work-order'), drafting, question)
+    if (drafting) {
+      const work = plan.steps.find(step => step.specialist === 'work-order')
+      assert.match(work.question, /named no equipment/)
+      assert.equal(work.requires_verified_issue, false)
+    }
+  }
+})
+
+test('advice detection does not fire for listings, named creations, analytics or negated actions', () => {
+  for (const question of nonAdvisoryPhrasings) {
+    assert.equal(requestsWorkOrderNeedAssessment(question), false, question)
+    assert.equal(chatIntent(question).required_evidence_kinds.includes('signal_quality'), false, question)
+  }
+})
+
+test('a draft for explicitly named equipment keeps its direct identity-and-coverage review', () => {
+  const plan = compileOrchestrationPlan('Please draft a work order for T7.')
+  const work = plan.steps.find(step => step.specialist === 'work-order')
+  assert.match(work.question, /Review verified identity and work coverage/)
+})
+
+test('abbreviations and short identifiers are equivalent to their long forms', () => {
+  const pairs = [
+    ['Help me create a WO for T12', 'Help me create a work order for T012'],
+    ['List the WOs open on each unit', 'List the work orders open on each unit'],
+  ]
+  for (const [short, long] of pairs) {
+    const a = chatIntent(short)
+    const b = chatIntent(long)
+    assert.ok(a.required_specialists.length > 0, short)
+    assert.deepEqual(a.required_specialists, b.required_specialists, short)
+    assert.deepEqual(a.required_evidence_kinds, b.required_evidence_kinds, short)
+    assert.deepEqual(a.permitted_evidence_kinds, b.permitted_evidence_kinds, short)
   }
 })
 

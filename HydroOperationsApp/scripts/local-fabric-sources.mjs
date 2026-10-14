@@ -9,7 +9,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedRankLimit, requestedWorkBacklogGroup, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedRankLimit, requestedWorkBacklogGroup, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -68,6 +68,13 @@ export function requiredEvidenceKinds(question) {
   if (/\bread\b[^.!?;\n]{0,80}\bnotifications?\b/i.test(text)) kinds.add('notifications')
   if (/\blist\b[^.!?;\n]{0,80}\bspare parts?\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:show|read|list)\b[^.!?;\n]{0,80}\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
+  if (requestsWorkOrderNeedAssessment(question)) {
+    kinds.add('work_orders')
+    if (!kinds.has('signal_quality') && !kinds.has('temperature')) {
+      kinds.add('signal_quality')
+      kinds.add('temperature')
+    }
+  }
   return [...kinds]
 }
 
@@ -97,6 +104,14 @@ export function permittedEvidenceKinds(question) {
   if (/\bnotifications?\b/i.test(text)) kinds.add('notifications')
   if (/\b(?:spare parts?|parts stock|reorder level)\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
+  if (requestsWorkOrderNeedAssessment(question)) {
+    // A "which work orders need to be opened" question needs the condition evidence and the existing cover.
+    kinds.add('work_orders')
+    if (!kinds.has('signal_quality') && !kinds.has('temperature')) {
+      kinds.add('signal_quality')
+      kinds.add('temperature')
+    }
+  }
   return [...kinds]
 }
 
@@ -160,6 +175,8 @@ function defaultEvidenceScope(kind, question) {
   }
   if (kind === 'work_orders') {
     return /\b(?:every|inventory|backlog|on each|by equipment|facility[- ]level)\b/i.test(text)
+      || /\b(?:for|on|against)\s+(?:these|those|them|all of them)\b/i.test(text)
+      || requestsWorkOrderNeedAssessment(question)
       ? 'population' : 'focus'
   }
   if (kind === 'equipment') {
@@ -314,6 +331,8 @@ function partitionEvidenceKinds(kinds, count) {
   return groups
 }
 
+const NAMED_EQUIPMENT = /\b(?:EQUIP_RTI_T?\d+|T\d{1,3}|(?:turbine|unit|equipment|asset|generator)\s*(?:number|no\.?|#)?\s*\d+)\b/i
+
 export function compileOrchestrationPlan(question, intent = chatIntent(question)) {
   if (!intent || typeof intent !== 'object'
       || !Array.isArray(intent.required_specialists)
@@ -396,7 +415,9 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
       specialist: 'work-order',
       question: conditionalWork
         ? 'Review verified work coverage and stage an editable draft only for a verified uncovered equipment issue.'
-        : 'Review verified identity and work coverage, then prepare the explicitly requested editable draft.',
+        : initialQaCount > 0 && !NAMED_EQUIPMENT.test(positiveActionClauses(question))
+          ? 'The operator named no equipment, so choose the target from the supplied verified evidence: the highest-priority equipment with a verified concern and no open work plausibly covering it. Confirm its identity and complete open-work coverage, then prepare the requested editable draft for it. If every affected equipment is already covered, conclude no_draft and name the covering work.'
+          : 'Review verified identity and work coverage, then prepare the explicitly requested editable draft.',
       reason: 'Perform the requested governed work review without executing a production write.',
       native_source: null,
       requires_selection: conditionalWork,
