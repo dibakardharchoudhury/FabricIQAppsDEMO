@@ -238,6 +238,10 @@ async def create_runtime_app(
     with TemporaryDirectory(prefix=".state-probe-", dir=root) as directory:
         with FileLock(str(Path(directory) / "state.lock"), timeout=0):
             pass
+    # Startup runs in a short-lived event loop; release its worker so the serving loop starts and warms its own.
+    release = getattr(bridge, "aclose", None)
+    if release is not None:
+        await release()
     client = httpx.AsyncClient()
     try:
         app = create_fabric_delegated_app(
@@ -252,8 +256,15 @@ async def create_runtime_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with client:
-            yield
+        # Pre-warm the Node worker so the first operator request does not pay module start-up.
+        await bridge.call({"action": "agent_contracts"})
+        try:
+            async with client:
+                yield
+        finally:
+            release_worker = getattr(bridge, "aclose", None)
+            if release_worker is not None:
+                await release_worker()
 
     app.router.lifespan_context = lifespan
 

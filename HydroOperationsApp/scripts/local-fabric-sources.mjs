@@ -47,7 +47,7 @@ export function requiredEvidenceKinds(question) {
   }
   if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
-  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work)\b/i.test(text)
+  if (/\b(?:work[\s-]*orders?|wos?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work)\b/i.test(text)
       || /\bwork\b[^.!?;\n]{0,40}\b(?:already\s+)?open\b/i.test(text)) {
     kinds.add('work_orders')
   }
@@ -76,7 +76,7 @@ export function permittedEvidenceKinds(question) {
   const kinds = new Set()
   if (requestedNativeSources(text).length) kinds.add('native_claims')
   if (/\bfacilit(?:y|ies)\b/i.test(text)) kinds.add('facilities')
-  if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{3})\b/i.test(text)) kinds.add('equipment')
+  if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{1,3})\b/i.test(text)) kinds.add('equipment')
   if (/\b(?:instrument|signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
   if (/\b(?:telemetry|readings?|signals?|power|temperature|quality)\b/i.test(text)) kinds.add('telemetry')
   if (/\b(?:signal[\s-]+quality|sensor[\s-]+quality|quality (?:BAD|GOOD|UNCERTAIN)|BAD signals?|UNCERTAIN signals?|BAD alone|running bad)\b/i.test(text)
@@ -88,7 +88,7 @@ export function permittedEvidenceKinds(question) {
   }
   if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
-  if (/\b(?:work[\s-]*orders?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)
+  if (/\b(?:work[\s-]*orders?|wos?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work|backlog)\b/i.test(text)
       || /\bwork\b[^.!?;\n]{0,40}\b(?:already\s+)?open\b/i.test(text)) {
     kinds.add('work_orders')
   }
@@ -1063,7 +1063,30 @@ async function main() {
     input += chunk
     if (input.length > 262144) throw new Error('Local adapter request exceeds its input bound.')
   }
-  const request = JSON.parse(input)
+  return handle(JSON.parse(input))
+}
+
+const DISCOVERY_TTL_MS = 60_000
+const discoveryCache = new Map()
+
+// Source-identity verification (workspace, ontology generation, KQL database) is re-verified at most once per
+// TTL for the same configuration and the same bearer token. Failures are evicted so they are never replayed, and
+// no analytical data is held here.
+function discoverCached(config, token) {
+  const now = Date.now()
+  for (const [key, entry] of discoveryCache) if (entry.expires <= now) discoveryCache.delete(key)
+  const key = createHash('sha256').update(`${config.configuration_digest}\0${token}`).digest('hex')
+  const hit = discoveryCache.get(key)
+  if (hit) return hit.promise
+  const promise = discover(config, token)
+  const entry = { expires: now + DISCOVERY_TTL_MS, promise }
+  discoveryCache.set(key, entry)
+  if (discoveryCache.size > 16) discoveryCache.delete(discoveryCache.keys().next().value)
+  promise.catch(() => { if (discoveryCache.get(key) === entry) discoveryCache.delete(key) })
+  return promise
+}
+
+export async function handle(request) {
   if (request.action === 'chat_intent') return chatIntent(request.question)
   if (request.action === 'analytical_evidence_plan') {
     return { entries: analyticalEvidencePlan(request.question, request.answer_kinds) }
@@ -1111,7 +1134,7 @@ async function main() {
     return identity
   }
   if (request.configuration_digest !== config.configuration_digest) throw new Error('Source configuration changed; restart the local source adapter.')
-  const metadata = await discover(config, request.tokens.fabric)
+  const metadata = await discoverCached(config, request.tokens.fabric)
   if (request.action === 'discover') return metadata
   if (request.action === 'resolve_identity_scope') {
     const equipmentEntity = ASSET_ENTITIES.find(entity => entity.key === 'equipment')
@@ -1214,16 +1237,55 @@ async function main() {
     open_work_numbers: work.rows.map(item => item.workOrderNumber) }
 }
 
+function errorEnvelope(error) {
+  // Do not serialize SDK exceptions, request headers, tokens or response bodies.
+  const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
+    || (error instanceof Error && error.constructor === Error)
+    ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
+  return { ok: false, error: message,
+    ...(error instanceof WorkOrderSubmissionError ? { write_attempted: error.writeAttempted } : {}) }
+}
+
+const RESULT_MARKER = '__HYDRO_RESULT__='
+
+// Long-lived worker: one JSON request per line, answered by an id-tagged marker line. Requests run concurrently,
+// so a slow source read never blocks pure contract validation.
+async function serve() {
+  const { createInterface } = await import('node:readline')
+  const pending = new Set()
+  const reply = (id, envelope) => process.stdout.write(`\n${RESULT_MARKER}${JSON.stringify({ id, ...envelope })}\n`)
+  for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+    if (!line.trim()) continue
+    let id = null
+    let work
+    try {
+      if (line.length > 262144) throw new Error('Local adapter request exceeds its input bound.')
+      const message = JSON.parse(line)
+      id = message.id
+      if (!Number.isInteger(id) || !message.request || typeof message.request !== 'object') {
+        throw new Error('Local adapter request envelope is invalid.')
+      }
+      work = handle(message.request)
+    } catch (error) {
+      reply(id, errorEnvelope(error))
+      continue
+    }
+    const task = work.then(result => reply(id, { ok: true, result }), error => reply(id, errorEnvelope(error)))
+      .finally(() => pending.delete(task))
+    pending.add(task)
+  }
+  await Promise.allSettled(pending)
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    process.stdout.write(`\n__HYDRO_RESULT__=${JSON.stringify({ ok: true, result: await main() })}`)
-  } catch (error) {
-    // Do not serialize SDK exceptions, request headers, tokens or response bodies.
-    const message = error instanceof RcaEvidenceError || error instanceof WorkOrderSubmissionError
-      || (error instanceof Error && error.constructor === Error)
-      ? error.message : 'Local source adapter failed; inspect source/authentication prerequisites.'
-    process.stdout.write(`\n__HYDRO_RESULT__=${JSON.stringify({ ok: false, error: message,
-      ...(error instanceof WorkOrderSubmissionError ? { write_attempted: error.writeAttempted } : {}) })}`)
-    process.exitCode = 1
+  if (process.argv.includes('--serve')) {
+    await serve()
+  } else {
+    try {
+      process.stdout.write(`\n${RESULT_MARKER}${JSON.stringify({ ok: true, result: await main() })}`)
+    } catch (error) {
+      process.stdout.write(`\n${RESULT_MARKER}${JSON.stringify(errorEnvelope(error))}`)
+      process.exitCode = 1
+    }
   }
 }

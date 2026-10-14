@@ -186,7 +186,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Foundry provisioning failed: {method} {url}: HTTP {response.status_code}: {response.text[:800]}")
         return response
 
-    model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip() or "gpt-5-mini"
+    model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip() or "gpt-5.6-sol"
     account_id = project_id.rsplit("/projects/", 1)[0]
     model_data = request("GET", f"https://management.azure.com{account_id}/deployments/{model}?api-version=2025-06-01", arm_headers).json()
     if model_data.get("properties", {}).get("provisioningState") != "Succeeded":

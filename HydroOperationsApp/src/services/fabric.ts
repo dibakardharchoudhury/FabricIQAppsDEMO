@@ -50,6 +50,7 @@ const msal = clientId && tenantId ? new PublicClientApplication({
 
 const GRAPHQL_SCOPE = 'https://analysis.windows.net/powerbi/api/GraphQLApi.Execute.All'
 const POWER_BI_ITEM_EXECUTE_SCOPE = 'https://analysis.windows.net/powerbi/api/Item.Execute.All'
+const HOSTED_RUN_TOKEN_LIFETIME_MS = 12 * 60_000
 // A named scope, not `.default`: `.default` only returns permissions already statically configured
 // for the exact cluster audience, so Entra escalates to "Need admin approval" instead of consenting.
 const kustoScope = (clusterUri: string) => `${clusterUri.replace(/\/$/, '')}/user_impersonation`
@@ -90,9 +91,9 @@ async function ensureInit() {
 }
 
 /** Acquire a token silently. Returns null when interactive sign-in/consent is required. */
-async function silentToken(scopes: string[], forceRefresh = false): Promise<string | null> {
+async function silentToken(scopes: string[], forceRefresh = false, minimumLifetimeMs = 0): Promise<string | null> {
   if (!entraTokens) throw new Error('Microsoft Entra client configuration is missing.')
-  return entraTokens.silent(scopes, forceRefresh)
+  return entraTokens.silent(scopes, forceRefresh, minimumLifetimeMs)
 }
 
 /** Acquire a token interactively via popup (redirects are blocked inside the Fabric iframe).
@@ -296,12 +297,13 @@ export async function hostedSourceTokens() {
   const config = await ensureConfig(false)
   const cluster = configuredEventhouseQueryUri ?? config?.eventhouseQueryUri
   if (!cluster) throw new Error('The hosted source requires the authoritative Eventhouse endpoint.')
-  // A hosted run can remain active for ten minutes, so do not submit near-expiry cached leases.
+  // A hosted run can remain active for ten minutes, so never submit a lease that could expire during it. Cached
+  // leases with enough remaining life are reused; only near-expiry ones pay an Entra round trip.
   const [fabric, foundry, graphql, kusto] = await Promise.all([
-    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], true),
-    silentToken(FOUNDRY_AGENT_SCOPES, true),
-    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], true),
-    silentToken([kustoScope(cluster)], true),
+    silentToken([...new Set([...FABRIC_JOB_SCOPES, ...DATA_AGENT_SCOPES])], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken(FOUNDRY_AGENT_SCOPES, false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([GRAPHQL_SCOPE, POWER_BI_ITEM_EXECUTE_SCOPE], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
+    silentToken([kustoScope(cluster)], false, HOSTED_RUN_TOKEN_LIFETIME_MS),
   ])
   if (!fabric || !foundry || !graphql || !kusto) {
     throw new Error('Renew Fabric, Foundry, STID and telemetry access through the existing sign-in/connection controls.')

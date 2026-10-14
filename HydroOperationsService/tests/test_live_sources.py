@@ -80,6 +80,46 @@ class GovernedBridgeCall(AsyncMock):
         return response
 
 
+class FakeBridgeWorker:
+    """Scripted stand-in for the Node worker process: stdin accepts request lines, stdout yields reply lines."""
+
+    def __init__(self, replies):
+        self.returncode = None
+        self.killed = False
+        self.requests = []
+        self.stdin = self.stdout = self
+        self._replies = replies
+        self._lines = asyncio.Queue()
+
+    def write(self, data):
+        message = json.loads(data)
+        self.requests.append(message)
+        for line in self._replies(message):
+            self._lines.put_nowait(line)
+
+    async def drain(self):
+        return None
+
+    def is_closing(self):
+        return self.returncode is not None
+
+    def close(self):
+        if self.returncode is None:
+            self.returncode = 0
+        self._lines.put_nowait(b"")
+
+    async def readline(self):
+        return await self._lines.get()
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+        self._lines.put_nowait(b"")
+
+    async def wait(self):
+        return self.returncode
+
+
 def reader():
     bridge = AsyncMock()
     bridge.call = GovernedBridgeCall()
@@ -626,13 +666,14 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             await sources.probe(BODY["equipment_id"])
 
     async def test_bridge_suppresses_invalid_child_output(self):
-        process = AsyncMock()
-        process.returncode = 1
-        process.communicate.return_value = (b"private child output", b"private diagnostic output")
-        with patch("asyncio.create_subprocess_exec", return_value=process):
+        worker = FakeBridgeWorker(lambda message: [b"__HYDRO_RESULT__=private child output\n"])
+        with patch("asyncio.create_subprocess_exec", return_value=worker):
+            bridge = NodeSourceBridge()
             with self.assertRaisesRegex(SourceFailure, "output suppressed") as caught:
-                await NodeSourceBridge().call({"action": "configuration"})
+                await bridge.call({"action": "configuration"})
+            await bridge.aclose()
         self.assertNotIn("private", str(caught.exception))
+        self.assertTrue(worker.killed or worker.returncode is not None)
 
     async def test_bridge_compiles_prompt_one_evidence_before_chief_correction(self):
         question = (
@@ -683,28 +724,106 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_telemetry.presentation, "direct_records_table")
 
     async def test_bridge_reads_only_bounded_final_envelope_after_library_output(self):
-        process = AsyncMock()
-        process.returncode = 0
-        process.communicate.return_value = (
-            b"library output that must not be parsed or returned\n__HYDRO_RESULT__="
-            b'{"ok":true,"result":{"status":"ready"}}',
-            b"",
-        )
-        with patch("asyncio.create_subprocess_exec", return_value=process):
-            result = await NodeSourceBridge().call({"action": "configuration"})
+        def replies(message):
+            return [
+                b"library output that must not be parsed or returned\n",
+                b"__HYDRO_RESULT__=" + json.dumps(
+                    {"id": message["id"], "ok": True, "result": {"status": "ready"}}).encode() + b"\n",
+            ]
+
+        worker = FakeBridgeWorker(replies)
+        with patch("asyncio.create_subprocess_exec", return_value=worker):
+            bridge = NodeSourceBridge()
+            result = await bridge.call({"action": "configuration"})
+            await bridge.aclose()
         self.assertEqual(result, {"status": "ready"})
 
-    async def test_bridge_cancellation_terminates_only_its_owned_process(self):
-        process = AsyncMock()
-        process.returncode = None
-        process.communicate.side_effect = asyncio.CancelledError()
-        from unittest.mock import Mock
-        process.kill = Mock()
-        with patch("asyncio.create_subprocess_exec", return_value=process):
+    async def test_bridge_cancellation_leaves_the_shared_worker_and_close_terminates_only_it(self):
+        worker = FakeBridgeWorker(lambda message: [])
+        with patch("asyncio.create_subprocess_exec", return_value=worker):
+            bridge = NodeSourceBridge()
+            task = asyncio.create_task(bridge.call({"action": "configuration"}))
+            await asyncio.sleep(0.05)
+            task.cancel()
             with self.assertRaises(asyncio.CancelledError):
-                await NodeSourceBridge().call({"action": "configuration"})
-        process.kill.assert_called_once()
-        process.wait.assert_awaited_once()
+                await task
+            self.assertEqual(bridge._pending, {})
+            self.assertIsNone(worker.returncode)
+            self.assertFalse(worker.killed)
+            await bridge.aclose()
+        self.assertEqual(worker.returncode, 0)
+
+    async def test_bridge_never_replays_a_call_after_worker_exit_and_restarts_cleanly(self):
+        workers = []
+
+        def create_worker(*_args, **_kwargs):
+            if not workers:
+                worker = FakeBridgeWorker(lambda message: [b""])
+            else:
+                worker = FakeBridgeWorker(lambda message: [
+                    b"__HYDRO_RESULT__=" + json.dumps(
+                        {"id": message["id"], "ok": True, "result": {"attempt": len(workers)}}).encode() + b"\n",
+                ])
+            workers.append(worker)
+            return worker
+
+        with patch("asyncio.create_subprocess_exec", side_effect=create_worker):
+            bridge = NodeSourceBridge()
+            with self.assertRaisesRegex(SourceFailure, "exited before returning"):
+                await bridge.call({"action": "approve_work_order"})
+            self.assertEqual(len(workers[0].requests), 1)
+            self.assertEqual(await bridge.call({"action": "configuration"}), {"attempt": 2})
+            self.assertEqual(len(workers[0].requests), 1)
+            await bridge.aclose()
+
+    async def test_bridge_multiplexes_concurrent_calls_over_one_reused_worker(self):
+        bridge = NodeSourceBridge()
+        try:
+            questions = {
+                "work_backlog_group": [
+                    ("open work by facility", "facility"), ("open work by equipment", "equipment"),
+                    ("show a table", None),
+                ],
+            }
+            calls = [bridge.call({"action": "work_backlog_group", "question": question})
+                     for question, _expected in questions["work_backlog_group"] for _ in range(4)]
+            results = await asyncio.gather(*calls, bridge.call({"action": "agent_contracts"}))
+            worker = bridge._process
+            self.assertIsNotNone(worker)
+            for index, (_question, expected) in enumerate(
+                    [item for item in questions["work_backlog_group"] for _ in range(4)]):
+                self.assertEqual(results[index], {"group_by": expected})
+            self.assertTrue(results[-1]["names"])
+            await bridge.call({"action": "agent_contracts"})
+            self.assertIs(bridge._process, worker)
+        finally:
+            await bridge.aclose()
+
+    async def test_bridge_replaces_a_crashed_worker_and_follows_source_configuration_changes(self):
+        def configured(key):
+            identities = {name: str(uuid4()) for name in (
+                "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
+                "database_id", "graphql_id", "appbackend_id",
+            )}
+            return json.dumps({**identities, "api_url": f"https://{'b' * 32}.pbidedicated.windows.net/workload",
+                               "publishable_key": key})
+
+        bridge = NodeSourceBridge()
+        try:
+            with patch.dict(os.environ, {"HYDRO_FABRIC_SOURCE_CONFIG": configured("pk-first")}):
+                first = await bridge.call({"action": "configuration"})
+                first_worker = bridge._process
+                assert first_worker is not None
+                first_worker.kill()
+                await first_worker.wait()
+                again = await bridge.call({"action": "configuration"})
+                self.assertIsNot(bridge._process, first_worker)
+                self.assertEqual(again["configuration_digest"], first["configuration_digest"])
+            with patch.dict(os.environ, {"HYDRO_FABRIC_SOURCE_CONFIG": configured("pk-second")}):
+                changed = await bridge.call({"action": "configuration"})
+            self.assertNotEqual(changed["configuration_digest"], first["configuration_digest"])
+        finally:
+            await bridge.aclose()
 
 
 class LiveFailureWorkflowTests(unittest.TestCase):

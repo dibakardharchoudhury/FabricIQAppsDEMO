@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -1007,6 +1009,94 @@ test('live discovery verifies generation, ownership and current capacity', async
   await assert.rejects(discover({ ...config, api_url: config.api_url.replace('appbackends', 'other') }, 'test', discoveryFetch()), /capacity/)
   await assert.rejects(discover(config, 'test', discoveryFetch(2, 'https://example.com')), /trusted/)
   await assert.rejects(discover(config, 'test', discoveryFetch(2, `${metadata.cluster}?redirect=1`)), /trusted/)
+})
+
+test('discovery is memoized per configuration and bearer, coalesced, and never caches a failure', async () => {
+  const runtime = {
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+  }
+  const digest = runtimeConfiguration(runtime).configuration_digest
+  const originalConfig = process.env.HYDRO_FABRIC_SOURCE_CONFIG
+  const originalFetch = globalThis.fetch
+  process.env.HYDRO_FABRIC_SOURCE_CONFIG = JSON.stringify(runtime)
+  let calls = 0
+  let generation = 2
+  globalThis.fetch = async (url, options) => { calls++; return discoveryFetch(generation)(url, options) }
+  const request = token => ({ action: 'discover', configuration_digest: digest, tokens: { fabric: token } })
+  try {
+    const [first, concurrent] = await Promise.all([handle(request('token-a')), handle(request('token-a'))])
+    assert.equal(calls, 3)
+    assert.deepEqual(first, concurrent)
+    await handle(request('token-a'))
+    assert.equal(calls, 3)
+    await handle(request('token-b'))
+    assert.equal(calls, 6)
+    generation = 1
+    await assert.rejects(handle(request('token-c')), /generation 2/)
+    const afterFailure = calls
+    generation = 2
+    await handle(request('token-c'))
+    assert.equal(calls, afterFailure + 3)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalConfig === undefined) delete process.env.HYDRO_FABRIC_SOURCE_CONFIG
+    else process.env.HYDRO_FABRIC_SOURCE_CONFIG = originalConfig
+  }
+})
+
+test('serve mode answers id-tagged requests and isolates malformed input', () => {
+  const runtime = {
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+  }
+  const input = [
+    JSON.stringify({ id: 1, request: { action: 'work_backlog_group', question: 'open work by facility' } }),
+    JSON.stringify({ id: 2, request: { action: 'no_such_action', tokens: { fabric: 'x' } } }),
+    'not json',
+    JSON.stringify({ id: 3, request: { action: 'work_backlog_group', question: 'open work by equipment' } }),
+  ].join('\n') + '\n'
+  const completed = spawnSync(process.execPath, [fileURLToPath(new URL('./local-fabric-sources.mjs', import.meta.url)), '--serve'], {
+    input, encoding: 'utf8', env: { ...process.env, HYDRO_FABRIC_SOURCE_CONFIG: JSON.stringify(runtime) }, timeout: 30000,
+  })
+  assert.equal(completed.status, 0, completed.stderr)
+  const replies = completed.stdout.split('\n').filter(line => line.startsWith('__HYDRO_RESULT__='))
+    .map(line => JSON.parse(line.slice('__HYDRO_RESULT__='.length)))
+  const byId = new Map(replies.map(reply => [reply.id, reply]))
+  assert.deepEqual(byId.get(1), { id: 1, ok: true, result: { group_by: 'facility' } })
+  assert.deepEqual(byId.get(3), { id: 3, ok: true, result: { group_by: 'equipment' } })
+  assert.equal(byId.get(2)?.ok, false)
+  assert.equal(byId.get(null)?.ok, false)
+  assert.equal(replies.length, 4)
+})
+
+test('WO/WOs and short turbine IDs compile to the same governed contract as their long forms', () => {
+  const pairs = [
+    ['Help me create a WO for T12', 'Help me create a work order for T012'],
+    ['Which WOs need to be opened now?', 'Which work orders need to be opened now?'],
+    ['Now, tell me which WOs need to be opened and help me with a draft.',
+      'Now, tell me which work orders need to be opened and help me with a draft.'],
+  ]
+  for (const [abbreviated, long] of pairs) {
+    const intent = chatIntent(abbreviated)
+    const reference = chatIntent(long)
+    assert.ok(intent.required_specialists.length > 0, abbreviated)
+    assert.deepEqual(intent.required_specialists, reference.required_specialists, abbreviated)
+    assert.deepEqual(intent.required_evidence_kinds, reference.required_evidence_kinds, abbreviated)
+    assert.deepEqual(intent.permitted_evidence_kinds, reference.permitted_evidence_kinds, abbreviated)
+    const plan = compileOrchestrationPlan(abbreviated, intent)
+    const kinds = [...new Set([
+      ...plan.answer_contract.requirements.map(item => item.kind), ...plan.answer_contract.views.map(view => view.kind),
+    ])].filter(Boolean).sort()
+    const defects = validatePlanRequirements(
+      intent.required_specialists, intent.required_specialist_steps,
+      plan.steps.map(step => ({ specialist: step.specialist, native_source: step.native_source ?? null })),
+      intent.native_sources, abbreviated, kinds, intent.required_evidence_kinds, intent.permitted_evidence_kinds)
+    assert.deepEqual(
+      [defects.missing_specialists, defects.missing_native_sources, defects.missing_evidence_kinds,
+        defects.unexpected_evidence_kinds, Object.keys(defects.missing_specialist_steps)],
+      [[], [], [], [], []], abbreviated)
+  }
 })
 
 test('transport rejects non-success status and does not follow redirects', async () => {

@@ -154,7 +154,9 @@ The canonical Python orchestrator also provisions the five Hydro Prompt Agents f
 the SPA. It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
 (or the saved public project endpoint); discovery must find one matching project in the
 current subscription. `HYDRO_FOUNDRY_MODEL` selects an existing model deployment, defaulting
-to `gpt-5-mini`. It does not create a new Foundry account or silently select an ambiguous project.
+to `gpt-5.6-sol`. In measured specialist tool-selection steps it was faster than `gpt-5-mini`
+at the same `low` reasoning effort (median 2.9 s versus 5.0 s) and did not emit the redundant
+parallel calls the mini model produced. It does not create a new Foundry account or silently select an ambiguous project.
 
 Separate Fabric IQ connections target the published Data Agent matching the live selected
 generation-2 ontology and the Ontology endpoint directly. The Data Agent keeps direct-table

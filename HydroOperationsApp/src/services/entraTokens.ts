@@ -11,12 +11,17 @@ export function createEntraTokens(client: TokenClient, initialize: () => Promise
     return candidates.length === 1 ? candidates[0] : undefined
   }
 
-  const silent = async (scopes: string[], forceRefresh = false): Promise<string | null> => {
+  const silent = async (scopes: string[], forceRefresh = false, minimumLifetimeMs = 0): Promise<string | null> => {
     await initialize()
     const account = selectAccount()
     if (!account) return null
     try {
-      const result = await client.acquireTokenSilent({ account, scopes, forceRefresh })
+      let result = await client.acquireTokenSilent({ account, scopes, forceRefresh })
+      // A cached lease is reusable only while it outlives the bounded operation that will carry it.
+      if (!forceRefresh && minimumLifetimeMs > 0 && result.accessToken
+        && !(result.expiresOn && result.expiresOn.getTime() - Date.now() >= minimumLifetimeMs)) {
+        result = await client.acquireTokenSilent({ account, scopes, forceRefresh: true })
+      }
       if (!result.accessToken) throw new Error('Entra returned no access token.')
       return result.accessToken
     } catch (error) {

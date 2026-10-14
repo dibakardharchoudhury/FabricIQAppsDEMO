@@ -62,36 +62,143 @@ class Bridge(Protocol):
 
 
 class NodeSourceBridge:
-    result_marker = b"\n__HYDRO_RESULT__="
+    """One long-lived Node worker multiplexed by request id.
+
+    The worker pays module start-up once instead of on every contract/source call. It is bound to the event loop
+    and source configuration that started it, is replaced after a crash, and no call is ever replayed after a
+    worker failure because some actions (work-order approval) write.
+    """
+
+    result_marker = b"__HYDRO_RESULT__="
+    request_limit = 262144
+    response_limit = 2 * 1024 * 1024
+    call_timeout = 75
 
     def __init__(self, node: str | None = None):
         self.node = node or os.environ.get("HYDRO_LOCAL_NODE", "node")
         self.script = Path(__file__).resolve().parents[3] / "HydroOperationsApp" / "scripts" / "local-fabric-sources.mjs"
+        self._process: asyncio.subprocess.Process | None = None
+        self._reader: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
+        self._environment: str | None = None
+        self._pending: dict[int, asyncio.Future[dict[str, object]]] = {}
+        self._sequence = 0
 
-    async def call(self, request: dict[str, object]) -> dict[str, object]:
-        process = await asyncio.create_subprocess_exec(
-            self.node, str(self.script), stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
+    @staticmethod
+    def _environment_key() -> str:
+        return repr(os.environ.get("HYDRO_FABRIC_SOURCE_CONFIG"))
+
+    def _fail_pending(self, message: str) -> None:
+        pending, self._pending = self._pending, {}
+        for future in pending.values():
+            if not future.done():
+                future.set_exception(SourceFailure(message))
+
+    async def _read_responses(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stdout is not None
+        failure = "Local source process exited before returning a response."
         try:
-            async with asyncio.timeout(75):
-                stdout, _stderr = await process.communicate(json.dumps(request).encode())
+            while True:
+                try:
+                    line = await process.stdout.readline()
+                except (ValueError, asyncio.LimitOverrunError):
+                    failure = "Local source process response exceeds its bounded size."
+                    break
+                if not line:
+                    break
+                _prefix, marker, payload = line.rpartition(self.result_marker)
+                if not marker:
+                    continue
+                if len(payload) > self.response_limit:
+                    failure = "Local source process response exceeds its bounded size."
+                    break
+                try:
+                    envelope = json.loads(payload)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    failure = "Local source process returned an invalid response; output suppressed."
+                    break
+                identifier = envelope.get("id") if isinstance(envelope, dict) else None
+                if not isinstance(identifier, int):
+                    failure = "Local source process returned an unroutable response; output suppressed."
+                    break
+                future = self._pending.pop(identifier, None)
+                if future is not None and not future.done():
+                    future.set_result(envelope)
         finally:
+            # A worker that cannot be trusted to route responses is discarded; the next call starts a clean one.
+            if self._process is process:
+                self._process = None
+            self._fail_pending(failure)
             if process.returncode is None:
                 process.kill()
-                await process.wait()
-        if len(stdout) > 2 * 1024 * 1024:
-            raise SourceFailure("Local source process response exceeds its bounded size.")
-        _prefix, marker, payload = stdout.rpartition(self.result_marker)
-        if not marker:
-            raise SourceFailure("Local source process returned an invalid response; output suppressed.")
+            await process.wait()
+
+    async def _ensure_worker(self) -> asyncio.subprocess.Process:
+        loop = asyncio.get_running_loop()
+        if self._lock_loop is not loop:
+            self._lock, self._lock_loop = asyncio.Lock(), loop
+        assert self._lock is not None
+        async with self._lock:
+            environment = self._environment_key()
+            process = self._process
+            if (process is not None and process.returncode is None and self._loop is loop
+                    and self._environment == environment):
+                return process
+            await self.aclose()
+            process = await asyncio.create_subprocess_exec(
+                self.node, str(self.script), "--serve", stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=4 * 1024 * 1024,
+            )
+            self._process, self._loop, self._environment = process, loop, environment
+            self._reader = loop.create_task(self._read_responses(process))
+            return process
+
+    async def aclose(self) -> None:
+        process, reader, loop = self._process, self._reader, self._loop
+        self._process = self._reader = None
+        if process is None:
+            return
+        self._fail_pending("Local source process was closed.")
+        if loop is not asyncio.get_running_loop():
+            # The owning loop is gone, so its reader cannot finish; closing stdin makes the worker exit itself.
+            if process.stdin is not None and not process.stdin.is_closing():
+                process.stdin.close()
+            return
+        if process.stdin is not None and not process.stdin.is_closing():
+            process.stdin.close()
         try:
-            envelope = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise SourceFailure("Local source process returned an invalid response; output suppressed.") from error
-        if not isinstance(envelope, dict):
-            raise SourceFailure("Local source process did not return an object.")
-        if process.returncode != 0 or envelope.get("ok") is not True:
+            async with asyncio.timeout(2):
+                await process.wait()
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+        if reader is not None:
+            await asyncio.gather(reader, return_exceptions=True)
+
+    async def call(self, request: dict[str, object]) -> dict[str, object]:
+        encoded = json.dumps({"id": 0, "request": request}).encode()
+        if len(encoded) > self.request_limit:
+            raise SourceFailure("Local source request exceeds its bounded size.")
+        process = await self._ensure_worker()
+        assert process.stdin is not None
+        self._sequence += 1
+        identifier = self._sequence
+        future: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
+        self._pending[identifier] = future
+        try:
+            if process.returncode is not None or self._process is not process:
+                raise SourceFailure("Local source process exited before accepting the request.")
+            process.stdin.write(json.dumps({"id": identifier, "request": request}).encode() + b"\n")
+            await process.stdin.drain()
+            async with asyncio.timeout(self.call_timeout):
+                envelope = await future
+        except (BrokenPipeError, ConnectionResetError) as error:
+            raise SourceFailure("Local source process exited before accepting the request.") from error
+        finally:
+            self._pending.pop(identifier, None)
+        if envelope.get("ok") is not True:
             attempted = envelope.get("write_attempted")
             raise SourceFailure(str(envelope.get("error", "Local source process failed.")),
                                 write_attempted=attempted if isinstance(attempted, bool) else None)
