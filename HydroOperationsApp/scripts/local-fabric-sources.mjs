@@ -9,7 +9,7 @@ import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, positiveActionClauses, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -20,26 +20,54 @@ export function governedToolResult(tool, args, result) {
   return { ...result, _evidence_datasets: describeToolEvidence(tool, args, result) }
 }
 
-export function chatIntent(question) {
+export function chatIntent(question, carriedKinds = []) {
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) {
     throw new Error('Chat intent requires a bounded nonempty operator question.')
   }
   const nativeSources = requestedNativeSources(question)
   const specialists = requiredSpecialists(question, nativeSources.length > 0)
   // Required evidence always needs a reader: never compile an empty plan for a question that asks for data.
-  if (!specialists.length && requiredEvidenceKinds(question).some(kind => kind !== 'native_claims')) specialists.push('qa')
+  if (!specialists.length && requiredEvidenceKinds(question, carriedKinds).some(kind => kind !== 'native_claims')) specialists.push('qa')
   return { charts_requested: requiresChartOutput(question), native_sources: nativeSources,
     proposal_priority: workOrderPriorityForRequest(question),
     equipment_selection: equipmentSelectionForRequest(question) ?? null,
-    required_evidence_kinds: requiredEvidenceKinds(question),
-    permitted_evidence_kinds: permittedEvidenceKinds(question),
+    required_evidence_kinds: requiredEvidenceKinds(question, carriedKinds),
+    permitted_evidence_kinds: permittedEvidenceKinds(question, carriedKinds),
     required_specialists: specialists,
     required_specialist_steps: Object.fromEntries(specialists.map(role => [
       role, role === 'qa' ? requiredIndependentQaSteps(question) : 1,
     ])) }
 }
 
-export function requiredEvidenceKinds(question) {
+/** Intent for a follow-up in a conversation whose previous run already produced verified evidence of the given
+ *  kinds. `reuse` is true only when the question points back at that data, every kind it needs is already held,
+ *  and no specialist would still have to re-read it. Otherwise the intent is exactly the standalone one. */
+export function chatFollowUp(question, carriedKinds) {
+  const carried = [...new Set(carriedKinds)]
+  const standalone = chatIntent(question)
+  if (!carried.length || !refersToPriorData(question)) return { intent: standalone, reuse: false }
+  const intent = chatIntent(question, carried)
+  const needed = intent.required_evidence_kinds.filter(kind => kind !== 'native_claims')
+  if (!needed.length || !needed.every(kind => carried.includes(kind)) || intent.native_sources.length) {
+    return { intent: standalone, reuse: false }
+  }
+  const explicitQa = missingRequestedSpecialists(question, []).includes('qa')
+  const others = intent.required_specialists.filter(role => role !== 'qa')
+  if (!others.length || explicitQa) return { intent: standalone, reuse: false }
+  return { reuse: true, intent: { ...intent, required_specialists: others,
+    required_specialist_steps: Object.fromEntries(others.map(role => [role, 1])) } }
+}
+
+/** A "which work needs raising" question needs the condition evidence and the existing open-work cover. When the
+ *  conversation already holds condition evidence it points back at, that is used instead of fresh defaults. */
+function addNeedAssessmentKinds(question, kinds, carriedKinds) {
+  kinds.add('work_orders')
+  if (kinds.has('signal_quality') || kinds.has('temperature')) return
+  const held = carriedKinds.filter(kind => kind === 'signal_quality' || kind === 'temperature')
+  for (const kind of held.length && refersToPriorData(question) ? held : ['signal_quality', 'temperature']) kinds.add(kind)
+}
+
+export function requiredEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
   if (requestedNativeSources(text).length) kinds.add('native_claims')
@@ -67,17 +95,11 @@ export function requiredEvidenceKinds(question) {
   if (/\bread\b[^.!?;\n]{0,80}\bnotifications?\b/i.test(text)) kinds.add('notifications')
   if (/\blist\b[^.!?;\n]{0,80}\bspare parts?\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:show|read|list)\b[^.!?;\n]{0,80}\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
-  if (requestsWorkOrderNeedAssessment(question)) {
-    kinds.add('work_orders')
-    if (!kinds.has('signal_quality') && !kinds.has('temperature')) {
-      kinds.add('signal_quality')
-      kinds.add('temperature')
-    }
-  }
+  if (requestsWorkOrderNeedAssessment(question)) addNeedAssessmentKinds(question, kinds, carriedKinds)
   return [...kinds]
 }
 
-export function permittedEvidenceKinds(question) {
+export function permittedEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
   if (requestedNativeSources(text).length) kinds.add('native_claims')
@@ -103,14 +125,7 @@ export function permittedEvidenceKinds(question) {
   if (/\bnotifications?\b/i.test(text)) kinds.add('notifications')
   if (/\b(?:spare parts?|parts stock|reorder level)\b/i.test(text)) kinds.add('spare_parts')
   if (/\b(?:asset models?|3d models?)\b/i.test(text)) kinds.add('asset_models')
-  if (requestsWorkOrderNeedAssessment(question)) {
-    // A "which work orders need to be opened" question needs the condition evidence and the existing cover.
-    kinds.add('work_orders')
-    if (!kinds.has('signal_quality') && !kinds.has('temperature')) {
-      kinds.add('signal_quality')
-      kinds.add('temperature')
-    }
-  }
+  if (requestsWorkOrderNeedAssessment(question)) addNeedAssessmentKinds(question, kinds, carriedKinds)
   return [...kinds]
 }
 
@@ -414,7 +429,7 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
       specialist: 'work-order',
       question: conditionalWork
         ? 'Review verified work coverage and stage an editable draft only for a verified uncovered equipment issue.'
-        : initialQaCount > 0 && !NAMED_EQUIPMENT.test(positiveActionClauses(question))
+        : (initialQaCount > 0 || intent.evidence_carried === true) && !NAMED_EQUIPMENT.test(positiveActionClauses(question))
           ? 'The operator named no equipment, so choose the target from the supplied verified evidence: the highest-priority equipment with a verified concern and no open work plausibly covering it. Confirm its identity and complete open-work coverage, then prepare the requested editable draft for it. If every affected equipment is already covered, conclude no_draft and name the covering work.'
           : 'Review verified identity and work coverage, then prepare the explicitly requested editable draft.',
       reason: 'Perform the requested governed work review without executing a production write.',
@@ -1108,7 +1123,15 @@ function discoverCached(config, token) {
 
 export async function handle(request, deps = {}) {
   const submitApproved = deps.submitApprovedWorkOrder ?? submitApprovedWorkOrder
-  if (request.action === 'chat_intent') return chatIntent(request.question)
+  if (request.action === 'chat_intent') {
+    if (request.carried_kinds === undefined) return chatIntent(request.question)
+    if (!Array.isArray(request.carried_kinds) || request.carried_kinds.length > 40
+        || request.carried_kinds.some(kind => typeof kind !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(kind))) {
+      throw new Error('Carried evidence kinds must be a bounded list of governed identifiers.')
+    }
+    const { intent, reuse } = chatFollowUp(request.question, request.carried_kinds)
+    return { ...intent, reuse_prior_evidence: reuse }
+  }
   if (request.action === 'analytical_evidence_plan') {
     return { entries: analyticalEvidencePlan(request.question, request.answer_kinds) }
   }

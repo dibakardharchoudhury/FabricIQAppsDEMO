@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
-import { requestsWorkOrderNeedAssessment } from '../src/services/copilot/orchestration.ts'
+import { analyticalEvidencePlan, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
@@ -1199,6 +1199,56 @@ test('the approval action returns the committed write result after a successful 
     globalThis.fetch = originalFetch
     if (originalConfig === undefined) delete process.env.HYDRO_FABRIC_SOURCE_CONFIG
     else process.env.HYDRO_FABRIC_SOURCE_CONFIG = originalConfig
+  }
+})
+
+test('follow-ups that point at held data reuse it; otherwise the question is planned as a standalone one', () => {
+  const held = ['signal_quality', 'work_orders']
+  const reuse = chatFollowUp('Based on this data, tell me which work orders need to be created and help me with the drafts.', held)
+  assert.equal(reuse.reuse, true)
+  assert.deepEqual(reuse.intent.required_specialists, ['work-order'])
+  assert.deepEqual(reuse.intent.required_specialist_steps, { 'work-order': 1 })
+  assert.deepEqual([...reuse.intent.required_evidence_kinds].sort(), ['signal_quality', 'work_orders'])
+  assert.ok(!reuse.intent.required_evidence_kinds.includes('temperature'), 'held condition data replaces the fresh defaults')
+  // The reused plan has no reader step; the draft step picks its target from the carried evidence.
+  const plan = compileOrchestrationPlan('Based on this data, tell me which work orders need to be created and help me with the drafts.',
+    { ...reuse.intent, evidence_carried: true })
+  assert.deepEqual(plan.steps.map(step => step.specialist), ['work-order'])
+  assert.match(plan.steps[0].question, /named no equipment/)
+
+  const standalone = chatIntent('Which work orders need to be created and help me with the drafts?')
+  for (const [question, carried] of [
+    ['Which work orders need to be created and help me with the drafts?', held],
+    ['Based on this data, tell me which work orders need to be created and draft them.', ['station_power']],
+    ['What work is open on those?', held],
+    ['Based on this data, draft a work order and independently verify the draft.', held],
+    ['Based on this data, tell me which work orders need to be created.', []],
+  ]) {
+    const result = chatFollowUp(question, carried)
+    assert.equal(result.reuse, false, question)
+    assert.deepEqual(result.intent, chatIntent(question), question)
+  }
+  assert.deepEqual(standalone.required_specialists, ['qa', 'work-order'])
+})
+
+test('references to earlier data are recognised by concept and not triggered by new data requests', () => {
+  for (const question of [
+    'Based on this data, draft work.', 'Which of those turbines need attention?', 'Using the above readings, rank them.',
+    'Show the same results as a chart.', 'For these units, what is open?', 'Based on the above, what next?',
+  ]) assert.equal(refersToPriorData(question), true, question)
+  for (const question of [
+    'Which turbines are hot?', 'List the open work orders.', 'Chart power per station.', 'Which WOs need to be opened now?',
+  ]) assert.equal(refersToPriorData(question), false, question)
+})
+
+test('the bridge validates carried kinds and leaves the standalone intent contract unchanged', async () => {
+  assert.deepEqual(Object.keys(await handle({ action: 'chat_intent', question: 'Which turbines are hot?' })).sort(), [
+    'charts_requested', 'equipment_selection', 'native_sources', 'permitted_evidence_kinds', 'proposal_priority',
+    'required_evidence_kinds', 'required_specialist_steps', 'required_specialists'])
+  const followUp = await handle({ action: 'chat_intent', question: 'Based on this data, draft work.', carried_kinds: ['signal_quality'] })
+  assert.equal(typeof followUp.reuse_prior_evidence, 'boolean')
+  for (const bad of ['signal_quality', ['Bad Kind'], [1], new Array(41).fill('a')]) {
+    await assert.rejects(handle({ action: 'chat_intent', question: 'Draft work.', carried_kinds: bad }), /governed identifiers/)
   }
 })
 

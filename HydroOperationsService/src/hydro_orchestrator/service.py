@@ -26,7 +26,7 @@ from .contracts import (
 )
 from .foundry_supervisor import (
     ChatAnswer, ChatRequest, EquipmentSelection, FoundrySupervisor, HistoricalContext, NativeBinding, NativeSource,
-    RunJournal,
+    RunJournal, ToolEvidence,
 )
 from pydantic import Field, ValidationError, model_validator
 from starlette.responses import JSONResponse, StreamingResponse
@@ -174,6 +174,49 @@ def normalized_chat_input(chat: ChatInput, intent: dict[str, object]) -> ChatInp
             }
         },
     })
+
+
+CARRY_MAX_AGE = timedelta(minutes=30)
+MAX_CARRIED_RECEIPTS = 16
+
+
+def carriable_receipts(state: Path, source: SourceIdentity, previous_run_id: UUID | None) -> list[ToolEvidence]:
+    """Verified receipts of the preceding run that a follow-up may reuse. Staged drafts, other sources and
+    receipts older than the conversation window are never reused; a missing or unreadable journal means none."""
+    if previous_run_id is None:
+        return []
+    try:
+        saved = RunJournal(state / str(previous_run_id) / "receipts").read("evidence")
+    except (OSError, ValueError, SourceFailure):
+        return []
+    raw_receipts = saved.get("receipts") if isinstance(saved, dict) else None
+    if not isinstance(raw_receipts, list):
+        return []
+    now = utc_now()
+    receipts: list[ToolEvidence] = []
+    for raw in raw_receipts:
+        try:
+            receipt = ToolEvidence.model_validate(raw)
+        except ValueError:
+            continue
+        if (receipt.tool == "propose_work_order" or receipt.source != source or receipt.production_write_executed
+                or not timedelta(0) <= now - receipt.completed_at <= CARRY_MAX_AGE):
+            continue
+        receipts.append(receipt)
+    return receipts
+
+
+def reusable_kinds(receipt: ToolEvidence) -> set[str]:
+    return {
+        dataset.kind for dataset in receipt.datasets
+        if dataset.scope == "population" and dataset.authority == "direct" and dataset.complete
+        and dataset.role != "audit"
+    }
+
+
+def select_carried_ids(receipts: list[ToolEvidence], needed: set[str]) -> tuple[str, ...]:
+    chosen = [item.id for item in receipts if reusable_kinds(item) & needed]
+    return tuple(chosen[:MAX_CARRIED_RECEIPTS])
 
 
 def preceding_context(state: Path, source: SourceIdentity, previous_run_id: UUID | None) -> HistoricalContext | None:
@@ -387,7 +430,9 @@ def create_delegated_app(
     *, run_timeout: float = 600, max_concurrent_runs: int = 4,
     decision_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
     reconciliation_handler: Callable[[Path, DelegatedCredential, UUID, WorkOrderDecision], Awaitable[dict[str, object]]] | None = None,
-    normalize_chat: Callable[[ChatInput, DelegatedCredential], Awaitable[ChatInput]] | None = None,
+    normalize_chat: Callable[
+        [ChatInput, DelegatedCredential, Path], Awaitable[tuple[ChatInput, tuple[str, ...]]]
+    ] | None = None,
 ) -> FastAPI:
     """Raw invocations boundary; the deployment must supply an authorized source factory."""
     if source.tenant_id != verifier.policy.tenant_id:
@@ -513,15 +558,21 @@ def create_delegated_app(
             if capacity.locked():
                 raise HTTPException(429, "Orchestration capacity is busy; retry later.")
             assert body.chat is not None
-            input_chat = await normalize_chat(body.chat, credential) if normalize_chat else body.chat
+            assert state is not None
+            input_chat, carried_ids = (
+                await normalize_chat(body.chat, credential, state) if normalize_chat else (body.chat, ())
+            )
             if input_chat.question != body.chat.question:
                 raise ValueError("Intent normalization changed the operator question.")
             chat = ChatRequest(run_id=uuid4(), source=source, requested_at=requested_at, deadline=deadline,
                                historical_context=preceding_context(state, source, input_chat.previous_run_id),
+                               carried_from=input_chat.previous_run_id if carried_ids else None,
+                               carried_evidence_ids=carried_ids,
                                **input_chat.model_dump())
             logger.info(
-                "Delegated run %s normalized intent: specialists=%s native_sources=%s charts=%s.",
+                "Delegated run %s normalized intent: specialists=%s native_sources=%s charts=%s carried=%d.",
                 chat.run_id, list(chat.required_specialists), list(chat.native_sources), chat.charts_requested,
+                len(chat.carried_evidence_ids),
             )
             if body.stream:
                 assert credential is not None and state is not None
@@ -750,9 +801,28 @@ def create_fabric_delegated_app(
         finally:
             await sources.close()
 
-    async def normalize_chat(chat: ChatInput, credential: DelegatedCredential) -> ChatInput:
-        intent = await bridge.call({"action": "chat_intent", "question": chat.question})
-        normalized = normalized_chat_input(chat, intent)
+    async def normalize_chat(
+        chat: ChatInput, credential: DelegatedCredential, state: Path,
+    ) -> tuple[ChatInput, tuple[str, ...]]:
+        receipts = carriable_receipts(state, source, chat.previous_run_id)
+        carried_ids: tuple[str, ...] = ()
+        if receipts:
+            kinds = sorted({kind for receipt in receipts for kind in reusable_kinds(receipt)})
+            intent = dict(await bridge.call({
+                "action": "chat_intent", "question": chat.question, "carried_kinds": kinds,
+            }))
+            reuse = intent.pop("reuse_prior_evidence", False) is True
+            normalized = normalized_chat_input(chat, intent)
+            if reuse:
+                carried_ids = select_carried_ids(receipts, set(normalized.required_evidence_kinds))
+                if not carried_ids:
+                    reuse = False
+            if not reuse:
+                intent = await bridge.call({"action": "chat_intent", "question": chat.question})
+                normalized = normalized_chat_input(chat, intent)
+        else:
+            intent = await bridge.call({"action": "chat_intent", "question": chat.question})
+            normalized = normalized_chat_input(chat, intent)
         if not re.search(
             r"\b(?:EQUIP_RTI_T0*\d+|FACILITY_RTI_0*\d+|T0*\d+|"
             r"(?:turbine|equipment|asset|facility|station|power\s+plant)\s*"
@@ -761,7 +831,7 @@ def create_fabric_delegated_app(
             chat.question,
             re.IGNORECASE,
         ):
-            return normalized
+            return normalized, carried_ids
         sources = await LiveSources.open_delegated(credential, bridge)
         try:
             resolved = await sources.resolve_scope(chat.question)
@@ -772,7 +842,7 @@ def create_fabric_delegated_app(
             raise
         return normalized.model_copy(update={
             "resolved_scope": ResolvedScope.model_validate(resolved) if resolved is not None else None,
-        })
+        }), carried_ids
 
     async def reconcile(state: Path, credential: DelegatedCredential, run_id: UUID, decision: WorkOrderDecision):
         return await decide(state, credential, run_id, decision, require_previous=True)

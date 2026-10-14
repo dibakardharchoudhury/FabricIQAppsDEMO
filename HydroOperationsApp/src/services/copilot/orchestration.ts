@@ -234,6 +234,19 @@ export function requestsWorkOrderNeedAssessment(question: string): boolean {
   })
 }
 
+const PRIOR_DATA_NOUN = String.raw`(?:data(?:set)?|results?|readings?|findings?|lists?|tables?|figures?|numbers?|information|output|turbines?|equipment|units?|signals?|assets?|work[\s-]*orders?|wos?|ones)`
+const PRIOR_DEIXIS = String.raw`(?:this|that|these|those|above|previous(?:ly)?|earlier|preceding|prior|aforementioned|same)`
+
+/** True when the question points back at data already shown in the conversation ("based on this data", "for
+ *  those", "the above"), as opposed to naming new data to look up. Whether that data can actually be reused is
+ *  decided by the backend against the previous run. */
+export function refersToPriorData(question: string): boolean {
+  return positiveActionClauses(question).split(/[.!?;\n]+/).some(clause =>
+    new RegExp(String.raw`\b${PRIOR_DEIXIS}\b[^.!?;\n]{0,40}\b${PRIOR_DATA_NOUN}\b`, 'i').test(clause)
+    || new RegExp(String.raw`\b${PRIOR_DATA_NOUN}\b[^.!?;\n]{0,25}\b(?:above|from before|you (?:just )?(?:showed|listed|returned|found|gave|provided))\b`, 'i').test(clause)
+    || /\bbased on (?:the )?(?:above|previous|earlier|answer|findings?)\b/i.test(clause))
+}
+
 export function isWorkOrderRequest(question: string): boolean {
   const positiveClauses = positiveActionClauses(question).replace(
     /\b(?:prepare|generate|make)\s+(?:(?:a|an|the|new)\s+)?(?:table|chart|report|summary|list|dashboard|comparison)\b/gi,

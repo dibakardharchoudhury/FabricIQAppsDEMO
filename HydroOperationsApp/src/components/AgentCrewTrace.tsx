@@ -8,12 +8,16 @@ import './AgentCrewTrace.css'
 import { CopilotHelper } from './CopilotHelper'
 
 const CREW = [
-  { role: 'supervisor', job: 'Deterministic orchestration', quip: 'Compile. Dispatch. Verify. Present.', icon: GitBranch },
+  { role: 'supervisor', job: '', quip: 'Compile. Dispatch. Verify. Present.', icon: GitBranch },
   { role: 'qa', job: 'Q&A', quip: 'Facts, not vibes.', icon: Telescope },
   { role: 'work-order', job: 'Work orders', quip: 'You approve. Then we do.', icon: ClipboardCheck },
   { role: 'rca', job: 'Root cause', quip: 'Suspicious of coincidences.', icon: Search },
   { role: 'fabric-iq', job: 'Fabric IQ', quip: 'Right plug. Right source.', icon: Workflow },
 ] as const
+
+// The Supervisor has no job subtitle: it is simply the Supervisor, so names never read "Supervisor - Supervisor".
+const jobOf = (role: AgentRole) => CREW.find(member => member.role === role)?.job || ''
+const crewTitle = (role: AgentRole) => { const job = jobOf(role); return job ? `${AGENT_DISPLAY_NAMES[role]} - ${job}` : AGENT_DISPLAY_NAMES[role] }
 
 const STATUS_LABELS = {
   idle: 'Standing by', queued: 'Queued', running: 'On the job',
@@ -58,7 +62,6 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
   const trace = focusedEvents.flatMap(event => event.trace ?? []).sort((a, b) => a.timestamp - b.timestamp)
   const start = Math.min(...events.map(event => event.timestamp))
   const latest = focusedEvents[focusedEvents.length - 1]
-  const member = CREW.find(member => member.role === focused)
   const communications = crewCommunications(events)
   const currentCommunications = crewCommunications(currentEvents)
   const handoffs = crewHandoffs(events)
@@ -95,8 +98,8 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
         const Icon = member.icon
         const awaiting = member.role === 'supervisor' && currentCommunications.some(flow => flow.waiting)
         return <button type="button" key={member.role} className={`crew-station role-${member.role} state-${state}${awaiting ? ' awaiting-specialist' : ''}${focused === member.role ? ' selected' : ''}`}
-          aria-pressed={focused === member.role} aria-label={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${STATUS_LABELS[state]}. Show execution details.`}
-          title={`${AGENT_DISPLAY_NAMES[member.role]} - ${member.job}: ${member.quip}`}
+          aria-pressed={focused === member.role} aria-label={`${crewTitle(member.role)}: ${STATUS_LABELS[state]}. Show execution details.`}
+          title={`${crewTitle(member.role)}: ${member.quip}`}
           onClick={() => { setSelected(member.role); setExpanded(true) }}>
           <span className="crew-helper-slot"><span className="crew-work-ring" /><CopilotHelper /><span className="crew-role-badge"><Icon size={12} /></span></span>
           <strong className="crew-name">{AGENT_DISPLAY_NAMES[member.role]}</strong>
@@ -113,13 +116,13 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     {recentActivity.length > 0 && <ol className="crew-live-feed" aria-label="Recent execution activity">
       {recentActivity.map(entry => <li key={entry.id} className={entry.failed ? 'failed' : ''}>
         <span className={`crew-feed-icon${entry.activity === 'tool-start' ? ' tool-start' : ''}`} aria-hidden="true">{entry.failed ? '!' : entry.activity === 'delegation-return' ? '\u2190' : '\u2192'}</span>
-        <span><strong>{AGENT_DISPLAY_NAMES[entry.role]} - {CREW.find(member => member.role === entry.role)?.job}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Browser coordination / tool'}</small></span>
+        <span><strong>{crewTitle(entry.role)}</strong> {entry.label}<small>{entry.source === 'foundry' ? 'Foundry event' : 'Browser coordination / tool'}</small></span>
         <time>+{((entry.timestamp - start) / 1000).toFixed(1)}s</time>
       </li>)}
     </ol>}
     <div className="crew-activity" aria-live="polite">
       <span className="crew-activity-dot" aria-hidden="true" />
-      <span><strong>{member?.job}</strong> · {latest?.detail ?? 'Standing by; not invoked for this request.'}</span>
+      <span><strong>{crewTitle(focused)}</strong> · {latest?.detail ?? 'Standing by; not invoked for this request.'}</span>
     </div>
     <div className="crew-controls">
       <span>{invoked} agents invoked · packets = recorded handoffs</span>
@@ -127,7 +130,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
     </div>
     {approvals.length > 0 && <p className="crew-review-status" role="status">Human review (application): {approvals.filter(state => state === 'created').length} created, {approvals.filter(state => state === 'rejected').length} rejected, {approvals.filter(state => state === 'pending').length} awaiting decision.{reviewStatus === 'error' && ' A draft expired or a SQL write outcome is uncertain. Check existing work before retrying.'}{approvals.includes('validating') && ' Checking identity and existing work; no SQL write yet.'}{approvals.includes('saving') && ' Writing the approved SQL draft; do not submit again.'}</p>}
     {!compact && <details className="crew-diagnostics">
-      <summary>Execution receipts <span>{trace.length} events for {CREW.find(member => member.role === focused)?.job}</span></summary>
+      <summary>Execution receipts <span>{trace.length} events for {jobOf(focused) || AGENT_DISPLAY_NAMES[focused]}</span></summary>
       <p>Foundry stream events and browser-executed tools are labeled separately. These are execution records, not private reasoning or an Application Insights span export.</p>
       {insightsLink && <a className="crew-insights-link" href={insightsLink} target="_blank" rel="noreferrer">Open linked Application Insights <ExternalLink size={12} /></a>}
       {traceQuery && <details className="crew-query"><summary>Find these responses in Foundry telemetry</summary><p>Use this query in the linked Application Insights Logs. No matching rows means trace ingestion is unverified, not that execution succeeded or failed.</p><pre><code>{traceQuery}</code></pre></details>}

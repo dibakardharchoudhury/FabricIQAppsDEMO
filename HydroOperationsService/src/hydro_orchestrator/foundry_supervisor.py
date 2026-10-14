@@ -575,9 +575,19 @@ class ChatRequest(Contract):
     resolved_scope: ResolvedScope | None = None
     previous_run_id: UUID | None = None
     historical_context: HistoricalContext | None = None
+    # Receipts from the previous run that this follow-up reuses instead of re-reading. They are selected and
+    # validated by the backend (same principal, same source, recent, never a staged draft), never by the client.
+    carried_from: UUID | None = None
+    carried_evidence_ids: tuple[str, ...] = Field(default=(), max_length=16)
 
     @model_validator(mode="after")
     def bounded_credential_lease(self) -> "ChatRequest":
+        if bool(self.carried_evidence_ids) != (self.carried_from is not None) or (
+            self.carried_from is not None and self.carried_from != self.previous_run_id
+        ):
+            raise ValueError("Carried evidence must come from, and only from, the preceding run.")
+        if len(self.carried_evidence_ids) != len(set(self.carried_evidence_ids)):
+            raise ValueError("Carried evidence identities must be distinct.")
         if not self.requested_at < self.deadline <= self.requested_at + MAX_CHAT_RUN_DURATION:
             raise ValueError("Credential lease must be within ten minutes of its persisted request clock.")
         if len(self.native_sources) != len(set(self.native_sources)):
@@ -862,6 +872,7 @@ Write like a senior maintenance planner briefing a colleague: direct, specific, 
 - "reasoning": explain HOW you got from the data to the answer. For a question about which work orders to open or create, compare every affected equipment (BAD signal quality, highest temperatures, whatever the question targets) with open_work_by_equipment. Say which equipment is already covered and by which work order, judging from its title, status and priority whether it plausibly addresses the concern, and which has no cover. Say why a gap matters now.
 - "recommendations": one entry per equipment or decision. Use create_work_order only for a verified gap with no plausibly covering open work (priority required, equipment_id required). Use covered_by_open_work when an open work order already addresses it and cite that number in the justification. Use monitor when evidence is thin, stale or only a single weak signal. Use no_action when nothing is wrong. Use needs_clarification when identity or scope is ambiguous. Give each a short actionable title (for a work order a ready-to-use inspection title) and a justification that cites the evidence. Set priority relative to the evidence (multiple affected signals, hottest-ranked, no cover, stale data) and say that the priority is a suggestion for the operator to adjust.
 - If a draft is staged (staged_drafts), say which equipment it targets, why it is justified, and tell the operator to review and approve it in the card below. Never claim it was created.
+- carried_evidence lists datasets that were read earlier in the conversation and reused, not re-read. When it is non-empty, say in one short clause which data was reused and when it was read (now_utc is the current time), so the operator can judge how current it is. Draft-coverage checks for staged drafts are fresh.
 - "caveats": only real limits that change how far the operator can trust the conclusion (stale readings, truncated rows, missing sources, specialist limitations). Do not pad.
 
 Hard rules:
@@ -1316,6 +1327,7 @@ class FoundrySupervisor:
         self.source_tasks: dict[str, asyncio.Task[ToolEvidence]] = {}
         self.delegation_lock = asyncio.Lock()
         self.run_id: UUID | None = None
+        self.carried_ids: set[str] = set()
         self.selected_equipment_ids: set[str] = set()
         self.answer_contract: OperatorAnswerContract | None = None
         self.orchestration_plan: OrchestrationPlan | None = None
@@ -1356,6 +1368,47 @@ class FoundrySupervisor:
             raise SourceFailure(
                 f"{type(first).__name__}: source, handoff or validation failed; no successful answer is permitted."
             ) from first
+
+    def load_carried_evidence(self, request: ChatRequest, journal: RunJournal) -> None:
+        """Seed this run with the verified receipts the follow-up reuses. They keep their original read times, so
+        the answer can disclose their age; they are never presented as a fresh read."""
+        if not request.carried_evidence_ids:
+            return
+        saved = journal.read("carried_evidence")
+        if saved is None:
+            previous = RunJournal(self.root / str(request.carried_from) / "receipts").read("evidence")
+            raw = previous.get("receipts") if isinstance(previous, dict) else None
+            if not isinstance(raw, list):
+                raise SourceFailure("The previous answer's evidence is no longer available; ask the question again.")
+            by_id = {item.id: item for item in (ToolEvidence.model_validate(value) for value in raw)}
+            missing = [identity for identity in request.carried_evidence_ids if identity not in by_id]
+            if missing:
+                raise SourceFailure("Carried evidence differs from the previous answer's receipts.")
+            chosen = [by_id[identity] for identity in request.carried_evidence_ids]
+            journal.save("carried_evidence", {
+                "from": str(request.carried_from), "receipts": [item.model_dump(mode="json") for item in chosen],
+            })
+        else:
+            chosen = [ToolEvidence.model_validate(value) for value in cast(list[object], saved["receipts"])]
+        for receipt in chosen:
+            if (receipt.source != request.source or receipt.tool == "propose_work_order"
+                    or receipt.completed_at > request.requested_at):
+                raise SourceFailure("Carried evidence must be an earlier verified read from the same source.")
+            self.evidence.setdefault(receipt.id, receipt)
+        self.carried_ids = {item.id for item in chosen}
+
+    def carried_limitations(self, request: ChatRequest) -> tuple[str, ...]:
+        carried = [self.evidence[identity] for identity in sorted(self.carried_ids) if identity in self.evidence]
+        if not carried:
+            return ()
+        oldest = min(item.completed_at for item in carried)
+        newest = max(item.completed_at for item in carried)
+        age_minutes = max(0, int((request.requested_at - oldest).total_seconds() // 60))
+        return (
+            f"Reused evidence: {', '.join(sorted({item.tool for item in carried}))} came from the previous answer "
+            f"(read {oldest:%H:%M:%S}Z to {newest:%H:%M:%S}Z UTC, up to {age_minutes} min before this question) "
+            "instead of being re-read. Ask for a fresh read to refresh it.",
+        )
 
     async def fulfill_catalog_requirements(
         self, request: ChatRequest, journal: RunJournal,
@@ -1593,6 +1646,11 @@ class FoundrySupervisor:
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
             return [item.receipt() for item in self.evidence.values()]
+        if (role == "work-order" and not targeted and self.carried_ids
+                and not any(item.role == "rca" for item in self.specialists)):
+            # No RCA narrowed the focus, and the verified dataset this draft is based on was carried in: the
+            # specialist needs all of it to choose its target, not a projection around an unknown focus.
+            return [item.receipt() for item in self.evidence.values()]
 
         referenced_rows: dict[str, set[str]] = {}
         for specialist in self.specialists:
@@ -1769,6 +1827,7 @@ class FoundrySupervisor:
                 "permitted_evidence_kinds": list(request.permitted_evidence_kinds),
                 "required_specialists": list(request.required_specialists),
                 "required_specialist_steps": request.required_specialist_steps,
+                "evidence_carried": bool(request.carried_evidence_ids),
             },
         })
         if not isinstance(compiled, dict) or set(compiled) != {"steps", "answer_contract"}:
@@ -2303,6 +2362,19 @@ class FoundrySupervisor:
             },
             "trusted_operation_skills": operation_skill_guidance(role),
         }
+        if self.carried_ids:
+            context["carried_evidence"] = [
+                {"id": item.id, "tool": item.tool, "read_at_utc": item.completed_at.isoformat()}
+                for identity in sorted(self.carried_ids) if (item := self.evidence.get(identity)) is not None
+            ]
+            context["carried_evidence_policy"] = (
+                "The receipts listed in carried_evidence were read earlier in this conversation (read times above) "
+                "and are the dataset the operator is referring to. Treat them as the current condition evidence: do not "
+                "re-read, refresh or re-query signal quality, temperature or the complete work-order list, because a "
+                "second read would describe a different moment and contradict the operator's dataset. Read only what "
+                "a draft or no-draft decision still needs, which is fresh complete open-work coverage for the "
+                "equipment you choose."
+            )
         if targeted_context:
             context["evidence_scope"] = (
                 "Role-relevant projection for bounded independent verification. Complete immutable receipts remain "
@@ -2967,6 +3039,10 @@ class FoundrySupervisor:
             "source_limitations": list(answer.limitations),
             "specialist_notes": notes,
             "staged_drafts": drafts,
+            "carried_evidence": [
+                {"tool": item.tool, "read_at_utc": item.completed_at.isoformat()}
+                for identity in sorted(self.carried_ids) if (item := self.evidence.get(identity)) is not None
+            ],
         }
 
     def analysis_violations(self, report: AnalysisReport, context_text: str) -> list[str]:
@@ -3216,6 +3292,7 @@ class FoundrySupervisor:
                     "in the requested window, so no current/stale reading classification was possible."
                 )
         limitations = tuple(dict.fromkeys([
+            *self.carried_limitations(request),
             *(gap for item in self.evidence.values() for gap in item.limitations),
             *plan.limitations,
             *zero_result_limitations,
@@ -3346,6 +3423,13 @@ class FoundrySupervisor:
             if journal.read("tool_catalog") is None:
                 catalog = SourceCatalog.model_validate(await self.tools.catalog(request))
                 journal.save("tool_catalog", catalog.model_dump(mode="json"))
+            self.load_carried_evidence(request, journal)
+            if self.carried_ids:
+                self.emit_event(
+                    f"{request.run_id}:chief", "supervisor", "running", "Supervisor",
+                    "Reusing the verified evidence from the previous answer instead of re-reading it.",
+                    agent_name="hydro-orchestrator", trace=list(self.chief_trace),
+                )
             owner = self
             storage = RequiredCheckpointStorage(path / "checkpoints")
             request_digest = sha256(request.model_dump_json().encode()).hexdigest()

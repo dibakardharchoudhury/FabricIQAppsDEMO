@@ -385,6 +385,23 @@ BAD-today and `let` failures are not covered by those successful cases.
 - **Specialists run `gpt-5.6-sol` at low reasoning effort**, which was faster than `gpt-5-mini` in measured
   tool-selection steps and avoids its redundant parallel calls.
 
+### Follow-ups reuse the evidence they point at
+
+A follow-up such as "based on this data, which WOs need to be created?" is answered from the dataset the
+operator is already looking at, not from a second, different read of rapidly changing telemetry:
+
+- The runtime keeps the verified receipts of each answer (with their original read times) in the signed-in
+  user's run journal. A follow-up that points back at earlier data (this/these/those/the above, recognised by
+  concept) and needs only kinds of evidence already held carries those receipts forward. No specialist reader
+  is planned for them, so the redundant Gauge run disappears.
+- Only complete direct population datasets from the immediately preceding run are reusable, within 30 minutes
+  and the same source. Staged drafts are never reused. The backend selects the receipts, never the client.
+- Fixer receives the whole carried dataset to choose its target, and still performs its own fresh open-work
+  coverage read for the equipment it picks, because a draft must rest on fresh coverage.
+- The answer says what was reused and how old it is, and the briefing states it. Ask for a fresh read to refresh.
+- If the question does not point back, needs data the earlier answer lacks, or would still need a reader (for
+  example an independent verification), it is planned and read fresh exactly as a standalone question.
+
 ### Grounded briefing (reasoning, justification, recommendations)
 
 After the specialists finish and the evidence is verified, the Supervisor writes one briefing from the
@@ -420,7 +437,7 @@ capability explanation, not private model reasoning.
 
 | Visible name and role | Foundry agent | Routing rule and source |
 |---|---|---|
-| Supervisor - deterministic orchestration | hosted `hydro-orchestrator` (no prompt agent) | Compiles the contract, dispatches bounded specialists, verifies evidence, writes the briefing. Only the orchestrator delegates. |
+| Supervisor | hosted `hydro-orchestrator` (no prompt agent) | Compiles the contract, dispatches bounded specialists, verifies evidence, writes the briefing. Only the orchestrator delegates. |
 | Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
 | Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
 | Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
