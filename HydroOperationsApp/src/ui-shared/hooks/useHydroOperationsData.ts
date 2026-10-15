@@ -45,7 +45,7 @@ type CachedData = { stid?: StidData; telemetry?: TelemetryReading[]; ontology?: 
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live telemetry, or maintenance work. I run an Azure AI Foundry model over the Lakehouse asset tables, the Eventhouse telemetry and the operational database, and show you every query I ran.' },
+  foundry: { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live telemetry, weather forecasts, or maintenance work. I run an Azure AI Foundry model over the Lakehouse asset and weather tables, the Eventhouse telemetry and the operational database, and show you every query I ran.' },
 }
 
 function readPersistedSetup(): PersistedSetup {

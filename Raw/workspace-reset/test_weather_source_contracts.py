@@ -6,6 +6,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_ukmet_forecast_pressure_is_stored_in_hpa(self):
+        source = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        compile(source, "Weather_003", "exec")
+        self.assertIn('FORECAST_SCALE = {"pressure": 0.01}', source)
+        self.assertIn("value *= FORECAST_SCALE.get(variable_id, 1.0)", source)
+
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         compile(source, "Weather_002", "exec")

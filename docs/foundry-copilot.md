@@ -20,7 +20,7 @@ published agent's MCP endpoint and forwards the question. This doc covers v2 onl
 | `src/services/copilot/responsesProtocol.ts` | Responses API request conversion and bounded completed-turn history |
 | `src/services/copilot/suggestions.ts` | Parses the follow-up options a reply offers |
 | `src/services/copilot/foundry.ts` | The agent loop, system prompt, conversation history |
-| `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid` |
+| `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid`, `queryWeatherData` |
 | `scripts/copilot-tools.test.mjs` | Unit tests for validation, tools, Responses streaming/context and suggestions |
 
 ---
@@ -66,7 +66,7 @@ requested as **named scopes rather than `.default`**.
 | --- | --- | --- |
 | Foundry inference | `https://cognitiveservices.azure.com/user_impersonation` | Microsoft Cognitive Services (`7d312290-…`) |
 | Telemetry (Kusto) | `<cluster>/user_impersonation` | Azure Data Explorer (`2746ea77-…`) |
-| Asset metadata | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
+| Asset metadata and weather | `…/powerbi/api/GraphQLApi.Execute.All` | Power BI Service (`00000009-…`) |
 | Workspace discovery | `Workspace.Read.All`, `Item.Read.All`, `Item.Execute.All` | Power BI Service |
 | Operational records | *(none — Rayfin session cookie)* | Rayfin backend |
 
@@ -208,7 +208,7 @@ transcript.
 | System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
 | Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |
-| Lakehouse / operational tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
+| Lakehouse / operational / weather tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
 | Eventhouse tables & functions | Also narrows the `run_kql` allow-list. |
 
 > [!NOTE]
@@ -234,6 +234,10 @@ query semantics.
 | `instruments` → `silver_instruments` | Lakehouse | GraphQL |
 | `work_orders`, `inspections`, `spare_parts`, `notifications` | App SQL database | `RayfinClient` |
 | `asset_models` | App SQL database | `RayfinClient` — 3D model files per equipment |
+| `weather_locations` → `weather_locations` | Lakehouse | GraphQL (`queryWeatherData`) — one point per facility; `location_id` = `facility_id` |
+| `weather_areas` → `weather_areas` | Lakehouse | GraphQL — 20 km operating area per facility (geometry is not exposed) |
+| `weather_forecasts` → `weather_latest_forecasts` | Lakehouse | GraphQL — newest issue per vendor (`aurora`, `ukmet`), 6-hourly to 72 h, for locations and areas |
+| `weather_observations` → `weather_latest_observations` | Lakehouse | GraphQL — recent observed conditions per facility |
 | `OPCUAEvents` | Eventhouse | Kusto REST |
 | `AssetMaster()`, `TelemetryEnriched(...)` | Eventhouse | Kusto REST — telemetry pre-joined to asset master via OneLake shortcuts |
 
@@ -242,12 +246,21 @@ Kusto identifiers are case-sensitive. `AssetMaster()` returns `opcua_node_id`, `
 capitalized asset columns, `value`, and `quality`. These names mirror the functions provisioned by
 `RTI_008_build_realtime_dashboard`; lowercase `station`, `turbine`, or `unit` will not resolve.
 
+Weather comes from the wide serving tables rebuilt by `Weather_020_area_calculations`, so each row
+carries every variable for one valid time. The catalog states each variable's unit (temperature
+°C, precipitation mm, pressure hPa mean sea-level, solar radiation W/m², wind m/s and degrees) and
+the vendor rules: rows are per `source_id`, vendors are never blended, and rainfall between two
+valid times is the difference of `cumulative_precipitation` values within one issue. Timestamp
+filters (`gt`/`gte`/`lt`/`lte` on `valid_time_utc`, `observed_at_utc`, …) compare chronologically;
+a value without a zone is read as UTC.
+
 ### The tools
 
 | Tool | Accepts | Guardrail |
 | --- | --- | --- |
 | `query_assets` | entity + structured predicate | No query text — **no injection surface** |
 | `query_operations` | entity + structured predicate | No query text — **no injection surface** |
+| `query_weather` | entity + structured predicate | No query text — **no injection surface** |
 | `query_telemetry` | node ids, lookback, bin, aggregation | Templated KQL; each fragment regex- or map-validated, node ids escaped |
 | `run_kql` | **model-authored KQL** | Allow-list + rejection rules below |
 | `visualize_dataset` | chart spec + inline CSV | Renders only; reaches no data |
@@ -306,6 +319,7 @@ model call it autonomously.
 | "Need admin approval" | A `.default` scope was requested instead of a named one |
 | Engine toggle missing | `RAYFIN_PUBLIC_FOUNDRY_*` unset, or the app wasn't rebuilt after setting them |
 | "Asset metadata is not connected" | STID GraphQL not yet consented — use **Connect** in the app once |
+| "Weather data is not connected" | No silent GraphQL token yet — open the **Weather** page once, then ask again |
 | "stopped after too many tool calls" | Hit the 6-iteration cap; narrow the question |
 | "disabled in Administration" | The tool or table was switched off in **Administration → Foundry Copilot** |
 | "Not signed in to the operational database" | The Rayfin session is separate from the Entra token — use Administration step 1 |

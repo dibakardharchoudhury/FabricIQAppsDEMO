@@ -1,7 +1,7 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import { queryStid, runKustoQuery, type StidData } from '../fabric.ts'
+import { queryStid, queryWeatherData, runKustoQuery, type StidData, type WeatherData } from '../fabric.ts'
 import { isRayfinConfigured, isRayfinSignedIn, listAsset3DModels, listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders, type Asset3DModelRecord } from '../rayfin.ts'
-import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
+import { ASSET_ENTITIES, OPERATIONS_ENTITIES, WEATHER_ENTITIES, type CatalogEntity } from './catalog.ts'
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import {
   applyFilter, buildTelemetryQuery, FILTER_OPERATORS, kustoRowsToObjects, MAX_ROWS,
@@ -21,6 +21,7 @@ export function describeToolCall(name: string, args: ToolArguments): string {
   switch (name) {
     case 'query_assets':
     case 'query_operations':
+    case 'query_weather':
       return [args.entity ?? '?', args.where?.length ? plural(args.where.length, 'filter') : ''].filter(Boolean).join(' · ')
     case 'query_telemetry':
       return [
@@ -83,6 +84,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           where: whereSchema,
           columns: { type: 'array', items: { type: 'string' } },
           limit: { type: 'integer' },
+        },
+        required: ['entity'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_weather',
+      description: 'Read weather from the Lakehouse: facility weather locations, operating areas, the latest forecasts from each vendor (aurora, ukmet) and recent observations. Filter forecasts by source_id, target_kind, target_id and a valid_time_utc window.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: WEATHER_ENTITIES.map(entity => entity.key) },
+          where: whereSchema,
+          columns: { type: 'array', items: { type: 'string' }, description: 'Optional subset of columns to return.' },
+          limit: { type: 'integer', description: `Maximum rows to return (default ${MAX_ROWS}).` },
         },
         required: ['entity'],
       },
@@ -196,6 +214,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
     .filter(tool => {
       if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
       if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
+      if (tool.function.name === 'query_weather') return enabledEntities(WEATHER_ENTITIES).length > 0
       if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
       if (tool.function.name === 'run_kql') return enabledKustoNames(settings).length > 0
       return true
@@ -203,7 +222,8 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
     .map(tool => {
       const entities = tool.function.name === 'query_assets' ? enabledEntities(ASSET_ENTITIES)
         : tool.function.name === 'query_operations' ? enabledEntities(OPERATIONS_ENTITIES)
-          : undefined
+          : tool.function.name === 'query_weather' ? enabledEntities(WEATHER_ENTITIES)
+            : undefined
       if (!entities) {
         if (tool.function.name !== 'run_kql') return tool
         return {
@@ -245,6 +265,7 @@ const SIGN_IN_HINT = 'Not signed in to the operational database. Open Administra
 /** Per-turn caches so repeated tool calls in one answer do not refetch the same source. */
 export function createToolRuntime(settings: CopilotSettings) {
   let stid: Promise<StidData | null> | undefined
+  let weather: Promise<WeatherData | null> | undefined
   const operations = new Map<string, Promise<Record<string, unknown>[]>>()
 
   const loadOperations = (key: string): Promise<Record<string, unknown>[]> => {
@@ -287,6 +308,19 @@ export function createToolRuntime(settings: CopilotSettings) {
       case 'query_operations': {
         const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity, settings)
         return shape(entity, await loadOperations(entity.key), args)
+      }
+      case 'query_weather': {
+        const entity = entityOrThrow(WEATHER_ENTITIES, args.entity, settings)
+        weather ??= queryWeatherData()
+        const data = await weather
+        if (!data) throw new Error('Weather data is not connected. Open the Weather page once so the app can obtain Lakehouse GraphQL access, then ask again.')
+        const rows = {
+          weather_locations: data.locations,
+          weather_areas: data.areas,
+          weather_forecasts: data.forecasts,
+          weather_observations: data.observations,
+        }[entity.key] as unknown as Record<string, unknown>[]
+        return shape(entity, rows, args)
       }
       case 'query_telemetry': {
         if (!enabledKustoNames(settings).includes('OPCUAEvents')) throw new Error('The OPCUAEvents table is disabled in Administration.')

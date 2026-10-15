@@ -1,10 +1,10 @@
-import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from './catalog.ts'
 
 // Operator-tunable copilot configuration, edited in Administration and persisted per browser.
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
 // who is always limited to their own Entra permissions by the delegated token.
 
-export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_weather', 'query_telemetry', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export type CopilotSettings = {
@@ -31,7 +31,7 @@ export const TIME_PLACEHOLDER = '{{time}}'
 
 /** The shipped base prompt. Editable in Administration; the two placeholders are substituted
  *  at call time and are the only way the schema and clock reach the model. */
-export const DEFAULT_SYSTEM_PROMPT = `You are the Hydro Operations Copilot for a Microsoft Fabric hydro power demo. You answer questions about hydro facilities, turbines, sensors, live telemetry and maintenance work.
+export const DEFAULT_SYSTEM_PROMPT = `You are the Hydro Operations Copilot for a Microsoft Fabric hydro power demo. You answer questions about hydro facilities, turbines, sensors, live telemetry, weather forecasts and maintenance work.
 
 Rules:
 - Answer only from data returned by the tools. Never invent identifiers, readings or counts. If a tool returns no rows, say so.
@@ -57,7 +57,7 @@ const STORAGE_KEY = 'hydro.copilot.settings.v1'
 
 const allEnabled = (keys: readonly string[]) => Object.fromEntries(keys.map(key => [key, true]))
 
-export const ENTITY_KEYS = [...ASSET_ENTITIES, ...OPERATIONS_ENTITIES].map(entity => entity.key)
+export const ENTITY_KEYS = [...ASSET_ENTITIES, ...OPERATIONS_ENTITIES, ...WEATHER_ENTITIES].map(entity => entity.key)
 export const KUSTO_NAMES = KUSTO_SOURCES.map(source => source.name)
 
 export function defaultCopilotSettings(): CopilotSettings {
