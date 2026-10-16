@@ -104,6 +104,8 @@ OBSERVATION_FIELDS = {
     "wind_gust": ("wind_gust", "m/s"),
     "wind_direction": ("wind_direction", "degree"),
 }
+# Global Spot reports mslp in Pa; Land Observations already report it in hPa.
+FORECAST_SCALE = {"pressure": 0.01}
 COMPASS_DEGREES = {
     "N": 0.0, "NNE": 22.5, "NE": 45.0, "ENE": 67.5,
     "E": 90.0, "ESE": 112.5, "SE": 135.0, "SSE": 157.5,
@@ -396,6 +398,7 @@ for point in points:
                 if value is None:
                     continue
                 interval_hours = 0
+            value *= FORECAST_SCALE.get(variable_id, 1.0)
             forecast_rows.append({
                 "source_id": SOURCE_ID,
                 "variable_id": variable_id,

@@ -156,11 +156,11 @@ print(f"Created or verified {len(ddl_statements)} weather tables")
 source_rows = [
   (
     "aurora",
-    "Aurora 1.5",
+    "Aurora",
     "forecast",
     "Microsoft AI",
     "CC-BY-4.0",
-    "https://mai-weather-api.azure-api.net/stac/collections/aurora-1p5-zarr-staging",
+    "https://mai-weather-api.azure-api.net/stac/collections/mai-aurora",
     True,
   ),
   (
@@ -184,7 +184,7 @@ source_rows = [
 ]
 variable_rows = [
     ("precipitation", "precipitation", "mm", "sum", "Precipitation depth over the source interval"),
-  ("pressure", "surface_air_pressure", "hPa", "mean", "Surface pressure at terrain elevation"),
+  ("pressure", "air_pressure_at_mean_sea_level", "hPa", "mean", "Mean sea-level pressure"),
     ("temperature", "air_temperature", "degC", "mean", "Near-surface air temperature"),
   ("relative_humidity", "relative_humidity", "%", "mean", "Relative humidity derived from temperature and dew point"),
   ("dew_point", "dew_point_temperature", "degC", "mean", "Near-surface dew point temperature"),

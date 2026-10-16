@@ -14,10 +14,30 @@ export const FILTER_OPERATORS: FilterOperator[] = ['eq', 'neq', 'contains', 'gt'
 const text = (value: unknown) => value instanceof Date ? value.toISOString() : String(value ?? '')
 const lower = (value: unknown) => text(value).toLowerCase()
 
+// Matches ISO-8601 dates and date-times, with or without a zone designator.
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i
+
+function asNumber(value: unknown): number {
+  if (typeof value === 'number') return value
+  const raw = text(value).trim()
+  return raw ? Number(raw) : Number.NaN
+}
+
+/** Parse an ISO timestamp, reading a zone-less value as UTC so comparisons do not depend on the browser zone. */
+function asTimestamp(value: unknown): number {
+  const raw = text(value).trim()
+  if (!ISO_TIMESTAMP.test(raw)) return Number.NaN
+  const zoned = /[T ]\d{2}:\d{2}/.test(raw) && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw.replace(' ', 'T')
+  return Date.parse(zoned)
+}
+
 function compare(left: unknown, right: unknown): number {
-  const leftNumber = typeof left === 'number' ? left : Number.parseFloat(text(left))
-  const rightNumber = typeof right === 'number' ? right : Number.parseFloat(text(right))
+  const leftNumber = asNumber(left)
+  const rightNumber = asNumber(right)
   if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber
+  const leftTime = asTimestamp(left)
+  const rightTime = asTimestamp(right)
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime - rightTime
   return text(left).localeCompare(text(right))
 }
 

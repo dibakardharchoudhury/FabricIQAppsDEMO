@@ -23,7 +23,7 @@ Important findings:
 Fabric calls this storage item a Lakehouse. The four notebooks are deployable Fabric Git items:
 
 - `Weather_001_create_lakehouse` initializes source-neutral Delta dimensions, facts, and audit tables in an attached Lakehouse.
-- `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, surface pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction, and maintains facility operating-area geometry.
+- `Weather_002_fetch_area_weather` implements a 72-hour Aurora adapter for precipitation, mean sea-level pressure, temperature, relative humidity, dew point, solar radiation, average wind speed, wind gust and wind direction, and maintains facility operating-area geometry. It reads the operational (`oper`) stream of the `mai-aurora` STAC collection, which publishes one global NetCDF item per valid hour with a kerchunk byte-range index; the adapter range-reads only the required variables of the 72 hourly items. The earlier `aurora-1p5-zarr-staging` collection stopped publishing on 2026-09-30, and an issue older than `max_issue_age_hours` (default 36) now fails the run instead of silently reloading stale forecasts.
 - `Weather_003_fetch_ukmet` implements UKMet Global Spot forecasts and Land Observations for the same facility locations and canonical tables.
 - `Weather_020_area_calculations` reads canonical forecasts after all adapters finish and rebuilds area metrics independently by vendor, variable, issue, valid time, and forecast type.
 

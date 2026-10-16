@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Bot, RotateCcw, Save } from 'lucide-react'
-import { ASSET_ENTITIES, catalogPrompt, KUSTO_SOURCES, OPERATIONS_ENTITIES, type CatalogEntity } from '../services/copilot/catalog'
+import { ASSET_ENTITIES, catalogPrompt, KUSTO_SOURCES, OPERATIONS_ENTITIES, WEATHER_ENTITIES, type CatalogEntity } from '../services/copilot/catalog'
 import { TOOL_DEFINITIONS } from '../services/copilot/tools'
 import {
   CATALOG_PLACEHOLDER, defaultCopilotSettings, FOUNDRY_ENV_DEFAULTS, loadCopilotSettings, renderSystemPrompt,
@@ -127,6 +127,8 @@ export function CopilotSettingsPanel() {
     {group('Lakehouse tables', 'Asset metadata reachable through query_assets.', entityToggles(ASSET_ENTITIES), 'entities')}
 
     {group('Operational tables', 'App database records reachable through query_operations.', entityToggles(OPERATIONS_ENTITIES), 'entities')}
+
+    {group('Weather tables', 'Lakehouse weather locations, operating areas, latest vendor forecasts and observations reachable through query_weather.', entityToggles(WEATHER_ENTITIES), 'entities')}
 
     {group('Eventhouse tables & functions', 'Kusto sources reachable through query_telemetry and run_kql. run_kql rejects any query that does not start with an enabled source.',
       KUSTO_SOURCES.map(source => ({ key: source.name, label: source.name, hint: source.description })),
