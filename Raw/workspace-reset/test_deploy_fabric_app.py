@@ -140,7 +140,11 @@ class DeployOrderTests(unittest.TestCase):
         )
 
         with (
-            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(
+                DEPLOY,
+                "ensure_azure_tenant",
+                return_value="11111111-1111-4111-8111-111111111111",
+            ),
             patch.object(
                 DEPLOY,
                 "resolve_workspace",
@@ -530,16 +534,51 @@ class DeployOrderTests(unittest.TestCase):
         read_redirects.assert_called_once_with("client-id", "tenant-id")
 
     def test_wrong_active_tenant_is_rejected_without_login(self):
-        account = {"tenantId": "other-tenant", "user": {"name": "user@example.test"}}
+        target = "11111111-1111-4111-8111-111111111111"
+        account = {
+            "tenantId": "22222222-2222-4222-8222-222222222222",
+            "user": {"name": "user@example.test"},
+        }
         with (
             patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
             patch.object(DEPLOY, "run_capture", return_value=json.dumps(account)),
             patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
         ):
-            with self.assertRaisesRegex(DEPLOY.DeployError, "not target-tenant"):
-                DEPLOY.ensure_azure_tenant("target-tenant")
+            with self.assertRaisesRegex(DEPLOY.DeployError, f"not {target}"):
+                DEPLOY.ensure_azure_tenant(target)
 
         reauthenticate.assert_not_called()
+
+    def test_tenant_domain_resolves_to_the_active_tenant_guid(self):
+        tenant_id = "11111111-1111-4111-8111-111111111111"
+        account = {"tenantId": tenant_id.upper(), "user": {"name": "user@example.test"}}
+
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
+            patch.object(
+                DEPLOY,
+                "run_capture",
+                side_effect=[tenant_id.upper(), json.dumps(account)],
+            ) as run_capture,
+        ):
+            resolved = DEPLOY.ensure_azure_tenant("contoso.onmicrosoft.com")
+
+        self.assertEqual(resolved, tenant_id)
+        self.assertEqual(
+            run_capture.call_args_list[0].args[0],
+            [
+                "account",
+                "get-access-token",
+                "--tenant",
+                "contoso.onmicrosoft.com",
+                "--resource",
+                "https://api.fabric.microsoft.com",
+                "--query",
+                "tenant",
+                "-o",
+                "tsv",
+            ],
+        )
 
     def test_deploy_starts_with_the_users_current_azure_cli_session(self):
         args = argparse.Namespace(
@@ -593,7 +632,11 @@ class DeployOrderTests(unittest.TestCase):
         prepare = Mock()
 
         with (
-            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(
+                DEPLOY,
+                "ensure_azure_tenant",
+                return_value="11111111-1111-4111-8111-111111111111",
+            ),
             patch.object(
                 DEPLOY,
                 "resolve_workspace",
@@ -625,7 +668,11 @@ class DeployOrderTests(unittest.TestCase):
         )
 
         with (
-            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(
+                DEPLOY,
+                "ensure_azure_tenant",
+                return_value="11111111-1111-4111-8111-111111111111",
+            ),
             patch.object(
                 DEPLOY,
                 "resolve_workspace",
@@ -677,7 +724,11 @@ class DeployOrderTests(unittest.TestCase):
         )
 
         with (
-            patch.object(DEPLOY, "ensure_azure_tenant"),
+            patch.object(
+                DEPLOY,
+                "ensure_azure_tenant",
+                return_value="11111111-1111-4111-8111-111111111111",
+            ),
             patch.object(
                 DEPLOY,
                 "resolve_workspace",
@@ -944,6 +995,19 @@ class DeployOrderTests(unittest.TestCase):
                 "RAYFIN_PUBLIC_AAD_CLIENT_ID=22dedc54-8b7e-442c-929d-497c4df086e6",
                 (rayfin_dir / ".env").read_text(encoding="utf-8"),
             )
+            self.assertIn(
+                "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false",
+                (rayfin_dir / ".env").read_text(encoding="utf-8"),
+            )
+
+    def test_feature_flag_update_replaces_stale_map_setting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = Path(temp_dir) / ".env"
+            env.write_text("RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=true\n", encoding="utf-8")
+
+            DEPLOY.configure_app_feature_flags(env, enable_energy_map=False)
+
+            self.assertEqual(env.read_text(encoding="utf-8"), "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false\n")
 
     def test_write_rayfin_redirects_retains_current_entra_origin(self):
         current = "https://current-app-swedencentral.webapp.fabricapps.net"

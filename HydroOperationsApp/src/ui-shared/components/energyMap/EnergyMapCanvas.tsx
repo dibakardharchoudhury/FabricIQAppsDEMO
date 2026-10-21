@@ -7,6 +7,7 @@ import {
   type EnergyFeature, type EnergyLayerId, type MapViewport, type ReservoirAreaSelection,
 } from '../../energyMapModel'
 import type { MapFocusRequest } from '../../mapChatModel'
+import { setGeoJSONSourceData } from './mapSourceUpdate'
 
 setWorkerUrl(workerUrl)
 
@@ -84,7 +85,7 @@ export function EnergyMapCanvas({ features, areas, capacityMaximum, showAreas, a
         const source = map.getSource<GeoJSONSource>(`energy-${layer.id}`)
         if (!source) continue
         signatures.set(layer.id, signature)
-        void source.setData(asFeatureCollection(layerFeatures, maximum)).catch((reason: unknown) => {
+        setGeoJSONSourceData(source, asFeatureCollection(layerFeatures, maximum), (reason: unknown) => {
           if (!alive) return
           signatures.delete(layer.id)
           console.error(`Map layer ${layer.id} could not update.`, reason)

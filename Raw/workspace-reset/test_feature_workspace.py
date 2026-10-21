@@ -431,17 +431,26 @@ class FeatureWorkspaceTests(unittest.TestCase):
             self.assertIs(client.poll_lro(accepted), done)
         request.assert_called_once_with("GET", f"{feature.FABRIC_BASE}/operations/{WORKSPACE}")
 
-    def test_feature_configuration_does_not_edit_generated_env_local(self):
+    def test_feature_configuration_writes_source_flag_without_editing_generated_env_local(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(feature, "FeatureFabric"):
-            config = feature.FeatureConfig(**config_dict(), state_path=Path(directory) / "state.json", env_suffix="V8")
+            config = feature.FeatureConfig(
+                **config_dict(),
+                state_path=Path(directory) / "state.json",
+                env_suffix="V8",
+                enable_energy_map=True,
+            )
             workspace = feature.FeatureWorkspace(config, ROOT)
             env = Path(directory) / ".env"
-            env.write_text("RAYFIN_PUBLIC_EVENTHOUSE_NAME=old\n")
+            env.write_text(
+                "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=false\n"
+                "RAYFIN_PUBLIC_EVENTHOUSE_NAME=old\n"
+            )
             generated = Path(directory) / ".env.local"
             generated.write_text("unchanged")
             workspace.configure_app(env)
             self.assertIn("RTI_Demo_Eventhouse_V8", env.read_text())
             self.assertIn("RAYFIN_PUBLIC_KQL_DASHBOARD_NAME=RTI_Demo_OPCUA_TelemetryStats_V8", env.read_text())
+            self.assertIn("RAYFIN_PUBLIC_ENABLE_ENERGY_MAP=true", env.read_text())
             self.assertEqual(generated.read_text(), "unchanged")
 
     def test_feature_schedule_flag_is_wired_and_disables_before_api_access(self):
@@ -486,10 +495,16 @@ class FeatureWorkspaceTests(unittest.TestCase):
         item_id = "55555555-5555-4555-8555-555555555555"
         api_url = "https://api.feature.test"
         url = "https://feature.webapp.fabricapps.net"
-        args = argparse.Namespace(tenant=TENANT, workspace=WORKSPACE, client_id=SUBSCRIPTION, push_config=False)
+        args = argparse.Namespace(
+            tenant="feature.contoso.onmicrosoft.com",
+            workspace=WORKSPACE,
+            client_id=SUBSCRIPTION,
+            push_config=False,
+        )
         for failure in (None, "endpoint", "cors", "auth-ready"):
             with self.subTest(failure=failure):
                 config = Mock()
+                config.enable_energy_map = True
                 workspace = Mock()
                 events = []
                 workspace.configure_app.side_effect = lambda path: events.append("configure")
@@ -502,11 +517,13 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         raise deploy.DeployError(f"{step} failed")
 
                 with ExitStack() as stack:
+                    load_config = stack.enter_context(
+                        patch.object(feature, "load_feature_config", return_value=config)
+                    )
                     for context in (
                         patch.dict(os.environ, {"FABRIC_FEATURE_CONFIG": "/not-read-by-mock.json"}),
-                        patch.object(feature, "load_feature_config", return_value=config),
                         patch.object(feature, "FeatureWorkspace", return_value=workspace),
-                        patch.object(deploy, "ensure_azure_tenant"),
+                        patch.object(deploy, "ensure_azure_tenant", return_value=TENANT),
                         patch.object(deploy, "resolve_workspace", return_value=(WORKSPACE, "Feature", capacity_id)),
                         patch.object(deploy, "resolve_spa", return_value=SUBSCRIPTION),
                         patch.object(deploy, "read_entra_spa_redirects_with_reauth", return_value=[url]),
@@ -541,7 +558,15 @@ class FeatureWorkspaceTests(unittest.TestCase):
                             "endpoint", "cors", "auth-ready", "finish",
                         ])
                         cors.assert_called_once_with(api_url, url, "pk-test")
-                    prepare_env.assert_called_once_with(TENANT, WORKSPACE, "Feature", capacity_id, SUBSCRIPTION)
+                    prepare_env.assert_called_once_with(
+                        TENANT,
+                        WORKSPACE,
+                        "Feature",
+                        capacity_id,
+                        SUBSCRIPTION,
+                        enable_energy_map=True,
+                    )
+                    load_config.assert_called_once_with(TENANT, WORKSPACE)
                     workspace.configure_app.assert_called_once_with(deploy.RAYFIN_DIR / ".env")
                     endpoint.assert_called_once_with(capacity_id, WORKSPACE, item_id)
                     self.assertEqual([call.args for call in rayfin.call_args_list], [

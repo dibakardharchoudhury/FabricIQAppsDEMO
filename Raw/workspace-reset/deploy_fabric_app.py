@@ -365,16 +365,41 @@ def ensure_deploy_dependencies() -> None:
     print(f"Rayfin dependency ready: {version}", flush=True)
 
 
-def ensure_azure_tenant(tenant: str) -> None:
+def resolve_tenant_guid(tenant: str) -> str:
+    """Resolve a tenant domain or GUID to the canonical tenant GUID."""
+    if GUID_RE.fullmatch(tenant):
+        return tenant.lower()
+    tenant_id = run_capture(
+        az(
+            "account",
+            "get-access-token",
+            "--tenant",
+            tenant,
+            "--resource",
+            "https://api.fabric.microsoft.com",
+            "--query",
+            "tenant",
+            "-o",
+            "tsv",
+        )
+    )
+    if not GUID_RE.fullmatch(tenant_id):
+        raise DeployError(f"Azure CLI could not resolve tenant domain '{tenant}' to a tenant GUID.")
+    return tenant_id.lower()
+
+
+def ensure_azure_tenant(tenant: str) -> str:
+    tenant_id = resolve_tenant_guid(tenant)
     account = json.loads(run_capture(az("account", "show", "-o", "json")))
     active = str(account.get("tenantId") or "")
-    if active.casefold() != tenant.casefold():
+    if active.casefold() != tenant_id:
         raise DeployError(
-            f"Azure CLI is signed into tenant {active or '(unknown)'}, not {tenant}. "
+            f"Azure CLI is signed into tenant {active or '(unknown)'}, not {tenant} ({tenant_id}). "
             "Use the local app's Switch button with the target tenant, then retry."
         )
     user = (account.get("user") or {}).get("name") or "current Azure CLI user"
     print(f"Azure identity: {user} (tenant {active})", flush=True)
+    return tenant_id
 
 
 def isolated_azure_cli_config(tenant: str) -> Path:
@@ -886,12 +911,27 @@ def validate_appbackend_cors(
         )
 
 
+def configure_app_feature_flags(env_path: Path, *, enable_energy_map: bool) -> None:
+    """Write build-time feature flags into the Rayfin public environment."""
+    key = "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP"
+    value = "true" if enable_energy_map else "false"
+    content = env_path.read_text(encoding="utf-8")
+    pattern = rf"(?m)^{key}=.*$"
+    if re.search(pattern, content):
+        content = re.sub(pattern, f"{key}={value}", content)
+    else:
+        content = content.rstrip("\r\n") + f"\n{key}={value}\n"
+    env_path.write_text(content, encoding="utf-8", newline="\n")
+
+
 def prepare_rayfin_env(
     tenant: str,
     workspace_id: str,
     workspace_name: str,
     capacity_id: str,
     client_id: str | None,
+    *,
+    enable_energy_map: bool = False,
 ) -> bool:
     values, deployment = current_rayfin_target()
     same_target = deployment and all(
@@ -917,6 +957,10 @@ def prepare_rayfin_env(
     if target_matches:
         item_id = str(deployment.get("fabricItemId") or "")
         if fabric_item_exists(workspace_id, item_id, tenant):
+            configure_app_feature_flags(
+                RAYFIN_DIR / ".env",
+                enable_energy_map=enable_energy_map,
+            )
             print("Existing Rayfin state already targets this tenant/workspace; reusing it.", flush=True)
             return True
         print(f"Saved Fabric AppBackend {item_id or '(missing)'} no longer exists; resetting state.", flush=True)
@@ -942,7 +986,9 @@ def prepare_rayfin_env(
         if placeholder not in template:
             raise DeployError(f"Expected placeholder {placeholder!r} is missing from rayfin/.env.example.")
         template = template.replace(placeholder, value)
-    (RAYFIN_DIR / ".env").write_text(template, encoding="utf-8", newline="\n")
+    env_path = RAYFIN_DIR / ".env"
+    env_path.write_text(template, encoding="utf-8", newline="\n")
+    configure_app_feature_flags(env_path, enable_energy_map=enable_energy_map)
     print("Generated fresh rayfin/.env for the target workspace.", flush=True)
     return False
 
@@ -1291,24 +1337,26 @@ def deploy(args: argparse.Namespace) -> None:
     print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
     if args.push_config:
         validate_git_push_ready()
-    ensure_azure_tenant(args.tenant)
-    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, args.tenant)
+    tenant_id = ensure_azure_tenant(args.tenant)
+    workspace_id, workspace_name, capacity_id = resolve_workspace(args.workspace, tenant_id)
     print(f"Target workspace: {workspace_name} ({workspace_id})", flush=True)
 
     feature_workspace = None
+    enable_energy_map = False
     if os.environ.get("FABRIC_FEATURE_CONFIG", "").strip():
         from feature_workspace import FeatureWorkspace, FeatureWorkspaceError, load_feature_config
 
         try:
-            feature_config = load_feature_config(args.tenant, workspace_id)
+            feature_config = load_feature_config(tenant_id, workspace_id)
             if feature_config is None:
                 raise DeployError("Feature bootstrap configuration was not loaded.")
+            enable_energy_map = feature_config.enable_energy_map
             feature_workspace = FeatureWorkspace(feature_config, REPO_ROOT)
         except (FeatureWorkspaceError, ValueError, OSError) as exc:
             raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
 
     print("[2/8] Resolving the tenant SPA app registration", flush=True)
-    client_id = resolve_spa(args.client_id, args.tenant)
+    client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
             "A usable Entra SPA Application (client) ID is required. Deployment stopped before "
@@ -1321,7 +1369,7 @@ def deploy(args: argparse.Namespace) -> None:
     # A shared SPA may already serve several Fabric webapps, so losing even one existing
     # redirect URI is a deployment failure.
     try:
-        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, args.tenant)
+        original_entra_redirects = read_entra_spa_redirects_with_reauth(client_id, tenant_id)
     except (DeployError, json.JSONDecodeError) as exc:
         raise DeployError(
             f"Could not snapshot existing SPA redirect URIs for {client_id}. "
@@ -1340,7 +1388,12 @@ def deploy(args: argparse.Namespace) -> None:
 
     print("[3/8] Resetting local Rayfin deployment state", flush=True)
     reuse_deployment = prepare_rayfin_env(
-        args.tenant, workspace_id, workspace_name, capacity_id, client_id
+        tenant_id,
+        workspace_id,
+        workspace_name,
+        capacity_id,
+        client_id,
+        enable_energy_map=enable_energy_map,
     )
     if feature_workspace:
         feature_workspace.configure_app(RAYFIN_DIR / ".env")
@@ -1349,7 +1402,7 @@ def deploy(args: argparse.Namespace) -> None:
         run_stream(npm24("run", "validate-env"), cwd=APP_DIR)
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
-    ensure_rayfin_login(args.tenant)
+    ensure_rayfin_login(tenant_id)
 
     if feature_workspace:
         try:
@@ -1400,7 +1453,7 @@ def deploy(args: argparse.Namespace) -> None:
     if client_id:
         try:
             run_with_azure_cli_reauthentication(
-                args.tenant,
+                tenant_id,
                 "configuring browser sign-in",
                 lambda: run_stream(
                     node24_script(APP_DIR / "scripts" / "setup-live-auth.mjs"),
@@ -1424,15 +1477,15 @@ def deploy(args: argparse.Namespace) -> None:
             f"App verification failed: {hosting_url} returned HTTP {response.status_code} "
             f"with Content-Type {response.headers.get('Content-Type', '(missing)')}."
         )
-    item_id = validate_fabric_app(workspace_id, args.tenant)
+    item_id = validate_fabric_app(workspace_id, tenant_id)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
     validate_appbackend_cors(api_url, hosting_url, publishable_key)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.
-        validate_spa_redirect_preservation(client_id, required_entra_redirects, args.tenant)
-        validate_entra_live_auth_with_reauth(client_id, hosting_url, args.tenant)
+        validate_spa_redirect_preservation(client_id, required_entra_redirects, tenant_id)
+        validate_entra_live_auth_with_reauth(client_id, hosting_url, tenant_id)
     else:
         warn_live_auth(
             f"Entra validation was skipped. After an administrator creates the SPA, register "

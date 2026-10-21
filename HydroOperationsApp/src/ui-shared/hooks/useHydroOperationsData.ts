@@ -14,6 +14,7 @@ import {
 } from '../../services/rayfin'
 import { twinStatus, type TwinStatus } from '../../twin'
 import { askFoundryCopilot, isFoundryConfigured, resetFoundryConversation, type AgentStep, type FoundryAnswer } from '../../services/copilot/foundry'
+import { ENERGY_MAP_ENABLED } from '../appFeatures'
 
 const openStatuses = new Set(['draft', 'approved', 'planned', 'scheduled', 'ready', 'in progress', 'in_progress', 'on hold', 'on_hold'])
 const equipmentTagFromNode = (nodeId: string) => nodeId.match(/(?:^|;)s=([^.;]+)/)?.[1]?.trim() || undefined
@@ -82,6 +83,7 @@ function readPersistedJobs(): Record<string, ProgressJob> {
     const fresh: Record<string, ProgressJob> = {}
     for (const [key, job] of Object.entries(saved)) {
       if (job && (job.kind === 'seed' || job.kind === 'stream' || job.kind === 'weather' || job.kind === 'map') && typeof job.startedAt === 'number'
+        && (job.kind !== 'map' || ENERGY_MAP_ENABLED)
         && Date.now() - job.startedAt < (job.kind === 'map' ? MAP_REFRESH_MAX_AGE_MS : JOB_RESUME_MAX_AGE_MS)) fresh[key] = job
     }
     return fresh
@@ -357,6 +359,11 @@ function useHydroOperationsDataController() {
   }, [authenticate, jobs.weather, user, weatherState])
 
   const updateAllMapData = useCallback(async () => {
+    if (!ENERGY_MAP_ENABLED) {
+      setMapRefreshState('error')
+      setMapRefreshMessage('Energy map provisioning is disabled for this deployment.')
+      return
+    }
     if (mapRefreshState === 'running' || jobs.map) return
     setMapRefreshState('running')
     setMapRefreshMessage('Starting the full map refresh in Fabric...')

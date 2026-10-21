@@ -667,6 +667,7 @@ class FeatureWorkspace:
 
     def configure_app(self, env_path: Path) -> None:
         values = {
+            "RAYFIN_PUBLIC_ENABLE_ENERGY_MAP": "true" if self.config.enable_energy_map else "false",
             "RAYFIN_PUBLIC_EVENTHOUSE_NAME": f"RTI_Demo_Eventhouse_{self.config.env_suffix}",
             "RAYFIN_PUBLIC_KQL_DATABASE": f"RTI_Demo_Eventhouse_{self.config.env_suffix}",
             "RAYFIN_PUBLIC_LAKEHOUSE_NAME": f"Energy_IQ_LakehouseRTI_{self.config.env_suffix}",

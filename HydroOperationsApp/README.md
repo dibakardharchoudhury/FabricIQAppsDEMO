@@ -35,9 +35,10 @@ are copied into Rayfin SQL).
 
 The separate **Map** tab in both UI shells uses a lazy-loaded MapLibre renderer.
 It is distinct from the Overview facility map and shows **real imported energy
-data**, not simulated STID coordinates. Enable its Fabric provisioning with
-`enable_energy_map: true` in the local feature-bootstrap config; deploy through
-the existing orchestrator in [DEPLOY.md](DEPLOY.md).
+data**, not simulated STID coordinates. The tab and Administration refresh panel
+are included only when `enable_energy_map: true` is set in the local
+feature-bootstrap config; the standard app-only build keeps them hidden. Deploy
+through the existing orchestrator in [DEPLOY.md](DEPLOY.md).
 
 `04_Pipe_EnergyMap` runs `Geo_001_ingest_energy_context` against a separate
 `Hydro_GeoContext_<suffix>` Lakehouse. Layers cover NVE's six public grid datasets,

@@ -101,6 +101,14 @@ completed base setup/seed/telemetry checkpoints. Subsequent source refreshes can
 be triggered from the Map tab or its dedicated pipeline; no recurring map
 schedule is enabled by deployment.
 
+The orchestrator also writes the corresponding public build flag into
+`rayfin/.env` before Rayfin generates Vite configuration. App-only deployments
+force it to `false`, including when existing Rayfin state is reused; feature
+deployments set it from `enable_energy_map`. Rayfin's supported custom-public-env
+mapping projects `RAYFIN_PUBLIC_ENABLE_ENERGY_MAP` to
+`VITE_RAYFIN_ENABLE_ENERGY_MAP`; `npm run env` verifies that the generated value
+matches the source before Vite starts. Do not edit generated `.env.local`.
+
 After provisioning, **Administration → Update map data sources → Update all map
 data** runs the same notebook pipeline with `refresh_mode="all"` and
 `force_refresh=true`, bypassing the normal source cache. This is a user-initiated
