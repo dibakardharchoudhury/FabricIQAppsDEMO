@@ -134,9 +134,15 @@ function parseEnv(file) {
   return out
 }
 
-function az(argv) {
-  // az is a .cmd shim on Windows; execFileSync needs shell:true to resolve it.
-  return execFileSync('az', argv, { encoding: 'utf8', shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+export function az(argv, options = {}) {
+  const execute = options.execFileSync ?? execFileSync
+  const platform = options.platform ?? process.platform
+  // Only Windows needs a shell for az.cmd. POSIX shells expand JMESPath braces.
+  return execute('az', argv, {
+    encoding: 'utf8',
+    shell: platform === 'win32',
+    stdio: options.stdio ?? ['pipe', 'pipe', 'pipe'],
+  })
 }
 
 const AZURE_CLI_SESSION_ROOT = path.join(os.tmpdir(), 'fabric-demo-azure-cli')
@@ -231,7 +237,7 @@ export function recoverStaleToken(tenantId) {
     '--only-show-errors', '--output', 'none',
   ]
   try {
-    execFileSync('az', loginArgs, { stdio: 'inherit', shell: true })
+    az(loginArgs, { stdio: 'inherit' })
   } catch {
     fail(
       `Re-authentication via \`az login --tenant ${tenantId}\` failed. ` +

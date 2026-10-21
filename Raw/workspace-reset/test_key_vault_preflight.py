@@ -1,6 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from key_vault_preflight import (
+    ARM_SCOPE,
+    CloudClient,
     PreflightError,
     connection_is_transitioning,
     connection_state,
@@ -13,6 +16,12 @@ from key_vault_preflight import (
 
 
 class KeyVaultPreflightTests(unittest.TestCase):
+    def test_preflight_refuses_cross_host_before_requesting_credentials(self):
+        with patch("key_vault_preflight.AzureCliCredential") as credential:
+            client = CloudClient("tenant")
+            with self.assertRaisesRegex(PreflightError, "unexpected"):
+                client.request(ARM_SCOPE, "GET", "https://example.com/untrusted")
+            credential.return_value.get_token.assert_not_called()
     def test_vault_uri_requires_canonical_https_host(self):
         self.assertEqual(vault_name_from_uri("https://Demo-Vault.vault.azure.net/"), "demo-vault")
         for uri in ("http://demo-vault.vault.azure.net", "https://example.com", "demo-vault"):

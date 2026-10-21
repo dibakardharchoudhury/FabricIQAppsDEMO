@@ -1,4 +1,4 @@
-import { Activity, Bot, CloudSun, Factory, Gauge, Network, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Wrench } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { AdministrationPage } from './pages/AdministrationPage'
 import { CopilotPage } from './pages/CopilotPage'
@@ -8,8 +8,10 @@ import { MaintenancePage } from './pages/MaintenancePage'
 import { OverviewPage } from './pages/OverviewPage'
 import { TelemetryPage } from './pages/TelemetryPage'
 import { WeatherPage } from './pages/WeatherPage'
+import { OperationsMapPage } from '../ui-shared/pages/OperationsMapPage'
+import { filterEnergyMapTabs, resolveVisibleTab } from '../ui-shared/appFeatures'
 
-export type V1TabId = 'overview' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
+export type V1TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
 
 export type V1Tab = {
   id: V1TabId
@@ -19,8 +21,9 @@ export type V1Tab = {
   Page: ComponentType
 }
 
-export const V1_TABS: V1Tab[] = [
+const ALL_V1_TABS: V1Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: OverviewPage },
+  { id: 'map', label: 'Map', title: 'Operations Map', icon: Map, Page: OperationsMapPage },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: TelemetryPage },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: WeatherPage },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: DigitalTwinPage },
@@ -30,8 +33,9 @@ export const V1_TABS: V1Tab[] = [
   { id: 'administration', label: 'Administration', title: 'Administration', icon: Settings, Page: AdministrationPage },
 ]
 
+export const V1_TABS = filterEnergyMapTabs(ALL_V1_TABS)
 export const DEFAULT_V1_TAB = V1_TABS[0]
 
 export function resolveV1Tab(value: string | null): V1Tab {
-  return V1_TABS.find(tab => tab.id === value) ?? DEFAULT_V1_TAB
+  return resolveVisibleTab(V1_TABS, value)
 }

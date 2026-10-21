@@ -56,6 +56,13 @@ Pipelines are **not** versioned (one of each per workspace): `Pipe_Setup`, `Pipe
 > [`docs/knowledge-graph.md`](docs/knowledge-graph.md) for its Ontology relationship, source
 > federation, operational scenarios, health semantics, and RDF/OWL path.
 
+The companion app also has an optional **Map** tab for real Norwegian energy
+context, separate from the synthetic demo. It imports NVE grid/hydropower/reservoir
+data, Statnett measurements and Nord Pool UMM into a dedicated GeoContext Lakehouse
+and serves viewport-bounded map layers through Eventhouse. See
+[Operations Map](HydroOperationsApp/README.md#operations-map) for provisioning and
+source-freshness behavior. SafeSky, OGN and Altitude Angel are not included.
+
 ## Prerequisites (one‑time)
 
 The demo is otherwise self‑contained — **no ADLS, shortcut, or cloud connection.** You only grant the

@@ -102,6 +102,13 @@
               },
               "type": "int"
             },
+            "enable_weather_schedule": {
+              "value": {
+                "value": "@pipeline().parameters.enable_weather_schedule",
+                "type": "Expression"
+              },
+              "type": "bool"
+            },
             "workspace_id": {
               "value": {
                 "value": "@pipeline().parameters.workspace_id",
@@ -197,6 +204,10 @@
       "per_notebook_timeout_secs": {
         "type": "int",
         "defaultValue": 3600
+      },
+      "enable_weather_schedule": {
+        "type": "bool",
+        "defaultValue": true
       }
     }
   }

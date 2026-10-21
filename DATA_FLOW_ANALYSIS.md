@@ -4,6 +4,23 @@
 
 This document describes the implemented data flows in the Fabric IQ hydropower demo, from synthetic source data through Microsoft Fabric artifacts to the React application. It covers setup, runtime reads, user-triggered writes, agent interactions, identity boundaries, and failure behavior.
 
+The optional Operations Map adds a separate real-data path:
+public energy APIs -> `Geo_001_ingest_energy_context` -> raw snapshots and curated
+Delta tables in `Hydro_GeoContext_<suffix>` -> Eventhouse Delta external tables
+`HydroGeoFeatures` / `HydroGeoStatus` -> bounded, zoom/viewport-filtered queries
+from the Map tab. Auxiliary `geo_reservoir_areas` and `geo_market_asset_links`
+tables provide authoritative/generalized area coverage and evidence-backed,
+revision-specific asset-message relationships through `HydroGeoReservoirAreas`
+and `HydroGeoMarketAssetLinks`. The separate frequency tile reads fresh Statnett
+samples on demand through Fabric KQL `externaldata`, with visible-only polling
+and no continuous collection; its imported Lakehouse snapshot is retained separately.
+Market messages are read only for a selected asset. Viewport responses omit
+bulky provider objects; full source/GIS details are loaded on selection.
+No external features are inserted into synthetic STID or
+operational SQL. Source failures retain last-good snapshots and explicit status;
+the browser refresh does not imply a new upstream observation. A separate
+`04_Pipe_EnergyMap` import refreshes the source snapshots on demand.
+
 The central design choice is that the application composes governed semantic topology with external operational context in the browser. The Knowledge Graph reads bound instances and relationships directly from the live Ontology child Graph Model through GQL, enriches them with current Eventhouse telemetry through KQL, and joins only Rayfin SQL records that are outside the Ontology. Lakehouse GraphQL remains a compatibility transport for other app pages and graph fallback; the detailed contract is documented in [docs/knowledge-graph.md](docs/knowledge-graph.md).
 
 ## Architecture Summary

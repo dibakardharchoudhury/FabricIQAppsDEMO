@@ -1,6 +1,6 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import { type AgentAnswer } from './assistantStream'
-import { selectDataAgent } from './artifactDiscovery'
+import { mapDataAgentName, selectDataAgent, selectNamedDataAgent } from './artifactDiscovery'
 import { selectGraphModel, selectOntology } from './ontologyArtifactDiscovery'
 import { parseOntologyContract, type OntologyContract, type OntologyDefinition } from './ontologyContract'
 import { parseOntologyGraph, type OntologyGraph } from './ontologyGraph'
@@ -22,6 +22,7 @@ const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | 
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
+const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
 
 const msal = clientId && tenantId ? new PublicClientApplication({
   auth: { clientId, authority: `https://login.microsoftonline.com/${tenantId}`, redirectUri: location.origin },
@@ -123,11 +124,11 @@ function envConfig(): ResolvedConfig {
   }
 }
 
-async function listItems(token: string): Promise<WorkspaceItem[]> {
+async function listItems(token: string, signal?: AbortSignal): Promise<WorkspaceItem[]> {
   const items: WorkspaceItem[] = []
   let nextUrl: string | undefined = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items`
   while (nextUrl) {
-    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` }, signal })
     if (!res.ok) throw new Error(`Workspace listing failed (${res.status}).`)
     const page = await res.json() as { value?: WorkspaceItem[]; continuationUri?: string; continuationToken?: string }
     items.push(...(page.value ?? []))
@@ -293,24 +294,46 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 type JobInstance = { id?: string; status?: JobStatus; startTimeUtc?: string; failureReason?: { message?: string } }
 const ACTIVE_STATUSES: JobStatus[] = ['NotStarted', 'InProgress']
+function jobStartUtc(value: string): string {
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`
+  if (!Number.isFinite(Date.parse(normalized))) throw new Error('Fabric returned an invalid job start time.')
+  return new Date(normalized).toISOString()
+}
 
-/** Newest job instance started at/after `sinceIso` — used when the 202 Location header is not CORS-exposed. */
+/** Read all job-history pages before deciding whether a new run is safe. */
+async function jobInstances(token: string, itemId: string): Promise<JobInstance[]> {
+  const path = `/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`
+  const base = `https://api.fabric.microsoft.com${path}`
+  let url: string | undefined = base
+  const seen = new Set<string>()
+  const items: JobInstance[] = []
+  while (url) {
+    const parsed = new URL(url, base)
+    if (parsed.origin !== 'https://api.fabric.microsoft.com' || parsed.pathname !== path
+      || parsed.username || parsed.password || parsed.hash || seen.has(parsed.href) || seen.size >= 100) {
+      throw new Error('Fabric returned an invalid job-history continuation; no new job was started.')
+    }
+    seen.add(parsed.href)
+    const res = await fetch(parsed.href, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`Cannot read Fabric job history (${res.status}); no new job was started.`)
+    const page = await res.json() as { value?: JobInstance[]; continuationUri?: string; continuationToken?: string }
+    if (!Array.isArray(page.value)) throw new Error('Fabric job history did not return an instance list.')
+    items.push(...page.value)
+    url = page.continuationUri ?? (page.continuationToken ? `${base}?continuationToken=${encodeURIComponent(page.continuationToken)}` : undefined)
+  }
+  return items
+}
+
 async function latestInstance(token: string, itemId: string, sinceIso: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return undefined
-  const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
-  return list
-    .filter(i => !i.startTimeUtc || i.startTimeUtc >= sinceIso)
+  return (await jobInstances(token, itemId))
+    .filter(i => !i.startTimeUtc || jobStartUtc(i.startTimeUtc) >= sinceIso)
     .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
 }
 
 /** Newest still-running (NotStarted/InProgress) instance for an item, so callers can reattach
  *  instead of starting a duplicate run after a refresh or repeated clicks. */
 async function activeInstance(token: string, itemId: string): Promise<JobInstance | undefined> {
-  const res = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return undefined
-  const list = ((await res.json()) as { value?: JobInstance[] }).value ?? []
-  return list
+  return (await jobInstances(token, itemId))
     .filter(i => i.status && ACTIVE_STATUSES.includes(i.status))
     .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))[0]
 }
@@ -324,6 +347,8 @@ async function runJob(
     stopAt?: JobStatus[]
     timeoutMs?: number
     reuseActive?: boolean
+    pipelineParameters?: Record<string, string | number | boolean>
+    onReuseActive?: (startedAt?: string) => void
     parameters?: Array<{
       name: string
       value: string | number | boolean
@@ -335,10 +360,15 @@ async function runJob(
   if (!token) throw new Error('Fabric sign-in is required.')
   let startedAt = new Date(Date.now() - 5000).toISOString()
   let location: string | null = null
+  let pollDelayMs = 4000
   // Reattach to an already-running instance instead of starting a duplicate (survives refresh / repeat clicks).
   const active = opts?.reuseActive ? await activeInstance(token, itemId) : undefined
-  if (active?.startTimeUtc) {
-    startedAt = new Date(Date.parse(active.startTimeUtc) - 5000).toISOString()
+  if (active) {
+    const activeStarted = active.startTimeUtc ? jobStartUtc(active.startTimeUtc) : undefined
+    opts?.onReuseActive?.(activeStarted)
+    if (active.id) location = `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/${active.id}`
+    if (activeStarted) startedAt = new Date(Date.parse(activeStarted) - 5000).toISOString()
+    if (!location && !activeStarted) throw new Error('A Fabric job is active but its identity cannot be resolved; no duplicate was started.')
     if (active.status) onStatus?.(active.status)
   } else {
     const isNotebookRun = jobType === 'RunNotebook'
@@ -348,7 +378,7 @@ async function runJob(
 
     const requestBody = isNotebookRun && opts?.parameters?.length
       ? JSON.stringify({ parameters: opts.parameters })
-      : undefined
+      : opts?.pipelineParameters ? JSON.stringify({ executionData: { parameters: opts.pipelineParameters } }) : undefined
 
     const trigger = await fetch(triggerUrl, {
       method: 'POST',
@@ -362,25 +392,45 @@ async function runJob(
       const detail = await trigger.text().catch(() => '')
       throw new Error(`Job start failed (${trigger.status})${detail ? `: ${detail.slice(0, 500)}` : '.'}`)
     }
-    location = trigger.headers.get('Location')
+    const retryAfter = Number(trigger.headers.get('Retry-After'))
+    if (Number.isFinite(retryAfter) && retryAfter > 0) pollDelayMs = Math.max(pollDelayMs, retryAfter * 1000)
+    const candidate = trigger.headers.get('Location')
+    if (candidate) {
+      const parsed = new URL(candidate, 'https://api.fabric.microsoft.com')
+      const prefix = `/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/`
+      if (parsed.origin === 'https://api.fabric.microsoft.com' && !parsed.username && !parsed.password
+        && !parsed.search && !parsed.hash && parsed.pathname.startsWith(prefix)
+        && /^[0-9a-f-]{36}$/i.test(parsed.pathname.slice(prefix.length))) location = parsed.href
+    }
   }
   const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
   const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
-  let last: JobStatus = 'NotStarted'
+  let last: JobStatus = active?.status ?? 'NotStarted'
+  let readFailures = 0
   onStatus?.(last)
   while (Date.now() < deadline) {
-    await delay(4000)
+    await delay(pollDelayMs)
+    pollDelayMs = 4000
+    const pollToken = await fabricToken(false)
+    if (!pollToken) throw new Error('Fabric sign-in expired while monitoring the job. The cloud run is not cancelled; sign in and resume monitoring.')
     let status: JobStatus | undefined
     let failure: string | undefined
     try {
       if (location) {
-        const res = await fetch(location, { headers: { Authorization: `Bearer ${token}` } })
-        if (res.ok) { const body = await res.json() as JobInstance; status = body.status; failure = body.failureReason?.message }
+        const res = await fetch(location, { headers: { Authorization: `Bearer ${pollToken}` } })
+        if (!res.ok) throw new Error(`Fabric job status could not be read (${res.status}).`)
+        const body = await res.json() as JobInstance
+        status = body.status; failure = body.failureReason?.message
       } else {
-        const inst = await latestInstance(token, itemId, startedAt)
+        const inst = await latestInstance(pollToken, itemId, startedAt)
         status = inst?.status; failure = inst?.failureReason?.message
       }
-    } catch { continue }
+      readFailures = 0
+    } catch (error) {
+      console.warn('Fabric job monitoring read failed.', error)
+      if (++readFailures >= 3) throw new Error('Fabric job monitoring was interrupted. The cloud run is not cancelled; reconnect to resume progress.', { cause: error })
+      continue
+    }
     if (!status) continue
     if (status !== last) { last = status; onStatus?.(status) }
     if (status === 'Failed') throw new Error(failure || 'Fabric job failed.')
@@ -390,20 +440,35 @@ async function runJob(
 }
 
 /** Re-attach to the newest instance of an already-triggered job — used to resume progress after a page reload. */
-async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number }): Promise<JobStatus> {
+async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: JobProgress, opts?: { stopAt?: JobStatus[]; timeoutMs?: number; instanceId?: string }): Promise<JobStatus> {
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
   const stopAt = opts?.stopAt ?? TERMINAL_STATUSES
   const deadline = Date.now() + (opts?.timeoutMs ?? 10 * 60_000)
   let last: JobStatus = 'NotStarted'
+  let readFailures = 0
   onStatus?.(last)
   while (Date.now() < deadline) {
+    const pollToken = await fabricToken(false)
+    if (!pollToken) throw new Error('Fabric sign-in expired while monitoring the job. The cloud run is not cancelled; sign in and resume monitoring.')
     let status: JobStatus | undefined
     let failure: string | undefined
     try {
-      const inst = await latestInstance(token, itemId, sinceIso)
+      let inst: JobInstance | undefined
+      if (opts?.instanceId) {
+        const response = await fetch(`https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/items/${itemId}/jobs/instances/${opts.instanceId}`, {
+          headers: { Authorization: `Bearer ${pollToken}` },
+        })
+        if (!response.ok) throw new Error(`Fabric job status could not be read (${response.status}).`)
+        inst = await response.json() as JobInstance
+      } else inst = await latestInstance(pollToken, itemId, sinceIso)
       status = inst?.status; failure = inst?.failureReason?.message
-    } catch { await delay(4000); continue }
+      readFailures = 0
+    } catch (error) {
+      console.warn('Fabric job monitoring read failed.', error)
+      if (++readFailures >= 3) throw new Error('Fabric job monitoring was interrupted. The cloud run is not cancelled; reconnect to resume progress.', { cause: error })
+      await delay(4000); continue
+    }
     if (status) {
       if (status !== last) { last = status; onStatus?.(status) }
       if (status === 'Failed') throw new Error(failure || 'Fabric job failed.')
@@ -846,13 +911,43 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
   if (!endpoint) return { text: 'No published Fabric Data Agent was found in this workspace. Publish the Data Agent (run RTI_011), then try again.' }
   const token = await fabricToken(true)
   if (!token) throw new Error('Fabric sign-in is required.')
+  const answer = await invokeDataAgent(endpoint, token, dataAgentQuestion(question), onProgress)
+  dataAgentConversation.push({ question, answer: answer.text })
+  if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
+  return answer
+}
+
+export async function askMapDataAgent(question: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<AgentAnswer> {
+  signal.throwIfAborted()
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required for map chat.')
+  signal.throwIfAborted()
+  const agent = selectNamedDataAgent(await listItems(token, signal), mapDataAgentName(eventhouseName, configuredMapAgentName))
+  const endpoint = `https://api.fabric.microsoft.com/v1/mcp/workspaces/${requireWorkspaceId()}/dataagents/${agent.id}/agent`
+  return invokeDataAgent(endpoint, token, question, onProgress, signal)
+}
+
+export async function ensureMapChatConnection(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  const config = await ensureConfig(true)
+  signal.throwIfAborted()
+  if (!config?.eventhouseQueryUri) throw new Error('No map Eventhouse was found in this workspace.')
+  const scopes = [kustoScope(config.eventhouseQueryUri)]
+  if (!await silentToken(scopes)) {
+    signal.throwIfAborted()
+    await popupToken(scopes)
+  }
+  signal.throwIfAborted()
+}
+
+async function invokeDataAgent(endpoint: string, token: string, question: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<AgentAnswer> {
   const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
   ])
   const client = new Client({ name: 'hydro-operations-app', version: '1.0.0' })
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() } },
+    requestInit: { headers: { Authorization: `Bearer ${token}`, ActivityId: crypto.randomUUID() }, signal },
   })
   try {
     await client.connect(transport)
@@ -862,8 +957,9 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
     if (!questionArgument) throw new Error('The Data Agent MCP tool has no question argument.')
     const result = await client.callTool({
       name: tool.name,
-      arguments: { [questionArgument]: dataAgentQuestion(question) },
-    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000 })
+      arguments: { [questionArgument]: question },
+    }, undefined, { timeout: 5 * 60_000, maxTotalTimeout: 5 * 60_000, signal })
+    signal?.throwIfAborted()
     const content = result.content as McpContent[]
     const text = content
       .flatMap(part => [part.text, part.resource?.text])
@@ -884,8 +980,6 @@ export async function askDataAgent(question: string, onProgress?: (text: string)
       }]
     })
     const answer = text || 'The Data Agent returned no answer.'
-    dataAgentConversation.push({ question, answer })
-    if (dataAgentConversation.length > 4) dataAgentConversation.splice(0, dataAgentConversation.length - 4)
     onProgress?.(answer)
     return { text: answer, artifacts }
   } finally {
@@ -966,7 +1060,7 @@ export type KustoResult = { columns: string[]; rows: unknown[][] }
 
 /** Run an already-validated KQL query against the Eventhouse as the signed-in user.
  *  Callers outside the telemetry views must validate the query text first — see copilot/query.ts. */
-export async function runKustoQuery(csl: string, maxRows: number): Promise<KustoResult> {
+export async function runKustoQuery(csl: string, maxRows: number, signal?: AbortSignal): Promise<KustoResult> {
   const config = await ensureConfig(false)
   if (!config?.eventhouseQueryUri || !config.kqlDatabase) throw new Error('No Eventhouse is connected in this workspace.')
   const cluster = config.eventhouseQueryUri.replace(/\/$/, '')
@@ -974,6 +1068,7 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   if (!token) throw new Error('Eventhouse consent is required. Connect telemetry first.')
   const response = await fetch(`${cluster}/v1/rest/query`, {
     method: 'POST',
+    signal,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     // Server-side caps back up the client-side `| take`, so a runaway query cannot return a huge payload.
     body: JSON.stringify({
@@ -984,10 +1079,74 @@ export async function runKustoQuery(csl: string, maxRows: number): Promise<Kusto
   })
   const text = await response.text()
   if (!response.ok) throw new Error(`Eventhouse query failed (${response.status}): ${text.slice(0, 300)}`)
-  const payload = JSON.parse(text) as { Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }> }
+  const payload = JSON.parse(text) as {
+    Tables?: Array<{ Columns?: Array<{ ColumnName?: string }>; Rows?: unknown[][] }>
+    Exceptions?: unknown[]
+    error?: unknown
+  }
+  if (payload.error || payload.Exceptions?.length) {
+    throw new Error('Eventhouse returned a partial or failed query result. Narrow the query and retry.')
+  }
   const table = payload.Tables?.[0]
+  if (!table?.Columns || !table.Rows) throw new Error('Eventhouse returned no result table.')
   return {
     columns: (table?.Columns ?? []).map((column, index) => column.ColumnName ?? `column_${index}`),
     rows: table?.Rows ?? [],
   }
+}
+
+async function resolveEnergyMapPipeline(): Promise<string> {
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required to refresh map data.')
+  const matches = (await listItems(token)).filter(item =>
+    item.type === 'DataPipeline' && item.displayName === '04_Pipe_EnergyMap')
+  if (matches.length !== 1) throw new Error('The energy-map import pipeline is missing or ambiguous. Run map provisioning.')
+  return matches[0].id
+}
+
+const mapRefreshListeners = new Set<JobProgress>()
+let mapRefreshInFlight: Promise<JobStatus> | undefined
+let mapRefreshStatus: JobStatus = 'NotStarted'
+let mapRefreshStartedAt: string | undefined
+
+export function refreshEnergyMap(onStatus?: JobProgress, forceRefresh = false, onExistingRun?: (startedAt?: string) => void): Promise<JobStatus> {
+  if (onStatus) mapRefreshListeners.add(onStatus)
+  if (mapRefreshInFlight) {
+    onExistingRun?.(mapRefreshStartedAt)
+    onStatus?.(mapRefreshStatus)
+  } else {
+    mapRefreshStatus = 'NotStarted'
+    mapRefreshStartedAt = new Date().toISOString()
+    const publish = (status: JobStatus) => {
+      mapRefreshStatus = status
+      mapRefreshListeners.forEach(listener => listener(status))
+    }
+    const current = (async () => {
+      const pipelineId = await resolveEnergyMapPipeline()
+      return runJob(pipelineId, 'Pipeline', publish, {
+        reuseActive: true, timeoutMs: 3 * 60 * 60_000,
+        pipelineParameters: { refresh_mode: 'all', force_refresh: forceRefresh },
+        onReuseActive: startedAt => {
+          mapRefreshStartedAt = startedAt ?? mapRefreshStartedAt
+          onExistingRun?.(mapRefreshStartedAt)
+        },
+      })
+    })()
+    mapRefreshInFlight = current
+    void current.finally(() => { if (mapRefreshInFlight === current) mapRefreshInFlight = undefined }).catch(() => undefined)
+  }
+  return mapRefreshInFlight.finally(() => { if (onStatus) mapRefreshListeners.delete(onStatus) })
+}
+
+export async function resumeEnergyMapRefresh(onStatus: JobProgress | undefined, sinceIso: string): Promise<JobStatus> {
+  if (mapRefreshInFlight) return refreshEnergyMap(onStatus)
+  const pipelineId = await resolveEnergyMapPipeline()
+  const token = await fabricToken(true)
+  if (!token) throw new Error('Fabric sign-in is required to resume map refresh progress.')
+  const instances = (await jobInstances(token, pipelineId))
+    .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
+  const instance = instances.find(item => item.status && ACTIVE_STATUSES.includes(item.status))
+    ?? instances.find(item => item.startTimeUtc && jobStartUtc(item.startTimeUtc) >= sinceIso)
+  if (!instance?.id) throw new Error('The recorded map refresh was not found. Check Fabric run history before starting another update.')
+  return pollLatestInstance(pipelineId, sinceIso, onStatus, { timeoutMs: 3 * 60 * 60_000, instanceId: instance.id })
 }
