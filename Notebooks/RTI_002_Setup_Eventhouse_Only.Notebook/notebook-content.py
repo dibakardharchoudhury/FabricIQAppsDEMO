@@ -148,9 +148,19 @@ def fabric_get_items(workspace_id, access_token, item_type=None):
     """
     url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/items"
     headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    items = resp.json().get("value", [])
+    base_url = url
+    params = {}
+    items = []
+    while url:
+        resp = requests.get(url, headers=headers, params=params, timeout=60)
+        resp.raise_for_status()
+        page = resp.json()
+        items.extend(page.get("value", []))
+        url = page.get("continuationUri")
+        params = {}
+        if not url and page.get("continuationToken"):
+            url = base_url
+            params = {"continuationToken": page["continuationToken"]}
     if item_type:
         return [i for i in items if i.get("type", "").lower() == item_type.lower()]
     return items
@@ -524,14 +534,28 @@ def create_eventstream(workspace_id: str, name: str, token: str) -> str:
         "folderId": target_folder_id,
     }
 
-    resp = requests.post(url, headers=headers, json=body)
+    resp = requests.post(url, headers=headers, json=body, timeout=60)
 
     if resp.status_code == 400 and "ItemDisplayNameNotAvailableYet" in resp.text:
         print("⏳ Display name not yet available. Waiting 30 seconds and retrying...")
         time.sleep(30)
-        resp = requests.post(url, headers=headers, json=body)
+        resp = requests.post(url, headers=headers, json=body, timeout=60)
 
     resp.raise_for_status()
+
+    if resp.status_code == 202:
+        operation_url = resp.headers.get("Location") or resp.headers.get("Operation-Location")
+        if not operation_url:
+            raise RuntimeError("Eventstream creation returned 202 without an operation URL.")
+        print("Eventstream creation accepted; waiting for Fabric provisioning...")
+        wait_for_fabric_lro(operation_url, token)
+        result = requests.get(operation_url.rstrip("/") + "/result", headers=headers, timeout=60)
+        result.raise_for_status()
+        data = result.json()
+        if not isinstance(data, dict) or not isinstance(data.get("id"), str) or not data["id"].strip():
+            raise RuntimeError("Eventstream creation completed without an item ID in its operation result.")
+        print(f"Created Eventstream '{name}' - ID: {data['id']}")
+        return data["id"]
 
     try:
         data = resp.json()
@@ -656,21 +680,21 @@ def wait_for_fabric_lro(operation_url: str, token: str,
         )
         if response.status_code == 429 or response.status_code >= 500:
             delay = int(response.headers.get("Retry-After", poll_seconds))
-            print(f"⏳ Eventstream update still provisioning ({response.status_code}); retrying in {delay}s...")
+            print(f"⏳ Eventstream operation still provisioning ({response.status_code}); retrying in {delay}s...")
             time.sleep(delay)
             continue
         if response.status_code >= 400:
             raise RuntimeError(
-                f"Eventstream update poll failed: {response.status_code} | {response.text[:3000]}"
+                f"Eventstream operation poll failed: {response.status_code} | {response.text[:3000]}"
             )
         result = response.json()
         status = str(result.get("status", "")).lower()
         if status in ("succeeded", "completed"):
             return result
         if status in ("failed", "cancelled"):
-            raise RuntimeError(f"Eventstream update failed: {json.dumps(result)[:3000]}")
+            raise RuntimeError(f"Eventstream operation failed: {json.dumps(result)[:3000]}")
         time.sleep(poll_seconds)
-    raise TimeoutError("Timed out waiting for the Eventstream definition update.")
+    raise TimeoutError("Timed out waiting for the Eventstream operation.")
 
 
 def update_eventstream_definition(workspace_id: str, eventstream_id: str, token: str):

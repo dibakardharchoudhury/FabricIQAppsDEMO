@@ -266,11 +266,18 @@ No custom pool ID is copied between workspaces. See the official
 On October 23, 2026, the local app successfully imported commit `87fde47` into
 `ws-FabricIQAppsDemoFEATURE` and published Weather on Runtime 2.0. Authoritative
 readback verified the workspace default, the published Environment runtime and all eight
-library versions above; 74 focused regression tests passed. This is configuration/publication
-acceptance, not a completed notebook or application runtime test. Setup remains blocked by
-HTTP 401 when the Key Vault-backed service principal lists workspace folders. Verify the
-principal stored under `clientid` has Contributor or Admin access to the target workspace;
-do not downgrade Spark or relax Key Vault networking to bypass that prerequisite.
+library versions above; 74 focused regression tests passed. A separate read-only Weather
+notebook then executed under Python 3.13.11 / Spark 4.1, importing all Weather packages and
+passing geometry and in-memory Zarr-2 roundtrip checks. The initial workspace-folder HTTP 401
+was resolved by identifying the exact `clientid` principal through approved Fabric private
+connectivity and granting it Contributor on the target workspace. Lakehouse creation then
+completed successfully; Key Vault public access remained disabled.
+Fresh-workspace testing also exposed an Eventstream creation race: HTTP 202 is acceptance,
+not completed provisioning. NB02 now waits for the Fabric operation and reads its authoritative
+item result instead of attempting to find an unfinished item within 30 seconds. Item lookup
+also follows every inventory page. Failed or malformed operations still fail setup; no item
+is deleted or recreated to recover. These bounded checks do not certify the remaining setup,
+agent execution/delivery, native graph materialization or authenticated application runtime.
 The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
