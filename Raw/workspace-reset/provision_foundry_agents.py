@@ -53,10 +53,13 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
     matched = False
     for part in definition.get("definition", {}).get("parts", []):
         path = part.get("path", "")
-        if not path.startswith("Files/Config/published/") or not path.endswith("/datasource.json"):
+        context_source = path.startswith("Files/Config/published/ontologies/") and path.endswith("/ontology.json")
+        if not path.startswith("Files/Config/published/") or not (
+            path.endswith("/datasource.json") or context_source
+        ):
             continue
         source = json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
-        if str(source.get("type", "")).lower() != "ontology":
+        if not context_source and str(source.get("type", "")).lower() != "ontology":
             continue
         if source.get("workspaceId", "").lower() != workspace.lower() or source.get("artifactId", "").lower() != ontology.lower():
             raise RuntimeError("The published Data Agent has a mismatched ontology source.")

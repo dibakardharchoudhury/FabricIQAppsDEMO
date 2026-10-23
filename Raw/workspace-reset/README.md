@@ -140,6 +140,18 @@ must preserve all source definitions/selections, ontology bindings and published
 test the edited draft separately. A successful published query does not validate different
 draft selections, and publishing can promote those unrelated draft changes.
 
+For an existing context-backed agent, NB09 recognizes
+`Files/Config/<stage>/ontologies/<name>/ontology.json`, verifies its matching live v2
+identity, and preserves it without adding separate Lakehouse/Eventhouse profiles or
+rewriting NB11's SQL source guidance. The Foundry connection validator recognizes this
+published shape too. Fully deselected direct profiles for the same underlying items can
+suppress automatic attachment: native traces showed `attachedCount=0`, `skippedCount=2`
+and no Lakehouse/KQL tools. A guarded removal of just those unused profiles restored
+`attachedCount=2`, `skippedCount=0`. Fresh draft and published queries then joined
+telemetry, ontology reference data and operational SQL successfully. This is not a reason
+to remove selected/custom sources indiscriminately or claim the federation planner itself
+was repaired. See the [bounded live evidence](../../docs/foundry-deployment-and-multi-agent-setup.md#compact-data-agent-instructions-and-automatic-sources-october-23-2026).
+
 The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
 metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
 `b1818634-f77e-4dec-ab55-982460ecb101` correctly **failed** on the actual unsupported Ontology API

@@ -309,6 +309,25 @@ class PublishedIdentityTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 module.verify_published_identity(invalid, "workspace", "ontology")
 
+    def test_published_ontology_context_identity_without_separate_source_profiles(self):
+        def context(stage="published", workspace="workspace", ontology="ontology"):
+            return {"definition": {"parts": [{
+                "path": f"Files/Config/{stage}/ontologies/model/ontology.json",
+                "payload": base64.b64encode(json.dumps({
+                    "workspaceId": workspace, "artifactId": ontology,
+                    "elements": [{"id": "facilities", "is_selected": True}],
+                }).encode()).decode(),
+            }]}}
+
+        module.verify_published_identity(context(), "workspace", "ontology")
+        for invalid in (context(stage="draft"), context(workspace="other"), context(ontology="other")):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                module.verify_published_identity(invalid, "workspace", "ontology")
+        mixed = context()
+        mixed["definition"]["parts"] += definition(ontology="other")["definition"]["parts"]
+        with self.assertRaises(RuntimeError):
+            module.verify_published_identity(mixed, "workspace", "ontology")
+
     def test_malformed_source_is_not_ignored(self):
         malformed = definition()
         malformed["definition"]["parts"][0]["payload"] = "not-base64"

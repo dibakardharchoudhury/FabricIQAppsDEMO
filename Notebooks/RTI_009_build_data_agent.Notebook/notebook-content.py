@@ -415,6 +415,12 @@ def require_v2_ontology(ontology_id: str) -> None:
         )
 
 
+def is_ontology_context_path(path: str) -> bool:
+    return path.startswith((
+        "Files/Config/draft/ontologies/", "Files/Config/published/ontologies/",
+    )) and path.endswith("/ontology.json")
+
+
 def validate_agent_ontology_sources(
     parts: list, expected_ontology_id: str,
     require_draft: bool = False, require_published: bool = False,
@@ -426,16 +432,17 @@ def validate_agent_ontology_sources(
     found_published = False
     for part in parts:
         path = part.get("path", "")
-        if not path.endswith("/datasource.json"):
+        context_source = is_ontology_context_path(path)
+        if not context_source and not path.endswith("/datasource.json"):
             continue
         if part.get("payloadType") != "InlineBase64":
             raise RuntimeError(f"Cannot verify agent data source {path!r}: expected InlineBase64.")
         ds = json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
         if not isinstance(ds, dict):
             raise RuntimeError(f"Cannot verify agent data source {path!r}: expected a JSON object.")
-        if not isinstance(ds.get("type"), str) or not ds["type"].strip():
+        if not context_source and (not isinstance(ds.get("type"), str) or not ds["type"].strip()):
             raise RuntimeError(f"Cannot verify agent data source {path!r}: missing source type.")
-        if ds["type"].lower() != "ontology":
+        if not context_source and ds["type"].lower() != "ontology":
             if "/ontology-" in path:
                 raise RuntimeError(f"Malformed ontology data source {path!r}; no agent writes are allowed.")
             continue
@@ -484,7 +491,9 @@ def published_agent_sources(parts: list) -> dict:
     return {
         part["path"]: json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
         for part in parts
-        if part["path"].startswith("Files/Config/published/") and part["path"].endswith("/datasource.json")
+        if part["path"].startswith("Files/Config/published/") and (
+            part["path"].endswith("/datasource.json") or is_ontology_context_path(part["path"])
+        )
     }
 
 
@@ -861,7 +870,7 @@ RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
 RUNNING_BAD_INSTRUCTIONS = """### Canonical "running bad" questions
 
 "Running bad" means literal telemetry quality BAD. Unless overridden, query all active signals in a 30-minute window; select the latest raw row using summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
-Include tag, equipment/node/instrument, value/unit, quality and event time. Report stale/missing data without widening scope. Join all open work by affected equipment; do not filter work by node/instrument. Label same-signal only for matching node/instrument; otherwise equipment-level."""
+Include tag, equipment/node/instrument, value/unit, quality and event time. Treat null/0001 timestamps as missing, not zero readings. Compare active-node coverage; report missing counts, never widen the window or equate empty BAD results with healthy turbines. Join all open work by affected equipment; do not filter work by node/instrument. Label same-signal only for matching node/instrument; otherwise equipment-level."""
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'
 RUNNING_HOT_INSTRUCTIONS = """### Canonical "running hot" questions
@@ -1188,61 +1197,74 @@ try:
     for part in parts:
         print("   •", part.get("path", ""))
 
-    # 3) PATCH — preserve instructions and upsert Ontology, Lakehouse and Eventhouse sources.
+    # 3) PATCH — preserve ontology context and its automatic source attachment when present.
     existing_stage = next(
         (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DRAFT_STAGE_CONFIG_PATH),
         {},
     )
     parts = upsert_part(parts, DRAFT_STAGE_CONFIG_PATH, build_stage_obj(existing_stage))
 
-    existing_ds = next(
-        (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DATASOURCE_PATH),
-        {},
-    )
-    parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
-
-    discovered_lakehouse_schema = lakehouse_schema_map()
-    existing_lakehouse_ds = next(
-        (
-            decode_payload(p.get("payload", ""))
-            for p in parts if p.get("path") == LAKEHOUSE_DATASOURCE_PATH
-        ),
-        {},
-    )
-    submitted_lakehouse_source = build_lakehouse_datasource_obj(
-        existing_lakehouse_ds, discovered_lakehouse_schema,
-    )
-    parts = upsert_part(parts, LAKEHOUSE_DATASOURCE_PATH, submitted_lakehouse_source)
-
-    existing_kusto_ds = next(
-        (
-            decode_payload(p.get("payload", ""))
-            for p in parts if p.get("path") == KUSTO_DATASOURCE_PATH
-        ),
-        {},
-    )
-    submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
-    parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
+    context_paths = [
+        part["path"] for part in parts
+        if part["path"].startswith("Files/Config/draft/") and is_ontology_context_path(part["path"])
+    ]
     submitted_direct_sources = {
-        LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
-        KUSTO_DATASOURCE_PATH: submitted_kusto_source,
+        part["path"]: decode_payload(part["payload"])
+        for part in parts if part["path"] in context_paths
     }
-    parts = update_operational_source_guidance(parts)
+    if not context_paths:
+        existing_ds = next(
+            (decode_payload(p.get("payload", "")) for p in parts if p.get("path") == DATASOURCE_PATH),
+            {},
+        )
+        parts = upsert_part(parts, DATASOURCE_PATH, build_datasource_obj(existing_ds, ontology_id))
+
+        discovered_lakehouse_schema = lakehouse_schema_map()
+        existing_lakehouse_ds = next(
+            (
+                decode_payload(p.get("payload", ""))
+                for p in parts if p.get("path") == LAKEHOUSE_DATASOURCE_PATH
+            ),
+            {},
+        )
+        submitted_lakehouse_source = build_lakehouse_datasource_obj(
+            existing_lakehouse_ds, discovered_lakehouse_schema,
+        )
+        parts = upsert_part(parts, LAKEHOUSE_DATASOURCE_PATH, submitted_lakehouse_source)
+
+        existing_kusto_ds = next(
+            (
+                decode_payload(p.get("payload", ""))
+                for p in parts if p.get("path") == KUSTO_DATASOURCE_PATH
+            ),
+            {},
+        )
+        submitted_kusto_source = build_kusto_datasource_obj(existing_kusto_ds)
+        parts = upsert_part(parts, KUSTO_DATASOURCE_PATH, submitted_kusto_source)
+        submitted_direct_sources = {
+            LAKEHOUSE_DATASOURCE_PATH: submitted_lakehouse_source,
+            KUSTO_DATASOURCE_PATH: submitted_kusto_source,
+        }
+        parts = update_operational_source_guidance(parts)
     for part in parts:
         if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json"):
             ds = decode_payload(part["payload"])
-            if ds.get("type") == "sql_database":
+            if context_paths or ds.get("type") == "sql_database":
                 submitted_direct_sources[part["path"]] = ds
     validate_agent_ontology_sources(parts, ontology_id, require_draft=True)
 
     print(f"Applying definition: {len(parts)} part(s)")
     print("   • aiInstructions        ->", DRAFT_STAGE_CONFIG_PATH)
-    print("   • ontology data source  ->", DATASOURCE_PATH)
-    print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
-    print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
-    print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
-    print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)
-    print(f"       {kql_table_name} selected with 4 columns.")
+    if context_paths:
+        print("   • verified ontology context ->", ", ".join(context_paths))
+        print("       Preserving context-owned automatic sources, selections and SQL guidance.")
+    else:
+        print("   • ontology data source  ->", DATASOURCE_PATH)
+        print(f"       {len(ONTOLOGY_ELEMENTS)} entity element(s) selected.")
+        print("   • Lakehouse data source ->", LAKEHOUSE_DATASOURCE_PATH)
+        print(f"       {len(LAKEHOUSE_TABLES)} table(s) selected with discovered columns.")
+        print("   • Eventhouse data source ->", KUSTO_DATASOURCE_PATH)
+        print(f"       {kql_table_name} selected with 4 columns.")
 
     update_item_definition(data_agent_item_id, {"parts": parts})
     verify_agent_source_readback(

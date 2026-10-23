@@ -380,9 +380,9 @@ The live NB10 definition was updated with the single-agent/guarded-retirement co
 preserving and verifying its cell metadata and target Lakehouse attachment.
 This verifies retirement and dependency preservation, not monitoring or Teams/email delivery.
 
-### Compact Data Agent instructions (October 23, 2026)
+### Compact Data Agent instructions and automatic sources (October 23, 2026)
 
-NB09 now generates 674 words / 5,152 characters of general guidance, replacing the
+NB09 now generates 694 words / 5,287 characters of general guidance, replacing the
 legacy instructions that discouraged ontology use. Ontology v2 provides semantic context;
 source-native queries against its associated Lakehouse/Eventhouse are normal execution,
 not a source fallback. Cross-source handoffs use exact `opcua_node_id` and
@@ -390,18 +390,32 @@ not a source fallback. Cross-source handoffs use exact `opcua_node_id` and
 owned by NB11, which is unchanged. Custom sections and NB11's appended operational
 instructions survive reruns.
 
-In `ws-vteam-demoV3`, only the Data Agent's draft `aiInstructions` field was changed.
-Readback verified every source definition/selection, SQL source instruction, ontology
-context and published part unchanged. Live NB09's owned instruction code/prose was also
-updated without executing it, preserving its metadata and Lakehouse attachment.
+The instruction-only correction initially preserved all sources but did not fix execution.
+Native draft execution records then established that two **deselected direct-source
+profiles** suppressed automatic attachment of the same ontology-associated sources:
+`attachedCount=0`, `skippedCount=2`; no Lakehouse or KQL analysis tools were exposed.
+Removing only those two unused profiles changed the trace to `attachedCount=2`,
+`skippedCount=0`, restoring both source-native query tools without separately selected
+tables. SQL source instructions/selections and ontology bindings were unchanged.
 
-Draft testing did **not** validate the requested combined answer: the agent still reported
-that it could not stitch telemetry to static signal metadata. A separate facilities query
-reported no available query tool for the ontology-associated Lakehouse. These are observed
-agent responses, not independent proof of a missing ontology binding or a native service
-error. The draft remains unpublished; successful earlier published queries, with different
-direct-table selections, do not validate this draft. Instructions alone cannot create
-missing source access or execution capabilities. Investigate actual run steps and
+In `ws-vteam-demoV3`, fresh draft runs returned all three facilities and correlated the
+latest-today BAD readings for T005/T009 with asset metadata and open work orders.
+The published configuration now matches that tested context-only draft, with no separate
+Lakehouse/Eventhouse profiles. Fresh published MCP sessions reproduced both answers and
+queried inspections, notifications, spare-part associations and linked 3D models. These
+bounded results do not certify every possible answer or repair the native federation
+planner's stitching metadata. Associated source-native SQL/KQL is the successful route.
+The compact policy also treats null/default timestamps as missing readings and requires
+coverage checks; an empty recent BAD result must not be represented as proof of healthy
+equipment. The published "right now" check used the 30-minute window and explicitly
+qualified its empty BAD result rather than reusing the older BAD readings from today.
+
+NB09 and Foundry connection validation recognize the current
+`ontologies/<name>/ontology.json` definition and still require the matching live v2 item.
+For an existing context-backed agent, NB09 preserves context and all custom sources,
+does not recreate direct profiles, and does not rewrite NB11's SQL guidance. Live NB09
+was synchronized without execution, preserving metadata and its Lakehouse attachment.
+Do not indiscriminately delete selected or unrelated source profiles. Inspect run steps and
 [downloaded ontology context](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources)
 before changing bindings or reattaching tables.
 

@@ -33,7 +33,7 @@ def functions(number, *names, **overrides):
     namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib}
     namespace.update(overrides)
     tree = ast.parse(source(number))
-    included = set(names) | {"definition_parts"}
+    included = set(names) | {"definition_parts", "is_ontology_context_path"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in included]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), number, "exec"), namespace)
     return namespace
@@ -92,6 +92,70 @@ def data_agent_instruction_namespace():
 
 
 class DataAgentInstructionTests(unittest.TestCase):
+    def test_context_sources_require_matching_live_v2_identity_in_both_stages(self):
+        ns = functions(
+            "009", "validate_agent_ontology_sources", "require_v2_ontology", "published_agent_sources",
+            workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+        )
+        parts = [
+            json_part(f"Files/Config/{stage}/ontologies/model/ontology.json", {
+                "artifactId": "ontology", "workspaceId": "ws",
+                "elements": [{"type": "ontology.entity", "is_selected": True, "id": "facilities"}],
+            })
+            for stage in ("draft", "published")
+        ]
+        ns["validate_agent_ontology_sources"](parts, "ontology", require_draft=True, require_published=True)
+        self.assertEqual(list(ns["published_agent_sources"](parts)), [parts[1]["path"]])
+        for field, value in (("artifactId", "other"), ("workspaceId", "other")):
+            with self.subTest(field=field):
+                bad = json.loads(base64.b64decode(parts[0]["payload"]))
+                bad[field] = value
+                with self.assertRaises(RuntimeError):
+                    ns["validate_agent_ontology_sources"](
+                        [json_part(parts[0]["path"], bad)], "ontology", require_draft=True,
+                    )
+        ns["get_ontology_generation"].return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "not generation 2"):
+            ns["validate_agent_ontology_sources"](parts, "ontology")
+
+    def test_context_rerun_does_not_recreate_direct_profiles_or_rewrite_sql_guidance(self):
+        context_path = "Files/Config/draft/ontologies/model/ontology.json"
+        context = {"artifactId": "ontology", "workspaceId": "ws", "elements": [], "custom": {"keep": True}}
+        sql_path = "Files/Config/draft/sql-source/datasource.json"
+        sql = {"type": "sql_database", "dataSourceInstructions": "Keep exact SQL policy.", "elements": []}
+        parts = [
+            json_part(context_path, context),
+            json_part(sql_path, sql),
+            json_part("Files/Config/draft/custom_queries.json", {"queries": ["keep"]}),
+        ]
+        ns = functions(
+            "009", "decode_payload", "validate_agent_ontology_sources", "require_v2_ontology",
+            workspace_id="ws", get_ontology_generation=Mock(return_value=2),
+            parts=copy.deepcopy(parts), ontology_id="ontology",
+            lakehouse_schema_map=Mock(side_effect=AssertionError("Must use context-owned sources")),
+            build_datasource_obj=Mock(side_effect=AssertionError("Must preserve ontology context")),
+            build_lakehouse_datasource_obj=Mock(side_effect=AssertionError("Must not add direct profiles")),
+            build_kusto_datasource_obj=Mock(side_effect=AssertionError("Must not add direct profiles")),
+            update_operational_source_guidance=Mock(side_effect=AssertionError("SQL belongs to NB11")),
+        )
+        deployment = next(node for node in ast.parse(source("009")).body
+                          if isinstance(node, ast.Try) and "create_data_agent" in ast.unparse(node))
+        start = next(index for index, node in enumerate(deployment.body) if assign_to(node, "context_paths"))
+        stop = next(index for index in range(start, len(deployment.body))
+                    if isinstance(deployment.body[index], ast.Expr)
+                    and isinstance(deployment.body[index].value, ast.Call)
+                    and isinstance(deployment.body[index].value.func, ast.Name)
+                    and deployment.body[index].value.func.id == "validate_agent_ontology_sources")
+        block = ast.Module(body=deployment.body[start:stop + 1], type_ignores=[])
+        exec(compile(block, "context-rerun", "exec"), ns)
+        self.assertEqual(ns["parts"], parts)
+        self.assertEqual(ns["submitted_direct_sources"], {context_path: context, sql_path: sql})
+        for name in (
+            "lakehouse_schema_map", "build_datasource_obj", "build_lakehouse_datasource_obj",
+            "build_kusto_datasource_obj", "update_operational_source_guidance",
+        ):
+            ns[name].assert_not_called()
+
     def test_compact_policy_uses_ontology_context_and_actual_source_keys(self):
         ns = data_agent_instruction_namespace()
         text = ns["build_stage_obj"]({})["aiInstructions"]
@@ -103,6 +167,8 @@ class DataAgentInstructionTests(unittest.TestCase):
             "equipmentId", "opcuaNodeId", "source-specific instructions",
             "work orders, maintenance notifications, inspections, spare parts and 3D models",
             "actual query results", "EVERY required returned identifier/count tuple",
+            "Treat null/0001 timestamps as missing", "Compare active-node coverage",
+            "report missing counts", "equate empty BAD results with healthy turbines",
         ):
             self.assertIn(phrase, text)
         for phrase in (
