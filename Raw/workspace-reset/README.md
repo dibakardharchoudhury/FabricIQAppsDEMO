@@ -337,8 +337,12 @@ The first Hosted Agent image build stayed in local repository-root packaging wit
 ACR build. Only that verified, task-owned CLI packaging process was stopped; no Azure build or
 resource was removed. The canonical builder now stages exactly its existing fingerprinted manifest
 in a temporary context (33 files / 1,064,697 bytes for this revision), verifies the same image tag,
-and cleans the context on either success or failure. Explicit **Seed & provision** still seeds
-demo data later. A final hosted/runtime retry is required.
+and cleans the context on either success or failure. The staged retry submitted ACR run `dt1`,
+which succeeded in 2m19s; local Unicode log streaming then failed and temporary-directory cleanup
+encountered a Windows working-directory lock. The builder now waits with `--no-logs` and a
+20-minute remote build timeout, launching from the stable repository directory with absolute
+staged paths. Explicit **Seed & provision** still seeds demo data later. A final hosted/runtime
+retry is required.
 
 Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.

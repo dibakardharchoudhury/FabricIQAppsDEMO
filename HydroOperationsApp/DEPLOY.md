@@ -225,6 +225,10 @@ selected and the operator explicitly opts in through the local form or `HYDRO_FO
 For a first image build, ACR receives a temporary context containing only the fingerprinted
 Dockerfile/COPY files, not the full repository or local dependencies/state. File/byte counts are
 logged, source identity is checked before upload, and the temporary context is cleaned on failure too.
+The CLI runs from the repository with absolute staged paths, so CLI child processes cannot lock
+the temporary working directory. ACR uses `--no-logs` to avoid Windows Unicode log-stream failures,
+waits for the build result with a 20-minute remote build timeout, and reports its run ID/status.
+An unsuccessful build still fails deployment; the image digest is independently verified afterward.
 Creation requires available model/version/SKU/capacity inputs, exposed in both local forms and documented in
 the operator guide. An unresolved explicitly selected endpoint stops deployment rather than creating elsewhere.
 Every publish uses isolated generated azd state with live target identity; the tracked `azure.yaml` contains

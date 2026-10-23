@@ -301,8 +301,10 @@ def ensure_hosted_agent(
                   f"{sum(source.stat().st_size for source in sources)} bytes.", flush=True)
             deploy.run_stream(
                 deploy.az("acr", "build", "--registry", registry, "--subscription", subscription,
-                          "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64", "--file", DOCKERFILE, "."),
-                cwd=context, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                          "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64",
+                          "--file", str(context / DOCKERFILE), "--no-logs", "--timeout", "1200",
+                          "--query", "{runId:runId,status:status}", "--output", "json", str(context)),
+                cwd=root, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             )
         digest = _registry_digest(deploy, registry, subscription, tag)
         if digest is None:

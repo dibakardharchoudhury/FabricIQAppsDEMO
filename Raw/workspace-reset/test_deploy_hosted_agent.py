@@ -127,11 +127,12 @@ class FakeDeploy:
     def run_stream(self, argv, cwd=None, env=None):
         self.log.append(argv)
         if argv[:3] == ["az", "acr", "build"]:
-            self.build_context = Path(cwd)
+            self.build_cwd = cwd
+            self.build_context = Path(argv[-1])
             self.build_context_files = (
-                {path.relative_to(cwd).as_posix(): path.read_bytes()
-                 for path in Path(cwd).rglob("*") if path.is_file()}
-                if Path(cwd) != self.REPO_ROOT else None
+                {path.relative_to(self.build_context).as_posix(): path.read_bytes()
+                 for path in self.build_context.rglob("*") if path.is_file()}
+                if self.build_context != self.REPO_ROOT else None
             )
             self.tags[argv[argv.index("--image") + 1].split(":", 1)[1]] = DIGEST_B
         return ""
@@ -307,7 +308,10 @@ class ConvergenceTests(unittest.TestCase):
         build = fake.commands("az", "acr", "build")[0]
         self.assertIn(f"hydro-orchestrator:{self.tag()}", build)
         self.assertEqual(build[build.index("--platform") + 1], "linux/amd64")
-        self.assertEqual(build[build.index("--file") + 1], "HydroOperationsService/Dockerfile")
+        self.assertEqual(Path(build[build.index("--file") + 1]), fake.build_context / hosted.DOCKERFILE)
+        self.assertIn("--no-logs", build)
+        self.assertNotIn("--no-wait", build)
+        self.assertEqual(build[build.index("--timeout") + 1], "1200")
         sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
         self.assertEqual(sets["HYDRO_ORCHESTRATOR_IMAGE"], f"myreg.azurecr.io/hydro-orchestrator@{DIGEST_B}")
         self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
@@ -329,6 +333,8 @@ class ConvergenceTests(unittest.TestCase):
         fake = FakeDeploy()
         run(fake, [agent(DIGEST_A), agent(DIGEST_A), agent(DIGEST_B)])
         self.assertNotEqual(fake.build_context, REPO_ROOT)
+        self.assertEqual(fake.build_cwd, REPO_ROOT)
+        self.assertTrue(fake.build_context.is_absolute())
         self.assertEqual(fake.build_context_files, {
             path.relative_to(REPO_ROOT).as_posix(): path.read_bytes()
             for path in hosted.packaged_sources(REPO_ROOT)
@@ -342,7 +348,8 @@ class ConvergenceTests(unittest.TestCase):
 
         def stream(argv, cwd=None, env=None):
             if argv[:3] == ["az", "acr", "build"]:
-                contexts.append(Path(cwd))
+                self.assertEqual(cwd, REPO_ROOT)
+                contexts.append(Path(argv[-1]))
                 raise fake.DeployError("remote build failed")
             return original(argv, cwd=cwd, env=env)
 

@@ -102,7 +102,10 @@ Consequences:
 - **Build context is exact and temporary.** The deployer stages only that fingerprinted Dockerfile/COPY manifest
   before invoking ACR, preserving relative paths and verifying its image tag. The CLI never packages the entire
   checkout, dependency trees, generated deployment state or unrelated files. It logs file/byte counts and removes
-  the staged directory after success or failure; failed builds still stop deployment.
+  the staged directory after success or failure; failed builds still stop deployment. The CLI uses
+  absolute context/Dockerfile paths from a stable working directory, and `--no-logs` waits for the
+  ACR result without Windows-incompatible Unicode log streaming. The remote build timeout is
+  20 minutes; the run ID/status and subsequent image digest readback remain required.
 - **Target changes redeploy the agent.** A new workspace, capacity, AppBackend, ontology or publishable key changes the
   configuration, so the agent is republished with fresh values (never copied from another target).
 - **No tracked deployment target.** `azure.yaml` uses `${AZURE_AI_PROJECT_ENDPOINT}`, not a live demo endpoint.
