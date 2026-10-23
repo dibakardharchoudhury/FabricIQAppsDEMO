@@ -330,7 +330,15 @@ publication remain mandatory; existing operational rows and demo-seed status are
 The engine verifies the live notebook code, Runtime 2.0 and idle state before starting, bounds its
 job wait to 15 minutes, propagates failures, and refreshes the verified public source identity.
 An ordinary deployment with an existing verified GraphQL ID avoids this extra notebook run.
-Explicit **Seed & provision** still seeds demo data later. A final hosted/runtime retry is required.
+The actual source-only retry then completed NB11 successfully: independent SQL counts before and
+after remained zero in all five operational tables, while GraphQL and the Data Agent SQL source
+were configured/published and four target-specific Foundry Prompt Agents passed definition readback.
+The first Hosted Agent image build stayed in local repository-root packaging without submitting an
+ACR build. Only that verified, task-owned CLI packaging process was stopped; no Azure build or
+resource was removed. The canonical builder now stages exactly its existing fingerprinted manifest
+in a temporary context (33 files / 1,064,697 bytes for this revision), verifies the same image tag,
+and cleans the context on either success or failure. Explicit **Seed & provision** still seeds
+demo data later. A final hosted/runtime retry is required.
 
 Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.

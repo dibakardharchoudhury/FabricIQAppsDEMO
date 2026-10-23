@@ -127,6 +127,12 @@ class FakeDeploy:
     def run_stream(self, argv, cwd=None, env=None):
         self.log.append(argv)
         if argv[:3] == ["az", "acr", "build"]:
+            self.build_context = Path(cwd)
+            self.build_context_files = (
+                {path.relative_to(cwd).as_posix(): path.read_bytes()
+                 for path in Path(cwd).rglob("*") if path.is_file()}
+                if Path(cwd) != self.REPO_ROOT else None
+            )
             self.tags[argv[argv.index("--image") + 1].split(":", 1)[1]] = DIGEST_B
         return ""
 
@@ -318,6 +324,33 @@ class ConvergenceTests(unittest.TestCase):
         run(fake, [stale, stale, agent()])
         self.assertEqual(fake.commands("az", "acr", "build"), [])
         self.assertEqual(len(fake.commands("azd", "deploy")), 1)
+
+    def test_acr_build_context_contains_only_the_exact_fingerprinted_files_and_is_cleaned(self):
+        fake = FakeDeploy()
+        run(fake, [agent(DIGEST_A), agent(DIGEST_A), agent(DIGEST_B)])
+        self.assertNotEqual(fake.build_context, REPO_ROOT)
+        self.assertEqual(fake.build_context_files, {
+            path.relative_to(REPO_ROOT).as_posix(): path.read_bytes()
+            for path in hosted.packaged_sources(REPO_ROOT)
+        })
+        self.assertFalse(fake.build_context.exists())
+
+    def test_failed_acr_build_cleans_its_context_and_propagates_the_failure(self):
+        fake = FakeDeploy()
+        contexts = []
+        original = fake.run_stream
+
+        def stream(argv, cwd=None, env=None):
+            if argv[:3] == ["az", "acr", "build"]:
+                contexts.append(Path(cwd))
+                raise fake.DeployError("remote build failed")
+            return original(argv, cwd=cwd, env=env)
+
+        with patch.object(fake, "run_stream", side_effect=stream):
+            with self.assertRaisesRegex(fake.DeployError, "remote build failed"):
+                run(fake, [agent(DIGEST_A)])
+        self.assertEqual(len(contexts), 1)
+        self.assertFalse(contexts[0].exists())
 
     def test_existing_azd_environment_is_rebound_to_verified_project_and_registry_before_publish(self):
         fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
@@ -606,8 +639,12 @@ class BackendBootstrapTests(unittest.TestCase):
     def test_the_deployer_runs_it_immediately_before_foundry_provisioning(self):
         import inspect
         source = inspect.getsource(DEPLOY.deploy)
-        self.assertLess(source.index('"validate-env.mjs"'), source.index("ensure_appbackend_identity("))
-        self.assertLess(source.index("ensure_appbackend_identity("), source.index("provision_foundry_agents("))
+        self.assertLess(source.index('"validate-env.mjs"'), source.index("provision_foundry_agents("))
+        provisioning = inspect.getsource(DEPLOY.provision_foundry_agents)
+        self.assertLess(provisioning.index("ensure_appbackend_identity("),
+                        provisioning.index("ensure_hosted_source_prerequisites("))
+        self.assertLess(provisioning.index("ensure_hosted_source_prerequisites("),
+                        provisioning.index("foundry.provision("))
 
 
 if __name__ == "__main__":

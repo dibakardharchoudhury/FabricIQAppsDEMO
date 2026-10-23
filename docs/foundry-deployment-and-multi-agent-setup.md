@@ -99,6 +99,10 @@ Consequences:
 - **Code changes deploy themselves.** The fingerprint covers the Python service, the Node bridge and the TypeScript
   files copied into the image. A change anywhere there triggers one build and one new Hosted Agent version on the next
   deploy; an unchanged tree costs a single registry lookup.
+- **Build context is exact and temporary.** The deployer stages only that fingerprinted Dockerfile/COPY manifest
+  before invoking ACR, preserving relative paths and verifying its image tag. The CLI never packages the entire
+  checkout, dependency trees, generated deployment state or unrelated files. It logs file/byte counts and removes
+  the staged directory after success or failure; failed builds still stop deployment.
 - **Target changes redeploy the agent.** A new workspace, capacity, AppBackend, ontology or publishable key changes the
   configuration, so the agent is republished with fresh values (never copied from another target).
 - **No tracked deployment target.** `azure.yaml` uses `${AZURE_AI_PROJECT_ENDPOINT}`, not a live demo endpoint.

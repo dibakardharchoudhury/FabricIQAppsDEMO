@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -286,11 +288,22 @@ def ensure_hosted_agent(
 
     if digest is None:
         print(f"Building {IMAGE_REPOSITORY}:{tag} in registry {registry} (this takes a few minutes).", flush=True)
-        deploy.run_stream(
-            deploy.az("acr", "build", "--registry", registry, "--subscription", subscription,
-                      "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64", "--file", DOCKERFILE, "."),
-            cwd=root, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-        )
+        sources = packaged_sources(root)
+        with tempfile.TemporaryDirectory(prefix="hydro-agent-build-") as directory:
+            context = Path(directory)
+            for source in sources:
+                target = context / source.relative_to(root)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            if image_tag(context) != tag:
+                raise deploy.DeployError("Hosted source changed while staging its build context; retry deployment.")
+            print(f"Staged hosted build context: {len(sources)} files, "
+                  f"{sum(source.stat().st_size for source in sources)} bytes.", flush=True)
+            deploy.run_stream(
+                deploy.az("acr", "build", "--registry", registry, "--subscription", subscription,
+                          "--image", f"{IMAGE_REPOSITORY}:{tag}", "--platform", "linux/amd64", "--file", DOCKERFILE, "."),
+                cwd=context, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
         digest = _registry_digest(deploy, registry, subscription, tag)
         if digest is None:
             raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")

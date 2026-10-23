@@ -222,6 +222,9 @@ deployment; otherwise exactly one ready deployment advertising chat-completion c
 No original demo endpoint, model name, model version, SKU or capacity is assumed.
 A new target-specific Foundry project/account and supporting resources are created only when no endpoint is
 selected and the operator explicitly opts in through the local form or `HYDRO_FOUNDRY_CREATE=true`.
+For a first image build, ACR receives a temporary context containing only the fingerprinted
+Dockerfile/COPY files, not the full repository or local dependencies/state. File/byte counts are
+logged, source identity is checked before upload, and the temporary context is cleaned on failure too.
 Creation requires available model/version/SKU/capacity inputs, exposed in both local forms and documented in
 the operator guide. An unresolved explicitly selected endpoint stops deployment rather than creating elsewhere.
 Every publish uses isolated generated azd state with live target identity; the tracked `azure.yaml` contains
