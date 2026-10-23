@@ -6,6 +6,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_weather_environment_pins_the_verified_runtime(self):
+        environment = ROOT / "Environments/Weather.Environment"
+        compute = (environment / "Setting/Sparkcompute.yml").read_text(encoding="utf-8")
+        libraries = (environment / "Libraries/PublicLibraries/environment.yml").read_text(encoding="utf-8")
+        self.assertIn("runtime_version: '1.3'", compute)
+        self.assertNotIn("instance_pool_id:", compute)
+        self.assertIn("numpy=1.26.4", libraries)
+        self.assertIn("pandas=2.1.4", libraries)
+
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         compile(source, "Weather_002", "exec")

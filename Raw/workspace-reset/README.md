@@ -248,7 +248,12 @@ can call Fabric public APIs* enabled.
 
 Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
 NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
-`numcodecs`. The Git sync verifies that
+`numcodecs`. Its Git-tracked `Setting/Sparkcompute.yml` explicitly selects Fabric Runtime 1.3
+(Spark 3.5 / Python 3.11), matching the verified published Weather Environment. Do not omit
+that part: a fresh workspace can otherwise select Runtime 2.0 while retaining the older
+library pins. The FEATURE deployment exposed this runtime drift and a failed library
+publication; publication must succeed before setup proceeds. No custom pool ID is copied
+between workspaces. The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
 folder and binds all four to the project Lakehouse. The fetch notebooks read
