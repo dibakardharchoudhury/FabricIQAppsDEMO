@@ -1,11 +1,23 @@
 import json
 import unittest
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_packaged_workflows_require_runtime_two_without_weather_exceptions(self):
+        for path in (ROOT / "Raw/RTI_Ontology_Workflow_clean.docx",
+                     ROOT / "Raw/RTI_Notebooks/RTI_Ontology_Workflow_clean.docx"):
+            with self.subTest(path=str(path)), zipfile.ZipFile(path) as document:
+                root = ET.fromstring(document.read("word/document.xml"))
+                text = "".join(root.itertext())
+                self.assertIn("All Spark notebooks, including every Weather notebook, require Fabric Runtime 2.0", text)
+                self.assertIn("no older-runtime exceptions or downgrade fallback", text)
+                self.assertIn("Waits for asynchronous Eventstream creation/update operations", text)
+
     def test_weather_environment_requires_runtime_two_and_python_313_libraries(self):
         environment = ROOT / "Environments/Weather.Environment"
         compute = (environment / "Setting/Sparkcompute.yml").read_text(encoding="utf-8")
