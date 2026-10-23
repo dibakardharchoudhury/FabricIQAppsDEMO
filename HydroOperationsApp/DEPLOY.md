@@ -8,7 +8,24 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Current deployed release: **1.0.874 (`30ee16e`)** with Hosted Agent v77.
+Latest FEATURE verification (October 23): the local **Deploy app** action published
+**1.0.979 (`346a95c`)** with Hosted Agent v1 at
+<https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
+Canonical deployment, backend/CORS checks and preservation of all 40 SPA redirects
+passed. Authenticated browser queries exercised all nine Lakehouse connector entities;
+explicit SQL seeding and a bounded three-source Data Agent question also passed.
+All Spark notebooks must use Runtime 2.0, including Weather; both the workspace
+default and published Environment were read back at 2.0.
+Final browser checks also returned real native topology from the explicitly bound
+FEATURE GraphModel, with GQL-backed canvas/tree/scopes and operational overlays.
+This is **not full runtime acceptance**: Weather ingestion is blocked by an invalid
+provider subscription key, and Hosted/Operations Agent actions and Teams/email
+delivery are untested.
+See the [FEATURE deployment record](../Raw/workspace-reset/README.md) for exact
+counts, credential remediation and acceptance limits. No existing Azure resource
+was removed.
+
+Historical October 12 release: **1.0.874 (`30ee16e`)** with Hosted Agent v77.
 The October 12 canonical deployment printed `SUCCESS` and `DEPLOYED_APP_URL`,
 observed the assigned capacity Active, preserved all 39 redirects, and passed
 AppBackend GraphQL/token preflight and POST checks. Hosted Agent v77 uses

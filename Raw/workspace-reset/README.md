@@ -353,6 +353,47 @@ rows while native graph loading failed. That path is removed: graph canvas, tree
 require actual verified native entities and relationships, and retries do not depend on STID.
 Operational SQL and connector-backed reference/weather pages remain independently available.
 
+The final local **Deploy app** run published build **1.0.979 (`346a95c`)**, with
+canonical `SUCCESS`, endpoint/CORS readiness and all 40 SPA redirects preserved.
+Actual authenticated browser reads on that build returned HTTP 200, no query errors
+and complete pagination for all nine Lakehouse connector entities: three facilities,
+three systems, 15 equipment records, 90 instruments, nine weather variables and
+currently empty weather areas, locations, observations and forecasts.
+Explicit **Seed & provision** completed; independent SQL counts are 12 work orders,
+six maintenance notifications, 30 inspections, 12 spare parts and 15 3D models.
+**Start stream** produced 90 fresh signals during acceptance; the bounded run later
+ended and the app correctly labels those readings stale, not currently fresh.
+
+The FEATURE Data Agent also answered actual read-only portal questions combining
+Lakehouse/Ontology mappings, Eventhouse telemetry and operational SQL. The positive
+UNCERTAIN-quality case returned three Sloy signals, correctly matched T001's
+`vibration_a` to `WO-2841`, distinguished T002's different-signal work order and
+reported no work order for T004. Independent SQL readback matched the cited
+work-order records. This bounded case is not execution-provenance attestation,
+comprehensive combined-source certification or Hosted/Operations Agent acceptance.
+Operations actions and Teams/email delivery remain untested.
+
+Weather ingestion is **blocked by the provider credential**, not a Runtime downgrade:
+Weather_002 failed with Aurora STAC HTTP 401 on Runtime 2.0. A bounded Python 3.13.11
+probe received `invalid subscription key` with both the existing query parameter
+and the subscription-header placement. No authentication-placement workaround was
+retained. An operator must verify or replace `mai-weather-api-key` in `akvfabcapnew`
+for this exact Aurora/STAC service, then rerun **Connect weather**. Do not put the
+secret in logs or chat. The failing owned pipeline is cancelled; the diagnostic
+completed and its original notebook definition and description were restored with
+exact readback. Weather_003 and Weather_020 did not execute in that failed pipeline.
+The workspace default and published Weather Environment both read back Runtime 2.0.
+Earlier portal inspection reported ineligible/unsupported source bindings, but the
+final authenticated browser verification returned actual native topology from the
+explicitly bound FEATURE GraphModel: metadata, queryable schema and both GQL queries
+returned HTTP 200, and the graph canvas/tree/scopes displayed native entities with
+operational overlays. The repeated GQL read returned **201 native nodes and 198
+native relationships**, execution code `00000`, without continuation; the **All**
+scope displayed 174 nodes after signal presentation and operational enrichment.
+This is live graph evidence, not the removed STID fallback.
+It does not establish an automated materialization endpoint or explain the earlier
+portal eligibility warning. No existing binding or resource was deleted.
+
 Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.
 This guard does not make ineligible entities eligible or certify nonempty topology from binding
