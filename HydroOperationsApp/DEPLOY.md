@@ -111,6 +111,9 @@ the unauthenticated connector POST. Missing routes, server failures and missing 
 This verifies protected transport readiness, not source execution. The engine explicitly prints
 `LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed`. Separately, use normal Fabric browser sign-in
 and verify all nine connector entities return HTTP 200 without GraphQL errors and complete pagination.
+The Knowledge Graph must remain unavailable when its verified native graph is absent or fails;
+connector rows and SQL records must never create replacement graph canvas/tree/scope topology.
+Graph retries query the native source independently of STID connectivity.
 Reference tables must contain seeded rows; weather tables may legitimately be empty.
 This proves that session's access, not every end user's permissions. Connector execution requires
 a deployed backend; local Vite uses that backend, not a local Lakehouse emulation.

@@ -122,7 +122,7 @@ test('open maintenance priority contributes the correct equipment health', () =>
   assert.equal(refreshed.reading?.value, 327.1)
 })
 
-test('renders Ontology-bound STID with KQL and SQL context before the native query completes', () => {
+test('does not render STID topology or SQL overlays before the native query completes', () => {
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null,
     facilities: [{ facility_id: 'F1', facility_name: 'Station' }],
@@ -130,15 +130,9 @@ test('renders Ontology-bound STID with KQL and SQL context before the native que
     equipment: [{ equipment_id: 'E1', facility_id: 'F1', system_id: 'S1', tag: 'Turbine' }],
     instruments: [{ instrument_id: 'I1', equipment_id: 'E1', system_id: 'S1', facility_id: 'F1', opcua_node_id: 'node-1' }],
   }))
-  assert.equal(graph.error, undefined)
-  assert.equal(graph.nodes.length, 8)
-  assert.equal(graph.edges.length, 7)
-  assert.equal(graph.nodes.find(node => node.id === 'instrument:I1')?.reading?.value, 96.8)
-  assert.equal(graph.nodes.find(node => node.id === 'work-order:W1')?.facilityId, 'F1')
-  assert.ok(graph.nodes.every(node => !node.nativeOid))
-  assert.ok(graph.edges.every(edge => !edge.nativeOid))
-  assert.match(graph.nodes.find(node => node.id === 'facility:F1')!.provenance, /Lakehouse entity binding/)
-  assert.ok(graph.edges.some(edge => edge.ontologyRelationshipId === 'equipment-system'))
+  assert.match(graph.error ?? '', /No verified native Ontology graph.*Manage graph/)
+  assert.deepEqual(graph.nodes, [])
+  assert.deepEqual(graph.edges, [])
 })
 
 test('keeps non-bijective signals separate and redirects other edges of collapsed signals', () => {
@@ -156,16 +150,16 @@ test('keeps non-bijective signals separate and redirects other edges of collapse
   assert.equal(collapsed.edges.find(edge => edge.nativeOid === 'signal-document')?.target, 'ontology:d1')
 })
 
-test('bound loading uses only declared ontology relationships, not guessed foreign keys', () => {
+test('missing native topology cannot expose SQL overlay nodes or guessed relationships', () => {
   const graph = buildKnowledgeGraph(input({
     ontologyGraph: null, ontology: { ...ontology, relationshipTypes: [] },
   }))
-  assert.equal(graph.error, undefined)
-  assert.ok(!graph.edges.some(edge => edge.type === 'contains' || edge.type === 'has-instrument'))
-  assert.ok(graph.edges.some(edge => edge.type === 'affects'))
+  assert.match(graph.error ?? '', /native Ontology graph/)
+  assert.deepEqual(graph.nodes, [])
+  assert.deepEqual(graph.edges, [])
 })
 
-test('demo-sized bound topology is available within 250ms without a native request', () => {
+test('a complete demo-sized STID inventory still cannot substitute for native topology', () => {
   const facilities = Array.from({ length: 3 }, (_, index) => ({ facility_id: `F${index}`, facility_name: `Station ${index}` }))
   const systems = Array.from({ length: 6 }, (_, index) => ({ system_id: `S${index}`, facility_id: `F${index % 3}` }))
   const equipment = Array.from({ length: 12 }, (_, index) => ({ equipment_id: `E${index}`, facility_id: `F${index % 3}`, system_id: `S${index % 6}` }))
@@ -173,13 +167,10 @@ test('demo-sized bound topology is available within 250ms without a native reque
     instrument_id: `I${index}`, equipment_id: `E${index % 12}`, facility_id: `F${index % 3}`,
     system_id: `S${index % 6}`, opcua_node_id: `node-${index}`,
   }))
-  const start = performance.now()
   const graph = buildKnowledgeGraph(input({ ontologyGraph: null, facilities, systems, equipment, instruments }))
-  const durationMs = performance.now() - start
-  assert.equal(graph.error, undefined)
-  assert.equal(graph.nodes.length, 115)
-  assert.equal(graph.edges.length, 112)
-  assert.ok(durationMs < 250, `Bound graph took ${durationMs.toFixed(1)}ms`)
+  assert.match(graph.error ?? '', /Lakehouse rows cannot substitute for native topology/)
+  assert.deepEqual(graph.nodes, [])
+  assert.deepEqual(graph.edges, [])
 })
 
 test('page snapshot reads the native query-refreshed contract, never the earlier cached definition', async () => {

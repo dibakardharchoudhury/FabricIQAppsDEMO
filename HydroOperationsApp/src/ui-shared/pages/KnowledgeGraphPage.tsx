@@ -92,7 +92,7 @@ export function KnowledgeGraphPage() {
       setGraphError(next ? undefined : 'No verified native backing graph is loaded for the selected Ontology. Materialize it through Manage graph in the Ontology portal, then configure the verified workspace, Ontology, and graph mapping and retry.')
     } catch (error) {
       if (version !== graphRefreshVersion.current) return
-      console.warn('Native ontology graph query failed; Ontology-bound Lakehouse data remains available.', error)
+      console.warn('Native ontology graph query failed; graph topology is unavailable.', error)
       setOntologyGraph(null)
       setGraphQueriedAt(undefined)
       setGraphError(error instanceof Error ? error.message : 'Ontology graph query failed. Refresh and check Fabric access.')
@@ -103,10 +103,7 @@ export function KnowledgeGraphPage() {
     }
   }, [])
 
-  const refreshAll = async () => {
-    await data.actions.refreshStid(true)
-    await loadOntologyGraph(true)
-  }
+  const refreshAll = () => loadOntologyGraph(true)
 
   useEffect(() => {
     let inFlight = false
@@ -270,7 +267,7 @@ export function KnowledgeGraphPage() {
   return <div className={`kg-page${graphView.expanded ? ' kg-page-maximized' : ''}`}>
     <header className="kg-header">
       <div><span className="v2-eyebrow">Fabric Ontology</span><h1>Operational Knowledge Graph</h1><p>Explore governed topology, bound time-series state, and maintenance context as one semantic network.</p></div>
-      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Ontology graph compatibility mode'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
+      <div className="kg-source-state"><span className="kg-live-dot" /><span title={graphError} role={graphError ? 'status' : undefined}>{ontologyGraph ? `${ontologyGraph.graphModelName} · GQL` : graphLoading ? 'Loading Ontology Graph Model' : 'Native Ontology graph unavailable'}</span><strong title={graphInstanceSummary}>{activeOntology?.entityTypes.length ?? 0} entity types · {activeOntology?.relationshipTypes.length ?? 0} relationship types{graphQueriedAt ? ` · queried ${new Date(graphQueriedAt).toLocaleTimeString()}` : ''}</strong><button type="button" onClick={() => void refreshAll()} title="Refresh graph, telemetry joins, and Ontology contract"><RefreshCw size={14} /></button></div>
     </header>
 
     <div className={`kg-workspace${graphView.expanded ? ' kg-workspace-maximized' : ''}`}>

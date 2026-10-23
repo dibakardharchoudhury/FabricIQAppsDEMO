@@ -348,6 +348,10 @@ and connector preflight/POST readiness passed. Normal Fabric browser sign-in the
 facilities, 15 equipment records and 90 instruments through the connector before SQL demo seeding.
 Explicit **Seed & provision** still seeds demo data later. Full runtime acceptance, including
 the target ontology's currently ineligible native graph, remains a separate gate.
+Hosted acceptance also exposed an obsolete compatibility path that drew a graph from Lakehouse
+rows while native graph loading failed. That path is removed: graph canvas, tree and scopes now
+require actual verified native entities and relationships, and retries do not depend on STID.
+Operational SQL and connector-backed reference/weather pages remain independently available.
 
 Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.

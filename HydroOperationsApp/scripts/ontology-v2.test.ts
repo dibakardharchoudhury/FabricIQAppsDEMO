@@ -250,13 +250,12 @@ const graphInput = {
   systems: [{ system_id: 'S1', facility_id: 'F1' }],
   equipment: [], instruments: [], telemetry: [], workOrders: [], inspections: [], notifications: [], models: [],
 }
-test('v2 bindings support progressive namespace-aware loading and native results take precedence', () => {
+test('v2 bindings require native topology and never promote namespace-aware source rows into graph nodes', () => {
   const ontology = parse(hydro)
   const bound = buildKnowledgeGraph({ ...graphInput, ontology })
-  assert.equal(bound.nodes.length, 2)
-  assert.equal(bound.edges.length, 1)
-  assert.equal(bound.edges[0].ontologyRelationshipId, ontology.relationshipTypes[0].id)
-  assert.equal(bound.edges[0].nativeOid, undefined)
+  assert.deepEqual(bound.nodes, [])
+  assert.deepEqual(bound.edges, [])
+  assert.match(bound.error ?? '', /No verified native Ontology graph/)
   const ontologyGraph = {
     ontologyId: ontology.id, graphModelId: 'native', graphModelName: 'Verified v2 projection',
     nodes: [
