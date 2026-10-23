@@ -287,6 +287,29 @@ still fail. An existing Direct Lake table with a missing source expression is re
 than silently retargeted. Unknown parts, existing mappings and strict readback verification
 remain preserved. The [official Ontology v2 definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition)
 provides the native backing-table contract.
+
+The subsequent FEATURE setup run completed the other notebook activities but failed NB09's
+strict ontology-only smoke with `Ontology query capability is unavailable in this environment.`
+This is **not** the narrowly allowed unsupported-API-version response, so the failure remains
+propagated; the full workflow is not accepted. That smoke explicitly forbids SQL and KQL,
+whereas the current agent instructions permit source-native execution on ontology-associated
+sources. A separate delegated CLI diagnostic permitting the associated Lakehouse returned
+three facility ID/name rows in 46 seconds. This diagnostic does not replace the independent
+live-row oracle, attest execution provenance, or certify telemetry/SQL joins or browser access.
+Changing the deployment gate from ontology-only execution to ontology-context/source execution
+is a separate readiness-contract decision, not an error to suppress.
+
+The selected ontology's **Manage graph** page also reported all five entity types as
+**Ineligible**, with **Unsupported Datasource** details. Its displayed completed materialization
+contained zero projected node/edge types; this is not a usable native graph. Bounded
+same-Lakehouse SQL-source representation probes did not clear that validation. Only the
+task-modified source parts and notebook functions were then restored and verified; no source
+retarget, speculative authoring change, or graph fallback was retained. The FEATURE application
+has not been deployed or runtime-accepted. Reusing the existing Foundry project would also
+rebind its stable workspace connections; resolve the documented project-isolation choice before
+publishing another concurrently hosted workspace. All 48 pre-existing ARM resource IDs across
+the two subscriptions were rechecked and remained present.
+
 The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
