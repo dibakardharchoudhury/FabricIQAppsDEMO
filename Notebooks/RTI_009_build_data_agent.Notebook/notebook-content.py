@@ -659,7 +659,10 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
             "verification": "ontology_context_facilities_smoke_v1", "lakehouse_id": lakehouse_id,
             "scope": "Ontology-context facilities functional smoke test; execution provenance, native ontology "
                      "traversal, telemetry and operational SQL are not attested.",
-            "published_sources": sources,
+            "published_sources": {
+                path: {key: source[key] for key in ("type", "workspaceId", "artifactId") if key in source}
+                for path, source in sources.items()
+            },
         })
         # MCP consumption uses the notebook user's context, not the provisioning SPN.
         token = notebookutils.credentials.getToken("pbi")
@@ -724,7 +727,9 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
             raise RuntimeError("MCP agent tool has an unsupported question contract.")
         evidence["tool"] = expected_name
         result = call("tools/call", {"name": expected_name, "arguments": {"userQuestion": question}})
-        evidence["response"] = json.dumps(result)[:8000]
+        response_text = json.dumps(result)
+        evidence["response"] = response_text[:2000]
+        evidence["response_truncated"] = len(response_text) > 2000
         error = mcp_semantic_error(result)
         if error:
             return {"status": "failed", "reason": error, "evidence": evidence}

@@ -81,7 +81,9 @@ SQL on its associated Lakehouse static binding. It compares the first five facil
 independently read configured Lakehouse rows. Expected values are not supplied in the prompt;
 operational SQL, KQL and unrelated sources are excluded, while their configurations remain preserved.
 Exact query-result CSV attachments are supported, including the generated-file footer returned by
-Fabric MCP. Evidence uses `verification=ontology_context_facilities_smoke_v1`, scoped to
+Fabric MCP. Receipts retain source identities and exact reference/returned rows, not full source
+schemas; diagnostic response excerpts are bounded and explicitly marked when truncated.
+Evidence uses `verification=ontology_context_facilities_smoke_v1`, scoped to
 **"Ontology-context facilities functional smoke test; execution provenance, native ontology traversal,
 telemetry and operational SQL are not attested."** It does not certify cryptographic provenance,
 SQL/combined-source answers, native graph readiness, or the entire agent. Semantic/transport errors and wrong rows fail;

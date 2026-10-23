@@ -2101,6 +2101,29 @@ class CapabilityTests(unittest.TestCase):
                     self.assertNotIn(row["facility_id"], question)
                     self.assertNotIn(row["facility_name"], question)
 
+    def test_runtime_evidence_keeps_exact_rows_within_sql_string_readback_limit(self):
+        ns, replies = self.runtime_namespace({})
+        expected = ns["facility_probe_reference"].return_value
+        replies[-1].json.return_value["result"] = {
+            "structuredContent": {"facilities": expected}, "diagnostics": "x" * 20000,
+        }
+        source = {
+            "type": "ontology", "workspaceId": "ws", "artifactId": "ontology",
+            "children": [{"description": "full source schema " * 2000}],
+        }
+        ns["published_agent_sources"] = Mock(return_value={"published/ontology.json": source})
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        encoded = json.dumps(outcome["evidence"])
+        self.assertLess(len(encoded.encode("utf-8")), 8000)
+        readback = json.loads(encoded[:8000])
+        self.assertEqual(readback["expected_facilities"], expected)
+        self.assertEqual(readback["returned_facilities"], expected)
+        self.assertEqual(readback["published_sources"], {"published/ontology.json": {
+            "type": "ontology", "workspaceId": "ws", "artifactId": "ontology",
+        }})
+        self.assertTrue(readback["response_truncated"])
+
     def test_runtime_probe_rejects_wrong_name_or_missing_rows(self):
         for actual in (
             [{"facility_id": "FACILITY_RTI_001", "facility_name": "RTI Demo Hydropower Plant"}],
