@@ -29,7 +29,8 @@ const deploymentStorageScope = [
   import.meta.env.VITE_FABRIC_WORKSPACE_ID ?? import.meta.env.VITE_RAYFIN_WORKSPACE_ID,
   import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID,
   import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID,
-  import.meta.env.VITE_RAYFIN_STID_GRAPHQL_ID,
+  import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID,
+  import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID,
 ].filter(Boolean).join('.')
 const scopedStorageKey = (key: string) => `${key}.${deploymentStorageScope || 'unconfigured'}`
 const SETUP_STORAGE_KEY = scopedStorageKey('hydro.v2.setup.v1')
@@ -269,8 +270,7 @@ function useHydroOperationsDataController() {
           lastError = error
         }
         if (data || attempt === retries) break
-        // A thrown GraphQL/schema response proves a token was already accepted; retry it silently.
-        // Open consent only when the query returned no data because discovery or a token is absent.
+        // Retry source failures silently; open sign-in only when no Rayfin session exists.
         if (interactive && attempt === 0 && !lastError) {
           try {
             await beginInteractiveConnect('stid')
@@ -291,17 +291,15 @@ function useHydroOperationsDataController() {
         clearStid()
         setStidState('unavailable')
         const detail = lastError instanceof Error ? ` ${lastError.message}` : ''
-        setNotice(`The STID GraphQL API is still publishing or needs permission. Try Connect STID again shortly.${detail}`)
+        setNotice(`The Rayfin Lakehouse connector is unavailable or needs source permission. Deploy the app and try Connect STID again.${detail}`)
       }
     } catch (error) {
       clearStid()
       setStidState('error')
       const message = error instanceof Error ? error.message : 'STID data is unavailable.'
-      setNotice(provisionState === 'complete' && /No GraphQL API found/i.test(message)
-        ? 'STID GraphQL API is not queryable yet. Wait a moment, then run Connect STID again.'
-        : message)
+      setNotice(message)
     }
-  }, [applyStid, clearStid, provisionState, refreshOntology])
+  }, [applyStid, clearStid, refreshOntology])
 
   const connectTelemetry = useCallback(async () => {
     clearTelemetry(); setTelemetryState('loading'); setNotice(undefined)

@@ -11,7 +11,13 @@ const serviceDependencies = Object.fromEntries(await Promise.all([
   'ontologyDiscovery', 'ontologyCache', 'ontologyContract', 'ontologyDefinition',
   'ontologyGraphQuery', 'ontologyArtifactDiscovery', 'singleFlight', 'dataAgentProgress',
   'dataAgentConversation', 'dataAgentVisualizations', 'entraTokens', 'copilot/answerPresentation',
+  'lakehouseConnector',
 ].map(async name => [`./${name}`, await import(`../src/services/${name}.ts`)])))
+serviceDependencies['./rayfin'] = {
+  connectedLakehouse: () => undefined,
+  lakehouseConnectionKey: () => `${workspaceId}:lakehouse:sql-endpoint:appbackend`,
+  signInToRayfin: async () => undefined,
+}
 const serviceCode = ts.transpileModule(source.replaceAll('import.meta.env', 'testEnv'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText
@@ -80,8 +86,22 @@ function graphService(onRequest = async () => undefined) {
 
 function weatherService() {
   const requests = []
+  let fail = false
+  const source = Object.fromEntries(Object.keys(serviceDependencies['./lakehouseConnector'].lakehouseConnectorConfig.entities)
+    .map(entity => [entity, { select: () => ({
+      first() { return this },
+      after() { return this },
+      async executePaginated() {
+        requests.push(entity)
+        if (fail) throw new Error('Lakehouse connector read failed')
+        return { hasNextPage: false, items: entity === 'WeatherLocations'
+          ? [{ location_id: 'L1', location_name: 'Station 1', latitude: 1, longitude: 2 }]
+          : entity === 'WeatherVariables' ? [{ variable_id: 'temperature', canonical_unit: 'C' }] : [] }
+      },
+    }) }]))
   const dependencies = {
     ...serviceDependencies,
+    './rayfin': { ...serviceDependencies['./rayfin'], connectedLakehouse: () => source },
     ...mcpDependencies,
     './artifactDiscovery': { selectDataAgent: () => undefined },
     '@azure/msal-browser': { PublicClientApplication: class {
@@ -100,24 +120,11 @@ function weatherService() {
     }, exports, {
       VITE_RAYFIN_AAD_CLIENT_ID: 'test-client', VITE_RAYFIN_TENANT_ID: 'test-tenant',
       VITE_RAYFIN_WORKSPACE_ID: workspaceId,
-      VITE_RAYFIN_STID_GRAPHQL_ID: 'weather-api',
     }, async (url) => {
-      requests.push(String(url))
-      if (url.endsWith('/graphqlapis/weather-api/graphql')) {
-        return Response.json({
-          data: {
-            locations: { items: [{ location_id: 'L1', location_name: 'Station 1', latitude: 1, longitude: 2 }] },
-            areas: { items: [] },
-            variables: { items: [{ variable_id: 'temperature', canonical_unit: 'C' }] },
-            observations: { items: [] },
-            forecasts: { items: [] },
-          },
-        })
-      }
       throw new Error(`Unexpected request: ${url}`)
     }, { origin: 'https://app.example.test' },
   )
-  return { service: exports, requests }
+  return { service: exports, requests, setFailure: value => { fail = value } }
 }
 
 test('Data Agent MCP runtime preserves bounded follow-up context without changing standalone questions', () => {
@@ -165,13 +172,19 @@ test('Data Agent progress maps real Fabric tool lifecycle without inventing argu
   assert.equal(steps[0].elapsedMs, 60, 'Repeated notifications must never turn durations into epoch timestamps')
 })
 
-test('weather loading uses the deployment-verified GraphQL endpoint without workspace discovery', async () => {
-  const { service, requests } = weatherService()
-  const weather = await service.queryWeatherData()
+test('weather uses the deployed connector, coalesces reads and invalidates failed refreshes without GraphQL discovery', async () => {
+  const { service, requests, setFailure } = weatherService()
+  const [weather, concurrent] = await Promise.all([service.queryWeatherData(), service.queryWeatherData()])
   assert.equal(weather.locations[0].location_name, 'Station 1')
-  assert.deepEqual(requests, [
-    `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/weather-api/graphql`,
-  ])
+  assert.equal(concurrent, weather)
+  assert.deepEqual(requests.sort(), ['WeatherAreas', 'WeatherLatestForecasts', 'WeatherLatestObservations', 'WeatherLocations', 'WeatherVariables'])
+  await service.queryWeatherData()
+  assert.equal(requests.length, 5)
+  setFailure(true)
+  await assert.rejects(service.queryWeatherData(true), /Lakehouse connector read failed/)
+  setFailure(false)
+  await service.queryWeatherData()
+  assert.equal(requests.length, 15)
 })
 
 test('graph loading reuses one definition and coalesces concurrent native requests', async () => {

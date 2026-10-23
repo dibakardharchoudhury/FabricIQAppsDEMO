@@ -438,13 +438,9 @@ export default function App() {
   async function connectStid(opts?: { retries?: number }) {
     setSourceState('Connecting...'); setNotice(undefined)
     const retries = opts?.retries ?? 0
-    // Always rediscover on a manual click: a config cache captured before Seed & provision
-    // (when the GraphQL API item didn't yet exist) would otherwise keep this stuck for the whole session.
     clearWorkspaceConfigCache()
     try {
       let data = await queryStid()
-      // Right after Seed & provision the GraphQL API can take a moment to become queryable —
-      // rediscover the workspace and retry a few times before surfacing an error.
       for (let attempt = 0; !data && attempt < retries; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 8_000))
         clearWorkspaceConfigCache()
@@ -456,10 +452,7 @@ export default function App() {
     } catch (error) {
       setSourceState('Connect STID')
       const message = errorMessage(error)
-      // Don't tell the operator to "run RTI_011" when Seed & provision has already completed.
-      if (provisioned && /No GraphQL API found/i.test(message)) {
-        setNotice('STID GraphQL API isn’t queryable yet — it can take a minute to finish publishing after Seed & provision. Wait a moment, then click Connect STID again.')
-      } else setNotice(message)
+      setNotice(message)
     }
   }
 
@@ -668,7 +661,7 @@ export default function App() {
     { n: 1, title: 'Sign in to Fabric', why: 'Authenticate with your Microsoft Fabric identity — required for operational data and to run setup.', done: Boolean(user), busy: false, action: 'Sign in', run: () => void authenticate() },
     { n: 2, title: 'Seed & provision', why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.', done: provisioned, busy: seeding, action: 'Seed & provision', run: () => void seedDemo() },
     { n: 3, title: 'Start telemetry stream', why: 'Starts the OPC UA pipeline so live signals flow into the Eventhouse. Independent of step 2 — run it in parallel. Takes ~5 min to warm up before signals appear.', done: streamState === 'started', busy: streamState === 'starting', action: 'Start stream', run: () => void startStream() },
-    { n: 4, title: 'Connect STID', why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
+    { n: 4, title: 'Connect STID', why: 'Loads facility & asset tables through the read-only Rayfin Lakehouse connector using your Fabric identity. Deploy the app to configure the connector.', done: Boolean(stid), busy: sourceState === 'Connecting...', action: 'Connect STID', run: () => void connectStid() },
     { n: 5, title: 'Connect telemetry', why: 'Reads the latest OPC UA signal values from the Eventhouse stream started in step 3.', done: telemetry.length > 0, busy: telemetryState === 'Connecting...', action: 'Connect telemetry', run: () => void connectTelemetry() },
   ]
   // Starter prompts grounded in the loaded data (SQL DB + ontology) so users click questions the
@@ -687,7 +680,7 @@ export default function App() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Factory size={18} /></span><div><strong>Hydro Operations</strong><small>Microsoft Fabric</small></div></div>
       <div className="source-actions">
-        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Load governed facility & asset metadata from the Lakehouse GraphQL API (publish it first via Seed & provision).">4 · <Database size={14} />{sourceState}</button>
+        <button className={stid ? 'source-chip connected' : 'source-chip'} onClick={() => void connectStid()} title="Step 4 · Read facility & asset tables through the deployed Rayfin Lakehouse connector with your Fabric identity.">4 · <Database size={14} />{sourceState}</button>
         <div className="telemetry-source">
           <button className={telemetry.length ? 'source-chip connected' : 'source-chip'} onClick={() => void connectTelemetry()} title="Step 5 · Read the latest OPC UA signals from the Eventhouse (start the stream first).">5 · <Radio size={14} />{telemetryState}</button>
           {telemetryLive && <span className={`live-pill ${dataStatus}`} title={`Polling every 10s · ${freshCount}/${eventTimesSorted.length} signals fresh (<60s)${newestEventMs ? ` · newest ${new Date(newestEventMs).toLocaleTimeString()}` : ''}${oldestEventMs ? ` · oldest ${new Date(oldestEventMs).toLocaleTimeString()}` : ''}`}><i className="live-dot" />{dataLabel}<em>· {dataAgo || telemetryAgo}</em></span>}

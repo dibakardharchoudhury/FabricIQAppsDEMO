@@ -408,6 +408,10 @@ tenant and workspace selected in the sidebar:
    and deploy static hosting, apply the generated hosting origin to backend auth, then always
    reapply AppBackend runtime/CORS settings and the DAB/SQL configuration. This also runs for an
    unchanged hosting origin so managed-service restarts cannot leave stale runtime settings.
+   The same flow configures the read-only, delegated `hydrolakehouse` Rayfin connector for
+   STID/weather. It resolves the selected Lakehouse's SQL analytics endpoint ID from live
+   metadata, reapplies the connector, and rejects missing/skipped/partial generation or apply
+   receipts. No extra form parameters or manual GraphQL binding are needed for SPA reads.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send
@@ -415,6 +419,11 @@ tenant and workspace selected in the sidebar:
   retried with bounded backoff. The checks also send a minimal GraphQL query and a deliberately
   incomplete token request; missing CORS headers, GraphQL failure, or a persistent token HTTP 5xx
   fails deployment.
+  The Lakehouse connector also requires a successful browser-equivalent CORS preflight and
+  delegated reads of all nine configured entities. Reference tables must contain seeded rows;
+  empty weather tables are reported as empty, not invented data. This operator-session check
+  does not certify every browser user's access. The existing Fabric GraphQL API remains for
+  the hosted crew's independent verification; SQL, agents, telemetry and native graph are unchanged.
   The final check also verifies the SPA redirect, every delegated scope, and its consent grant from
   Microsoft Graph. Missing SPA access, redirects, permissions, or consent blocks `SUCCESS` because
   browser sign-in and live Fabric data would otherwise be unavailable.

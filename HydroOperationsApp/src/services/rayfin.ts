@@ -1,5 +1,6 @@
 import { initEmbeddedAuth, ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric'
-import { RayfinClient } from '@microsoft/rayfin-client'
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client'
+import { lakehouseConnectorConfig, type LakehouseConnectors } from './lakehouseConnector'
 import {
   seedWorkOrders, seedNotifications, seedInspections, seedSpareParts, seedAsset3DModels,
 } from './seedData'
@@ -88,11 +89,12 @@ const fabricPortalUrl = (import.meta.env.VITE_FABRIC_PORTAL_URL ?? import.meta.e
 
 const configured = Boolean(apiUrl && publishableKey && workspaceId && projectId)
 const WORK_ORDERS_CHANGED_EVENT = 'hydro:work-orders-changed'
-const client = configured ? new RayfinClient<HydroSchema>({
+const client = configured ? new ConnectorsRayfinClient<HydroSchema, Record<string, never>, LakehouseConnectors>({
   baseUrl: apiUrl!.endsWith('/') ? apiUrl! : `${apiUrl}/`,
   publishableKey: publishableKey!,
   useProxy: false,
   authStorage: true,
+  connectors: { hydrolakehouse: lakehouseConnectorConfig },
 }) : undefined
 
 function options() {
@@ -109,6 +111,18 @@ function currentUser(): AppUser | null {
 export function isRayfinConfigured() { return configured }
 
 export function isRayfinSignedIn() { return currentUser() !== null }
+
+export function lakehouseConnectionKey(): string {
+  const lakehouseId = import.meta.env.VITE_RAYFIN_LAKEHOUSE_ID as string | undefined
+  const endpointId = import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID as string | undefined
+  if (!configured || !lakehouseId || !endpointId) throw new Error('Lakehouse connector identity is not configured. Run the canonical app deployer.')
+  return `${workspaceId}:${lakehouseId}:${endpointId}:${projectId}:${apiUrl}:${currentUser()?.id ?? 'signed-out'}`
+}
+
+export function connectedLakehouse() {
+  lakehouseConnectionKey()
+  return isRayfinSignedIn() ? client!.connectors.hydrolakehouse : undefined
+}
 
 export function subscribeWorkOrdersChanged(listener: () => void): () => void {
   if (typeof window === 'undefined') return () => undefined

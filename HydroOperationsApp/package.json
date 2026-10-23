@@ -32,6 +32,8 @@
     "@microsoft/rayfin-auth": "1.36.0",
     "@microsoft/rayfin-auth-provider-fabric": "1.36.0",
     "@microsoft/rayfin-client": "1.36.0",
+    "@microsoft/rayfin-connector-fabric-graphql": "1.36.0",
+    "@microsoft/rayfin-connectors": "1.36.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/leaflet": "^1.9.21",
     "@types/three": "^0.185.1",

@@ -15,6 +15,27 @@ assert SPEC and SPEC.loader
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
 
+
+class LakehouseConnectorReceiptTests(unittest.TestCase):
+    def test_required_connector_generation_and_apply_must_both_succeed(self):
+        receipt = {
+            "status": "success",
+            "generate": [{"name": "hydrolakehouse", "status": "generated"}],
+            "results": [{"name": "hydrolakehouse", "status": "success"}],
+        }
+        DEPLOY.validate_lakehouse_connector_apply("diagnostic line\n" + json.dumps(receipt))
+        for key in ("generate", "results"):
+            for invalid in ([], None, ["invalid"], [{"name": "other", "status": "success"}],
+                            [{"name": "hydrolakehouse", "status": "skipped"}],
+                            [{"name": "hydrolakehouse", "status": "error"}]):
+                with self.subTest(key=key, invalid=invalid):
+                    with self.assertRaises(DEPLOY.DeployError):
+                        DEPLOY.validate_lakehouse_connector_apply(json.dumps({**receipt, key: invalid}))
+        for output in ("", "not JSON", "{}", json.dumps({**receipt, "status": "partial"})):
+            with self.subTest(output=output), self.assertRaises(DEPLOY.DeployError):
+                DEPLOY.validate_lakehouse_connector_apply(output)
+
+
 def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenant="tenant.example"):
     bootstrap = {
         "authorizeBrokerUrl": "https://app.fabric.microsoft.com/secureItemEmbed?" + urlencode({
@@ -895,7 +916,8 @@ class DeployOrderTests(unittest.TestCase):
         prepare.assert_not_called()
         ensure_dependencies.assert_not_called()
 
-    def test_reuses_existing_backend_for_static_deploy(self):
+    @patch.object(DEPLOY, "validate_lakehouse_connector_data")
+    def test_reuses_existing_backend_for_static_deploy(self, validate_connector):
         client_id = "11111111-1111-1111-1111-111111111111"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -922,7 +944,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
             patch.object(DEPLOY, "export_frontend_env"),
-            patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}]),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}, {"RAYFIN_TOKEN": "connector"}]),
             patch.object(DEPLOY, "provision_foundry_agents") as provision_agents,
             patch.object(
                 DEPLOY,
@@ -936,6 +958,8 @@ class DeployOrderTests(unittest.TestCase):
                     "environment validated",
                     "Hosting URL: https://fast.webapp.fabricapps.net",
                     "backend updated",
+                    json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
+                                "results": [{"name": "hydrolakehouse", "status": "success"}]}),
                     "live auth configured",
                 ],
             ) as run_stream,
@@ -953,11 +977,13 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
-        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[3].kwargs["env"])
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[4].kwargs["env"])
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
+        validate_connector.assert_called_once_with(args.tenant, "https://fast.webapp.fabricapps.net")
 
+    @patch.object(DEPLOY, "validate_lakehouse_connector_data")
     @patch.object(DEPLOY, "provision_foundry_agents")
-    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents):
+    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents, validate_connector):
         hosting_url = "https://fast.webapp.fabricapps.net"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -987,7 +1013,10 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "rayfin_environment", return_value={}),
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", side_effect=lambda script, *args: [script.stem]),
-            patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,
+            patch.object(DEPLOY, "run_stream", side_effect=lambda command, **kwargs:
+                         json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
+                                     "results": [{"name": "hydrolakehouse", "status": "success"}]})
+                         if command[:3] == ["up", "connector", "apply"] else f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(
                 DEPLOY.requests,
                 "get",
@@ -1008,7 +1037,7 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 4)
+        self.assertEqual(run_stream.call_count, 5)
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
@@ -1016,7 +1045,8 @@ class DeployOrderTests(unittest.TestCase):
             run_stream.call_args_list[2].args[0],
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
-        self.assertEqual(run_stream.call_args_list[3].args[0], ["setup-live-auth"])
+        self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--name", "hydrolakehouse", "--json"])
+        self.assertEqual(run_stream.call_args_list[4].args[0], ["setup-live-auth"])
         hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
         output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
         self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)
@@ -1335,6 +1365,10 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             {"id": "lakehouse-v3", "type": "Lakehouse", "displayName": "Energy_IQ_LakehouseRTI_V3"},
         ]
         self.details = {
+            "lakehouse-v3": {
+                "id": "lakehouse-v3", "workspaceId": self.workspace,
+                "properties": {"sqlEndpointProperties": {"id": "33333333-3333-3333-3333-333333333333"}},
+            },
             self.database: {
                 "id": self.database, "displayName": "RTI_Demo_Eventhouse_V3",
                 "properties": {"parentEventhouseItemId": self.eventhouse, "queryServiceUri": self.cluster},
@@ -1355,6 +1389,16 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             return DEPLOY.resolve_public_artifact_config(
                 self.workspace, self.tenant, self.config if configured is None else configured
             )
+
+    def test_connector_uses_live_sql_endpoint_not_lakehouse_or_stale_override(self):
+        self.config["RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID"] = "old-endpoint"
+        values = self.resolve()
+        self.assertEqual(values["RAYFIN_PUBLIC_LAKEHOUSE_ID"], "lakehouse-v3")
+        self.assertEqual(values["RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID"], "33333333-3333-3333-3333-333333333333")
+        for endpoint in (None, {}, {"id": "not-a-guid"}):
+            self.details["lakehouse-v3"]["properties"]["sqlEndpointProperties"] = endpoint or {}
+            with self.assertRaisesRegex(DEPLOY.DeployError, "SQL analytics endpoint"):
+                self.resolve()
 
     def test_reused_state_rebinds_stale_v6_public_config_before_build(self):
         with tempfile.TemporaryDirectory() as directory:

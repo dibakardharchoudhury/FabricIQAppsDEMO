@@ -29,7 +29,7 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 
 | Store | Owns | Accessed via |
 |---|---|---|
-| **Lakehouse (STID)** | Engineering master data — facilities, systems, equipment, instruments | Workspace **GraphQL API** item (created + auto‑bound by `RTI_011`, discovered at runtime) |
+| **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
 | **Rayfin SQL (operational)** | Work orders, notifications, inspections, spare parts, 3D models | Rayfin `data` client (Data API Builder) |
 
@@ -48,11 +48,21 @@ cache with concurrent-request coalescing, forced-refresh bypass, and failure inv
 definitions/native graph results use their own bounded, source-keyed in-memory cache. None of these
 analytical caches survive a full page reload.
 
-On a full reload, STID, Weather, and latest telemetry use the exact GraphQL URL, Eventhouse query
-URI, and KQL database injected by the verified deployment before attempting slower workspace
-discovery. The live GraphQL/KQL requests still determine whether those sources exist and are
+On a full reload, STID and Weather use the deployed Rayfin Lakehouse connector with the signed-in
+user's Fabric identity. Its workspace and SQL analytics endpoint ID are rebound from live target
+metadata by the canonical deployer. Every entity is keyless and relationship-free because SQL
+discovery supplies no PK/FK metadata; no keys are inferred from names or sample values. All pages
+are read before returning a complete inventory. The browser ships scalar selections, never server
+decorator classes. Telemetry uses the verified Eventhouse query URI and KQL database.
+The live connector/KQL requests still determine whether those sources exist and are
 queryable: missing, deleted, or failed sources clear the corresponding UI data rather than displaying
 a persisted snapshot.
+
+The separate Fabric GraphQL API provisioned by NB11 remains for the hosted crew's independent
+direct-source verification and compatibility; the SPA's STID/weather reads no longer depend on it.
+This migration does not change SQL operational models, Data Agent sources, Eventhouse telemetry,
+or ontology-owned native graph topology. The connector reads SQL-visible tables, not OneLake files,
+and is unrelated to ontology generation. See [Rayfin connectors](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
 and CSS. Each layout loads only the selected navigation page; graph, map, telemetry embed,

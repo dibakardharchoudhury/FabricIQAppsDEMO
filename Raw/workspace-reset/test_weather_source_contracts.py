@@ -26,12 +26,16 @@ class WeatherSourceContractTests(unittest.TestCase):
         expected = '{"Weather_002_fetch_area_weather", "Weather_003_fetch_ukmet", "Weather_020_area_calculations"}'
         self.assertEqual(source.count(expected), 2)
 
-    def test_weather_query_contract_uses_supported_bound_and_refreshes_discovery(self):
+    def test_weather_query_contract_pages_the_verified_connector_without_legacy_api(self):
         source = (ROOT / "HydroOperationsApp/src/services/fabric.ts").read_text(encoding="utf-8")
-        weather_query = source.split("query HydroWeather", 1)[1].split("const response", 1)[0]
-        self.assertEqual(weather_query.count("first: 100000)"), 5)
-        self.assertNotIn("first: 1000)", weather_query)
-        self.assertIn("ensureConfig(forceRefresh, forceRefresh)", source)
+        weather_query = source.split("export async function queryWeatherData", 1)[1].split("export async function startStreamingPipeline", 1)[0]
+        self.assertEqual(weather_query.count("collectLakehousePages(cursor =>"), 5)
+        self.assertEqual(weather_query.count(".first(500).after(cursor).executePaginated()"), 5)
+        self.assertIn("const key = lakehouseConnectionKey()", weather_query)
+        self.assertIn("if (forceRefresh) weatherDataCache = undefined", weather_query)
+        self.assertIn("weatherDataCache = undefined", weather_query.split(".catch(error =>", 1)[1])
+        self.assertNotIn("graphqlUrl", weather_query)
+        self.assertNotIn("query HydroWeather", source)
 
     def test_setup_pagination_and_observation_fallbacks(self):
         setup = (ROOT / "Notebooks/RTI_001_create_lakehouse_SelfContained.Notebook/notebook-content.py").read_text(encoding="utf-8")

@@ -70,3 +70,13 @@ services:
     enabled: false
 workspace:
   name: ${FABRIC_WORKSPACE_NAME}
+connectors:
+  - name: hydrolakehouse
+    type: fabric-sqlanalytics
+    config:
+      workspaceId: ${RAYFIN_PUBLIC_WORKSPACE_ID}
+      itemId: ${RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID}
+    auth:
+      type: delegated
+    operations:
+      - name: read

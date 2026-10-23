@@ -16,6 +16,9 @@ import { applyDataAgentProgress } from './dataAgentProgress'
 import { contextualizeDataAgentQuestion } from './dataAgentConversation'
 import { extractDataAgentVisualizations } from './dataAgentVisualizations'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './copilot/answerPresentation'
+import { connectedLakehouse, lakehouseConnectionKey, signInToRayfin } from './rayfin'
+import { collectLakehousePages, lakehouseConnectorConfig, lakehouseTimestamp,
+  requireLakehouseNumber, requireLakehouseText } from './lakehouseConnector'
 
 export type { AgentAnswer, AgentArtifact, AgentUsage, AgentVisualization } from './assistantStream'
 export type { OntologyContract } from './ontologyContract'
@@ -37,9 +40,6 @@ const graphqlName = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_NAME as string | un
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
 const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
-const configuredGraphqlUrl = graphqlUrlOverride || (workspaceId && graphqlId
-  ? `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphqlapis/${graphqlId}/graphql`
-  : undefined)
 const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
 const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
 
@@ -453,14 +453,14 @@ async function pollLatestInstance(itemId: string, sinceIso: string, onStatus?: J
 
 /** Sign in / consent for a resource using a popup; the caller then retries its query. */
 export async function beginInteractiveConnect(target: ConnectTarget) {
+  if (target === 'stid') {
+    lakehouseConnectionKey()
+    await signInToRayfin()
+    return
+  }
   if (!msal) throw new Error('Microsoft Entra client configuration is missing.')
   const knownConfig = configCache ?? envConfig()
-  if (target === 'stid') {
-    if (knownConfig.graphqlUrl) {
-      await popupToken([GRAPHQL_SCOPE])
-      return
-    }
-  } else if (target === 'telemetry') {
+  if (target === 'telemetry') {
     if (knownConfig.eventhouseQueryUri) {
       await popupToken([kustoScope(knownConfig.eventhouseQueryUri)])
       return
@@ -468,10 +468,6 @@ export async function beginInteractiveConnect(target: ConnectTarget) {
   }
 
   const config = await ensureConfig(true)
-  if (target === 'stid') {
-    if (!config?.graphqlUrl) throw new Error('No GraphQL API found in the workspace. Publish the STID GraphQL API (run RTI_011) and try again.')
-    throw new Error('Fabric access is connected. Click Connect STID again to authorize the GraphQL API.')
-  }
   if (target === 'telemetry') {
     if (!config?.eventhouseQueryUri) throw new Error('No Eventhouse found in the workspace.')
     throw new Error('Fabric access is connected. Click Connect telemetry again to authorize the Eventhouse.')
@@ -643,18 +639,6 @@ export async function queryOntologyGraph(force = false): Promise<OntologyGraph |
   })
 }
 
-// Fabric API for GraphQL exposes each Lakehouse table under its own name; app-side keys are
-// pinned via GraphQL aliases so the client stays stable regardless of table naming.
-type StidPayload = {
-  data?: {
-    facilities?: { items?: Facility[]; hasNextPage?: boolean }
-    systems?: { items?: System[] }
-    equipment?: { items?: Equipment[]; hasNextPage?: boolean }
-    instruments?: { items?: Instrument[]; hasNextPage?: boolean }
-  }
-  errors?: Array<{ message?: string }>
-}
-
 export type StidData = {
   facilities: Facility[]; systems: System[]; equipment: Equipment[]; instruments: Instrument[]
   inventoryComplete: boolean
@@ -721,112 +705,86 @@ const WEATHER_DATA_CACHE_TTL_MS = 5 * 60_000
 let weatherDataCache: { key: string; expiresAt: number; value: WeatherData } | undefined
 let weatherDataPromise: { key: string; promise: Promise<WeatherData> } | undefined
 
-type WeatherPayload = {
-  data?: {
-    locations?: { items?: WeatherLocation[] }
-    areas?: { items?: WeatherArea[] }
-    variables?: { items?: WeatherVariable[] }
-    observations?: { items?: WeatherObservation[] }
-    forecasts?: { items?: WeatherForecast[] }
-  }
-  errors?: Array<{ message?: string }>
+export function isStidConfigured() {
+  return Boolean(import.meta.env.VITE_RAYFIN_API_URL && import.meta.env.VITE_RAYFIN_LAKEHOUSE_SQL_ENDPOINT_ID)
 }
 
-export function isStidConfigured() { return Boolean(msal) }
-
 export async function queryStid(): Promise<StidData | null> {
-  const graphqlUrl = configuredGraphqlUrl ?? (await ensureConfig(false))?.graphqlUrl
-  if (!graphqlUrl) return null
-  const token = await silentToken([GRAPHQL_SCOPE])
-  if (!token) return null
-  // Aliases map to the real Lakehouse tables exposed by the
-  // GraphQL API. Fabric auto-pluralizes the root field, so the equipment table is `silver_equipments`.
-  const coreQuery = `facilities: silver_facilities(first: 20) { hasNextPage items { facility_id facility_name type country lat lon commissioned_date } }
-    equipment: silver_equipments(first: 100) { hasNextPage items { equipment_id facility_id system_id equipment_type_code equipment_type_name tag manufacturer model criticality install_date status is_active } }
-    instruments: silver_instruments(first: 500) { hasNextPage items { opcua_node_id tag instrument_id equipment_id system_id facility_id unit instrument_type is_active } }`
-  const execute = async (query: string) => {
-    const response = await fetch(graphqlUrl, {
-      method: 'POST', cache: 'no-store',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      console.error('STID GraphQL request failed.', response.status, text.slice(0, 500))
-      throw new Error(`STID query failed (${response.status}).`)
-    }
-    return JSON.parse(text) as StidPayload
-  }
-  let payload = await execute(`query HydroStid { systems: silver_systems(first: 50) { items { system_id facility_id system_name oag_rds_system_code } } ${coreQuery} }`)
-  if (payload.errors?.some(error => /silver_systems/i.test(error.message ?? ''))) {
-    console.warn('The GraphQL definition does not expose silver_systems; rerun RTI_011 to publish the Ontology systems binding.')
-    payload = await execute(`query HydroStidLegacy { ${coreQuery} }`)
-  }
-  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
-  const equipment = payload.data?.equipment?.items ?? []
-  const systems = payload.data?.systems?.items ?? Array.from(new Map(equipment.map(asset => [asset.system_id, {
-    system_id: asset.system_id, facility_id: asset.facility_id, system_name: asset.system_id,
-  }])).values())
+  const key = lakehouseConnectionKey()
+  const source = connectedLakehouse()
+  if (!source) return null
+  const columns = lakehouseConnectorConfig.entities
+  const [facilities, systems, equipment, instruments] = await Promise.all([
+    collectLakehousePages(cursor => source.SilverFacilities.select([...columns.SilverFacilities]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverSystems.select([...columns.SilverSystems]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverEquipment.select([...columns.SilverEquipment]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.SilverInstruments.select([...columns.SilverInstruments]).first(500).after(cursor).executePaginated()),
+  ])
+  if (lakehouseConnectionKey() !== key) throw new Error('Lakehouse connector identity changed during the STID read.')
   return {
-    facilities: payload.data?.facilities?.items ?? [],
-    systems,
-    equipment,
-    instruments: payload.data?.instruments?.items ?? [],
-    inventoryComplete: Array.isArray(payload.data?.facilities?.items)
-      && payload.data.facilities.hasNextPage === false
-      && Array.isArray(payload.data?.equipment?.items)
-      && Array.isArray(payload.data?.instruments?.items)
-      && payload.data.equipment.hasNextPage === false && payload.data.instruments.hasNextPage === false,
+    facilities: facilities.map(row => ({ ...row,
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      facility_name: requireLakehouseText(row.facility_name, 'facility_name') })),
+    systems: systems.map(row => ({ ...row, system_id: requireLakehouseText(row.system_id, 'system_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id') })),
+    equipment: equipment.map(row => ({ ...row,
+      equipment_id: requireLakehouseText(row.equipment_id, 'equipment_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      system_id: requireLakehouseText(row.system_id, 'system_id'),
+      install_date: row.install_date ? lakehouseTimestamp(row.install_date, 'install_date') : undefined })),
+    instruments: instruments.map(row => ({ ...row,
+      opcua_node_id: requireLakehouseText(row.opcua_node_id, 'opcua_node_id'),
+      instrument_id: requireLakehouseText(row.instrument_id, 'instrument_id'),
+      equipment_id: requireLakehouseText(row.equipment_id, 'equipment_id'),
+      facility_id: requireLakehouseText(row.facility_id, 'facility_id'),
+      system_id: requireLakehouseText(row.system_id, 'system_id') })),
+    inventoryComplete: true,
   }
 }
 
 export async function queryWeatherData(forceRefresh = false): Promise<WeatherData | null> {
-  const graphqlUrl = configuredGraphqlUrl ?? (await ensureConfig(forceRefresh, forceRefresh))?.graphqlUrl
-  if (!graphqlUrl) {
+  const key = lakehouseConnectionKey()
+  const source = connectedLakehouse()
+  if (!source) {
     weatherDataCache = undefined
     weatherDataPromise = undefined
     return null
   }
-  const token = await silentToken([GRAPHQL_SCOPE], forceRefresh) ?? (forceRefresh ? await popupToken([GRAPHQL_SCOPE]) : null)
-  if (!token) {
-    weatherDataCache = undefined
-    weatherDataPromise = undefined
-    return null
-  }
-  const key = `${requireWorkspaceId()}:${graphqlUrl}`
   if (forceRefresh) weatherDataCache = undefined
   if (!forceRefresh && weatherDataCache?.key === key && weatherDataCache.expiresAt > Date.now()) {
     return weatherDataCache.value
   }
   if (!forceRefresh && weatherDataPromise?.key === key) return weatherDataPromise.promise
   const promise = (async () => {
-  // The serving tables hold only the newest issue, pivoted one row per valid time, so the
-  // whole page is a few hundred rows instead of the long tables' unbounded issue history.
-  const values = 'precipitation temperature pressure relative_humidity dew_point solar_radiation wind_speed wind_gust wind_direction'
-  const query = `query HydroWeather {
-    locations: weather_locations(first: 100000) { items { location_id location_name latitude longitude elevation_m } }
-    areas: weather_areas(first: 100000) { items { area_id area_name geometry_geojson crs metadata_json } }
-    variables: weather_variables(first: 100000) { items { variable_id canonical_unit } }
-    observations: weather_latest_observations(first: 100000) { items { source_id location_id observed_at_utc ${values} } }
-    forecasts: weather_latest_forecasts(first: 100000) { items { source_id target_kind target_id reference_time_utc valid_time_utc lead_hours precipitation_interval_hours cumulative_precipitation rainfall_volume_m3 cumulative_rainfall_volume_m3 ${values} } }
-  }`
-  const response = await fetch(graphqlUrl, {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
-  })
-  const text = await response.text()
-  if (!response.ok) throw new Error(`Weather query failed (${response.status}).`)
-  const payload = JSON.parse(text) as WeatherPayload
-  if (payload.errors?.length) throw new Error(payload.errors.map(error => error.message).filter(Boolean).join('; '))
-  const value = {
-    locations: payload.data?.locations?.items ?? [],
-    areas: payload.data?.areas?.items ?? [],
-    variables: payload.data?.variables?.items ?? [],
-    observations: payload.data?.observations?.items ?? [],
-    forecasts: payload.data?.forecasts?.items ?? [],
+  const columns = lakehouseConnectorConfig.entities
+  const [locations, areas, variables, observations, forecasts] = await Promise.all([
+    collectLakehousePages(cursor => source.WeatherLocations.select([...columns.WeatherLocations]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherAreas.select([...columns.WeatherAreas]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherVariables.select([...columns.WeatherVariables]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherLatestObservations.select([...columns.WeatherLatestObservations]).first(500).after(cursor).executePaginated()),
+    collectLakehousePages(cursor => source.WeatherLatestForecasts.select([...columns.WeatherLatestForecasts]).first(500).after(cursor).executePaginated()),
+  ])
+  const value: WeatherData = {
+    locations: locations.map(row => ({ ...row, location_id: requireLakehouseText(row.location_id, 'location_id'),
+      location_name: requireLakehouseText(row.location_name, 'location_name'),
+      latitude: requireLakehouseNumber(row.latitude, 'latitude'), longitude: requireLakehouseNumber(row.longitude, 'longitude') })),
+    areas: areas.map(row => ({ ...row, area_id: requireLakehouseText(row.area_id, 'area_id'),
+      area_name: requireLakehouseText(row.area_name, 'area_name'), geometry_geojson: requireLakehouseText(row.geometry_geojson, 'geometry_geojson'),
+      crs: requireLakehouseText(row.crs, 'crs') })),
+    variables: variables.map(row => ({ ...row, variable_id: requireLakehouseText(row.variable_id, 'variable_id'),
+      canonical_unit: requireLakehouseText(row.canonical_unit, 'canonical_unit') })),
+    observations: observations.map(row => ({ ...row, source_id: requireLakehouseText(row.source_id, 'source_id'),
+      location_id: requireLakehouseText(row.location_id, 'location_id'), observed_at_utc: lakehouseTimestamp(row.observed_at_utc, 'observed_at_utc') })),
+    forecasts: forecasts.map(row => {
+      if (row.target_kind !== 'location' && row.target_kind !== 'area') throw new Error('Lakehouse forecast target_kind is invalid.')
+      return { ...row, source_id: requireLakehouseText(row.source_id, 'source_id'),
+        target_kind: row.target_kind, target_id: requireLakehouseText(row.target_id, 'target_id'),
+        reference_time_utc: lakehouseTimestamp(row.reference_time_utc, 'reference_time_utc'),
+        valid_time_utc: lakehouseTimestamp(row.valid_time_utc, 'valid_time_utc'),
+        lead_hours: requireLakehouseNumber(row.lead_hours, 'lead_hours') }
+    }),
   }
+  if (lakehouseConnectionKey() !== key) throw new Error('Lakehouse connector identity changed during the weather read.')
   weatherDataCache = { key, expiresAt: Date.now() + WEATHER_DATA_CACHE_TTL_MS, value }
   return value
   })().catch(error => {

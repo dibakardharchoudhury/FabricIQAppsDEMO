@@ -1329,7 +1329,21 @@ def resolve_public_artifact_config(
         "Lakehouse",
         "RAYFIN_PUBLIC_LAKEHOUSE_NAME",
         rf"Energy_IQ_LakehouseRTI(?:_{RTI_ARTIFACT_SUFFIX_RE})?",
+        required=True,
     )
+    assert lakehouse is not None
+    lakehouse_detail = fabric_get(
+        f"workspaces/{workspace_id}/lakehouses/{quote(str(lakehouse['id']), safe='')}", headers
+    )
+    lakehouse_properties = lakehouse_detail.get("properties")
+    sql_endpoint = lakehouse_properties.get("sqlEndpointProperties") if isinstance(lakehouse_properties, dict) else None
+    sql_endpoint_id = str(sql_endpoint.get("id") or "") if isinstance(sql_endpoint, dict) else ""
+    if (
+        lakehouse_detail.get("id") != lakehouse["id"]
+        or (lakehouse_detail.get("workspaceId") and lakehouse_detail["workspaceId"] != workspace_id)
+        or not GUID_RE.fullmatch(sql_endpoint_id)
+    ):
+        raise DeployError("The selected Lakehouse has no verified SQL analytics endpoint identity.")
     dashboard = select(
         "KQLDashboard",
         "RAYFIN_PUBLIC_KQL_DASHBOARD_NAME",
@@ -1345,6 +1359,7 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_STID_GRAPHQL_ID": str(graphql["id"]) if graphql else "",
         "RAYFIN_PUBLIC_STID_GRAPHQL_URL": f"{FABRIC_BASE}/workspaces/{workspace_id}/graphqlapis/{graphql['id']}/graphql" if graphql else "",
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
+        "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
     }
@@ -1699,6 +1714,41 @@ def run_rayfin_deployment(command: list[str], tenant: str) -> str:
         export_frontend_env()
 
 
+def validate_lakehouse_connector_apply(output: str) -> None:
+    """Rayfin can exit zero on partial connector failure; require both steps."""
+    records = []
+    for line in output.splitlines():
+        if line.strip().startswith("{"):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if not records:
+        raise DeployError("Rayfin returned no connector apply JSON receipt.")
+    receipt = records[-1]
+    if not isinstance(receipt, dict) or receipt.get("status") != "success":
+        raise DeployError("Lakehouse connector application did not succeed.")
+    for key, status in (("generate", "generated"), ("results", "success")):
+        rows = receipt.get(key)
+        if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
+                or rows[0].get("name") != "hydrolakehouse" or rows[0].get("status") != status):
+            raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
+
+
+def validate_lakehouse_connector_data(tenant: str, hosting_url: str) -> None:
+    token = run_with_azure_cli_reauthentication(
+        tenant, "validating delegated Lakehouse connector reads",
+        lambda: run_capture(az("account", "get-access-token", "--resource",
+                               "https://analysis.windows.net/powerbi/api",
+                               "--query", "accessToken", "-o", "tsv")),
+    )
+    run_stream(
+        node24_script(APP_DIR / "scripts" / "validate-lakehouse-connector.mjs"),
+        cwd=APP_DIR,
+        env={**os.environ, "HYDRO_CONNECTOR_ENTRA_TOKEN": token, "HYDRO_CONNECTOR_ORIGIN": hosting_url},
+    )
+
+
 def current_git_push_target() -> tuple[str, str]:
     """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
@@ -1995,6 +2045,11 @@ def deploy(args: argparse.Namespace) -> None:
         ),
         args.tenant,
     )
+    connector_output = run_rayfin_deployment(
+        rayfin24("up", "connector", "apply", "--name", "hydrolakehouse", "--json"),
+        args.tenant,
+    )
+    validate_lakehouse_connector_apply(connector_output)
 
     print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
     if client_id:
@@ -2021,6 +2076,7 @@ def deploy(args: argparse.Namespace) -> None:
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
     validate_appbackend_cors(api_url, hosting_url, publishable_key)
+    validate_lakehouse_connector_data(args.tenant, hosting_url)
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.

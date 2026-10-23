@@ -96,6 +96,28 @@ For current operator steps, including fresh-project creation, see
 
 ## Start here: choose your interface, not a different deployment process
 
+### Lakehouse connector (October 23, 2026)
+
+The SPA now reads STID and weather through the delegated, read-only Rayfin
+`hydrolakehouse` (`fabric-sqlanalytics`) connector. The existing one-shot engine and local
+**Deploy app** button resolve `sqlEndpointProperties.id` from the selected Lakehouse;
+the connector's `itemId` is that SQL analytics endpoint ID, not the Lakehouse ID.
+No manual GraphQL API creation/binding is required for these SPA reads.
+
+Every deployment reapplies runtime/SQL settings, explicitly generates/applies the connector,
+and rejects missing, skipped or partial connector receipts even if Rayfin exits zero.
+Final validation checks connector CORS and queries all nine entities under a delegated operator
+session. This proves that session's source access, not every end user's permissions. Signed-user
+browser acceptance remains a separate check. Connector execution requires a deployed backend;
+local Vite uses that same backend, not a local Lakehouse emulation.
+
+Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
+no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
+seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted crew's independent
+direct-source verification. Do not delete that shared API or alter NB11 as part of this SPA migration.
+SQL operational records, Eventhouse queries and the ontology-managed graph remain independent.
+See the [official connector contract](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
+
 | Goal | Simplest supported path |
 |---|---|
 | Operator-led deployment without a coding agent | From the repository root, run the command below. It owns Node 24, dependency restore, target discovery, backend/schema, app publication and live auth. |
