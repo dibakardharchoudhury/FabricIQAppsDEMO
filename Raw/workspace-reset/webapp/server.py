@@ -696,6 +696,24 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         return value.strip() if isinstance(value, str) else ""
 
     env: dict[str, str] = {}
+    graph_binding = text("ontologyGraphBinding")
+    if graph_binding:
+        try:
+            binding = json.loads(graph_binding)
+        except ValueError as error:
+            raise ValueError("Ontology graph binding must be a JSON object.") from error
+        if not isinstance(binding, dict) or any(
+            not isinstance(binding.get(key), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", binding[key])
+            for key in ("workspaceId", "ontologyId", "graphModelId")
+        ):
+            raise ValueError("Ontology graph binding requires workspaceId, ontologyId and graphModelId GUIDs.")
+        env["HYDRO_ONTOLOGY_GRAPH_BINDING"] = json.dumps(binding, separators=(",", ":"))
+    subscription = text("azureSubscriptionId")
+    if subscription:
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", subscription):
+            raise ValueError("Azure subscription ID must be a GUID in the selected Fabric tenant.")
+        env["HYDRO_AZURE_SUBSCRIPTION_ID"] = subscription
     endpoint = text("foundryEndpoint")
     if endpoint:
         if not FOUNDRY_ENDPOINT_RE.fullmatch(endpoint):
@@ -706,6 +724,21 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         if not FOUNDRY_MODEL_RE.fullmatch(model):
             raise ValueError("Foundry model deployment name may contain only letters, digits, '.', '_' and '-'.")
         env["HYDRO_FOUNDRY_MODEL"] = model
+    for field, key in (
+        ("foundryModelName", "HYDRO_FOUNDRY_MODEL_NAME"),
+        ("foundryModelVersion", "HYDRO_FOUNDRY_MODEL_VERSION"),
+        ("foundryModelSku", "HYDRO_FOUNDRY_MODEL_SKU"),
+    ):
+        value = text(field)
+        if value:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
+                raise ValueError("Foundry model name, version and SKU must be valid identifiers.")
+            env[key] = value
+    capacity = data.get("foundryModelCapacity")
+    if capacity not in (None, ""):
+        if type(capacity) not in (str, int) or not re.fullmatch(r"[1-9][0-9]*", str(capacity).strip()):
+            raise ValueError("Foundry model capacity must be a positive whole number.")
+        env["HYDRO_FOUNDRY_MODEL_CAPACITY"] = str(capacity).strip()
     registry = text("acrName")
     if registry:
         if not ACR_NAME_RE.fullmatch(registry):
@@ -716,8 +749,10 @@ def _deploy_environment(data: dict) -> dict[str, str]:
         if not AZURE_LOCATION_RE.fullmatch(location):
             raise ValueError("Foundry location must be an Azure region such as swedencentral.")
         env["HYDRO_FOUNDRY_LOCATION"] = location
-    if data.get("createFoundry") is True:
-        env["HYDRO_FOUNDRY_CREATE"] = "true"
+    if "createFoundry" in data:
+        if type(data["createFoundry"]) is not bool:
+            raise ValueError("Create Foundry must be an explicit boolean.")
+        env["HYDRO_FOUNDRY_CREATE"] = str(data["createFoundry"]).lower()
     writes = text("productionWrites").lower()
     if writes:
         if writes not in ("true", "false"):

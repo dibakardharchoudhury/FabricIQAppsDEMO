@@ -377,12 +377,16 @@
           </div>
           <div class="foundry-block">
             <strong>Foundry (agents and Hosted Agent)</strong>
-            <p class="hint">All fields are optional; blank values are discovered. Requires the Azure Developer CLI (<code>azd</code>).</p>
+            <p class="hint">Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires the Azure Developer CLI (<code>azd</code>).</p>
             <div class="grid">
+              <label>Azure subscription ID
+                <input id="workflowAzureSubscriptionId" type="text" placeholder="Blank: active subscription, verified in the target tenant" /></label>
+              <label>Operator-verified ontology graph binding (JSON)
+                <textarea id="workflowOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
               <label>Foundry project endpoint
                 <input id="workflowFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
               <label>Model deployment
-                <input id="workflowFoundryModel" type="text" placeholder="gpt-5.6-sol" /></label>
+                <input id="workflowFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
               <label>Container registry
                 <input id="workflowAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
               <label>Work-order writes
@@ -393,10 +397,18 @@
                 </select></label>
             </div>
             <label class="check"><input id="workflowFoundryCreate" type="checkbox" />
-              <span>Create the Foundry project if none exists. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights.</span></label>
+              <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
             <div class="grid" style="margin-top:.85rem">
               <label>Region for the new project (only when creating)
                 <input id="workflowFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+              <label>Model catalog name (only when creating)
+                <input id="workflowFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
+              <label>Model version (required when creating)
+                <input id="workflowFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
+              <label>Model SKU (required when creating)
+                <input id="workflowFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
+              <label>Model capacity (required when creating)
+                <input id="workflowFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
             </div>
           </div>
         </section>
@@ -479,12 +491,16 @@
       </div>
       <div class="foundry-block">
         <strong>Foundry (agents and Hosted Agent)</strong>
-        <p class="hint">Every deploy also converges the Foundry side: connections, the four specialist agents and the <code>hydro-orchestrator</code> Hosted Agent (image built in ACR only when the source changed). All fields are optional; blank values are discovered. Requires the Azure Developer CLI (<code>azd</code>); its Foundry extensions are installed for you.</p>
+        <p class="hint">Every deploy converges connections, four specialists and the <code>hydro-orchestrator</code> Hosted Agent. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
         <div class="grid">
+          <label>Azure subscription ID
+            <input id="deployAzureSubscriptionId" type="text" placeholder="Blank: active subscription, verified in the target tenant" /></label>
+          <label>Operator-verified ontology graph binding (JSON)
+            <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
           <label>Foundry project endpoint
             <input id="deployFoundryEndpoint" type="text" placeholder="Blank: the only Foundry project in the subscription" /></label>
           <label>Model deployment
-            <input id="deployFoundryModel" type="text" placeholder="gpt-5.6-sol" /></label>
+            <input id="deployFoundryModel" type="text" placeholder="Existing deployment name; required when creating" /></label>
           <label>Container registry
             <input id="deployAcrName" type="text" placeholder="Blank: the project's registry connection" /></label>
           <label>Work-order writes
@@ -495,10 +511,18 @@
             </select></label>
         </div>
         <label class="check"><input id="deployFoundryCreate" type="checkbox" />
-          <span>Create the Foundry project if none exists. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights.</span></label>
+          <span>Create/reuse a target-specific Foundry project when none is selected. This provisions billable Azure resources: a Foundry account and project, the model deployment, a container registry and Application Insights. Unrelated projects are not reused.</span></label>
         <div class="grid" style="margin-top:.85rem">
           <label>Region for the new project (only when creating)
             <input id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity's region" disabled /></label>
+          <label>Model catalog name (only when creating)
+            <input id="deployFoundryModelName" type="text" placeholder="Blank: use the deployment name" disabled /></label>
+          <label>Model version (required when creating)
+            <input id="deployFoundryModelVersion" type="text" placeholder="Available version in the selected region" disabled /></label>
+          <label>Model SKU (required when creating)
+            <input id="deployFoundryModelSku" type="text" placeholder="Available deployment SKU" disabled /></label>
+          <label>Model capacity (required when creating)
+            <input id="deployFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
         </div>
       </div>
       <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
@@ -880,18 +904,29 @@ $("deleteBtn").addEventListener("click", async () => {
 // Foundry settings of one deploy form (`deploy` or `workflow`); each form submits only its own fields.
 function foundryPayload(prefix) {
   const value = (suffix) => $(prefix + suffix).value.trim();
+  const creating = $(prefix + "FoundryCreate").checked;
   return {
+    azureSubscriptionId: value("AzureSubscriptionId"),
+    ontologyGraphBinding: value("OntologyGraphBinding"),
     foundryEndpoint: value("FoundryEndpoint"),
     foundryModel: value("FoundryModel"),
     acrName: value("AcrName"),
-    foundryLocation: $(prefix + "FoundryCreate").checked ? value("FoundryLocation") : "",
+    foundryLocation: creating ? value("FoundryLocation") : "",
+    foundryModelName: creating ? value("FoundryModelName") : "",
+    foundryModelVersion: creating ? value("FoundryModelVersion") : "",
+    foundryModelSku: creating ? value("FoundryModelSku") : "",
+    foundryModelCapacity: creating ? value("FoundryModelCapacity") : "",
     productionWrites: value("ProductionWrites"),
-    createFoundry: $(prefix + "FoundryCreate").checked,
+    createFoundry: creating,
   };
 }
 for (const prefix of ["deploy", "workflow"]) {
   const create = $(prefix + "FoundryCreate");
-  create.addEventListener("change", () => { $(prefix + "FoundryLocation").disabled = !create.checked; });
+  create.addEventListener("change", () => {
+    for (const suffix of ["FoundryLocation", "FoundryModelName", "FoundryModelVersion", "FoundryModelSku", "FoundryModelCapacity"]) {
+      $(prefix + suffix).disabled = !create.checked;
+    }
+  });
 }
 
 $("deployBtn").addEventListener("click", async () => {

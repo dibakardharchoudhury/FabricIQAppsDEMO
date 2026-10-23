@@ -159,14 +159,62 @@ def _load_sibling(name: str):
     return module
 
 
+def resolve_subscription(deploy, tenant: str) -> str:
+    selected = os.environ.get("HYDRO_AZURE_SUBSCRIPTION_ID", "").strip()
+    if selected and not deploy.GUID_RE.fullmatch(selected):
+        raise deploy.DeployError("HYDRO_AZURE_SUBSCRIPTION_ID must be a subscription GUID.")
+    arguments = ("--subscription", selected) if selected else ()
+    account = json.loads(deploy.run_capture(deploy.az("account", "show", *arguments, "-o", "json")))
+    subscription = str(account.get("id") or "")
+    if (not deploy.GUID_RE.fullmatch(subscription)
+            or str(account.get("tenantId") or "").casefold() != tenant.casefold()
+            or account.get("state") != "Enabled"):
+        raise deploy.DeployError("The selected Azure subscription must be enabled and belong to the target Fabric tenant.")
+    print(f"Foundry: using subscription {subscription} in tenant {tenant}.", flush=True)
+    return subscription
+
+
+def select_model_deployment(deployments: list[dict], wanted: str) -> str:
+    ready = [
+        item for item in deployments
+        if item.get("properties", {}).get("provisioningState") == "Succeeded"
+    ]
+    if wanted:
+        matches = [item for item in ready if item.get("name") == wanted]
+    else:
+        matches = [
+            item for item in ready
+            if item.get("properties", {}).get("model", {}).get("format") == "OpenAI"
+            and item.get("properties", {}).get("capabilities", {}).get("chatCompletion") in (True, "true")
+        ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Select one ready Foundry chat model deployment with HYDRO_FOUNDRY_MODEL. "
+            "Automatic selection requires exactly one deployment advertising chatCompletion capability."
+        )
+    return matches[0]["name"]
+
+
 def provision(deploy, tenant: str, workspace: str) -> None:
     values, _ = deploy.current_rayfin_target()
-    endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip() or values.get("RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT", "").strip()
     print("Foundry: project - resolving the Foundry project.", flush=True)
+    subscription = resolve_subscription(deploy, tenant)
+    same_target = (
+        deploy._public_config_value(values, "RAYFIN_PUBLIC_TENANT_ID").casefold() == tenant.casefold()
+        and deploy._public_config_value(values, "RAYFIN_PUBLIC_WORKSPACE_ID").casefold() == workspace.casefold()
+        and deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID").casefold() in ("", subscription.casefold())
+    )
+    saved_endpoint = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT") if same_target else ""
+    explicit_endpoint = os.environ.get("HYDRO_FOUNDRY_PROJECT_ENDPOINT", "").strip()
+    endpoint = explicit_endpoint or saved_endpoint
+    model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip()
+    if not model and endpoint and endpoint.rstrip("/") == saved_endpoint.rstrip("/"):
+        model = deploy._public_config_value(values, "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT")
 
     def discover(wanted: str) -> list[tuple[str, str]]:
         projects = json.loads(deploy.run_capture(deploy.az(
-            "resource", "list", "--resource-type", "Microsoft.CognitiveServices/accounts/projects", "-o", "json",
+            "resource", "list", "--subscription", subscription,
+            "--resource-type", "Microsoft.CognitiveServices/accounts/projects", "-o", "json",
         )))
         found = []
         for project in projects:
@@ -179,6 +227,11 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         return found
 
     candidates = discover(endpoint)
+    if endpoint and not candidates and not explicit_endpoint:
+        print("Foundry: saved project is absent from the selected subscription; discarding its endpoint/model hints.", flush=True)
+        endpoint = ""
+        model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip()
+        candidates = discover("")
     if endpoint and not candidates:
         raise deploy.DeployError(
             "The selected Foundry project endpoint was not found in the current subscription. "
@@ -186,6 +239,8 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             "a different project in place of the selected one."
         )
     project_module = _load_sibling("deploy_foundry_project")
+    if project_module.enabled() and not endpoint:
+        candidates = []
     if not candidates and project_module.enabled():
         hosted_module = _load_sibling("deploy_hosted_agent")
 
@@ -217,21 +272,21 @@ def provision(deploy, tenant: str, workspace: str) -> None:
                 timeout=60,
             ).status_code == 200
 
-        print("Foundry: project - none found; creating one as requested.", flush=True)
+        print("Foundry: project - no project selected; provisioning the target-specific project as requested.", flush=True)
         created = project_module.ensure_foundry_project(
-            deploy, hosted_module, tenant=tenant, workspace=workspace, location=target_location(),
-            model=os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip() or "gpt-5.6-sol", check_access=agent_access,
+            deploy, hosted_module, tenant=tenant, workspace=workspace, subscription=subscription,
+            location=target_location(), model=model, check_access=agent_access,
         )
         candidates = discover(created)
     if len(candidates) != 1:
         raise deploy.DeployError(
             "Select exactly one existing Foundry project with HYDRO_FOUNDRY_PROJECT_ENDPOINT; automatic discovery is ambiguous or unavailable."
-            + ("" if candidates else " To create one instead, enable 'Create the Foundry project if none exists' "
+            + ("" if candidates else " To create one instead, enable 'Create/reuse a target-specific Foundry project' "
                "in the local app (HYDRO_FOUNDRY_CREATE=true).")
         )
     project_id, endpoint = candidates[0]
     parsed = urlparse(endpoint)
-    if parsed.scheme != "https" or not parsed.hostname.endswith(".services.ai.azure.com"):
+    if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com"):
         raise deploy.DeployError("Foundry project metadata returned an invalid endpoint.")
 
     def token(resource):
@@ -250,11 +305,21 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             raise deploy.DeployError(f"Foundry provisioning failed: {method} {url}: HTTP {response.status_code}: {response.text[:800]}")
         return response
 
-    model = os.environ.get("HYDRO_FOUNDRY_MODEL", "").strip() or "gpt-5.6-sol"
     account_id = project_id.rsplit("/projects/", 1)[0]
-    model_data = request("GET", f"https://management.azure.com{account_id}/deployments/{model}?api-version=2025-06-01", arm_headers).json()
-    if model_data.get("properties", {}).get("provisioningState") != "Succeeded":
-        raise deploy.DeployError("The selected Foundry model deployment is not ready.")
+    models_url = f"https://management.azure.com{account_id}/deployments"
+    model_page = request("GET", models_url + "?api-version=2025-06-01", arm_headers).json()
+    deployments = model_page.get("value", [])
+    while model_page.get("nextLink"):
+        link = urlparse(model_page["nextLink"])
+        if link.scheme != "https" or link.netloc != "management.azure.com" or link.path != f"{account_id}/deployments":
+            raise deploy.DeployError("Unexpected Foundry model pagination URL.")
+        model_page = request("GET", model_page["nextLink"], arm_headers).json()
+        deployments.extend(model_page.get("value", []))
+    try:
+        model = select_model_deployment(deployments, model)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
+    print(f"Foundry: using verified model deployment {model}.", flush=True)
 
     project_connections = request("GET", f"https://management.azure.com{project_id}/connections?api-version=2025-10-01-preview", arm_headers).json()
     connections = project_connections.get("value", [])
@@ -384,6 +449,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         raise deploy.DeployError(str(error)) from error
     env_path = deploy.RAYFIN_DIR / ".env"
     env_path.write_text(deploy._rebind_public_env(env_path.read_text(encoding="utf-8"), {
+        "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": subscription,
         "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
         "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": model,
         "RAYFIN_PUBLIC_FOUNDRY_APP_INSIGHTS_RESOURCE_ID": insights_id,

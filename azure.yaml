@@ -10,7 +10,7 @@ resourceGroup: ${AZURE_RESOURCE_GROUP}
 services:
     ai-project:
         host: azure.ai.project
-        endpoint: https://foundryfabriciqappsdemo-resource.services.ai.azure.com/api/projects/foundryfabriciqappsdemo
+        endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
     hydro-orchestrator:
         project: .
         host: azure.ai.agent

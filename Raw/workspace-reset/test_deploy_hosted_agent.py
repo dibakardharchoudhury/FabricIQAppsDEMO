@@ -212,6 +212,32 @@ class ConfigurationTests(unittest.TestCase):
             "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(orchestrator)}}}}}
         provision.verify_hosted_source(live, GUIDS["tenant"], GUIDS["workspace"], GUIDS["ontology"], digest)
 
+    def test_a_second_tenant_workspace_has_no_first_target_ids_or_endpoints(self):
+        ids = {name: f"{index + 30:08x}-1111-4111-8111-{index + 30:012x}"
+               for index, name in enumerate(GUIDS)}
+        values = {key: value for key, value in VALUES.items()}
+        for key, name in (
+            ("RAYFIN_PUBLIC_EVENTHOUSE_ID", "eventhouse"), ("RAYFIN_PUBLIC_KQL_DATABASE_ID", "database"),
+            ("RAYFIN_PUBLIC_STID_GRAPHQL_ID", "graphql"), ("RAYFIN_PUBLIC_ITEM_ID", "appbackend"),
+        ):
+            values[key] = ids[name]
+        values["RAYFIN_PUBLIC_API_URL"] = "https://" + "b" * 32 + ".pbidedicated.windows.net/other/"
+        values["RAYFIN_PUBLIC_PUBLISHABLE_KEY"] = "pk-other-target"
+        digest = provision.source_configuration_digest(ids["tenant"], ids["workspace"], ids["ontology"], values)
+        other, sources = hosted.compose_runtime_configuration(
+            tenant=ids["tenant"], workspace=ids["workspace"], ontology=ids["ontology"], spa_client_id=ids["spa"],
+            kusto_origin="https://other.kusto.fabric.microsoft.com",
+            project_endpoint="https://other.services.ai.azure.com/api/projects/other",
+            values=values, source_digest=digest, production_writes=False,
+        )
+        serialized = json.dumps([other, sources])
+        for old in (*GUIDS.values(), VALUES["RAYFIN_PUBLIC_API_URL"], VALUES["RAYFIN_PUBLIC_PUBLISHABLE_KEY"], ENDPOINT, KUSTO):
+            self.assertNotIn(old, serialized)
+        live = {"versions": {"latest": {"definition": {"environment_variables": {
+            "HYDRO_ORCHESTRATOR_CONFIG": json.dumps(other),
+        }}}}}
+        provision.verify_hosted_source(live, ids["tenant"], ids["workspace"], ids["ontology"], digest)
+
 
 class DecisionTests(unittest.TestCase):
     def test_a_current_agent_needs_nothing(self):
@@ -236,12 +262,14 @@ class DecisionTests(unittest.TestCase):
         self.assertIsNone(hosted.needs_publish(agent(env=spaced), image_digest=DIGEST_A, environment=environment()))
 
     def test_registry_resolution_prefers_override_then_the_single_project_connection(self):
-        self.assertEqual(hosted.registry_name(CONNECTIONS, "forced", {}), "forced")
-        self.assertEqual(hosted.registry_name(CONNECTIONS, "", {}), "myreg")
+        self.assertEqual(hosted.registry_name(CONNECTIONS, "myreg"), "myreg")
+        self.assertEqual(hosted.registry_name(CONNECTIONS, ""), "myreg")
         two = CONNECTIONS + [{"name": "b", "properties": {"category": "ContainerRegistry", "target": "other.azurecr.io"}}]
-        self.assertEqual(hosted.registry_name(two, "", {"AZURE_CONTAINER_REGISTRY_NAME": "fromazd"}), "fromazd")
+        self.assertEqual(hosted.registry_name(two, "other"), "other")
+        with self.assertRaisesRegex(RuntimeError, "live ContainerRegistry"):
+            hosted.registry_name(CONNECTIONS, "stale")
         with self.assertRaisesRegex(RuntimeError, "HYDRO_ACR_NAME"):
-            hosted.registry_name(two, "", {})
+            hosted.registry_name(two, "")
 
     def test_bootstrap_variables_are_derived_from_the_live_project(self):
         values = hosted.azd_bootstrap_values(
@@ -373,9 +401,17 @@ class ConvergenceTests(unittest.TestCase):
 class ProjectRoutingTests(unittest.TestCase):
     """Which azd project a publish runs from, and azd readiness."""
 
-    def test_the_pinned_project_publishes_from_the_repository_itself(self):
-        pinned = hosted.PINNED_ENDPOINT_RE.search((REPO_ROOT / "azure.yaml").read_text(encoding="utf-8"))["value"]
-        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), pinned + "/"), REPO_ROOT)
+    def test_repository_template_never_pins_a_live_project_or_reuses_repo_state(self):
+        template = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+        self.assertEqual(hosted.PINNED_ENDPOINT_RE.search(template)["value"], "${AZURE_AI_PROJECT_ENDPOINT}")
+        self.assertNotIn(".services.ai.azure.com", template)
+        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), ENDPOINT), REPO_ROOT)
+
+    def test_distinct_project_endpoints_cannot_collide_in_generated_state(self):
+        first = "https://res.services.ai.azure.com/api/projects/a.b"
+        second = "https://res.services.ai.azure.com/api/projects/a-b"
+        self.assertNotEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), second))
+        self.assertEqual(hosted.azd_project_dir(FakeDeploy(), first), hosted.azd_project_dir(FakeDeploy(), first + "/"))
 
     def test_another_project_gets_a_generated_untracked_azd_project_never_a_repo_edit(self):
         before = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
@@ -409,8 +445,17 @@ class ProjectRoutingTests(unittest.TestCase):
 class ProjectCreationTests(unittest.TestCase):
     ENDPOINT = "https://new-res.services.ai.azure.com/api/projects/new-proj"
 
+    def setUp(self):
+        settings = patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_MODEL_NAME": "", "HYDRO_FOUNDRY_MODEL_VERSION": "test-version",
+            "HYDRO_FOUNDRY_MODEL_SKU": "TestSku", "HYDRO_FOUNDRY_MODEL_CAPACITY": "7",
+        })
+        settings.start()
+        self.addCleanup(settings.stop)
+
     def create(self, fake, **overrides):
-        arguments = dict(tenant="tenant.example", workspace="ws", location="swedencentral", model="model-x",
+        arguments = dict(tenant="tenant.example", workspace="ws", subscription="sub-1",
+                         location="swedencentral", model="model-x",
                          check_access=lambda _endpoint: True, sleep=lambda _seconds: None)
         arguments.update(overrides)
         return project.ensure_foundry_project(fake, hosted, **arguments)
@@ -432,8 +477,8 @@ class ProjectCreationTests(unittest.TestCase):
         # The template embeds the value inside quotes in a JSON parameters file.
         embedded = json.loads('{"value": "' + parameter + '"}')["value"]
         self.assertEqual(json.loads(embedded), [{
-            "name": "model-x", "model": {"name": "model-x", "format": "OpenAI", "version": "2026-07-09"},
-            "sku": {"name": "GlobalStandard", "capacity": 500},
+            "name": "model-x", "model": {"name": "model-x", "format": "OpenAI", "version": "test-version"},
+            "sku": {"name": "TestSku", "capacity": 7},
         }])
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_VERSION": "v2", "HYDRO_FOUNDRY_MODEL_SKU": "Standard",
                                       "HYDRO_FOUNDRY_MODEL_CAPACITY": "50"}):
@@ -442,6 +487,25 @@ class ProjectCreationTests(unittest.TestCase):
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": "lots"}):
             with self.assertRaisesRegex(ValueError, "whole number"):
                 project.deployments_parameter("m")
+
+    def test_creation_has_no_implicit_model_version_sku_or_capacity(self):
+        for key in ("HYDRO_FOUNDRY_MODEL_VERSION", "HYDRO_FOUNDRY_MODEL_SKU", "HYDRO_FOUNDRY_MODEL_CAPACITY"):
+            with self.subTest(key=key), patch.dict(os.environ, {key: ""}):
+                fake = self.fake()
+                with self.assertRaisesRegex(FakeDeploy.DeployError, "New Foundry projects require"):
+                    self.create(fake)
+                self.assertEqual(fake.log, [])
+        for bad in ("0", "-1", "1.5"):
+            with self.subTest(bad=bad), patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_CAPACITY": bad}):
+                with self.assertRaisesRegex(ValueError, "whole number"):
+                    project.deployments_parameter("m")
+
+    def test_catalog_model_name_is_distinct_from_deployment_name(self):
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_MODEL_NAME": "catalog-chat-model"}):
+            parameter = project.deployments_parameter("my-custom-deployment")
+        deployment = json.loads(json.loads('{"value": "' + parameter + '"}')["value"])[0]
+        self.assertEqual(deployment["name"], "my-custom-deployment")
+        self.assertEqual(deployment["model"]["name"], "catalog-chat-model")
 
     def test_the_parameter_survives_windows_command_line_quoting_into_a_child_process(self):
         import subprocess, sys
@@ -454,6 +518,7 @@ class ProjectCreationTests(unittest.TestCase):
         self.assertEqual(project.normalize_location("Sweden Central"), "swedencentral")
         self.assertEqual(project.environment_name("T", "W"), project.environment_name("t", "w"))
         self.assertNotEqual(project.environment_name("t", "w1"), project.environment_name("t", "w2"))
+        self.assertNotEqual(project.environment_name("t", "w", "sub-1"), project.environment_name("t", "w", "sub-2"))
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_NAME": "my-name"}):
             self.assertEqual(project.environment_name("t", "w"), "my-name")
         with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_NAME": "bad name!"}):
@@ -483,7 +548,7 @@ class ProjectCreationTests(unittest.TestCase):
 
     def test_an_already_initialized_folder_is_reused_not_reinitialized(self):
         fake = self.fake()
-        folder = hosted.state_root() / "foundry-project" / project.environment_name("tenant.example", "ws")
+        folder = hosted.state_root() / "foundry-project" / project.environment_name("tenant.example", "ws", "sub-1")
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "azure.yaml").write_text("name: x\n")
         self.create(fake)
@@ -541,6 +606,7 @@ class BackendBootstrapTests(unittest.TestCase):
     def test_the_deployer_runs_it_immediately_before_foundry_provisioning(self):
         import inspect
         source = inspect.getsource(DEPLOY.deploy)
+        self.assertLess(source.index('"validate-env.mjs"'), source.index("ensure_appbackend_identity("))
         self.assertLess(source.index("ensure_appbackend_identity("), source.index("provision_foundry_agents("))
 
 

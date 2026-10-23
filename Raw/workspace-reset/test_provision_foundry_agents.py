@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, call, patch
@@ -24,23 +25,121 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
-    def test_missing_selected_project_never_creates_a_different_project(self):
+    def test_missing_explicit_project_never_creates_a_different_project(self):
         endpoint = "https://selected.services.ai.azure.com/api/projects/hydro"
         for saved in (False, True):
             with self.subTest(saved=saved):
                 deploy = Mock()
                 deploy.DeployError = RuntimeError
+                deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
                 deploy.current_rayfin_target.return_value = (
-                    {"RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint} if saved else {}, None,
+                    {"RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint,
+                     "RAYFIN_PUBLIC_TENANT_ID": "tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "workspace",
+                     "RAYFIN_PUBLIC_FOUNDRY_SUBSCRIPTION_ID": "subscription"} if saved else {}, None,
                 )
                 deploy.run_capture.return_value = "[]"
                 with patch.dict(os.environ, {
-                    "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "" if saved else endpoint,
+                    "HYDRO_FOUNDRY_PROJECT_ENDPOINT": endpoint,
                     "HYDRO_FOUNDRY_CREATE": "true",
-                }), patch.object(module, "_load_sibling") as load:
+                }), patch.object(module, "resolve_subscription", return_value="subscription"), \
+                     patch.object(module, "_load_sibling") as load:
                     with self.assertRaisesRegex(RuntimeError, "refusing to create"):
                         module.provision(deploy, "tenant", "workspace")
                 load.assert_not_called()
+
+    def test_saved_endpoint_from_another_workspace_is_not_a_selection_hint(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "old-tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "old-workspace",
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://old.services.ai.azure.com/api/projects/old",
+            "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "old-model",
+        }, None)
+        deploy.run_capture.return_value = "[]"
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_FOUNDRY_CREATE": ""}), \
+             patch.object(module, "resolve_subscription", return_value="selected-subscription"):
+            with self.assertRaisesRegex(RuntimeError, "Select exactly one existing Foundry project"):
+                module.provision(deploy, "new-tenant", "new-workspace")
+
+    def test_missing_legacy_saved_endpoint_is_discarded_before_fresh_target_discovery(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({
+            "RAYFIN_PUBLIC_TENANT_ID": "target-tenant", "RAYFIN_PUBLIC_WORKSPACE_ID": "target-workspace",
+            "RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": "https://old.services.ai.azure.com/api/projects/old",
+            "RAYFIN_PUBLIC_FOUNDRY_DEPLOYMENT": "old-model",
+        }, None)
+        deploy.run_capture.return_value = "[]"
+        with patch.dict(os.environ, {"HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_FOUNDRY_CREATE": ""}), \
+             patch.object(module, "resolve_subscription", return_value="new-subscription"):
+            with self.assertRaisesRegex(RuntimeError, "Select exactly one existing Foundry project"):
+                module.provision(deploy, "target-tenant", "target-workspace")
+        self.assertEqual(deploy.run_capture.call_count, 2)
+
+    def test_subscription_is_verified_in_target_tenant_without_changing_cli_default(self):
+        subscription = "11111111-2222-3333-4444-555555555555"
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy.GUID_RE = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+        deploy.az.side_effect = lambda *args: list(args)
+        deploy.run_capture.return_value = json.dumps({"id": subscription, "tenantId": "target", "state": "Enabled"})
+        with patch.dict(os.environ, {"HYDRO_AZURE_SUBSCRIPTION_ID": subscription}):
+            self.assertEqual(module.resolve_subscription(deploy, "target"), subscription)
+        deploy.run_capture.assert_called_once_with(["account", "show", "--subscription", subscription, "-o", "json"])
+        for overrides in ({"tenantId": "other"}, {"state": "Disabled"}, {"id": ""}):
+            deploy.run_capture.return_value = json.dumps({
+                "id": subscription, "tenantId": "target", "state": "Enabled", **overrides,
+            })
+            with self.subTest(overrides=overrides), patch.dict(os.environ, {"HYDRO_AZURE_SUBSCRIPTION_ID": ""}):
+                with self.assertRaisesRegex(RuntimeError, "target Fabric tenant"):
+                    module.resolve_subscription(deploy, "target")
+
+    def test_model_selection_uses_live_capability_or_explicit_deployment_never_a_fixed_name(self):
+        first = {"name": "tenant-specific-chat", "properties": {
+            "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
+            "capabilities": {"chatCompletion": "true"},
+        }}
+        embedding = {"name": "embedding", "properties": {
+            "provisioningState": "Succeeded", "model": {"format": "OpenAI"},
+            "capabilities": {"embeddings": "true"},
+        }}
+        self.assertEqual(module.select_model_deployment([first, embedding], ""), first["name"])
+        second = {**first, "name": "other-chat"}
+        self.assertEqual(module.select_model_deployment([first, second], second["name"]), second["name"])
+        for deployments, wanted in (([], ""), ([embedding], ""), ([first, second], ""), ([first], "missing"),
+                                    ([{**first, "properties": {"provisioningState": "Failed"}}], first["name"])):
+            with self.subTest(wanted=wanted, deployments=deployments):
+                with self.assertRaisesRegex(RuntimeError, "HYDRO_FOUNDRY_MODEL"):
+                    module.select_model_deployment(deployments, wanted)
+
+    def test_opted_in_target_creation_does_not_reuse_an_unrelated_existing_project(self):
+        deploy = Mock()
+        deploy.DeployError = RuntimeError
+        deploy._public_config_value.side_effect = lambda values, key: values.get(key, "")
+        deploy.current_rayfin_target.return_value = ({}, None)
+        project_id = "/subscriptions/selected/resourceGroups/old/providers/Microsoft.CognitiveServices/accounts/old/projects/old"
+        deploy.run_capture.side_effect = [
+            json.dumps([{"id": project_id}]),
+            json.dumps({"id": project_id, "properties": {"endpoints": {
+                "AI Foundry API": "https://old.services.ai.azure.com/api/projects/old",
+            }}}),
+        ]
+        creation, hosted = Mock(), Mock()
+        creation.enabled.return_value = True
+        creation.normalize_location.side_effect = lambda location: location
+        creation.ensure_foundry_project.side_effect = RuntimeError("target creation reached")
+        with patch.dict(os.environ, {
+            "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "", "HYDRO_FOUNDRY_LOCATION": "targetregion",
+            "HYDRO_FOUNDRY_MODEL": "target-model",
+        }), patch.object(module, "resolve_subscription", return_value="selected"), \
+             patch.object(module, "_load_sibling", side_effect=[creation, hosted]):
+            with self.assertRaisesRegex(RuntimeError, "target creation reached"):
+                module.provision(deploy, "target-tenant", "target-workspace")
+        arguments = creation.ensure_foundry_project.call_args.kwargs
+        self.assertEqual((arguments["tenant"], arguments["workspace"], arguments["subscription"], arguments["model"]),
+                         ("target-tenant", "target-workspace", "selected", "target-model"))
 
     def test_transient_get_failures_retry_with_bounded_backoff(self):
         response = Mock(status_code=200)

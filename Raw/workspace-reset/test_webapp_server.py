@@ -290,8 +290,33 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(SERVER._deploy_environment({}), {})
         self.assertEqual(SERVER._deploy_environment({
             "foundryEndpoint": "  ", "createFoundry": False, "productionWrites": "", "foundryModel": None,
-        }), {})
-        self.assertEqual(SERVER._deploy_environment({"createFoundry": "true"}), {})  # only a real boolean opts in
+        }), {"HYDRO_FOUNDRY_CREATE": "false"})
+        with self.assertRaisesRegex(ValueError, "explicit boolean"):
+            SERVER._deploy_environment({"createFoundry": "true"})
+
+    def test_subscription_and_model_creation_inputs_are_forwarded_without_defaults(self):
+        subscription = "11111111-2222-3333-4444-555555555555"
+        settings = SERVER._deploy_environment({
+            "azureSubscriptionId": subscription, "foundryModelName": "catalog-model",
+            "foundryModelVersion": "available-version", "foundryModelSku": "AvailableSku",
+            "foundryModelCapacity": 12, "createFoundry": False,
+        })
+        self.assertEqual(settings, {
+            "HYDRO_AZURE_SUBSCRIPTION_ID": subscription, "HYDRO_FOUNDRY_MODEL_NAME": "catalog-model",
+            "HYDRO_FOUNDRY_MODEL_VERSION": "available-version", "HYDRO_FOUNDRY_MODEL_SKU": "AvailableSku",
+            "HYDRO_FOUNDRY_MODEL_CAPACITY": "12", "HYDRO_FOUNDRY_CREATE": "false",
+        })
+
+    def test_operator_graph_binding_is_passed_only_as_explicit_json(self):
+        binding = {
+            key: f"{index:08x}-1111-4111-8111-{index:012x}"
+            for index, key in enumerate(("workspaceId", "ontologyId", "graphModelId"), start=1)
+        }
+        settings = SERVER._deploy_environment({"ontologyGraphBinding": json.dumps(binding)})
+        self.assertEqual(json.loads(settings["HYDRO_ONTOLOGY_GRAPH_BINDING"]), binding)
+        for invalid in ("not-json", "[]", "{}", '{"workspaceId":"wrong"}'):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "graph binding"):
+                SERVER._deploy_environment({"ontologyGraphBinding": invalid})
 
     def test_deploy_environment_rejects_unsafe_or_malformed_values(self):
         bad = (
@@ -300,6 +325,10 @@ class WorkspaceActionTests(unittest.TestCase):
             {"foundryEndpoint": "https://res.services.ai.azure.com/api/projects/p; calc"},
             {"foundryModel": "bad model"}, {"foundryModel": "x" * 80}, {"acrName": "UPPERCASE1"},
             {"acrName": "abc"}, {"foundryLocation": "sweden;central"}, {"productionWrites": "maybe"},
+            {"azureSubscriptionId": "not-a-guid"}, {"foundryModelName": "bad model"},
+            {"foundryModelVersion": "v;1"}, {"foundryModelSku": "SKU with spaces"},
+            {"foundryModelCapacity": "0"}, {"foundryModelCapacity": "-1"},
+            {"foundryModelCapacity": "1.5"}, {"foundryModelCapacity": True},
         )
         for payload in bad:
             with self.subTest(payload=payload), self.assertRaises(ValueError):
@@ -350,10 +379,13 @@ class WorkspaceActionTests(unittest.TestCase):
     def test_both_deploy_forms_collect_foundry_settings_and_warn_about_cost(self):
         page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
         for prefix in ("deploy", "workflow"):
-            for suffix in ("FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites", "FoundryCreate", "FoundryLocation"):
+            for suffix in ("AzureSubscriptionId", "OntologyGraphBinding", "FoundryEndpoint", "FoundryModel", "AcrName", "ProductionWrites",
+                           "FoundryCreate", "FoundryLocation", "FoundryModelName", "FoundryModelVersion",
+                           "FoundryModelSku", "FoundryModelCapacity"):
                 self.assertIn(f'id="{prefix}{suffix}"', page)
             self.assertIn(f'foundryPayload("{prefix}")', page)
         self.assertIn("billable Azure resources", page)
+        self.assertNotIn('placeholder="gpt-5.6-sol"', page)
         self.assertIn('id="deployFoundryLocation" type="text" placeholder="Blank: the Fabric capacity\'s region" disabled', page)
         handler = page[page.index('$("deployBtn").addEventListener'):page.index('$("workflowBtn").addEventListener')]
         self.assertNotIn("workflow", handler)

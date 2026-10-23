@@ -7,13 +7,14 @@ action**: the local deploy app or one command. Both run the same engine,
 ## Start a deployment
 
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
-The Foundry extensions are installed for you. Everything else, including the Foundry project itself, can be created
-by the deploy when you tick **Create the Foundry project if none exists**.
+The Foundry extensions are installed for you. The Foundry project and supporting resources can be created
+by the deploy when you tick **Create/reuse a target-specific Foundry project when none is selected** and supply
+the model settings available in your subscription/region. No original demo tenant or workspace is required.
 
 | | Local deploy app | Command line |
 |---|---|---|
 | 1 | Double-click [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) | |
-| 2 | Pick tenant + workspace. In the **Foundry** block leave fields blank (discovered) or fill them in; tick *Create the Foundry project* only if none exists | Optional env vars, Section 6 |
+| 2 | Pick tenant + workspace, subscription and Foundry/model settings. Opt into target-specific project creation when needed | Target-specific env vars, Section 6 |
 | 3 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
 | 4 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
 
@@ -45,7 +46,7 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
 | Sparky | `hydro-fabric-iq-agent` | Prompt agent | same | Deployer |
 | Data Agent connection | `hydro-fabric-iq` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
 | Ontology connection | `hydro-fabric-ontology` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
-| Model | `gpt-5.6-sol` by default | Model deployment | `HYDRO_FOUNDRY_MODEL` | Existing project: must exist; opt-in project creation: template provisions it, subject to availability/quota |
+| Model | Selected/discovered in the target account; no fixed deployment name | Model deployment | `HYDRO_FOUNDRY_MODEL` | Existing project: must exist; opt-in creation: template provisions the specified catalog model/version/SKU/capacity |
 
 The Supervisor is the hosted runtime, **not a prompt agent**. There is no separate "Chief" prompt agent in the
 current code; earlier records that mention Chief or five agents are historical.
@@ -82,7 +83,7 @@ Phase 3 of the deployer's eight phases ([`provision_foundry_agents.py`](../Raw/w
 | Step | Behaviour | Skipped when |
 |---|---|---|
 | 0. Backend identity | If the target has no AppBackend yet, creates it first (without static hosting) so the Hosted Agent can be configured against its identity | The target already has one |
-| 1. Foundry project | Finds the one Foundry project. If none exists **and you opted in**, creates it with the Azure Developer CLI template `Azure-Samples/azd-ai-starter-basic`: resource group, Foundry account and project, the model deployment, a container registry with its project connection, Application Insights with its connection, Log Analytics. Waits for your role assignments to take effect | A project exists, or you did not opt in |
+| 1. Foundry project | Verifies the selected subscription belongs to the Fabric tenant. Uses an explicitly selected or same-target saved project; otherwise discovers one, or **if you opted in** provisions a target-specific project with `Azure-Samples/azd-ai-starter-basic`: resource group, account/project, specified model, connected registry/monitoring and Log Analytics. Unrelated projects are not reused when creation is selected. Waits for role propagation | A project is selected, or you did not opt in |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
 | 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
 | 4. Prompt agents | Exports the four definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
@@ -100,12 +101,15 @@ Consequences:
   deploy; an unchanged tree costs a single registry lookup.
 - **Target changes redeploy the agent.** A new workspace, capacity, AppBackend, ontology or publishable key changes the
   configuration, so the agent is republished with fresh values (never copied from another target).
-- **The right Foundry project is always the one published to.** `azure.yaml` pins one project. When that is your
-  target, the repository is the azd project. For any other target (including a project the deploy just created) a
-  generated, untracked azd project under `~/.fabric-demo/hosted-agent/` carries the same file with the target's
-  endpoint. No tracked file is edited and a deploy can never reach the wrong project.
+- **No tracked deployment target.** `azure.yaml` uses `${AZURE_AI_PROJECT_ENDPOINT}`, not a live demo endpoint.
+  Every publish uses a generated, untracked azd project under `~/.fabric-demo/hosted-agent/`, keyed by the full
+  verified endpoint. Repository-local azd environments and registry hints cannot redirect a deployment.
 - **Creation is opt-in and repeatable.** The new project lives in `~/.fabric-demo/foundry-project/<name>`, where the name
-  is derived from the tenant and workspace, so a rerun reuses the same resources instead of creating duplicates.
+  is derived from tenant, subscription and workspace. Retain this state for reruns; on another machine explicitly
+  select the existing endpoint instead of opting into another project. No tenant-specific name is embedded in source.
+- **One target per hosted coordinator.** The stable `hydro-*` names are application contracts, not tenant identities.
+  Deploying another workspace into the same explicitly selected Foundry project rebinds that coordinator and its
+  connections. Use a separate target-specific project for each concurrently deployed Fabric workspace.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
   `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` (or the form's *Work-order writes*) to change it deliberately. A
   brand-new agent defaults to `false`. An unreadable or non-boolean live policy stops deployment unless you explicitly
@@ -118,6 +122,8 @@ Consequences:
 **Tools**
 
 - Python 3.11+, Azure CLI, and the Azure Developer CLI `azd >= 1.35.0` (Node 24 is downloaded by the deployer).
+- For manual command-line setup, restore the Python dependencies from the repository root:
+  `python -m pip install -r Raw\workspace-reset\requirements.txt`. The local launcher handles this itself.
 - The azd extensions `azure.ai.agents` and `microsoft.foundry` are installed automatically when missing.
 - `az login --tenant <tenant>`. If `azd` is signed out, the deployer opens its sign-in for you.
 - No local Docker: images build remotely in ACR.
@@ -135,8 +141,11 @@ Consequences:
 - A Foundry resource and project in the **same Entra tenant as the Fabric workspace**, with
   **public network access** (the browser calls it directly). New projects default to the capacity's region;
   model availability and quota must be checked for the selected region.
-- A ready model deployment (default `gpt-5.6-sol`), **exactly one** linked Application Insights resource, and an Azure
+- A compatible ready OpenAI chat model deployment (tool calling and structured output required), **exactly one**
+  linked Application Insights resource, and an Azure
   Container Registry connected to the project as a `ContainerRegistry` connection.
+  There is no hardcoded model/version/SKU/capacity. New projects require operator-supplied creation values;
+  Azure provisioning rejects unavailable models, regions or quota. No silent model/region downgrade is attempted.
 
 **Always required (not created by this deploy)**
 
@@ -148,19 +157,24 @@ Consequences:
 1. Launch [`Start Fabric Demo.cmd`](../Raw/workspace-reset/Start%20Fabric%20Demo.cmd) (`python launch.py` on any OS).
    It installs missing Python packages, signs in to Azure and opens `http://127.0.0.1:5000`.
 2. Choose the tenant and workspace. Add a **SPA client id** only if discovery is ambiguous or you were given one.
-3. **Deploy app** tab (or the same fields in the **Full workflow** tab), *Foundry* block. All fields are optional:
+3. **Deploy app** tab (or the same fields in the **Full workflow** tab), *Foundry* block:
 
    | Field | Use it when |
    |---|---|
+   | Azure subscription ID | Select a subscription explicitly; blank uses the active one, which must be enabled and in the selected Fabric tenant |
+   | Operator-verified ontology graph binding | Supply JSON after portal materialization if authoritative lineage is unavailable; never edit generated `.env` files |
    | Foundry project endpoint | You have several Foundry projects, or want a specific one |
-   | Model deployment | Not `gpt-5.6-sol` |
-   | Container registry | The project has several registry connections |
+   | Model deployment | Existing project: select its deployment, reuse the same-target saved selection, or discover exactly one ready deployment advertising chatCompletion capability. Required when creating |
+   | Container registry | Select a live project connection when several exist; arbitrary or stale registry names are rejected |
    | Work-order writes | You want to enable or disable the human-approved write (default: keep the current setting) |
-   | **Create the Foundry project if none exists** | You have no Foundry project. This **creates billable Azure resources** (account, project, model deployment, container registry, Application Insights) |
+   | **Create/reuse a target-specific Foundry project when none is selected** | Provision a dedicated project rather than reuse an unrelated project. This **creates billable Azure resources** |
    | Region for the new project | Only when creating; default is the Fabric capacity's region |
+   | Model catalog name | Only when creating; blank uses the deployment name, otherwise separates catalog identity from a custom deployment name |
+   | Model version / SKU / capacity | Required when creating; choose available values within your subscription/region quota |
 
    Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
-   collected. Blank fields fall back to the environment the app was launched with, then to discovery.
+   collected. Blank text fields fall back to the launch environment, then target-scoped discovery where supported.
+   The creation checkbox explicitly overrides an inherited `HYDRO_FOUNDRY_CREATE`; unchecked cannot opt into billing.
 4. Fresh data environment: use the **Full workflow** tab (GitHub sync, `01_Pipe_Setup`, deploy), or run those first.
    An ordinary update needs none of that. The workflow does not materialize the native graph: on a fresh target,
    complete the selected ontology's **Manage graph → select eligible entities/relationships → Continue → Materialize**
@@ -198,24 +212,30 @@ current target configuration. Do not bypass the engine with a hand-published ima
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `HYDRO_FOUNDRY_PROJECT_ENDPOINT` | Foundry project to use | Saved public endpoint, else the single discoverable project |
-| `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | `gpt-5.6-sol` |
+| `HYDRO_AZURE_SUBSCRIPTION_ID` | Subscription for discovery and creation | Active subscription, verified enabled in the selected tenant; no global CLI account change |
+| `HYDRO_ONTOLOGY_GRAPH_BINDING` | Operator-verified graph JSON passed into target configuration | Authoritative lineage, else same-target saved binding; old workspace bindings are ignored |
+| `HYDRO_FOUNDRY_PROJECT_ENDPOINT` | Foundry project to use | Saved endpoint from the same tenant/workspace/subscription, else unambiguous discovery (or dedicated creation when opted in) |
+| `HYDRO_FOUNDRY_MODEL` | Model deployment for the agents | Same-target saved selection, else exactly one ready chat-capable deployment; required when creating |
 | `HYDRO_ACR_NAME` | Registry to build in | The project's only `ContainerRegistry` connection |
 | `HYDRO_PRODUCTION_WRITES_ENABLED` | Allow the human-approved work-order write | Preserved from the live agent; `false` for a new one |
-| `HYDRO_FOUNDRY_CREATE` | `true` creates a Foundry project when none exists (billable) | off |
+| `HYDRO_FOUNDRY_CREATE` | `true` creates/reuses a target-specific project when no endpoint is selected (billable) | off |
 | `HYDRO_FOUNDRY_LOCATION` | Azure region of the new project | The Fabric capacity's region |
-| `HYDRO_FOUNDRY_PROJECT_NAME` | Name of the new project's azd environment | `hydro-foundry-<hash of tenant and workspace>` |
-| `HYDRO_FOUNDRY_MODEL_VERSION` / `_SKU` / `_CAPACITY` | Model deployment details when creating | `2026-07-09` / `GlobalStandard` / `500` (the values of the working deployment) |
+| `HYDRO_FOUNDRY_PROJECT_NAME` | Optional explicit azd environment name for creation | `hydro-foundry-<hash of tenant, subscription and workspace>`; keep an override unique per target |
+| `HYDRO_FOUNDRY_MODEL_NAME` | Catalog model name when creating a custom-named deployment | The operator-supplied deployment name |
+| `HYDRO_FOUNDRY_MODEL_VERSION` / `_SKU` / `_CAPACITY` | Required model details when creating | None; no demo-environment values are substituted |
 | `HYDRO_STATE_DIR` | Where generated azd projects live | `~/.fabric-demo` |
 | `HYDRO_SPA_DISPLAY_NAME` | SPA discovery/creation name | `Hydro Operations Fabric Client` |
 
-The local app sets the first six for you from its form; it does not read secrets.
+The local app exposes subscription, graph binding, endpoint/model/registry, write policy and all model-creation
+settings in both forms; it does not read secrets.
+An older deployment without saved subscription identity must rediscover its project; supply the existing endpoint
+if discovery is ambiguous. Do not opt into new project creation as a substitute for selecting an existing deployment.
 
 Runtime configuration is generated, never edited by hand. `HYDRO_ORCHESTRATOR_CONFIG` carries `source`,
 `authorization`, `project_endpoint`, `native_binding` and `production_writes_enabled` (`source.generation` must be `2`;
 the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFIG` carries the seven item GUIDs,
 `api_url` and `publishable_key` of the target. The azd environment `hydro-orchestrator` lives in the git-ignored
-`.azure/` folder and is created automatically from the live project on a new machine.
+`.azure/` folder of the generated target project and is created automatically from live metadata.
 `/health` and `/readiness` only report that the process awaits an invocation, not source access or agent readiness.
 
 ## 7. Troubleshooting
@@ -243,6 +263,11 @@ the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFI
 | Chat shows *Source limitations: the written briefing could not be verified* | Not a deployment fault: the briefing failed its checks and only verified tables are shown. |
 
 ## 8. Known limits
+
+Portability covers **public Azure/Fabric tenants and workspaces where the required services are available**,
+with sufficient permissions, active Fabric capacity, supported region/model/quota and the documented portal
+prerequisites. It is not a promise to bypass tenant policy, sovereign-cloud differences, unavailable previews
+or missing graph materialization. All such blockers must be resolved in the target environment.
 
 **The newly automated build/publish/project-creation path has not been certified by a full live deployment.**
 Earlier hosted releases are recorded separately in the [implementation record](foundry-multi-agent-implementation.md);
@@ -285,19 +310,35 @@ engine**, not a second sequence of Rayfin/Entra/Foundry commands.
 4. **Materialize the native graph.** In the selected ontology use **Manage graph → select eligible
    entities/relationships → Continue → Materialize**. Resolve `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from
    authoritative lineage, or provide the documented operator-verified fallback using
-   [the graph binding procedure](knowledge-graph.md). Do not infer ownership by name or graph count.
+   [the graph binding procedure](knowledge-graph.md). If lineage is unavailable, pass the operator-verified JSON
+   through `HYDRO_ONTOLOGY_GRAPH_BINDING` (or the local form); do not edit generated state. Do not infer ownership
+   by name or graph count.
 5. **Select Foundry.** For an existing project, verify model, registry and monitoring connections, then set its endpoint
    if discovery is ambiguous. For a new project, explicitly opt into billable resource creation:
    ```powershell
+   $env:HYDRO_AZURE_SUBSCRIPTION_ID = "<subscription-guid-in-the-target-tenant>"
    $env:HYDRO_FOUNDRY_CREATE = "true" # Only when creation is intended.
-   # Optional: $env:HYDRO_FOUNDRY_LOCATION = "swedencentral"
+   $env:HYDRO_FOUNDRY_MODEL = "<deployment-name>"
+   $env:HYDRO_FOUNDRY_MODEL_NAME = "<compatible-openai-chat-model-catalog-name>"
+   $env:HYDRO_FOUNDRY_MODEL_VERSION = "<available-model-version>"
+   $env:HYDRO_FOUNDRY_MODEL_SKU = "<available-deployment-sku>"
+   $env:HYDRO_FOUNDRY_MODEL_CAPACITY = "<positive-capacity-within-quota>"
+   # Optional: $env:HYDRO_FOUNDRY_LOCATION = "<supported-azure-region>"
+   # Only if authoritative graph lineage is unavailable, after portal verification:
+   # $env:HYDRO_ONTOLOGY_GRAPH_BINDING = '{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'
    ```
    For an existing project instead:
    ```powershell
+   $env:HYDRO_AZURE_SUBSCRIPTION_ID = "<subscription-guid-in-the-target-tenant>"
+   $env:HYDRO_FOUNDRY_CREATE = "false"
    $env:HYDRO_FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
+   $env:HYDRO_FOUNDRY_MODEL = "<existing-compatible-chat-deployment-name>"
    ```
    These are alternatives. If a specified endpoint cannot be found, stop and verify tenant/subscription/endpoint;
    do not use project creation to work around missing access.
+   Clear environment overrides from a previous target before switching; never copy its generated URLs, GUIDs or
+   registry settings. The canonical engine resolves tenant domains to GUIDs, validates the subscription's tenant,
+   discovers Fabric items in the selected workspace and derives the AppBackend endpoint from its current capacity.
 6. **Deploy from the repository root:**
    ```powershell
    python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config

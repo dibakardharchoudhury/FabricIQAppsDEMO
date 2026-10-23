@@ -41,22 +41,20 @@ def state_root() -> Path:
 
 
 def azd_project_dir(deploy, endpoint: str) -> Path:
-    """The azd project to publish from.
-
-    azure.yaml pins one Foundry project. When that is the target, the repository itself is the azd project (the
-    proven path). For any other target a generated, untracked project carries the same azure.yaml with the target's
-    endpoint, so a deploy can never reach the wrong project and no tracked file is edited."""
+    """Generate isolated azd state for the verified project, never reuse repository-local target state."""
     root = deploy.REPO_ROOT
     text = (root / "azure.yaml").read_text(encoding="utf-8")
     pinned = PINNED_ENDPOINT_RE.search(text)
-    if not pinned:
-        raise deploy.DeployError("azure.yaml has no ai-project endpoint to retarget.")
+    if not pinned or pinned["value"] != "${AZURE_AI_PROJECT_ENDPOINT}":
+        raise deploy.DeployError("azure.yaml must use the target-independent ${AZURE_AI_PROJECT_ENDPOINT} placeholder.")
     wanted = endpoint.rstrip("/")
-    if pinned["value"].rstrip("/") == wanted:
-        return root
     parsed = urlparse(wanted)
+    if (parsed.scheme != "https" or not (parsed.hostname or "").endswith(".services.ai.azure.com")
+            or parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment
+            or not re.fullmatch(r"/api/projects/[A-Za-z0-9_.-]+", parsed.path)):
+        raise deploy.DeployError("The selected Foundry project endpoint is invalid.")
     label = re.sub(r"[^a-z0-9-]", "-", f"{(parsed.hostname or 'project').split('.')[0]}-{parsed.path.rsplit('/', 1)[-1]}".lower())
-    directory = state_root() / "hosted-agent" / label
+    directory = state_root() / "hosted-agent" / f"{label}-{hashlib.sha256(wanted.encode()).hexdigest()[:12]}"
     directory.mkdir(parents=True, exist_ok=True)
     generated = PINNED_ENDPOINT_RE.sub(lambda match: match["head"] + wanted, text, count=1)
     target = directory / "azure.yaml"
@@ -168,9 +166,7 @@ def needs_publish(agent: dict | None, *, image_digest: str, environment: dict[st
     return None
 
 
-def registry_name(connections: list[dict], override: str, azd_values: dict[str, str]) -> str:
-    if override.strip():
-        return override.strip()
+def registry_name(connections: list[dict], override: str) -> str:
     names = {
         urlparse(target if "//" in target else f"https://{target}").hostname or ""
         for connection in connections
@@ -178,10 +174,12 @@ def registry_name(connections: list[dict], override: str, azd_values: dict[str, 
         and (target := str(properties.get("target") or ""))
     }
     names = {host.split(".")[0] for host in names if host.endswith(".azurecr.io")}
+    if override.strip():
+        if override.strip() not in names:
+            raise RuntimeError("HYDRO_ACR_NAME must match a live ContainerRegistry connection in the selected project.")
+        return override.strip()
     if len(names) == 1:
         return names.pop()
-    if azd_values.get("AZURE_CONTAINER_REGISTRY_NAME"):
-        return azd_values["AZURE_CONTAINER_REGISTRY_NAME"]
     raise RuntimeError(
         "Could not determine the container registry: the Foundry project has "
         f"{len(names)} registry connection(s). Set HYDRO_ACR_NAME to the registry to build in."
@@ -244,16 +242,9 @@ def ensure_hosted_agent(
     _kind, _version, _digest, live_environment = hosted_state(existing)
     override = os.environ.get("HYDRO_ACR_NAME", "")
     try:
-        registry = registry_name(connections, override, {})
-    except RuntimeError:
-        # Only an ambiguous project needs the azd environment to name the registry.
-        try:
-            azd_values = parse_azd_values(deploy.run_capture(
-                deploy.command_argv("azd", "env", "get-values", "--environment", AZD_ENVIRONMENT), cwd=project_dir,
-            ))
-            registry = registry_name(connections, override, azd_values)
-        except (RuntimeError, deploy.DeployError) as error:
-            raise deploy.DeployError(str(error)) from error
+        registry = registry_name(connections, override)
+    except RuntimeError as error:
+        raise deploy.DeployError(str(error)) from error
     subscription = project_id.split("/")[2]
 
     writes = os.environ.get("HYDRO_PRODUCTION_WRITES_ENABLED", "").strip().lower()

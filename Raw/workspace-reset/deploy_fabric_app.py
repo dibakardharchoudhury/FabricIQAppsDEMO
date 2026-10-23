@@ -504,6 +504,25 @@ def ensure_deploy_dependencies() -> None:
     print(f"Rayfin dependency ready: {version}", flush=True)
 
 
+def resolve_tenant_id(tenant: str) -> str:
+    if GUID_RE.fullmatch(tenant):
+        return tenant.lower()
+    if not TENANT_RE.fullmatch(tenant):
+        raise DeployError("Tenant must be a GUID or domain name.")
+    response = requests.get(
+        f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration",
+        timeout=30, allow_redirects=False,
+    )
+    response.raise_for_status()
+    match = re.fullmatch(
+        r"https://login\.microsoftonline\.com/([0-9a-fA-F-]{36})/v2\.0",
+        str(response.json().get("issuer") or ""),
+    )
+    if not match or not GUID_RE.fullmatch(match[1]):
+        raise DeployError("The tenant domain did not resolve to an authoritative Entra tenant GUID.")
+    return match[1].lower()
+
+
 def ensure_azure_tenant(tenant: str) -> None:
     account = json.loads(run_capture(az("account", "show", "-o", "json")))
     active = str(account.get("tenantId") or "")
@@ -1339,6 +1358,13 @@ def resolve_public_artifact_config(
 
     ontology_name = _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_NAME")
     ontologies = [item for item in items if item["type"] == "Ontology"]
+    explicit_binding = os.environ.get("HYDRO_ONTOLOGY_GRAPH_BINDING", "").strip()
+    if explicit_binding:
+        operator_binding = json.loads(_canonical_graph_binding(explicit_binding))
+        selected = [item for item in ontologies if item["id"] == operator_binding.get("ontologyId")]
+        if operator_binding.get("workspaceId") != workspace_id or len(selected) != 1:
+            raise DeployError("The operator-provided Ontology graph binding does not select an Ontology in the target workspace.")
+        ontology_name = selected[0]["displayName"]
     named_ontologies = (
         [item for item in ontologies if item["displayName"] == ontology_name]
         if ontology_name else []
@@ -1361,7 +1387,15 @@ def resolve_public_artifact_config(
             lineage_binding, separators=(",", ":")
         )
 
-    binding_text = _public_config_value(configured, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+    binding_text = (
+        _canonical_graph_binding(explicit_binding) if explicit_binding
+        else _public_config_value(hints, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING")
+    )
+    if explicit_binding and lineage_binding:
+        supplied = json.loads(binding_text)
+        if any(supplied.get(key) != value for key, value in lineage_binding.items()):
+            raise DeployError("The operator-provided Ontology graph binding conflicts with authoritative target lineage.")
+        values["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"] = binding_text
     if binding_text and not lineage_binding:
         try:
             binding = json.loads(binding_text)
@@ -1861,7 +1895,6 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
 
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
-    run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
     foundry_spec = importlib.util.spec_from_file_location(
         "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
     )
@@ -1917,6 +1950,7 @@ def deploy(args: argparse.Namespace) -> None:
         args.tenant, workspace_id, workspace_name, capacity_id, client_id
     )
     ensure_deploy_dependencies()
+    run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
     ensure_appbackend_identity(args.tenant, workspace_id)
     provision_foundry_agents(args.tenant, workspace_id)
 
@@ -2033,7 +2067,9 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     try:
-        deploy(parse_args())
+        arguments = parse_args()
+        arguments.tenant = resolve_tenant_id(arguments.tenant)
+        deploy(arguments)
     except (DeployError, requests.RequestException, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         raise SystemExit(1) from exc

@@ -359,11 +359,15 @@ tenant and workspace selected in the sidebar:
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
-   `HYDRO_PRODUCTION_WRITES_ENABLED` in the launch environment). New project creation is an explicit,
-   billable opt-in. Requires `azd`; missing `azure.ai.agents` and `microsoft.foundry` extensions are installed
+   `HYDRO_PRODUCTION_WRITES_ENABLED` in the launch environment). Select the Azure subscription with the form or
+   `HYDRO_AZURE_SUBSCRIPTION_ID`; the engine verifies that it is enabled in the Fabric tenant. New target-specific
+   project creation is an explicit, billable opt-in and requires model version/SKU/capacity settings, not defaults
+   copied from the demo tenant. Both forms expose those settings. Requires `azd`; missing
+   `azure.ai.agents` and `microsoft.foundry` extensions are installed
    by the deployer. Native graph materialization remains a manual prerequisite; if the full workflow stops
    there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
-   **Deploy app**, not another workspace reset. See
+   **Deploy app**, not another workspace reset. Pass a fallback operator-verified binding through the form or
+   `HYDRO_ONTOLOGY_GRAPH_BINDING`; do not hand-edit generated state. See
    [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, apply the generated hosting origin to backend auth, then always

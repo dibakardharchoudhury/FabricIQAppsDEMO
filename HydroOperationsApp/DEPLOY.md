@@ -151,13 +151,18 @@ The canonical Python orchestrator also provisions the four Hydro specialist Prom
 the SPA. The Supervisor is the `hydro-orchestrator` Hosted Agent, which the same orchestrator builds in
 ACR and publishes with azd when the packaged source or deployment target changed, then verifies; see
 [Foundry deployment and multi-agent setup](../docs/foundry-deployment-and-multi-agent-setup.md). It uses the existing Foundry project selected by `HYDRO_FOUNDRY_PROJECT_ENDPOINT`
-(or the saved public project endpoint); discovery must find one matching project in the
-current subscription. `HYDRO_FOUNDRY_MODEL` selects an existing model deployment, defaulting
-to `gpt-5.6-sol`. In measured specialist tool-selection steps it was faster than `gpt-5-mini`
-at the same `low` reasoning effort (median 2.9 s versus 5.0 s) and did not emit the redundant
-parallel calls the mini model produced. A new Foundry project/account and supporting resources are created only
-when no project is found and the operator explicitly opts in through the local form or
-`HYDRO_FOUNDRY_CREATE=true`; ambiguous discovery or an unresolved selected endpoint stops deployment.
+(or a saved endpoint verified for the same tenant/workspace/subscription); discovery must find one matching
+project in the selected subscription. `HYDRO_AZURE_SUBSCRIPTION_ID` selects that subscription without changing
+the global CLI default; its tenant and enabled state are verified. `HYDRO_FOUNDRY_MODEL` selects a live model
+deployment; otherwise exactly one ready deployment advertising chat-completion capability must exist.
+No original demo endpoint, model name, model version, SKU or capacity is assumed.
+A new target-specific Foundry project/account and supporting resources are created only when no endpoint is
+selected and the operator explicitly opts in through the local form or `HYDRO_FOUNDRY_CREATE=true`.
+Creation requires available model/version/SKU/capacity inputs, exposed in both local forms and documented in
+the operator guide. An unresolved explicitly selected endpoint stops deployment rather than creating elsewhere.
+Every publish uses isolated generated azd state with live target identity; the tracked `azure.yaml` contains
+only an endpoint placeholder. Use a separate Foundry project for each concurrently hosted Fabric workspace,
+because explicitly reusing a project rebinds its stable `hydro-*` coordinator/connections.
 
 Separate Fabric IQ connections target the published Data Agent matching the live selected
 generation-2 ontology and the Ontology endpoint directly. The Data Agent keeps direct-table

@@ -305,6 +305,10 @@ operator/agent command line use the same deployment orchestrator. For the Foundr
 multi-agent setup and its one-step deployment (including the Hosted Agent), see
 [`docs/foundry-deployment-and-multi-agent-setup.md`](docs/foundry-deployment-and-multi-agent-setup.md). Manual portal work
 is limited to documented access/setup prerequisites and ontology-managed graph materialization.
+Deployment targets are not pinned to the original demo: select the tenant/workspace and Azure subscription,
+then supply or discover the target's Foundry project/model/registry. New project creation requires explicit
+model/version/SKU/capacity inputs; both local forms expose them. Generated endpoints, item GUIDs and azd state
+are resolved and verified for that target, not copied from another workspace.
 For agent responsibilities, routing, evidence-based RCA, proposed maintenance specialists,
 and the ten-flow acceptance status, see
 [`HydroOperationsApp/AGENT-ACCEPTANCE.md`](HydroOperationsApp/AGENT-ACCEPTANCE.md).

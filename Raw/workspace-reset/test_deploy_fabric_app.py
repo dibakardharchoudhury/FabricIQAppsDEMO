@@ -805,6 +805,22 @@ class DeployOrderTests(unittest.TestCase):
 
         reauthenticate.assert_not_called()
 
+    def test_tenant_domains_resolve_to_authoritative_guids_before_target_configuration(self):
+        tenant = "11111111-2222-3333-4444-555555555555"
+        with patch.object(DEPLOY.requests, "get") as get:
+            self.assertEqual(DEPLOY.resolve_tenant_id(tenant), tenant)
+            get.assert_not_called()
+            get.return_value.json.return_value = {"issuer": f"https://login.microsoftonline.com/{tenant}/v2.0"}
+            self.assertEqual(DEPLOY.resolve_tenant_id("example.onmicrosoft.com"), tenant)
+            get.assert_called_once_with(
+                "https://login.microsoftonline.com/example.onmicrosoft.com/v2.0/.well-known/openid-configuration",
+                timeout=30, allow_redirects=False,
+            )
+            for issuer in ("https://untrusted.example/" + tenant, "https://login.microsoftonline.com/common/v2.0", ""):
+                get.return_value.json.return_value = {"issuer": issuer}
+                with self.assertRaisesRegex(DEPLOY.DeployError, "authoritative Entra"):
+                    DEPLOY.resolve_tenant_id("example.onmicrosoft.com")
+
     def test_deploy_starts_with_the_users_current_azure_cli_session(self):
         args = argparse.Namespace(
             tenant="tenant-id",
@@ -917,6 +933,7 @@ class DeployOrderTests(unittest.TestCase):
                 DEPLOY,
                 "run_stream",
                 side_effect=[
+                    "environment validated",
                     "Hosting URL: https://fast.webapp.fabricapps.net",
                     "backend updated",
                     "live auth configured",
@@ -932,10 +949,11 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
-        self.assertEqual(run_stream.call_args_list[0].kwargs["env"]["RAYFIN_TOKEN"], "first")
-        self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
-        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[2].kwargs["env"])
+        self.assertIn("validate-env.mjs", " ".join(run_stream.call_args_list[0].args[0]))
+        self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
+        self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
+        self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[3].kwargs["env"])
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
 
     @patch.object(DEPLOY, "provision_foundry_agents")
@@ -968,7 +986,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "export_frontend_env"),
             patch.object(DEPLOY, "rayfin_environment", return_value={}),
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
-            patch.object(DEPLOY, "node24_script", return_value=["setup-live-auth"]),
+            patch.object(DEPLOY, "node24_script", side_effect=lambda script, *args: [script.stem]),
             patch.object(DEPLOY, "run_stream", return_value=f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(
                 DEPLOY.requests,
@@ -990,14 +1008,15 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 3)
+        self.assertEqual(run_stream.call_count, 4)
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
-        self.assertEqual(run_stream.call_args_list[0].args[0], ["up", "staticapp", "deploy"])
+        self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
+        self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(
-            run_stream.call_args_list[1].args[0],
+            run_stream.call_args_list[2].args[0],
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
-        self.assertEqual(run_stream.call_args_list[2].args[0], ["setup-live-auth"])
+        self.assertEqual(run_stream.call_args_list[3].args[0], ["setup-live-auth"])
         hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
         output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
         self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)
@@ -1525,6 +1544,40 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             "ontologyId": ontology_id,
             "graphModelId": graph_id,
         })
+        binding = {"workspaceId": self.workspace, "ontologyId": ontology_id, "graphModelId": "conflicting-graph"}
+        with patch.dict(DEPLOY.os.environ, {"HYDRO_ONTOLOGY_GRAPH_BINDING": json.dumps(binding)}):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "conflicts with authoritative"):
+                self.resolve()
+
+    def test_explicit_graph_binding_selects_the_ontology_on_a_fresh_target_without_editing_state(self):
+        self.items.extend([
+            {"id": "ontology-id", "type": "Ontology", "displayName": "Chosen ontology"},
+            {"id": "other-ontology", "type": "Ontology", "displayName": "Unrelated ontology"},
+            {"id": "graph-id", "type": "GraphModel", "displayName": "Operator verified graph"},
+        ])
+        self.details["ontology-id"] = {
+            "id": "ontology-id", "workspaceId": self.workspace, "properties": {"generation": 2},
+        }
+        self.details["downstream?beta=true"] = {"items": [], "relations": [], "workspaces": []}
+        binding = {"workspaceId": self.workspace, "ontologyId": "ontology-id", "graphModelId": "graph-id"}
+        old = {
+            **self.config, "RAYFIN_PUBLIC_WORKSPACE_ID": "old-workspace",
+            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({**binding, "workspaceId": "old-workspace"}),
+        }
+        with patch.dict(DEPLOY.os.environ, {"HYDRO_ONTOLOGY_GRAPH_BINDING": json.dumps(binding)}):
+            result = self.resolve(old)
+        self.assertEqual(json.loads(result["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"]), binding)
+        self.assertEqual(result["RAYFIN_PUBLIC_ONTOLOGY_NAME"], "Chosen ontology")
+
+    def test_old_workspace_graph_binding_is_not_reused_for_a_new_target(self):
+        old = {
+            **self.config, "RAYFIN_PUBLIC_WORKSPACE_ID": "old-workspace",
+            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({
+                "workspaceId": "old-workspace", "ontologyId": "old-ontology", "graphModelId": "old-graph",
+            }),
+        }
+        with patch.dict(DEPLOY.os.environ, {"HYDRO_ONTOLOGY_GRAPH_BINDING": ""}):
+            self.assertEqual(self.resolve(old)["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"], "")
 
     def test_stale_same_workspace_ontology_hint_rotates_to_authoritative_lineage(self):
         ontology_id = "ontology-v10"

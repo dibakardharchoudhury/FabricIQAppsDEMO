@@ -34,6 +34,32 @@ Validation: **251 deployment, launcher and ontology/agent contract tests passed*
 not a live deployment, project creation, signed-user multi-agent acceptance run or verification of the reported
 Fabric service fix. The prior same-build acceptance gates remain pending.
 
+### Follow-up: tenant/workspace portability
+
+The tracked `azure.yaml` no longer contains a live project endpoint. Every Hosted Agent publish uses isolated,
+endpoint-keyed generated azd state. Project creation state includes tenant, subscription and workspace identity.
+The selected subscription must be enabled in the Fabric tenant; tenant-domain inputs resolve to authoritative
+GUIDs before deployment. Saved endpoint/model hints are target-scoped and verified, and stale registry hints
+cannot select a registry outside the project's live connections.
+
+The demo model name/version/SKU/capacity defaults were removed. Existing projects select a verified deployment
+or discover one ready chat-capable deployment; creation requires explicit catalog/version/SKU/capacity values.
+Both local deployment forms expose these values, subscription selection and operator-verified graph-binding JSON.
+Unchecking creation explicitly overrides inherited opt-in; opting in without selecting an endpoint provisions a
+target-specific project rather than rebinding an unrelated existing project. Stable `hydro-*` role names remain
+application contracts; each concurrently hosted Fabric workspace needs a separate Foundry project.
+
+Environment validation now precedes fresh AppBackend bootstrap as well as image/app publication.
+The manual guide documents the same inputs and canonical engine, including Python dependency restore and the
+separate graph-materialization prerequisite. No generated state, historical redirects or cloud versions were deleted.
+
+Validation: a broader **261-test** deployment/ontology run passed, followed by a final **186-test**
+deployment/launcher regression run with the additional target-isolation and graph-binding cases.
+A browser fixture confirmed both forms enable/disable creation inputs and submit isolated subscription/model
+payloads; it did not call cloud deployment APIs. No new tenant/workspace deployment, billable project creation or
+signed-user runtime acceptance was performed. Portability remains subject to target permissions, service/region
+availability, quota, active capacity and portal materialization; it is not universal cloud/runtime certification.
+
 ## October 12 v77 canonical-prompt release
 
 Hosted Agent v77 is active from commit `30ee16e` on immutable image
