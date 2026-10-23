@@ -341,8 +341,13 @@ and cleans the context on either success or failure. The staged retry submitted 
 which succeeded in 2m19s; local Unicode log streaming then failed and temporary-directory cleanup
 encountered a Windows working-directory lock. The builder now waits with `--no-logs` and a
 20-minute remote build timeout, launching from the stable repository directory with absolute
-staged paths. Explicit **Seed & provision** still seeds demo data later. A final hosted/runtime
-retry is required.
+staged paths. The next actual local **Deploy app** retry reused the verified image and completed
+with `SUCCESS` at `https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net`
+(build 1.0.975, Hosted Agent v1). All 40 required SPA redirects were preserved; GraphQL, token
+and connector preflight/POST readiness passed. Normal Fabric browser sign-in then loaded three
+facilities, 15 equipment records and 90 instruments through the connector before SQL demo seeding.
+Explicit **Seed & provision** still seeds demo data later. Full runtime acceptance, including
+the target ontology's currently ineligible native graph, remains a separate gate.
 
 Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.
@@ -517,8 +522,9 @@ tenant and workspace selected in the sidebar:
    An empty tenant-scoped Azure CLI cache never shadows an existing signed-in identity:
    the engine selects a scoped cache only when its profile contains the target tenant,
    then still verifies the active account's exact tenant before changing Fabric state.
-   Child Python/Azure CLI processes use UTF-8 output as well, so streamed Unicode
-   container-build logs do not crash Windows deployment under a legacy console code page.
+   Child Python processes use UTF-8 output. ACR waits with `--no-logs` because the
+   Windows Azure CLI isolated interpreter can ignore Python encoding environment variables.
+   Run ID/status and image digest readback verify the build without Unicode log streaming.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send

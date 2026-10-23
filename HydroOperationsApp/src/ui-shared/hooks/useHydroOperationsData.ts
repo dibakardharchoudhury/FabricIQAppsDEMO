@@ -336,7 +336,7 @@ function useHydroOperationsDataController() {
         setProvisionState('complete')
         writePersistedSetup({ provisioned: true })
         await loadOperationalData()
-        setNotice('Operational data re-seeded and Fabric provisioning complete. Checking STID publication...')
+        setNotice('Operational data re-seeded and Fabric provisioning complete. Connecting Lakehouse STID...')
       } else {
         setNotice(`Fabric provisioning ${humanStatus(status).toLowerCase()}.`)
       }
