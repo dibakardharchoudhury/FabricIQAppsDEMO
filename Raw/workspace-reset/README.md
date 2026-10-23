@@ -310,8 +310,11 @@ same-Lakehouse SQL-source representation probes did not clear that validation. O
 task-modified source parts and notebook functions were then restored and verified; no source
 retarget, speculative authoring change, or graph fallback was retained. The FEATURE application
 has not been deployed or runtime-accepted. Reusing the existing Foundry project would also
-rebind its stable workspace connections; resolve the documented project-isolation choice before
-publishing another concurrently hosted workspace. All 48 pre-existing ARM resource IDs across
+rebind its stable workspace connections; use an isolated target-specific project before publishing
+another concurrently hosted workspace. Missing native graph binding now stops the app engine before
+AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.
+This guard does not make ineligible entities eligible or certify nonempty topology from binding
+JSON alone. All 48 pre-existing ARM resource IDs across
 the two subscriptions were rechecked and remained present.
 
 The Git sync verifies that

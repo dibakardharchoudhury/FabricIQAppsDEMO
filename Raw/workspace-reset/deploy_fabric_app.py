@@ -1953,6 +1953,16 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
 
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
+    values, _ = current_rayfin_target()
+    if not _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"):
+        raise DeployError(
+            "Native Ontology graph binding is missing. In the selected generation-2 Ontology, use "
+            "Manage graph -> select eligible entities/relationships -> Continue -> Materialize, then "
+            "supply authoritative lineage or operator-verified HYDRO_ONTOLOGY_GRAPH_BINDING JSON. "
+            "Ineligible entities or a zero-node materialization do not satisfy this prerequisite. "
+            "Stopped before AppBackend or Foundry provisioning."
+        )
+    ensure_appbackend_identity(tenant, workspace_id)
     foundry_spec = importlib.util.spec_from_file_location(
         "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
     )
@@ -2009,7 +2019,6 @@ def deploy(args: argparse.Namespace) -> None:
     )
     ensure_deploy_dependencies()
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
-    ensure_appbackend_identity(args.tenant, workspace_id)
     provision_foundry_agents(args.tenant, workspace_id)
 
     print("[4/8] Authenticating Rayfin to the target tenant", flush=True)

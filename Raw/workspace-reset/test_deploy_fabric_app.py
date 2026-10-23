@@ -77,6 +77,43 @@ def protected_hosting_gate(workspace="workspace-id", item="appbackend-id", tenan
     )
 
 
+class FoundryGraphPrerequisiteTests(unittest.TestCase):
+    def test_missing_graph_binding_stops_before_loading_foundry_provisioning(self):
+        for binding in ("", "''", '""'):
+            with (
+                self.subTest(binding=binding),
+                patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                    {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+                )),
+                patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+                patch.object(
+                    DEPLOY.importlib.util, "spec_from_file_location",
+                    side_effect=AssertionError("Foundry provisioning must not load without a graph binding."),
+                ),
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "Native Ontology graph binding is missing"):
+                    DEPLOY.provision_foundry_agents("tenant", "workspace")
+                backend.assert_not_called()
+
+    def test_existing_binding_continues_to_the_existing_foundry_provisioner(self):
+        binding = json.dumps({
+            "workspaceId": "workspace", "ontologyId": "ontology", "graphModelId": "graph",
+        })
+        foundry = Mock()
+        with (
+            patch.object(DEPLOY, "current_rayfin_target", return_value=(
+                {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
+            )),
+            patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+            patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
+            patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
+            patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
+        ):
+            DEPLOY.provision_foundry_agents("tenant", "workspace")
+        backend.assert_called_once_with("tenant", "workspace")
+        foundry.provision.assert_called_once_with(DEPLOY, "tenant", "workspace")
+
+
 class DeployOrderTests(unittest.TestCase):
     def test_inactive_capacity_stops_before_configuration_changes(self):
         workspace = "11111111-1111-1111-1111-111111111111"

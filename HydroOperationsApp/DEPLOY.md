@@ -184,6 +184,9 @@ success is point-in-time evidence, not an availability guarantee.
 3. In the selected verified v2 ontology, use **Manage graph -> select eligible
    entities/relationships -> Continue -> Materialize**. The app requires authoritative item
    lineage or an explicit operator-verified graph binding. This is not unattended REST deployment.
+   Missing graph binding stops the canonical engine before AppBackend/Foundry provisioning.
+   A portal status of Complete with zero materialized nodes/edges is not usable graph readiness;
+   resolve ineligible/unsupported source types rather than inventing a binding.
 4. For a fresh environment, finish **Seed & provision** and start the telemetry stream.
    Verify real source timestamps, not just a connected badge.
 5. Require `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it. Hosting readiness,
