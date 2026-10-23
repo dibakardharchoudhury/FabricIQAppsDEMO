@@ -98,6 +98,15 @@ skipping because of the previous result. No code switch or workspace reset is ne
 for exact status keys, preservation guarantees and separate acceptance gates.
 NB10 leaves both Operations Agents stopped; configuration does not prove delivery.
 
+The ontology-backed agent now uses the October 23 working playbook: two SQL/KQL-grounded
+BAD/UNCERTAIN rules, `Id` mapped from `opcua_node_id`, and direct email action bindings.
+The Knowledge source remains the verified v2 ontology. The notebook resolves the target
+Lakehouse SQL endpoint and KQL database query URI from Fabric, rather than copying endpoints
+from the reference workspace. This requires the target Lakehouse SQL endpoint to be ready.
+All copies of the queries in the playbook's grounding definitions are rebound together.
+The imported conditions remain state-based; **no 15-minute cooldown is implemented**.
+See the [alert policy guidance](../../docs/foundry-deployment-and-multi-agent-setup.md#operations-agent-playbook-and-alert-frequency).
+
 The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
 agent when an operator chooses portal generation. The default remains `true`. RTI_010 also deploys
 the Eventhouse-backed agent with its separately generated and verified OPCUAEvents KQL playbook:

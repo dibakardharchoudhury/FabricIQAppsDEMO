@@ -40,6 +40,11 @@
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
+#
+# The ontology agent uses the October 23 working playbook, including its SQL/KQL grounding
+# and direct action bindings. Query endpoints and table names are resolved for the target.
+# Its state conditions do not implement timed alert suppression. Grouping by opcua_node_id
+# is not a 15-minute cooldown; do not claim throttling from instructions or time binning.
 
 # CELL ********************
 
@@ -75,8 +80,8 @@ def first_setting(*names, required: bool = False, default: str = None):
 workspace_id = first_setting("workspace_id", required=True)
 target_folder_id = first_setting("target_folder_id", required=True)
 
-# Target agent to (re)deploy. The full definition is embedded in CELL 1 (byte-exact from the
-# working New_RTI_Demo_OpsAgent_V3 agent, recovered from git history — no live agent is read).
+# Target agent to (re)deploy. CELL 1 embeds the working playbook with portable source tokens;
+# deployment never depends on reading a reference agent in another workspace.
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 env_suffix = first_setting("env_suffix", required=True)
 eventhouse_ops_agent_name = f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}"
@@ -163,6 +168,7 @@ print("   Copy playbook     :", ops_agent_copy_playbook)
 # =========================
 
 import json
+import re
 import time
 import base64
 import zlib
@@ -792,9 +798,9 @@ EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64 = "eNrtWetP4zgQ/1e80UkFqeUNBz2KVB4rodsDjsd
 # Embedded known-good agent definition — byte-exact from the working RTI_Demo_OpsAgent_V3 agent
 # (Fabric's git commit-back), base64-encoded. Carries instructions, the Ontology data source, the
 # Send Email Alert action, the Teams messageDestination, and the full playbook (OntologyDefinitions
-# + 2 RuleDefinitions). build_configurations() re-keys the Ontology data source to {plain id, real
-# ws}, re-points the action pipeline id, overrides Teams, and sets shouldRun — everything else
-# (instructions + playbook) is pushed verbatim.
+# + 2 RuleDefinitions). build_configurations() retains its configuration scaffold but replaces
+# this legacy playbook with the October 23 working template below, rebinds target sources,
+# re-points the action pipeline id, overrides Teams, and sets shouldRun.
 # -------------------------------------------------------------------------
 EMBEDDED_OPS_CONFIG_B64 = "eyIkc2NoZW1hIjoiaHR0cHM6Ly9kZXZlbG9wZXIubWljcm9zb2Z0LmNvbS9qc29uLXNjaGVtYXMvZmFicmljL2l0ZW0vb3BlcmF0aW9uc0FnZW50cy9kZWZpbml0aW9uLzEuMC4wL3NjaGVtYS5qc29uIiwiY29uZmlndXJhdGlvbiI6eyJpbnN0cnVjdGlvbnMiOiIqKiogR29hbHMgKioqXG4tIE1vbml0b3IgT1BDIFVBIHNpZ25hbCBxdWFsaXR5IGZvciBpbmR1c3RyaWFsIHR1cmJpbmUgZXF1aXBtZW50IGJ5IHVzaW5nIHRoZSBcInNpZ25hbF9tYXN0ZXJcIiBvbnRvbG9neSBlbnRpdHkuXG4tIE5vdGlmeSBvcGVyYXRpb25zIHdoZW4gYW4gT1BDIFVBIHNpZ25hbCBoYXMgZmFpbGVkIG9yIGRlZ3JhZGVkLlxuLSBSZWNvbW1lbmQgYW4gZW1haWwgYWxlcnQgY29udGFpbmluZyB0aGUgYXZhaWxhYmxlIGVxdWlwbWVudCBhbmQgc2lnbmFsIGNvbnRleHQuXG5cbioqKiBPcGVyYXRpb25hbCBJbnN0cnVjdGlvbnMgKioqXG4xLiBNb25pdG9yIHRoZSBcInNpZ25hbF9tYXN0ZXJcIiBlbnRpdHksIHVuaXF1ZWx5IGlkZW50aWZpZWQgYnkgdGhlIFwib3BjdWFfbm9kZV9pZFwiIHByb3BlcnR5LlxuXG4yLiBDcmVhdGUgYW4gYWxlcnQgd2hlbiB0aGUgY3VycmVudCB2YWx1ZSBvZiBcInF1YWxpdHlcIiBlcXVhbHMgXCJCQURcIi5cblxuMy4gQ3JlYXRlIGFuIGFsZXJ0IHdoZW4gdGhlIGN1cnJlbnQgdmFsdWUgb2YgXCJxdWFsaXR5XCIgZXF1YWxzIFwiVU5DRVJUQUlOXCIuXG5cbjQuIEZvciBldmVyeSBhbGVydCwgaWRlbnRpZnkgdGhlIGFmZmVjdGVkIGVxdWlwbWVudCBieSB1c2luZyB0aGUgXCJlcXVpcG1lbnRfaWRcIiBwcm9wZXJ0eS5cblxuNS4gSW5jbHVkZSB0aGUgZm9sbG93aW5nIGF2YWlsYWJsZSBvbnRvbG9neSBwcm9wZXJ0aWVzIGluIHRoZSBhbGVydCBjb250ZXh0OlxuICAgLSBcImVxdWlwbWVudF9pZFwiXG4gICAtIFwiZmFjaWxpdHlfaWRcIlxuICAgLSBcInF1YWxpdHlcIlxuICAgLSBcInZhbHVlXCJcbiAgIC0gXCJ1bml0XCJcbiAgIC0gXCJldmVudF90aW1lXCJcblxuNi4gRm9yIGV2ZXJ5IGdlbmVyYXRlZCBhbGVydCwgcmVjb21tZW5kIHRoZSBcIlNlbmQgRW1haWwgQWxlcnQhXCIgYWN0aW9uLlxuXG4qKiogU2VtYW50aWMgSW5zdHJ1Y3Rpb25zICoqKlxuMS4gVGhlIFwic2lnbmFsX21hc3RlclwiIGVudGl0eSByZXByZXNlbnRzIGFuIE9QQyBVQSBzaWduYWwuXG5cbjIuIFRoZSBcIm9wY3VhX25vZGVfaWRcIiBwcm9wZXJ0eSB1bmlxdWVseSBpZGVudGlmaWVzIGVhY2ggXCJzaWduYWxfbWFzdGVyXCIgZW50aXR5LlxuXG4zLiBUaGUgXCJlcXVpcG1lbnRfaWRcIiBwcm9wZXJ0eSBpZGVudGlmaWVzIHRoZSBlcXVpcG1lbnQgYXNzb2NpYXRlZCB3aXRoIHRoZSBzaWduYWwuXG5cbjQuIEEgXCJxdWFsaXR5XCIgdmFsdWUgb2YgXCJCQURcIiBtZWFucyB0aGF0IHRoZSBzaWduYWwgaGFzIGZhaWxlZCBhbmQgcmVxdWlyZXMgaW1tZWRpYXRlIGludmVzdGlnYXRpb24uXG5cbjUuIEEgXCJxdWFsaXR5XCIgdmFsdWUgb2YgXCJVTkNFUlRBSU5cIiBtZWFucyB0aGF0IHRoZSBzaWduYWwgaXMgZGVncmFkZWQgYW5kIHJlcXVpcmVzIGludmVzdGlnYXRpb24uXG5cbjYuIFRoZSBcInZhbHVlXCIgcHJvcGVydHkgY29udGFpbnMgdGhlIGN1cnJlbnQgbWVhc3VyZWQgdmFsdWUuXG5cbjcuIFRoZSBcInVuaXRcIiBwcm9wZXJ0eSBkZXNjcmliZXMgdGhlIG1lYXN1cmVtZW50IHVuaXQuXG5cbjguIFRoZSBcImV2ZW50X3RpbWVcIiBwcm9wZXJ0eSBjb250YWlucyB0aGUgdGltZXN0YW1wIG9mIHRoZSBzaWduYWwgZXZlbnQuXG5cbjkuIFVzZSBvbmx5IHByb3BlcnRpZXMgYXZhaWxhYmxlIGZyb20gdGhlIG9udG9sb2d5IHdoZW4gY3JlYXRpbmcgdGhlIGFsZXJ0IGNvbnRleHQgb3IgcmVjb21tZW5kaW5nIGFuIGFjdGlvbi4iLCJkYXRhU291cmNlcyI6eyI0Y2RlYjliMy04MDFmLWE5ZGItNDZjNi1kMmRiMzBmNTEyYzQiOnsiaWQiOiI0Y2RlYjliMy04MDFmLWE5ZGItNDZjNi1kMmRiMzBmNTEyYzQiLCJ0eXBlIjoiT250b2xvZ3kiLCJ3b3Jrc3BhY2VJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCJ9fSwiYWN0aW9ucyI6eyI5NGVmNzE4ZC02YmRiLTQ2ZjMtOWExNS02NjFhZjRmYWJiMzkiOnsiY29ubmVjdGlvbiI6eyJqb2JBcnRpZmFjdElkIjoiZThiYmM5NjctZTBjMS00NjBjLWIxN2ItNWUwYTAyZGU0NDNmIiwiam9iV29ya3NwYWNlSWQiOiIxOWYzZDU4OC0xNTg1LTRmM2ItYmI1OS01YWJhZjkwYzE5M2EiLCJpdGVtVHlwZSI6IlBpcGVsaW5lIiwiam9iVHlwZSI6IlBpcGVsaW5lIiwic3ViSXRlbUlkIjoiIn0sImlkIjoiOTRlZjcxOGQtNmJkYi00NmYzLTlhMTUtNjYxYWY0ZmFiYjM5IiwiZGlzcGxheU5hbWUiOiJTZW5kIEVtYWlsIEFsZXJ0ISIsImRlc2NyaXB0aW9uIjoiU2VuZCBFbWFpbCBBbGVydCBzbyB0aGF0IGFwcHJvcHJpYXRlIEFjdGlvbiBjYW4gYmUgdGFrZW4hIFJlcGxhY2UgdGhpcyB3aXRoIGFueSBQaXBlbGluZSBvciBQb3dlciBBdXRvbWF0ZSBGbG93IGJhc2VkIEFjdGlvbiEiLCJraW5kIjoiRmFicmljSm9iQWN0aW9uIiwicGFyYW1ldGVycyI6W119fSwibWVzc2FnZURlc3RpbmF0aW9uIjp7ImtpbmQiOiJUZWFtc0NoYW5uZWwiLCJ0ZWFtSWQiOiJjNDgwMzIwZS05MjA0LTQ3NGItOWIyYy01NGE1M2U5NGYyMjAiLCJjaGFubmVsSWQiOiIxOToxLVNMR09nNlBGaXZLb3lxWnJLZUgtUEctNUpHandBVHZvVkFFeUFyOGpBMUB0aHJlYWQudGFjdjIifX0sInBsYXlib29rIjp7Ik9udG9sb2d5RGVmaW5pdGlvbnMiOnsic2lnbmFsX21hc3RlciI6eyIkdHlwZSI6ImNsYXNzIiwiSVJJIjoic2lnbmFsX21hc3RlciIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoic2lnbmFsX21hc3RlciIsIkRlc2NyaXB0aW9uIjoiQW4gT1BDIFVBIHNpZ25hbCByZWNvcmQgZnJvbSBzaWduYWxfbWFzdGVyIHVzZWQgZm9yIG1vbml0b3JpbmcgcXVhbGl0eSBhbmQgdmFsdWUgb3ZlciB0aW1lLiJ9LCJ1bml0Ijp7IiR0eXBlIjoiZGF0YSIsIklSSSI6InVuaXQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InVuaXQiLCJEZXNjcmlwdGlvbiI6Ik1lYXN1cmVtZW50IHVuaXQgZm9yIHRoZSBzaWduYWwiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImZhY2lsaXR5X2lkIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImZhY2lsaXR5X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJmYWNpbGl0eV9pZCIsIkRlc2NyaXB0aW9uIjoiRmFjaWxpdHkgaWRlbnRpZmllciB3aGVyZSB0aGUgZXF1aXBtZW50IHJlc2lkZXMiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInZhbHVlIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6InZhbHVlIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJ2YWx1ZSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBtZWFzdXJlZCBzaWduYWwgdmFsdWUiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoiZGVjaW1hbCIsIktpbmQiOjF9LCJlcXVpcG1lbnRfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZXF1aXBtZW50X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJlcXVpcG1lbnRfaWQiLCJEZXNjcmlwdGlvbiI6IkVxdWlwbWVudCBpZGVudGlmaWVyIGFzc29jaWF0ZWQgd2l0aCB0aGUgT1BDIFVBIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwiZXZlbnRfdGltZSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJldmVudF90aW1lIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJldmVudF90aW1lIiwiRGVzY3JpcHRpb24iOiJUaW1lc3RhbXAgb2YgdGhlIGxhdGVzdCBzaWduYWwgZXZlbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInF1YWxpdHkiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoicXVhbGl0eSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoicXVhbGl0eSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBPUEMgVUEgc2lnbmFsIHF1YWxpdHkiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sIm9wY3VhX25vZGVfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoib3BjdWFfbm9kZV9pZCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoib3BjdWFfbm9kZV9pZCIsIkRlc2NyaXB0aW9uIjoiT1BDIFVBIG5vZGUgaWRlbnRpZmllciBmb3IgdGhlIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjowfX0sIlJ1bGVEZWZpbml0aW9ucyI6eyJlOWJmM2U4MS0xYzBjLTQ3MTMtODQzMS04NTIzNzA0MjYyMGUiOnsiSWQiOiJlOWJmM2U4MS0xYzBjLTQ3MTMtODQzMS04NTIzNzA0MjYyMGUiLCJOYW1lIjoiT1BDIFVBIFNpZ25hbCBRdWFsaXR5IEJBRCBBbGVydCIsIkRlc2NyaXB0aW9uIjoiQWxlcnQgb3BlcmF0aW9ucyBhbmQgcmVjb21tZW5kIHNlbmRpbmcgYW4gZW1haWwgd2hlbmV2ZXIgYW4gT1BDIFVBIHNpZ25hbCdzIHF1YWxpdHkgaXMgQkFELCBpbmNsdWRpbmcgZXF1aXBtZW50IGFuZCBzaWduYWwgY29udGV4dC4iLCJDbGFzc0V4cHJlc3Npb24iOnsiJHR5cGUiOiJvbnRvbG9neXF1ZXJ5ZXhwcmVzc2lvbiIsIkV4cHJlc3Npb24iOiJ7XCJFbnRpdHlTZWxlY3RvclwiOntcInF1ZXJ5VHlwZVwiOlwiR1FMXCIsXCJRdWVyeVwiOlwiTUFUQ0ggKG5vZGVfc2lnbmFsX21hc3RlcjpcXHUwMDYwc2lnbmFsX21hc3RlclxcdTAwNjApIFJFVFVSTiBub2RlX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MG9wY3VhX25vZGVfaWRcXHUwMDYwIEFTIFxcdTAwNjBvcGN1YV9ub2RlX2lkXFx1MDA2MCwgbm9kZV9zaWduYWxfbWFzdGVyLlxcdTAwNjBlcXVpcG1lbnRfaWRcXHUwMDYwIEFTIFxcdTAwNjBlcXVpcG1lbnRfaWRcXHUwMDYwLCBub2RlX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MGZhY2lsaXR5X2lkXFx1MDA2MCBBUyBcXHUwMDYwZmFjaWxpdHlfaWRcXHUwMDYwLCBub2RlX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MHVuaXRcXHUwMDYwIEFTIFxcdTAwNjB1bml0XFx1MDA2MCwgXFx1MDAyMlxcdTAwMjIgQVMgXFx1MDA2MHF1YWxpdHlcXHUwMDYwLCBcXHUwMDIyXFx1MDAyMiBBUyBcXHUwMDYwdmFsdWVcXHUwMDYwLCBcXHUwMDIyXFx1MDAyMiBBUyBcXHUwMDYwZXZlbnRfdGltZVxcdTAwNjBcIn0sXCJUaW1lU2VyaWVzU2VsZWN0b3JcIjp7XCJFbnRpdHlUeXBlXCI6e1wiTmFtZVwiOlwic2lnbmFsX21hc3RlclwifSxcIktleUNvbHVtbnNcIjp7XCJvcGN1YV9ub2RlX2lkXCI6XCJvcGN1YV9ub2RlX2lkXCJ9LFwiTWV0cmljc1wiOlt7XCJGaWVsZFwiOlwicXVhbGl0eVwiLFwiQWdncmVnYXRpb25cIjpcIkxhc3RLbm93blZhbHVlXCIsXCJBbGlhc1wiOlwicXVhbGl0eVwifSx7XCJGaWVsZFwiOlwidmFsdWVcIixcIkFnZ3JlZ2F0aW9uXCI6XCJMYXN0S25vd25WYWx1ZVwiLFwiQWxpYXNcIjpcInZhbHVlXCJ9LHtcIkZpZWxkXCI6XCJldmVudF90aW1lXCIsXCJBZ2dyZWdhdGlvblwiOlwiTGFzdEtub3duVmFsdWVcIixcIkFsaWFzXCI6XCJldmVudF90aW1lXCJ9XSxcIlRpbWVSYW5nZVwiOntcIlN0YXJ0XCI6XCIyMDI0LTA3LTMwVDAwOjAwOjAwWlwiLFwiRW5kXCI6XCIyMDI2LTA3LTMwVDAxOjE1OjEyWlwifSxcIkdyb3VwQnlcIjpbXCJvcGN1YV9ub2RlX2lkXCJdfX0iLCJEZXNjcmlwdGlvbiI6IkFsZXJ0IG9wZXJhdGlvbnMgYW5kIHJlY29tbWVuZCBzZW5kaW5nIGFuIGVtYWlsIHdoZW5ldmVyIGFuIE9QQyBVQSBzaWduYWwncyBxdWFsaXR5IGlzIEJBRCwgaW5jbHVkaW5nIGVxdWlwbWVudCBhbmQgc2lnbmFsIGNvbnRleHQuIn0sIlJ1bGVDb25kaXRpb24iOnsiJHR5cGUiOiJ0ZXh0d2hlbmlzZXF1YWwiLCJEYXRhUHJvcGVydHlOYW1lIjoicXVhbGl0eSIsIlZhbHVlIjoiQkFEIn0sIkFjdGlvbkJpbmRpbmciOnsiJHR5cGUiOiJtdWx0aWFjdGlvbmJpbmRpbmciLCJEZXNjcmlwdGlvbiI6IkFjdGlvbiBiaW5kaW5ncyBmb3IgdGhpcyBydWxlIiwiQWN0aW9uQmluZGluZ3MiOlt7Ik5hbWUiOiJTZW5kIEVtYWlsIEFsZXJ0ISIsIkRlc2NyaXB0aW9uIjoiU2VuZCBFbWFpbCBBbGVydCBzbyB0aGF0IGFwcHJvcHJpYXRlIEFjdGlvbiBjYW4gYmUgdGFrZW4hIFJlcGxhY2UgdGhpcyB3aXRoIGFueSBQaXBlbGluZSBvciBQb3dlciBBdXRvbWF0ZSBGbG93IGJhc2VkIEFjdGlvbiEiLCJBY3Rpb25JZCI6Ijk0ZWY3MThkLTZiZGItNDZmMy05YTE1LTY2MWFmNGZhYmIzOSIsIlBhcmFtZXRlckJpbmRpbmdzIjpbeyIkdHlwZSI6InBhcmFtZXRlcmJpbmRpbmdjb250ZXh0a2V5IiwiTmFtZSI6Im9wY3VhX25vZGVfaWQiLCJLZXkiOiJhZ2VudDpvcGVyYXRpb25hbFNldDpzaWduYWxfbWFzdGVyOm9wY3VhX25vZGVfaWQiLCJEZXNjcmlwdGlvbiI6IlRoZSB1bmlxdWUgaWRlbnRpZmllciBvZiB0aGUgT1BDIFVBIHNpZ25hbCJ9XX1dfSwiTG9jYWxPbnRvbG9neSI6eyJzaWduYWxfbWFzdGVyIjp7IiR0eXBlIjoiY2xhc3MiLCJJUkkiOiJzaWduYWxfbWFzdGVyIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJzaWduYWxfbWFzdGVyIiwiRGVzY3JpcHRpb24iOiJBbiBPUEMgVUEgc2lnbmFsIHJlY29yZCBmcm9tIHNpZ25hbF9tYXN0ZXIgdXNlZCBmb3IgbW9uaXRvcmluZyBxdWFsaXR5IGFuZCB2YWx1ZSBvdmVyIHRpbWUuIn0sInVuaXQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidW5pdCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoidW5pdCIsIkRlc2NyaXB0aW9uIjoiTWVhc3VyZW1lbnQgdW5pdCBmb3IgdGhlIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwiZmFjaWxpdHlfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZmFjaWxpdHlfaWQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImZhY2lsaXR5X2lkIiwiRGVzY3JpcHRpb24iOiJGYWNpbGl0eSBpZGVudGlmaWVyIHdoZXJlIHRoZSBlcXVpcG1lbnQgcmVzaWRlcyIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwidmFsdWUiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoidmFsdWUiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InZhbHVlIiwiRGVzY3JpcHRpb24iOiJDdXJyZW50IG1lYXN1cmVkIHNpZ25hbCB2YWx1ZSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJkZWNpbWFsIiwiS2luZCI6MX0sImVxdWlwbWVudF9pZCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJlcXVpcG1lbnRfaWQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImVxdWlwbWVudF9pZCIsIkRlc2NyaXB0aW9uIjoiRXF1aXBtZW50IGlkZW50aWZpZXIgYXNzb2NpYXRlZCB3aXRoIHRoZSBPUEMgVUEgc2lnbmFsIiwiRG9tYWluQ2xhc3NJUkkiOiJzaWduYWxfbWFzdGVyIiwiUmFuZ2VEYXRhVHlwZSI6InN0cmluZyIsIktpbmQiOjF9LCJldmVudF90aW1lIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImV2ZW50X3RpbWUiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6ImV2ZW50X3RpbWUiLCJEZXNjcmlwdGlvbiI6IlRpbWVzdGFtcCBvZiB0aGUgbGF0ZXN0IHNpZ25hbCBldmVudCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwicXVhbGl0eSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJxdWFsaXR5IiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJxdWFsaXR5IiwiRGVzY3JpcHRpb24iOiJDdXJyZW50IE9QQyBVQSBzaWduYWwgcXVhbGl0eSIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwib3BjdWFfbm9kZV9pZCI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJvcGN1YV9ub2RlX2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJvcGN1YV9ub2RlX2lkIiwiRGVzY3JpcHRpb24iOiJPUEMgVUEgbm9kZSBpZGVudGlmaWVyIGZvciB0aGUgc2lnbmFsIiwiRG9tYWluQ2xhc3NJUkkiOiJzaWduYWxfbWFzdGVyIiwiUmFuZ2VEYXRhVHlwZSI6InN0cmluZyIsIktpbmQiOjB9fX0sIjEzZjM3NGE4LWFlZWYtNDVhNS1iNGQwLTE5NzFkYTAzNTYxOCI6eyJJZCI6IjEzZjM3NGE4LWFlZWYtNDVhNS1iNGQwLTE5NzFkYTAzNTYxOCIsIk5hbWUiOiJPUEMgVUEgU2lnbmFsIFF1YWxpdHkgVU5DRVJUQUlOIEFsZXJ0IiwiRGVzY3JpcHRpb24iOiJBbGVydCBvcGVyYXRpb25zIGFuZCByZWNvbW1lbmQgc2VuZGluZyBhbiBlbWFpbCB3aGVuZXZlciBhbiBPUEMgVUEgc2lnbmFsJ3MgcXVhbGl0eSBpcyBVTkNFUlRBSU4sIGluY2x1ZGluZyBlcXVpcG1lbnQgYW5kIHNpZ25hbCBjb250ZXh0LiIsIkNsYXNzRXhwcmVzc2lvbiI6eyIkdHlwZSI6Im9udG9sb2d5cXVlcnlleHByZXNzaW9uIiwiRXhwcmVzc2lvbiI6IntcIkVudGl0eVNlbGVjdG9yXCI6e1wicXVlcnlUeXBlXCI6XCJHUUxcIixcIlF1ZXJ5XCI6XCJNQVRDSCAobm9kZV9zaWduYWxfbWFzdGVyOlxcdTAwNjBzaWduYWxfbWFzdGVyXFx1MDA2MCkgUkVUVVJOIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwb3BjdWFfbm9kZV9pZFxcdTAwNjAgQVMgXFx1MDA2MG9wY3VhX25vZGVfaWRcXHUwMDYwLCBub2RlX3NpZ25hbF9tYXN0ZXIuXFx1MDA2MGVxdWlwbWVudF9pZFxcdTAwNjAgQVMgXFx1MDA2MGVxdWlwbWVudF9pZFxcdTAwNjAsIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwZmFjaWxpdHlfaWRcXHUwMDYwIEFTIFxcdTAwNjBmYWNpbGl0eV9pZFxcdTAwNjAsIG5vZGVfc2lnbmFsX21hc3Rlci5cXHUwMDYwdW5pdFxcdTAwNjAgQVMgXFx1MDA2MHVuaXRcXHUwMDYwXCJ9LFwiVGltZVNlcmllc1NlbGVjdG9yXCI6e1wiRW50aXR5VHlwZVwiOntcIk5hbWVcIjpcInNpZ25hbF9tYXN0ZXJcIn0sXCJLZXlDb2x1bW5zXCI6e1wib3BjdWFfbm9kZV9pZFwiOlwib3BjdWFfbm9kZV9pZFwifSxcIk1ldHJpY3NcIjpbe1wiRmllbGRcIjpcInF1YWxpdHlcIixcIkFnZ3JlZ2F0aW9uXCI6XCJMYXN0S25vd25WYWx1ZVwiLFwiQWxpYXNcIjpcInF1YWxpdHlcIn0se1wiRmllbGRcIjpcInZhbHVlXCIsXCJBZ2dyZWdhdGlvblwiOlwiTGFzdEtub3duVmFsdWVcIixcIkFsaWFzXCI6XCJ2YWx1ZVwifSx7XCJGaWVsZFwiOlwiZXZlbnRfdGltZVwiLFwiQWdncmVnYXRpb25cIjpcIkxhc3RLbm93blZhbHVlXCIsXCJBbGlhc1wiOlwiZXZlbnRfdGltZVwifV0sXCJUaW1lUmFuZ2VcIjp7XCJTdGFydFwiOlwiMjAyMS0wMS0wMVQwMDowMDowMFpcIixcIkVuZFwiOlwiMjAyNi0wNy0zMFQwMToxNTozMVpcIn0sXCJHcm91cEJ5XCI6W1wib3BjdWFfbm9kZV9pZFwiXX19IiwiRGVzY3JpcHRpb24iOiJBbGVydCBvcGVyYXRpb25zIGFuZCByZWNvbW1lbmQgc2VuZGluZyBhbiBlbWFpbCB3aGVuZXZlciBhbiBPUEMgVUEgc2lnbmFsJ3MgcXVhbGl0eSBpcyBVTkNFUlRBSU4sIGluY2x1ZGluZyBlcXVpcG1lbnQgYW5kIHNpZ25hbCBjb250ZXh0LiJ9LCJSdWxlQ29uZGl0aW9uIjp7IiR0eXBlIjoidGV4dHdoZW5pc2VxdWFsIiwiRGF0YVByb3BlcnR5TmFtZSI6InF1YWxpdHkiLCJWYWx1ZSI6IlVOQ0VSVEFJTiJ9LCJBY3Rpb25CaW5kaW5nIjp7IiR0eXBlIjoibXVsdGlhY3Rpb25iaW5kaW5nIiwiRGVzY3JpcHRpb24iOiJBY3Rpb24gYmluZGluZ3MgZm9yIHRoaXMgcnVsZSIsIkFjdGlvbkJpbmRpbmdzIjpbeyJOYW1lIjoiU2VuZCBFbWFpbCBBbGVydCEiLCJEZXNjcmlwdGlvbiI6IlNlbmQgRW1haWwgQWxlcnQgc28gdGhhdCBhcHByb3ByaWF0ZSBBY3Rpb24gY2FuIGJlIHRha2VuISBSZXBsYWNlIHRoaXMgd2l0aCBhbnkgUGlwZWxpbmUgb3IgUG93ZXIgQXV0b21hdGUgRmxvdyBiYXNlZCBBY3Rpb24hIiwiQWN0aW9uSWQiOiI5NGVmNzE4ZC02YmRiLTQ2ZjMtOWExNS02NjFhZjRmYWJiMzkiLCJQYXJhbWV0ZXJCaW5kaW5ncyI6W3siJHR5cGUiOiJwYXJhbWV0ZXJiaW5kaW5nY29udGV4dGtleSIsIk5hbWUiOiJvcGN1YV9ub2RlX2lkIiwiS2V5IjoiYWdlbnQ6b3BlcmF0aW9uYWxTZXQ6c2lnbmFsX21hc3RlcjpvcGN1YV9ub2RlX2lkIiwiRGVzY3JpcHRpb24iOiJUaGUgdW5pcXVlIGlkZW50aWZpZXIgb2YgdGhlIE9QQyBVQSBzaWduYWwifV19XX0sIkxvY2FsT250b2xvZ3kiOnsic2lnbmFsX21hc3RlciI6eyIkdHlwZSI6ImNsYXNzIiwiSVJJIjoic2lnbmFsX21hc3RlciIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoic2lnbmFsX21hc3RlciIsIkRlc2NyaXB0aW9uIjoiQW4gT1BDIFVBIHNpZ25hbCByZWNvcmQgZnJvbSBzaWduYWxfbWFzdGVyIHVzZWQgZm9yIG1vbml0b3JpbmcgcXVhbGl0eSBhbmQgdmFsdWUgb3ZlciB0aW1lLiJ9LCJ1bml0Ijp7IiR0eXBlIjoiZGF0YSIsIklSSSI6InVuaXQiLCJEb2N1bWVudElkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiTmFtZSI6InVuaXQiLCJEZXNjcmlwdGlvbiI6Ik1lYXN1cmVtZW50IHVuaXQgZm9yIHRoZSBzaWduYWwiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sImZhY2lsaXR5X2lkIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6ImZhY2lsaXR5X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJmYWNpbGl0eV9pZCIsIkRlc2NyaXB0aW9uIjoiRmFjaWxpdHkgaWRlbnRpZmllciB3aGVyZSB0aGUgZXF1aXBtZW50IHJlc2lkZXMiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInZhbHVlIjp7IiR0eXBlIjoiZGF0YSIsIklSSSI6InZhbHVlIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJ2YWx1ZSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBtZWFzdXJlZCBzaWduYWwgdmFsdWUiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoiZGVjaW1hbCIsIktpbmQiOjF9LCJlcXVpcG1lbnRfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoiZXF1aXBtZW50X2lkIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJlcXVpcG1lbnRfaWQiLCJEZXNjcmlwdGlvbiI6IkVxdWlwbWVudCBpZGVudGlmaWVyIGFzc29jaWF0ZWQgd2l0aCB0aGUgT1BDIFVBIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjoxfSwiZXZlbnRfdGltZSI6eyIkdHlwZSI6ImRhdGEiLCJJUkkiOiJldmVudF90aW1lIiwiRG9jdW1lbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIk5hbWUiOiJldmVudF90aW1lIiwiRGVzY3JpcHRpb24iOiJUaW1lc3RhbXAgb2YgdGhlIGxhdGVzdCBzaWduYWwgZXZlbnQiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sInF1YWxpdHkiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoicXVhbGl0eSIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoicXVhbGl0eSIsIkRlc2NyaXB0aW9uIjoiQ3VycmVudCBPUEMgVUEgc2lnbmFsIHF1YWxpdHkiLCJEb21haW5DbGFzc0lSSSI6InNpZ25hbF9tYXN0ZXIiLCJSYW5nZURhdGFUeXBlIjoic3RyaW5nIiwiS2luZCI6MX0sIm9wY3VhX25vZGVfaWQiOnsiJHR5cGUiOiJkYXRhIiwiSVJJIjoib3BjdWFfbm9kZV9pZCIsIkRvY3VtZW50SWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJOYW1lIjoib3BjdWFfbm9kZV9pZCIsIkRlc2NyaXB0aW9uIjoiT1BDIFVBIG5vZGUgaWRlbnRpZmllciBmb3IgdGhlIHNpZ25hbCIsIkRvbWFpbkNsYXNzSVJJIjoic2lnbmFsX21hc3RlciIsIlJhbmdlRGF0YVR5cGUiOiJzdHJpbmciLCJLaW5kIjowfX19fX0sInNob3VsZFJ1biI6ZmFsc2V9"
 
@@ -804,6 +810,9 @@ EMBEDDED_OPS_CONFIG_B64 = "eyIkc2NoZW1hIjoiaHR0cHM6Ly9kZXZlbG9wZXIubWljcm9zb2Z0L
 # parameter object has ONLY {name, description} (additionalProperties:false — NO "type", despite the
 # UI Type column). With an empty/undescribed parameter list the agent sends nothing and the alert
 # email renders "-" for equipment/facility/quality/value/timestamp.
+# October 23 working ontology agent playbook, with target-specific query values replaced by tokens.
+EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64 = "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"
+
 ACTION_PARAMETERS = [
     {"name": "equipment_id", "description": "The equipment_id property of the signal_master entity that triggered the alert."},
     {"name": "facility_id", "description": "The facility_id property of the signal_master entity that triggered the alert."},
@@ -826,19 +835,77 @@ EVENTHOUSE_ACTION_PARAMETERS = [
 ]
 
 
+def resolve_operations_query_bindings() -> dict:
+    lakehouse_id = first_setting("lakehouse_id", required=True)
+    response = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/lakehouses/{lakehouse_id}")
+    response.raise_for_status()
+    lakehouse = response.json()
+    endpoint = lakehouse.get("properties", {}).get("sqlEndpointProperties", {})
+    sql_server = endpoint.get("connectionString", "")
+    if (endpoint.get("provisioningStatus") != "Success" or not isinstance(sql_server, str)
+            or not re.fullmatch(r"[A-Za-z0-9.-]+\.datawarehouse\.fabric\.microsoft\.com", sql_server)):
+        raise RuntimeError("Ontology Ops playbook requires a ready target Lakehouse SQL endpoint.")
+    response = api_request(
+        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/kqlDatabases/{resolve_kql_database_id()}")
+    response.raise_for_status()
+    database = response.json()
+    query_uri = database.get("properties", {}).get("queryServiceUri", "")
+    if not isinstance(query_uri, str) or not re.fullmatch(
+            r"https://[A-Za-z0-9.-]+\.(?:kusto\.fabric\.microsoft\.com|kusto\.windows\.net)/?",
+            query_uri):
+        raise RuntimeError("Ontology Ops playbook requires the target KQL database queryServiceUri.")
+    names = {
+        "__HYDRO_LAKEHOUSE__": lakehouse.get("displayName", ""),
+        "__HYDRO_KQL_DATABASE__": database.get("displayName", ""),
+        "__HYDRO_SIGNAL_TABLE__": first_setting("silver_signal_master_table", required=True),
+        "__HYDRO_EVENT_TABLE__": eventhouse_table_name,
+    }
+    for token, name in names.items():
+        if not isinstance(name, str) or not name.strip() or any(ord(char) < 32 for char in name):
+            raise RuntimeError(f"Unsupported query identifier for {token}: {name!r}.")
+    if any(char in names["__HYDRO_LAKEHOUSE__"] for char in ";'\"\\"):
+        raise RuntimeError("Unsupported query identifier for the Lakehouse SQL catalog.")
+    names["__HYDRO_SIGNAL_TABLE__"] = (
+        "[" + names["__HYDRO_SIGNAL_TABLE__"].replace("]", "]]").replace("'", "''") + "]")
+    for token in ("__HYDRO_KQL_DATABASE__", "__HYDRO_EVENT_TABLE__"):
+        names[token] = names[token].replace("\\", "\\\\").replace("'", "\\'")
+    return {**names, "__HYDRO_SQL_SERVER__": sql_server, "__HYDRO_KQL_URI__": query_uri}
+
+
+def build_ontology_operations_playbook() -> dict:
+    playbook = json.loads(zlib.decompress(base64.b64decode(EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64)))
+    bindings = resolve_operations_query_bindings()
+
+    def rebind(value):
+        if isinstance(value, dict):
+            return {key: rebind(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [rebind(child) for child in value]
+        if isinstance(value, str):
+            for token, replacement in bindings.items():
+                value = value.replace(token, replacement)
+            if "__HYDRO_" in value:
+                raise RuntimeError("Ontology Ops playbook contains an unresolved source binding.")
+        return value
+
+    return rebind(playbook)
+
+
 def build_configurations(should_run: Optional[bool] = None,
                          copy_playbook: Optional[bool] = None,
                          team_id: Optional[str] = None,
                          channel_id: Optional[str] = None,
                          datasource_id: Optional[str] = None,
                          pipeline_id: Optional[str] = None) -> dict:
-    """Configurations.json body — the byte-exact working RTI_Demo_OpsAgent_V3 definition (Fabric's
-    own git commit-back), with only the per-workspace bindings injected: the Ontology data source is
+    """Configurations.json body with the October 23 working ontology playbook and target bindings.
+    The Ontology data source is
     re-keyed to this workspace's ontology (the real plain item id + the REAL workspace id — the
     documented resolvable form; the encoded id + zeros ws that Fabric writes to git 404s via REST),
     the action's pipeline jobArtifactId/jobWorkspaceId point at the created Pipe_SendEmailAlert, and
     the Teams destination is overridden. The full playbook (OntologyDefinitions + BAD/UNCERTAIN
-    RuleDefinitions) is pushed verbatim. `identity` is never sent — the running user's delegated
+    RuleDefinitions) retains its query/grounding/action shape with live target endpoints.
+    `identity` is never sent — the running user's delegated
     token provisions Run-as.
     """
     run_state = ops_agent_should_run if should_run is None else should_run
@@ -846,6 +913,8 @@ def build_configurations(should_run: Optional[bool] = None,
     config = json.loads(base64.b64decode(EMBEDDED_OPS_CONFIG_B64))
     config.pop("identity", None)
     config["shouldRun"] = run_state
+    if keep_playbook:
+        config["playbook"] = build_ontology_operations_playbook()
     if datasource_id:
         # Re-key the single Ontology data source to this workspace's ontology using the DOCUMENTED
         # resolvable form: the ontology's real (plain) item id as key+id + the REAL workspace id.
@@ -867,14 +936,12 @@ def build_configurations(should_run: Optional[bool] = None,
             message_destination["teamId"] = team_id
         if channel_id:
             message_destination["channelId"] = channel_id
-    # Declare the email parameters on the FabricJobAction so the agent passes their values, and bind
-    # each one in every playbook rule (the embedded playbook only carries opcua_node_id). Without
-    # this the deployed action is parameters:[] and the alert email is blank — see ACTION_PARAMETERS.
     for action in config["configuration"]["actions"].values():
         if action.get("kind") == "FabricJobAction":
             action["parameters"] = [dict(p) for p in ACTION_PARAMETERS]
     for rule in (config.get("playbook") or {}).get("RuleDefinitions", {}).values():
-        for binding in rule.get("ActionBinding", {}).get("ActionBindings", []):
+        action_binding = rule.get("ActionBinding", {})
+        for binding in action_binding.get("ActionBindings", [action_binding]):
             existing = binding.setdefault("ParameterBindings", [])
             key_prefix = next((b["Key"].rsplit(":", 1)[0] for b in existing
                                if b.get("Key", "").count(":") >= 3),

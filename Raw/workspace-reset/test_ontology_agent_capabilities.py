@@ -155,15 +155,25 @@ class CapabilityTests(unittest.TestCase):
             self.assertNotEqual(payload["status"], "ready")
 
     def operations_namespace(self):
-        ns = functions("010", "build_configurations", "build_eventhouse_configurations")
+        ns = functions(
+            "010", "build_configurations", "build_eventhouse_configurations",
+            "build_ontology_operations_playbook")
         names = {
             "EMBEDDED_OPS_CONFIG_B64", "EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64",
-            "ACTION_PARAMETERS", "EVENTHOUSE_ACTION_PARAMETERS",
+            "EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64", "ACTION_PARAMETERS", "EVENTHOUSE_ACTION_PARAMETERS",
         }
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "operations-template", "exec"), ns)
         ns.update(workspace_id="workspace", ops_agent_should_run=False, ops_agent_copy_playbook=True)
+        ns["resolve_operations_query_bindings"] = Mock(return_value={
+            "__HYDRO_SQL_SERVER__": "target.datawarehouse.fabric.microsoft.com",
+            "__HYDRO_LAKEHOUSE__": "TargetLakehouse",
+            "__HYDRO_KQL_URI__": "https://target.kusto.fabric.microsoft.com",
+            "__HYDRO_KQL_DATABASE__": "TargetEvents",
+            "__HYDRO_SIGNAL_TABLE__": "[target_signals]",
+            "__HYDRO_EVENT_TABLE__": "TargetTelemetry",
+        })
         return ns
 
     def test_full_operations_configuration_preserves_business_capabilities(self):
@@ -187,17 +197,134 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(parameters, {"equipment_id", "facility_id", "quality", "value", "unit", "event_time"})
         rules = config["playbook"]["RuleDefinitions"]
         self.assertEqual(len(rules), 2)
-        self.assertTrue(any("BAD" in rule["Name"] for rule in rules.values()))
-        self.assertTrue(any("UNCERTAIN" in rule["Name"] for rule in rules.values()))
+        self.assertEqual({rule["RuleCondition"]["Value"] for rule in rules.values()}, {"BAD", "UNCERTAIN"})
         for rule in rules.values():
-            for binding in rule["ActionBinding"]["ActionBindings"]:
-                self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
+            binding = rule["ActionBinding"]
+            self.assertEqual(binding["ActionId"], action["id"])
+            self.assertTrue(parameters.issubset({item["Name"] for item in binding["ParameterBindings"]}))
+            self.assertEqual(
+                {item["Name"]: item["Key"] for item in binding["ParameterBindings"]},
+                {name: f"agent:operationalSet:SignalMaster:{column}" for name, column in {
+                    "equipment_id": "EquipmentId", "facility_id": "FacilityId",
+                    "quality": "Quality", "value": "SignalValue", "unit": "Unit",
+                    "event_time": "EventTime",
+                }.items()},
+            )
         manual = ns["build_configurations"](
             copy_playbook=False, datasource_id="v2-ontology",
             pipeline_id="email-pipeline", team_id="team", channel_id="channel")
         self.assertEqual(manual, {key: value for key, value in config.items() if key != "playbook"})
         ns["ops_agent_copy_playbook"] = False
         self.assertNotIn("playbook", ns["build_configurations"]())
+        ns["resolve_operations_query_bindings"].reset_mock()
+        ns["build_configurations"](copy_playbook=False)
+        ns["resolve_operations_query_bindings"].assert_not_called()
+
+    def test_working_ontology_playbook_rebinds_every_query_without_changing_alert_policy(self):
+        ns = self.operations_namespace()
+        template = json.loads(zlib.decompress(base64.b64decode(
+            ns["EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64"])))
+        encoded = json.dumps(template)
+        for token, value in ns["resolve_operations_query_bindings"].return_value.items():
+            encoded = encoded.replace(token, value)
+        playbook = ns["build_ontology_operations_playbook"]()
+        self.assertEqual(playbook, json.loads(encoded))
+        self.assertNotIn("__HYDRO_", json.dumps(playbook))
+        for rule in playbook["RuleDefinitions"].values():
+            expression = rule["ClassExpression"]
+            query = expression["Expression"]
+            self.assertEqual(expression["$type"], "kqldataquery")
+            self.assertEqual(expression["TriggerType"], 0)
+            self.assertEqual(rule["RuleCondition"]["$type"], "textwhenisequal")
+            self.assertIn("startTime .. endTime", query)
+            self.assertIn("dbo.[target_signals]", query)
+            self.assertIn("database('TargetEvents').['TargetTelemetry']", query)
+            self.assertIn("Id", expression["ProjectedColumns"])
+            self.assertEqual(rule["LocalOntology"]["SignalMaster"]["DataLink"]["Query"], query)
+        second_target = {key: value.replace("target", "second").replace("Target", "Second")
+                         for key, value in ns["resolve_operations_query_bindings"].return_value.items()}
+        ns["resolve_operations_query_bindings"].return_value = second_target
+        second = json.dumps(ns["build_ontology_operations_playbook"]())
+        self.assertIn("SecondLakehouse", second)
+        self.assertIn("second.kusto.fabric.microsoft.com", second)
+        self.assertNotIn("TargetLakehouse", second)
+        self.assertNotIn("target.datawarehouse.fabric.microsoft.com", second)
+
+    def test_ontology_playbook_requires_all_target_bindings(self):
+        ns = self.operations_namespace()
+        del ns["resolve_operations_query_bindings"].return_value["__HYDRO_SQL_SERVER__"]
+        with self.assertRaisesRegex(RuntimeError, "unresolved source binding"):
+            ns["build_ontology_operations_playbook"]()
+
+    def query_binding_namespace(self):
+        responses = [
+            Mock(json=Mock(return_value={
+                "displayName": "TargetLakehouse", "properties": {"sqlEndpointProperties": {
+                    "connectionString": "target.datawarehouse.fabric.microsoft.com",
+                    "provisioningStatus": "Success",
+                }},
+            })),
+            Mock(json=Mock(return_value={
+                "displayName": "TargetEvents",
+                "properties": {"queryServiceUri": "https://target.kusto.fabric.microsoft.com"},
+            })),
+        ]
+        ns = functions(
+            "010", "resolve_operations_query_bindings", re=re, workspace_id="workspace",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com", eventhouse_table_name="TargetTelemetry",
+            first_setting=Mock(side_effect=lambda name, **_: {
+                "lakehouse_id": "target-lakehouse", "silver_signal_master_table": "target_signals",
+            }[name]), api_request=Mock(side_effect=responses),
+            resolve_kql_database_id=Mock(return_value="target-kql"))
+        return ns, responses
+
+    def test_ontology_query_sources_are_resolved_live_in_selected_workspace(self):
+        ns, responses = self.query_binding_namespace()
+        bindings = ns["resolve_operations_query_bindings"]()
+        self.assertEqual(bindings["__HYDRO_SQL_SERVER__"], "target.datawarehouse.fabric.microsoft.com")
+        self.assertEqual(bindings["__HYDRO_KQL_DATABASE__"], "TargetEvents")
+        self.assertEqual(bindings["__HYDRO_SIGNAL_TABLE__"], "[target_signals]")
+        self.assertEqual([call.args for call in ns["api_request"].call_args_list], [
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/lakehouses/target-lakehouse"),
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/kqlDatabases/target-kql"),
+        ])
+        for response in responses:
+            response.raise_for_status.assert_called_once()
+
+    def test_ontology_query_source_names_are_escaped_for_their_query_context(self):
+        ns, responses = self.query_binding_namespace()
+        responses[1].json.return_value["displayName"] = "Target Events'Archive"
+        ns["eventhouse_table_name"] = "Device's Events"
+        ns["first_setting"].side_effect = lambda name, **_: {
+            "lakehouse_id": "target-lakehouse", "silver_signal_master_table": "ops]signals'raw",
+        }[name]
+        bindings = ns["resolve_operations_query_bindings"]()
+        self.assertEqual(bindings["__HYDRO_KQL_DATABASE__"], "Target Events\\'Archive")
+        self.assertEqual(bindings["__HYDRO_EVENT_TABLE__"], "Device\\'s Events")
+        self.assertEqual(bindings["__HYDRO_SIGNAL_TABLE__"], "[ops]]signals''raw]")
+
+    def test_ontology_query_binding_failures_propagate(self):
+        for field, invalid, message in [
+            ("provisioningStatus", "Failed", "ready target Lakehouse"),
+            ("connectionString", "unverified.example.com", "ready target Lakehouse"),
+            ("connectionString", None, "ready target Lakehouse"),
+            ("queryServiceUri", "http://target.kusto.fabric.microsoft.com", "queryServiceUri"),
+            ("displayName", "Injected'; print secret", "Unsupported query identifier"),
+        ]:
+            with self.subTest(field=field):
+                ns, responses = self.query_binding_namespace()
+                if field in {"connectionString", "provisioningStatus"}:
+                    responses[0].json.return_value["properties"]["sqlEndpointProperties"][field] = invalid
+                elif field == "queryServiceUri":
+                    responses[1].json.return_value["properties"][field] = invalid
+                else:
+                    responses[0].json.return_value[field] = invalid
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ns["resolve_operations_query_bindings"]()
+        ns, responses = self.query_binding_namespace()
+        responses[0].raise_for_status.side_effect = RuntimeError("HTTP source failure")
+        with self.assertRaisesRegex(RuntimeError, "HTTP source failure"):
+            ns["resolve_operations_query_bindings"]()
 
     def test_eventhouse_operations_configuration_is_separate_and_stopped(self):
         self.assertIn("import zlib", source("010"))

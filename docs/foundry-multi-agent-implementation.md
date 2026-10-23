@@ -60,6 +60,31 @@ payloads; it did not call cloud deployment APIs. No new tenant/workspace deploym
 signed-user runtime acceptance was performed. Portability remains subject to target permissions, service/region
 availability, quota, active capacity and portal materialization; it is not universal cloud/runtime certification.
 
+### Follow-up: working ontology Operations Agent playbook
+
+Read the working `ws-vteam-demoV3` ontology agent definition on October 23 without
+updating or restarting it. Its current playbook differs from the legacy embedded one:
+two SQL/KQL-grounded rules, 20 grounding definitions, projected signal identity, and
+direct `ActionBinding.ParameterBindings` rather than the older nested binding list.
+The instructions are unchanged, but copying only those instructions would not reproduce
+the working playbook. Ontology Knowledge still uses physical Lakehouse/Eventhouse queries.
+
+NB10 now embeds the working playbook with source placeholders and resolves the target's
+Lakehouse SQL endpoint/catalog, KQL query URI/database, and configured signal/event tables.
+All repeated grounding queries are rebound, and current direct email bindings survive.
+The Raw mirror is synchronized. The default remains stopped, and this update does not
+change existing cloud items or retire the Eventhouse provisioning path.
+
+Validation: **74 agent capability/deployment contract tests passed**. A read-only check
+against live target metadata regenerated the working playbook exactly except for safe SQL
+table-identifier quoting. No queries, action delivery, new deployment, or restart were
+performed as part of that comparison.
+
+The rules retain their reviewed state conditions; a timed 15-minute cooldown is **not**
+implemented or certified. The operator guide distinguishes signal grouping, transitions,
+fixed time buckets, and a rolling notification cooldown, including escalation and the need
+to cover both Teams and email. No undocumented suppression fields were added.
+
 ## October 12 v77 canonical-prompt release
 
 Hosted Agent v77 is active from commit `30ee16e` on immutable image

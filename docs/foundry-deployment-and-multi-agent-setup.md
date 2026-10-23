@@ -384,6 +384,49 @@ The bounded facilities smoke is functional evidence only: it does not attest exe
 SQL/combined-source answers, the full multi-agent matrix, or Operations Agent delivery. The service fix has not
 been independently verified in a target tenant by this documentation review.
 
+### Operations Agent playbook and alert frequency
+
+NB10 imports the playbook read from the working ontology-backed agent on October 23.
+It retains both BAD/UNCERTAIN rules, the generated `SignalMaster` grounding model,
+`Id = opcua_node_id`, projected columns, and the six direct email parameter bindings.
+The Knowledge source remains the selected, verified v2 ontology. Its generated queries
+still use Lakehouse SQL and Eventhouse KQL: ontology Knowledge does not mean those physical
+sources are unnecessary. NB10 replaces every query endpoint, catalog, database and table
+binding with the target's live metadata/settings, including queries repeated in grounding
+definitions. Deployment does not read another workspace's reference agent.
+
+The live rules use **Is BAD** and **Is UNCERTAIN**, not transition conditions. They return
+individual readings without an authored cooldown. Microsoft documents a five-minute rule
+evaluation cycle and explains that state conditions can signal repeatedly while satisfied.
+`Id` already identifies the signal, but grouping by `opcua_node_id` alone does not throttle it.
+
+Recommended alert policy, **not implemented by this template**:
+
+- Send the first signal alert immediately, subject to Fabric's evaluation latency.
+- Suppress repeats of that signal for 15 minutes from the last emitted notification.
+- Permit immediate UNCERTAIN-to-BAD escalation, then restart its cooldown.
+- If the condition persists, emit at most one reminder per cooldown period.
+- Keep different signals independent. Include workspace/source identity in any shared
+  deduplication key; `opcua_node_id` alone is scoped to its source, not globally unique.
+- Treat recovery/new-incident reset as an explicit policy decision.
+
+A query-side `bin(event_time, 15m)` is a fixed aggregation bucket, not a rolling cooldown;
+two alerts can straddle a bucket boundary. Choosing the latest reading per signal can reduce
+duplicate rows but can also hide a transient BAD event, and does not by itself suppress
+notifications across evaluations. An email-pipeline-only gate will not suppress built-in
+Teams notifications. Do not add undocumented playbook fields or claim suppression from
+natural-language instructions.
+
+The public Operations Agent guidance documents **Becomes** transition conditions, which can
+avoid repeats while a state persists, but these are not timed reminders or a strict 15-minute
+cooldown. Use the portal's supported rule authoring/Copilot flow to generate and inspect a
+candidate, and validate both Teams and email behavior before adopting it. A timed cooldown
+needs a verified native mechanism or a durable, atomic shared notification gate covering
+both channels. This repository update leaves alert frequency, existing agents, and the
+Eventhouse-agent provisioning path unchanged.
+
+See [Operations Agent rule semantics](https://learn.microsoft.com/en-us/fabric/real-time-intelligence/operations-agent#understand-operations-agent-rules).
+
 ## References
 
 [Deployer](../Raw/workspace-reset/deploy_fabric_app.py) ·
