@@ -16,6 +16,7 @@ services:
       enabled: true
       externalEntraExchange: true
     allowedRedirectUris:
+      - https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net
       - https://lofty-coast-a9601204e1-swedencentral.webapp.fabricapps.net
       - https://fair-hill-c529b5e004-swedencentral.webapp.fabricapps.net
       - https://solar-coral-a2b4bf0aec-swedencentral.webapp.fabricapps.net
@@ -55,7 +56,6 @@ services:
       - https://curly-dove-3ef4114f49d-swedencentral.webapp.fabricapps.net
       - https://wide-weld-988572c16f-swedencentral.webapp.fabricapps.net
       - http://localhost:5173
-      - https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net
   staticHosting:
     enabled: true
     folder: dist

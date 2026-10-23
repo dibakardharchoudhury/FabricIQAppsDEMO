@@ -300,12 +300,11 @@ The medallion is **data‑driven off the STID CSVs** in [`Raw/stid_rti_fixed_sou
 ## Companion app
 
 [`HydroOperationsApp/`](HydroOperationsApp/README.md) — a React + Rayfin app that joins STID (Lakehouse
-GraphQL), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
-Knowledge Graph retains progressive loading: available Lakehouse/STID entities are interpreted through
-the v2 Ontology's declared entity and relationship bindings while its native graph is loading.
-Verified native GraphModel results take precedence when available. Both paths retain Eventhouse
-readings and SQL operational overlays, with distinct provenance rather than presenting bound rows as
-native GQL results. Published REST metadata does not expose ontology ownership, so native queries
+connector), telemetry (Eventhouse KQL), and operational records (Rayfin SQL) on one screen. Its
+Knowledge Graph requires verified native GraphModel entities and relationships for canvas, tree
+and scopes. Lakehouse/STID rows never substitute for missing or failed native topology.
+Eventhouse readings and SQL operational overlays enrich only actual native entities; operational
+pages remain independently available. Published REST metadata does not expose ontology ownership, so native queries
 require an explicit operator binding; names and structural similarity
 are not evidence. Latest production-parser/model checks passed with 111 native nodes / 108 edges
 and 174 enriched nodes / 171 edges using real KQL/SQL and empty STID topology inputs. Protected

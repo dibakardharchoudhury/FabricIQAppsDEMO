@@ -903,9 +903,9 @@ The app validates live numeric generation `2`, TMDL, graph metadata, queryable t
 native responses using GET `graphModels/{id}/getQueryableGraphType?beta=true` and POST
 `graphModels/{id}/executeQuery?beta=true` under the workspace REST path. It follows opaque string
 `result.nextPage` continuations and rejects warnings/errors, truncation, malformed/dangling results,
-or more than 2,000 nodes/4,000 edges. Native results take precedence over the progressive
-Ontology-bound STID view; both retain KQL/SQL context. Only declared ontology bindings supply
-progressive relationships, never arbitrary physical foreign keys.
+or more than 2,000 nodes/4,000 edges. Verified native results are the only canvas/tree/scope
+topology source; KQL/SQL can enrich actual native entities. Missing or failed native reads
+produce an unavailable state, never an Ontology-bound STID replacement graph.
 See [the graph contract and acceptance checks](../docs/knowledge-graph.md).
 
 ## Agent one-shot deployment

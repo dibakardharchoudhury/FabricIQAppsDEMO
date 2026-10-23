@@ -71,8 +71,8 @@ signal_master -> instruments -> equipment -> systems -> facilities
 ```
 
 **This project requires Ontology v2.** Existing generation-1 items are rejected, not consumed through
-a legacy parser or used as agent sources. Graph materialization is required for native GQL reads,
-but does not block the progressive view of Ontology-bound STID entities.
+a legacy parser or used as agent sources. Graph materialization is required for canvas, tree and
+scopes; missing native topology is not replaced with Ontology-bound STID entities.
 
 Fabric does not document an ontology-owned REST materialization endpoint. A fresh generation-2
 Ontology currently exposes an attached service-owned GraphModel child. The final phase of `RTI_006`
@@ -135,17 +135,15 @@ bound native GraphModel for topology:
 ```mermaid
 flowchart LR
    DEF["Fabric IQ Ontology v2\nTMDL semantic contract"]
-   STID["Lakehouse/STID bound entity rows"]
    GM["Ontology-managed GraphModel"]
     EH["Eventhouse OPCUAEvents"]
     SQL["Rayfin SQL operational records"]
    GQL["Native Graph REST\nGQL queries"]
     KQL["KQL latest readings"]
-   BUILD["buildKnowledgeGraph()\nprogressive bound view, then native topology"]
+   BUILD["buildKnowledgeGraph()\nverified native topology + external enrichment"]
     CY["Cytoscape canvas"]
 
    DEF -->|"getDefinition"| BUILD
-   STID -->|"declared ontology bindings while native data loads"| BUILD
    GM --> GQL --> BUILD
     EH --> KQL --> BUILD
     SQL --> BUILD
@@ -156,12 +154,10 @@ flowchart LR
 Physical TOM relationships in `relationships.tmdl` are not semantic ontology edges.
 `queryOntologyGraph()` verifies live numeric generation `2`, the live TMDL contract, configured
 GraphModel metadata, queryable aliases, node/edge types, and relationship endpoints before accepting
-native GQL results. `buildKnowledgeGraph()` preserves native topology when it is available.
-While native reads are pending or unavailable, it retains the original progressive loading path:
-existing STID entities are mapped through the verified v2 contract's entity bindings and declared
-semantic relationship keys, then enriched with KQL/SQL. Arbitrary physical relationships and
-unsupported junction joins do not become semantic edges. Bound rows have compatibility provenance,
-not native OIDs or a claim of successful GQL execution.
+native GQL results. `buildKnowledgeGraph()` requires native topology before any canvas, tree or
+scope nodes can be presented. Pending reads show a loading state; failed or empty reads show an
+explicit unavailable state. STID rows, declared binding keys and physical foreign keys never
+create replacement topology. KQL/SQL enrich only actual native entities.
 
 Relative to `/v1/workspaces/{workspaceId}/`, native reads use
 `GET graphModels/{id}/getQueryableGraphType?beta=true` and
@@ -173,9 +169,9 @@ warnings, truncation, malformed responses, dangling edges, or limits exceeding *
 For page-load performance, Cytoscape is route-lazy and
 single-flight requests prevent duplicate calls. Discovery's parsed ontology contract is reused,
 avoiding a second definition download on first graph load. Contract and graph caches retain the
-original 15-minute lifetime; the 30-second native poll explicitly refreshes graph instances only.
+original 15-minute lifetime; the five-minute native poll explicitly refreshes graph instances only.
 Workspace discovery changes restart obsolete reads instead of displaying a cache-revision error.
-The page does not hide available bound entities behind the native-query loading screen.
+Native graph retries are independent of Lakehouse/STID connectivity.
 The page defaults to a selected-asset projection;
 facility and all-graph views are opt-in. Cytoscape reconciles changed element data in place, so live
 polls preserve the current viewport, selection, and dragged node positions instead of rebuilding
@@ -190,9 +186,8 @@ The v2 adaptation retains the existing page layout, controls, friendly inspector
 one-to-one signal presentation. Native identity validation and errors do not introduce new panels.
 Rayfin SQL work orders, inspections, notifications, and 3D models are joined by `equipmentId`,
 `instrumentId`, or `opcuaNodeId` as explicit external overlays attached to the corresponding
-native or Ontology-bound equipment. Existing GraphQL/STID reads support the progressive view,
-as on main. Native graph results replace that instance view once loaded; missing native edges
-are never filled in from foreign keys.
+native equipment. GraphQL/STID reads are not dependencies or topology substitutes for the
+canvas, tree or scopes; missing native edges are never filled in from foreign keys.
 
 The application does not execute GraphModel queries without an explicit, validated v2 graph binding.
 REST `/v1` does not mean Ontology generation 1.
@@ -312,7 +307,7 @@ It does not provide a GraphModel-instance REST export contract.
    2,000-node/4,000-edge boundaries. Verify native canvas/tree/scopes work with GraphQL unavailable.
 9. Run the NB06 graph helper regressions, verify definition round-trip preservation and idempotency,
    then confirm live `refreshGraph` timing and the Operations Agent `signal_master` GQL selector.
-10. Export both OWL Turtle and RDF Turtle, confirm compatibility mode cannot export, and benchmark
+10. Export both OWL Turtle and RDF Turtle, confirm unavailable native topology cannot export, and benchmark
     the 2,000-node/4,000-edge client-side boundary.
 
 ### Automated materialization acceptance (October 2, 2026)

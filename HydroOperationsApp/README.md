@@ -81,12 +81,12 @@ Real-Time Telemetry, Digital Twin, and Maintenance. It requires a verified
 ontology-managed native GraphModel. Native entities and relationships are the topology authority;
 Eventhouse KQL readings and Rayfin SQL records enrich actual native entities as external context.
 The explicit graph binding lets startup read the exact Ontology directly—without enumerating the
-workspace—so verified Ontology-bound STID entities render progressively while the authoritative
-native GraphModel query completes in the background.
+workspace. The graph stays in its loading or explicit unavailable state until verified native
+GraphModel entities are returned; STID rows cannot create canvas, tree or scope topology.
 No legacy Ontology, guessed GraphModel association, or STID/FK-fabricated graph is queried.
 When the native graph is loaded, the toolbar exports its verified Ontology schema and materialized
-instances as either **OWL 2 in Turtle** or **RDF 1.1 in Turtle**. Compatibility-mode and operational
-SQL/KQL overlays are intentionally excluded so an export never claims synthesized topology is
+instances as either **OWL 2 in Turtle** or **RDF 1.1 in Turtle**. Operational
+SQL/KQL overlays are intentionally excluded so an export never claims external context is
 governed Ontology data.
 See the canonical
 [`Knowledge Graph design`](../docs/knowledge-graph.md) for implementation details, operational
@@ -115,9 +115,8 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   Namespaces stay distinct; display names and namespace are derived from the qualified name.
 - **Only `entityRelationships.tmdl` defines semantic relationship types.** `relationships.tmdl`
   resolves referenced single-column physical joins, never additional semantic edge types.
-  Progressive loading uses only declared semantic relationships and their supported backing-table
-  keys over the existing STID rows; it does not turn arbitrary physical FK relationships into ontology edges.
-  Native graph results take precedence when available.
+  Only actual native graph instances supply topology; declared binding keys and STID rows
+  do not synthesize missing entities or relationships.
 - Primitive, `Any`, `TimeSeries<T>`, and single-line `complexDataType` JSON metadata are
   retained, including `additionalBackingTable` references for Eventhouse time-series bindings.
   Complex values and recursive `valueBackingConfiguration` metadata are **not evaluated**.
@@ -125,13 +124,10 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   reports these limitations. Composite keys, multiline expressions, unknown entity/property
   constructs, invalid payloads, unresolved endpoints, and mixed v1/v2 definitions produce errors
   rather than a silently empty contract. The parser is bounded, not a general TOM engine.
-- A v2 materialized GraphModel is required for **native GQL results**, not for displaying already
-  available Ontology-bound STID entities with KQL/SQL enrichment.
-  On a fresh Ontology, `RTI_006` follows the authoritative relation to its attached service-owned
-  GraphModel and authors the complete static five-entity/four-relationship projection. It verifies
-  persisted readback, automatic refresh, queryable schema, and the Operations Agent GQL query.
-  Missing authoritative lineage is a setup error; use **Manage graph → select eligible
-  entities/relationships → Continue → Materialize** only as the explicit operator fallback.
+- A v2 materialized GraphModel is required for the graph's **canvas, tree and scopes**.
+  Complete **Manage graph → select eligible entities/relationships → Continue → Materialize**
+  in the selected Ontology. Item creation, child-definition readback and a queryable schema
+  do not prove entity eligibility or populated native topology.
   Configure the `.env` binding with single-quoted JSON:
   `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING='{"workspaceId":"<guid>","ontologyId":"<guid>","graphModelId":"<guid>"}'`.
   Retain the outer single quotes when adding alias maps: dotenv truncates an unquoted value at
@@ -142,20 +138,20 @@ URL query parameters when fetching the result and surfacing request/poll/result 
   similarity are not proof. The explicit operator binding records the association established in
   the portal; live metadata/contract/type/endpoint checks establish consistency.
   Graph sources require keys and Delta/mirrored bindings. Fabric does not document an
-  ontology-owned materialization API. `RTI_006` uses the attached child's public GraphModel
-  definition API and automatic refresh; static properties from all five Delta-backed entities enter
-  the graph, while `event_time`, `value`, and `quality` remain Eventhouse-bound.
+  ontology-owned materialization API. Keep portal materialization separate from automated
+  deployment. After eligible static entities are materialized, `event_time`, `value`, and `quality`
+  remain Eventhouse-bound enrichment rather than fabricated native entities.
   Native GQL reads use GET `getQueryableGraphType?beta=true` and POST `executeQuery?beta=true`
   on the configured `graphModels/{id}`. Opaque string `result.nextPage` continuations are followed.
   Query errors, warnings, truncation, malformed/dangling results, or exceeding 2,000 nodes/4,000 edges
   fail explicitly. Malformed native results are never reinterpreted as valid native topology.
 - Ontology definitions and native results are cached and concurrent requests are coalesced.
-  The page can show the existing Ontology-bound compatibility view while native queries run; a
-  native failure is reported in the source-state tooltip and console without removing available
-  bound entities. Definition errors still prevent unverified governed topology. Workspace refreshes
+  The page shows a loading state while native queries run and an explicit unavailable state
+  after native failures; no STID compatibility graph is rendered. Definition errors also prevent
+  unverified topology. Workspace refreshes
   restart obsolete reads against current discovery rather than surfacing cache-invalidation errors.
-  Manual refresh updates STID and the ontology contract before querying the native graph.
-  The 30-second native poll does not repeatedly download the TMDL definition.
+  Manual refresh queries the native source independently of STID connectivity.
+  The five-minute native poll does not repeatedly download the TMDL definition.
 
 These read capabilities do **not** imply Data Agent semantic runtime or Operations Agent playbook
 execution succeeds. The latest live attempt accepted source publication and stopped-agent
