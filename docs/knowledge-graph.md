@@ -547,14 +547,16 @@ publication/semantic-error evidence, not a verified smoke result.
 The revised implementation requires a **bounded functional smoke test**, not full agent
 certification or attested execution provenance:
 
-- NB09 asks only for the selected ontology's first five facility IDs/names, without including
-  expected values in the prompt. It compares exact returned records with independently read rows
-  in the configured Lakehouse. Attached SQL sources are permitted and preserved; no cached proof
-  is required for this new check.
+- NB09 uses the selected ontology as semantic context and permits source-native SQL on its
+  associated Lakehouse static binding for the first five facility IDs/names. Expected values are
+  not included in the prompt. Exact returned records, including Fabric MCP's query-result CSV
+  attachments, are compared with independently read configured Lakehouse rows. Operational SQL,
+  KQL and unrelated sources are excluded from the smoke; their configurations remain preserved.
 - `data_agent_publication_status=published` records source publication independently. Successful
   comparison sets `data_agent_deployment_status=ready` and `data_agent_runtime_status=verified`,
-  with evidence `verification=ontology_facilities_smoke_v1` and scope
-  **"Source-specific functional smoke test; execution provenance is not attested."**
+  with evidence `verification=ontology_context_facilities_smoke_v1` and scope
+  **"Ontology-context facilities functional smoke test; execution provenance, native ontology
+  traversal, telemetry and operational SQL are not attested."**
   These labels do not certify cryptographic provenance, SQL/combined-source answers, or the entire
   agent.
 - Semantic errors (including nested JSON errors despite `isError: false`), wrong rows, and

@@ -2095,7 +2095,7 @@ class CapabilityTests(unittest.TestCase):
                 self.assertEqual(outcome["status"], "verified")
                 self.assertEqual(outcome["evidence"]["expected_facilities"], expected)
                 self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
-                self.assertEqual(outcome["evidence"]["verification"], "ontology_facilities_smoke_v1")
+                self.assertEqual(outcome["evidence"]["verification"], "ontology_context_facilities_smoke_v1")
                 question = outcome["evidence"]["question"]
                 for row in expected:
                     self.assertNotIn(row["facility_id"], question)
@@ -2110,6 +2110,40 @@ class CapabilityTests(unittest.TestCase):
             outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
             self.assertEqual(outcome["status"], "failed")
             self.assertIn("do not match", outcome["reason"])
+
+    def test_runtime_probe_accepts_real_csv_attachment_and_generated_file_footer(self):
+        ns, replies = self.runtime_namespace({})
+        expected = ns["facility_probe_reference"].return_value
+        csv_text = "facility_id,facility_name\r\n" + "".join(
+            f"{row['facility_id']},{row['facility_name']}\r\n" for row in expected)
+        replies[-1].json.return_value["result"] = {
+            "isError": False, "content": [
+                {"type": "text", "text": json.dumps(expected)
+                 + "\n\nFile(s) result_0.json were generated as a result of the query."},
+                {"type": "resource", "resource": {"mimeType": "text/csv", "text": csv_text}},
+            ],
+        }
+        outcome = ns["probe_data_agent_ontology"]("agent-id", "ontology")
+        self.assertEqual(outcome["status"], "verified")
+        self.assertEqual(outcome["evidence"]["returned_facilities"], expected)
+        self.assertIn("Source-native SQL on that associated Lakehouse is allowed", outcome["evidence"]["question"])
+        self.assertIn("Do not use operational SQL", outcome["evidence"]["question"])
+        self.assertIn("native ontology traversal, telemetry and operational SQL are not attested",
+                      outcome["evidence"]["scope"])
+
+    def test_runtime_probe_rejects_invalid_or_conflicting_csv_attachments(self):
+        for attachment, structured in (
+            ("facility_id,facility_id\none,two\n", None),
+            ("facility_id,facility_name\none,two,three\n", None),
+            ("facility_id,facility_name\n", None),
+            ("facility_id,facility_name\none,two\n",
+             [{"facility_id": "different", "facility_name": "Other"}]),
+        ):
+            ns, _ = self.runtime_namespace({
+                "structuredContent": structured,
+                "content": [{"type": "resource", "resource": {"mimeType": "text/csv", "text": attachment}}],
+            })
+            self.assertNotEqual(ns["probe_data_agent_ontology"]("agent-id", "ontology")["status"], "verified")
 
     def test_healthy_multi_source_rerun_needs_no_cached_proof_and_still_rejects_semantic_errors(self):
         ns, replies = self.runtime_namespace({})

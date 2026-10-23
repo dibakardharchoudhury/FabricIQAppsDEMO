@@ -523,6 +523,30 @@ def normalized_facility_rows(rows) -> list:
 
 def facility_rows_from_mcp(result: dict) -> list:
     payload = result.get("structuredContent")
+    csv_resources = [
+        item["resource"]["text"] for item in result.get("content", [])
+        if isinstance(item, dict) and item.get("type") == "resource"
+        and isinstance(item.get("resource"), dict)
+        and item["resource"].get("mimeType") == "text/csv"
+        and isinstance(item["resource"].get("text"), str)
+    ]
+    if csv_resources:
+        import csv
+        import io
+        if len(csv_resources) != 1:
+            raise ValueError("Readiness requires exactly one facility result attachment.")
+        rows = list(csv.reader(io.StringIO(csv_resources[0]), strict=True))
+        if (not rows or rows[0] != ["facility_id", "facility_name"]
+                or any(len(row) != 2 for row in rows[1:])):
+            raise ValueError("Facility CSV must contain only facility_id and facility_name columns.")
+        actual = normalized_facility_rows([
+            {"facility_id": row[0], "facility_name": row[1]} for row in rows[1:]
+        ])
+        if payload is not None:
+            structured = payload["facilities"] if isinstance(payload, dict) and set(payload) == {"facilities"} else payload
+            if normalized_facility_rows(structured) != actual:
+                raise ValueError("Structured facility rows disagree with the attached query result.")
+        return actual
     if payload is None:
         text = "\n".join(
             item.get("text", "") if item.get("type") == "text"
@@ -587,9 +611,14 @@ def mcp_semantic_error(value):
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
         if text.startswith(("{", "[")):
             try:
-                decoded = json.loads(text)
+                decoded, end = json.JSONDecoder().raw_decode(text)
             except json.JSONDecodeError:
                 return "Malformed structured MCP response; execution cannot be verified."
+            suffix = text[end:].strip()
+            if suffix and not re.fullmatch(
+                r"File\(s\) [A-Za-z0-9_. ,()-]+ were generated as a result of the query\.", suffix,
+            ):
+                return "Unexpected content after structured MCP response; execution cannot be verified."
             return mcp_semantic_error(decoded)
         if re.search(
             r"(?i)(ontology source unavailable|api version is not supported|"
@@ -601,16 +630,19 @@ def mcp_semantic_error(value):
 
 
 def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=None) -> dict:
-    """Smoke-test an ontology-requested answer against independent live Lakehouse rows."""
+    """Compare ontology-context facilities with independent live Lakehouse rows."""
     endpoint = f"{FABRIC_API_BASE}/v1/mcp/workspaces/{workspace_id}/dataagents/{agent_id}/agent"
     activity_id = str(uuid.uuid4())
     question = (
         f"Read-only source readiness check. Use ONLY the Ontology item {ontology_id} "
-        f"in workspace {workspace_id}. Do not use SQL, KQL databases, other sources, "
+        f"in workspace {workspace_id} as semantic context and its associated Lakehouse "
+        f"{lakehouse_id} for the static facilities binding. Source-native SQL on that associated "
+        "Lakehouse is allowed; an ontology traversal endpoint is not required. "
+        "Do not use operational SQL, KQL databases, unrelated sources, "
         "cached answers, examples in instructions, or estimates. Query the facilities entity: "
         "return the first five rows ordered by facility_id ascending (all rows if fewer than five). "
         "Return ONLY JSON: an array of objects with exactly facility_id and facility_name. "
-        "If the ontology cannot be queried, return the exact error; do not substitute another source."
+        "If the associated source cannot be queried, return the exact error; do not substitute another source."
     )
     evidence = {
         "endpoint": endpoint, "agent_id": agent_id, "ontology_id": ontology_id,
@@ -624,8 +656,9 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
         validate_agent_ontology_sources(published_parts, ontology_id, require_published=True)
         sources = published_agent_sources(published_parts)
         evidence.update({
-            "verification": "ontology_facilities_smoke_v1", "lakehouse_id": lakehouse_id,
-            "scope": "Source-specific functional smoke test; execution provenance is not attested.",
+            "verification": "ontology_context_facilities_smoke_v1", "lakehouse_id": lakehouse_id,
+            "scope": "Ontology-context facilities functional smoke test; execution provenance, native ontology "
+                     "traversal, telemetry and operational SQL are not attested.",
             "published_sources": sources,
         })
         # MCP consumption uses the notebook user's context, not the provisioning SPN.
@@ -708,8 +741,8 @@ def probe_data_agent_ontology(agent_id: str, ontology_id: str, published_parts=N
         if actual != expected:
             return {"status": "failed", "reason": "Ontology facility IDs/names do not match the live Lakehouse "
                     "reference rows.", "evidence": evidence}
-        return {"status": "verified", "reason": "Ontology-requested MCP facility IDs/names exactly match independent "
-                "live Lakehouse rows. Source-specific functional smoke test passed; execution provenance and "
+        return {"status": "verified", "reason": "Ontology-context MCP facility IDs/names exactly match independent "
+                "live Lakehouse rows. Bounded facilities functional smoke test passed; execution provenance and "
                 "other agent capabilities are not attested.", "evidence": evidence}
     except (RuntimeError, ValueError, KeyError, IndexError, requests.RequestException) as exc:
         reason = str(exc)[:4000]

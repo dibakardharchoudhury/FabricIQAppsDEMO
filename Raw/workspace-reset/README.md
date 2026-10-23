@@ -290,14 +290,18 @@ provides the native backing-table contract.
 
 The subsequent FEATURE setup run completed the other notebook activities but failed NB09's
 strict ontology-only smoke with `Ontology query capability is unavailable in this environment.`
-This is **not** the narrowly allowed unsupported-API-version response, so the failure remains
-propagated; the full workflow is not accepted. That smoke explicitly forbids SQL and KQL,
-whereas the current agent instructions permit source-native execution on ontology-associated
-sources. A separate delegated CLI diagnostic permitting the associated Lakehouse returned
-three facility ID/name rows in 46 seconds. This diagnostic does not replace the independent
-live-row oracle, attest execution provenance, or certify telemetry/SQL joins or browser access.
-Changing the deployment gate from ontology-only execution to ontology-context/source execution
-is a separate readiness-contract decision, not an error to suppress.
+This is **not** the narrowly allowed unsupported-API-version response, so that run failed rather
+than suppressing the error. The old smoke forbade SQL and KQL, contrary to the current agent
+instructions permitting source-native execution on ontology-associated sources. A separate delegated
+CLI diagnostic permitting the associated Lakehouse returned three facility ID/name rows in 46 seconds.
+NB09 now tests that intended ontology-context/static-binding contract, excluding operational SQL,
+KQL and unrelated sources, and still compares exact records with the independent live-row oracle.
+It also handles Fabric MCP's actual CSV result attachment/generated-file footer rather than
+misclassifying a successful query as malformed JSON. The evidence label is
+`ontology_context_facilities_smoke_v1`; this bounded check does not attest execution provenance,
+native ontology traversal, native graph readiness, telemetry/SQL joins, or browser access.
+All real execution, publication, transport, semantic and reconciliation failures still propagate.
+The corrected full workflow is being rechecked; the earlier failed run is not an accepted deployment.
 
 The selected ontology's **Manage graph** page also reported all five entity types as
 **Ineligible**, with **Unsupported Datasource** details. Its displayed completed materialization

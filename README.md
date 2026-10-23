@@ -76,12 +76,15 @@ RTI_009 tracks publication separately from functional validation. Healthy runtim
 Ontology-v2 API response is recorded as `known_product_limitation`; publication alone is never
 misreported as readiness.
 
-The Data Agent smoke check asks only for the selected ontology's first five facility IDs/names and
-compares the exact answer with independently read configured Lakehouse rows. Expected values are
-not supplied in the prompt; attached SQL sources are allowed and no cached proof is required.
-Evidence uses `verification=ontology_facilities_smoke_v1`, scoped to **"Source-specific functional
-smoke test; execution provenance is not attested."** It does not certify cryptographic provenance,
-SQL/combined-source answers, or the entire agent. Semantic/transport errors and wrong rows fail;
+The Data Agent smoke check uses the selected ontology as semantic context and permits source-native
+SQL on its associated Lakehouse static binding. It compares the first five facility IDs/names with
+independently read configured Lakehouse rows. Expected values are not supplied in the prompt;
+operational SQL, KQL and unrelated sources are excluded, while their configurations remain preserved.
+Exact query-result CSV attachments are supported, including the generated-file footer returned by
+Fabric MCP. Evidence uses `verification=ontology_context_facilities_smoke_v1`, scoped to
+**"Ontology-context facilities functional smoke test; execution provenance, native ontology traversal,
+telemetry and operational SQL are not attested."** It does not certify cryptographic provenance,
+SQL/combined-source answers, native graph readiness, or the entire agent. Semantic/transport errors and wrong rows fail;
 nonparseable, count-only, or unverifiable answers are inconclusive. Both fail required execution.
 
 RTI_011 attaches and publishes the SQL source independently of the ontology source or NB09's
