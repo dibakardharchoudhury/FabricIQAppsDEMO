@@ -77,9 +77,6 @@ export function KnowledgeGraphPage() {
     setGraphLoading(true)
     let timeoutId: number | undefined
     try {
-      const progressiveContract = await queryOntologyContract()
-      if (version !== graphRefreshVersion.current) return
-      setOntology(progressiveContract)
       const load = loadNativeGraphSnapshot(() => queryOntologyGraph(force), queryOntologyContract)
       const timeout = new Promise<never>((_, reject) => {
         timeoutId = window.setTimeout(() => reject(new Error('Ontology graph loading exceeded 30 seconds. Retry after the Fabric graph refresh completes.')), GRAPH_LOAD_TIMEOUT_MS)
