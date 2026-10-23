@@ -424,10 +424,15 @@ tenant and workspace selected in the sidebar:
   retried with bounded backoff. The checks also send a minimal GraphQL query and a deliberately
   incomplete token request; missing CORS headers, GraphQL failure, or a persistent token HTTP 5xx
   fails deployment.
-  The Lakehouse connector also requires a successful browser-equivalent CORS preflight and
-  delegated reads of all nine configured entities. Reference tables must contain seeded rows;
-  empty weather tables are reported as empty, not invented data. This operator-session check
-  does not certify every browser user's access. The existing Fabric GraphQL API remains for
+  The Lakehouse connector also requires a successful browser-equivalent CORS preflight and an
+  HTTP 401 authentication challenge from its unauthenticated POST; missing routes, server errors
+  and missing CORS fail deployment. The engine explicitly reports
+  `LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed`. Verify all nine entities separately through
+  normal Fabric browser sign-in, including complete pagination and seeded reference rows.
+  Empty weather tables are legitimate, not invented data. Azure CLI direct exchange is not a
+  supported acceptance path: requesting `Item.Execute.All` returned API-owner preauthorization
+  error `AADSTS65002`, not an operator-consent prerequisite. Browser acceptance proves only the
+  tested session's access. The existing Fabric GraphQL API remains for
   the hosted crew's independent verification; SQL, agents, telemetry and native graph are unchanged.
   The final check also verifies the SPA redirect, every delegated scope, and its consent grant from
   Microsoft Graph. Missing SPA access, redirects, permissions, or consent blocks `SUCCESS` because

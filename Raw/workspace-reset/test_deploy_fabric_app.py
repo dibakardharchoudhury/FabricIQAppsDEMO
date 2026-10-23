@@ -34,32 +34,6 @@ class CommandEncodingTests(unittest.TestCase):
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
-    def test_readback_requests_the_documented_execute_scope_in_the_target_tenant(self):
-        with (
-            patch.object(DEPLOY, "az", side_effect=lambda *args: ["az", *args]),
-            patch.object(DEPLOY, "run_capture", return_value="operator-token") as capture,
-            patch.object(DEPLOY, "node24_script", return_value=["node", "validate-script"]),
-            patch.object(DEPLOY, "run_stream") as stream,
-        ):
-            DEPLOY.validate_lakehouse_connector_data("target-tenant", "https://app.example")
-        capture.assert_called_once_with([
-            "az", "account", "get-access-token", "--tenant", "target-tenant",
-            "--scope", "https://api.fabric.microsoft.com/Item.Execute.All",
-            "--query", "accessToken", "-o", "tsv",
-        ])
-        self.assertEqual(stream.call_args.kwargs["env"]["HYDRO_CONNECTOR_ENTRA_TOKEN"], "operator-token")
-        self.assertEqual(stream.call_args.kwargs["env"]["HYDRO_CONNECTOR_ORIGIN"], "https://app.example")
-
-    def test_missing_operator_consent_stops_readback_with_an_actionable_error(self):
-        with (
-            patch.object(DEPLOY, "az", side_effect=lambda *args: ["az", *args]),
-            patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Consent required")),
-            patch.object(DEPLOY, "run_stream") as stream,
-        ):
-            with self.assertRaisesRegex(DEPLOY.DeployError, r"delegated Item\.Execute\.All"):
-                DEPLOY.validate_lakehouse_connector_data("target-tenant", "https://app.example")
-        stream.assert_not_called()
-
     def test_required_connector_generation_and_apply_must_both_succeed(self):
         receipt = {
             "status": "success",
@@ -987,8 +961,7 @@ class DeployOrderTests(unittest.TestCase):
         prepare.assert_not_called()
         ensure_dependencies.assert_not_called()
 
-    @patch.object(DEPLOY, "validate_lakehouse_connector_data")
-    def test_reuses_existing_backend_for_static_deploy(self, validate_connector):
+    def test_reuses_existing_backend_for_static_deploy(self):
         client_id = "11111111-1111-1111-1111-111111111111"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -1050,11 +1023,9 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
         self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[4].kwargs["env"])
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
-        validate_connector.assert_called_once_with(args.tenant, "https://fast.webapp.fabricapps.net")
 
-    @patch.object(DEPLOY, "validate_lakehouse_connector_data")
     @patch.object(DEPLOY, "provision_foundry_agents")
-    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents, validate_connector):
+    def test_existing_registered_origin_reapplies_backend_configuration(self, provision_agents):
         hosting_url = "https://fast.webapp.fabricapps.net"
         args = argparse.Namespace(
             tenant="tenant.example",
@@ -1202,7 +1173,7 @@ class DeployOrderTests(unittest.TestCase):
                 api_url,
             )
 
-    def test_cors_validation_retries_until_both_endpoints_are_ready(self):
+    def test_cors_validation_retries_until_all_three_endpoints_are_ready(self):
         origin = "https://app.webapp.fabricapps.net"
         failed = Mock(status_code=500, headers={})
         ready = Mock(
@@ -1219,7 +1190,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(
                 DEPLOY.requests,
                 "options",
-                side_effect=[failed, ready, ready],
+                side_effect=[failed, ready, ready, ready],
             ) as options,
             patch.object(
                 DEPLOY.requests,
@@ -1233,14 +1204,20 @@ class DeployOrderTests(unittest.TestCase):
                         status_code=400,
                         headers={"Access-Control-Allow-Origin": origin},
                     ),
+                    Mock(
+                        status_code=401,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
                 ],
             ) as post,
             patch.object(DEPLOY.time, "sleep") as sleep,
         ):
             DEPLOY.validate_appbackend_cors("https://api.test", origin, "pk-test")
 
-        self.assertEqual(options.call_count, 3)
-        self.assertEqual(post.call_count, 2)
+        self.assertEqual(options.call_count, 4)
+        self.assertEqual(post.call_count, 3)
+        self.assertTrue(post.call_args.args[0].endswith("/connectors/hydrolakehouse/graphql"))
+        self.assertNotIn("Authorization", post.call_args.kwargs["headers"])
         sleep.assert_called_once_with(2)
 
     def test_browser_readiness_retries_token_endpoint_http_500(self):
@@ -1263,6 +1240,7 @@ class DeployOrderTests(unittest.TestCase):
                     Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
                     Mock(status_code=500, headers={}),
                     Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
                 ],
             ) as post,
             patch.object(DEPLOY.time, "sleep") as sleep,
@@ -1271,8 +1249,27 @@ class DeployOrderTests(unittest.TestCase):
                 "https://api.test", origin, "pk-test"
             )
 
-        self.assertEqual(post.call_count, 3)
+        self.assertEqual(post.call_count, 4)
         sleep.assert_called_once_with(2)
+
+    def test_connector_transport_requires_an_authentication_challenge_not_a_missing_route(self):
+        ready = Mock(status_code=200, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "authorization,content-type,x-publishable-key",
+        })
+        for status in (200, 400, 403, 404, 405, 500):
+            with (
+                self.subTest(status=status),
+                patch.object(DEPLOY, "APPBACKEND_READINESS_DELAYS", (0,)),
+                patch.object(DEPLOY.requests, "options", return_value=ready),
+                patch.object(DEPLOY.requests, "post", side_effect=[
+                    Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=status, headers={"Access-Control-Allow-Origin": "*"}),
+                ]),
+            ):
+                with self.assertRaisesRegex(DEPLOY.DeployError, "/connectors/hydrolakehouse/graphql"):
+                    DEPLOY.validate_appbackend_cors("https://api.test", "https://app.test", "pk-test")
 
     def test_cors_validation_rejects_missing_allow_origin(self):
         response = Mock(

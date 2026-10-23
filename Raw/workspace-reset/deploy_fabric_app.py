@@ -43,7 +43,7 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
-APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token")
+APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token", "/connectors/hydrolakehouse/graphql")
 APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
     "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": {"user_impersonation"},
@@ -1053,6 +1053,7 @@ def validate_appbackend_cors(
     post_bodies = {
         "/graphql": {"query": "query { __typename }"},
         "/api/auth/v1/token": {},
+        "/connectors/hydrolakehouse/graphql": {"query": "query { __typename }"},
     }
     failures: list[str] = []
     for path in APPBACKEND_CORS_PATHS:
@@ -1097,7 +1098,9 @@ def validate_appbackend_cors(
                     "Access-Control-Allow-Origin", ""
                 )
                 expected_status = (
-                    post_response.status_code == 200
+                    post_response.status_code == 401
+                    if path == "/connectors/hydrolakehouse/graphql"
+                    else post_response.status_code == 200
                     if path == "/graphql"
                     else 200 <= post_response.status_code < 500
                     and post_response.status_code not in {404, 405}
@@ -1754,32 +1757,6 @@ def validate_lakehouse_connector_apply(output: str) -> None:
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
 
 
-def validate_lakehouse_connector_data(tenant: str, hosting_url: str) -> None:
-    print(
-        "Requesting delegated Item.Execute.All for connector readback; "
-        "Azure CLI may require native Microsoft sign-in/consent.",
-        flush=True,
-    )
-    try:
-        token = run_with_azure_cli_reauthentication(
-            tenant, "validating delegated Lakehouse connector reads",
-            lambda: run_capture(az("account", "get-access-token", "--tenant", tenant,
-                                   "--scope", "https://api.fabric.microsoft.com/Item.Execute.All",
-                                   "--query", "accessToken", "-o", "tsv")),
-        )
-    except DeployError as exc:
-        raise DeployError(
-            "Connector readback requires a delegated Item.Execute.All token in the target tenant "
-            "and Execute permission on the AppBackend. Complete the native Microsoft sign-in/"
-            f"consent prerequisite and retry the canonical deployment. Details: {exc}"
-        ) from exc
-    run_stream(
-        node24_script(APP_DIR / "scripts" / "validate-lakehouse-connector.mjs"),
-        cwd=APP_DIR,
-        env={**os.environ, "HYDRO_CONNECTOR_ENTRA_TOKEN": token, "HYDRO_CONNECTOR_ORIGIN": hosting_url},
-    )
-
-
 def current_git_push_target() -> tuple[str, str]:
     """Return a non-main branch and its matching origin upstream."""
     branch = run_capture(command_argv("git", "branch", "--show-current"), cwd=REPO_ROOT)
@@ -2107,7 +2084,12 @@ def deploy(args: argparse.Namespace) -> None:
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)
     publishable_key = validate_rayfin_publishable_key()
     validate_appbackend_cors(api_url, hosting_url, publishable_key)
-    validate_lakehouse_connector_data(args.tenant, hosting_url)
+    print(
+        "LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed "
+        "(use normal Fabric browser sign-in to verify all nine entities; "
+        "connector apply and protected transport readiness are not source-execution certification).",
+        flush=True,
+    )
     if client_id:
         # Redirect preservation is a hard safety contract: never report success if a URI
         # that existed in Entra before deployment disappeared.

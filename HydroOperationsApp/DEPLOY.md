@@ -106,25 +106,29 @@ No manual GraphQL API creation/binding is required for these SPA reads.
 
 Every deployment reapplies runtime/SQL settings, explicitly generates/applies the connector,
 and rejects missing, skipped or partial connector receipts even if Rayfin exits zero.
-Final validation checks connector CORS and queries all nine entities under a delegated operator
-session. This proves that session's source access, not every end user's permissions. Signed-user
-browser acceptance remains a separate check. Connector execution requires a deployed backend;
-local Vite uses that same backend, not a local Lakehouse emulation.
+Final validation checks connector CORS and requires an HTTP 401 authentication challenge from
+the unauthenticated connector POST. Missing routes, server failures and missing CORS fail deployment.
+This verifies protected transport readiness, not source execution. The engine explicitly prints
+`LAKEHOUSE_CONNECTOR_DATA_ACCEPTANCE=not-performed`. Separately, use normal Fabric browser sign-in
+and verify all nine connector entities return HTTP 200 without GraphQL errors and complete pagination.
+Reference tables must contain seeded rows; weather tables may legitimately be empty.
+This proves that session's access, not every end user's permissions. Connector execution requires
+a deployed backend; local Vite uses that backend, not a local Lakehouse emulation.
 
-The readback operator must acquire a target-tenant delegated Fabric `Item.Execute.All` token
-and have Execute permission on the AppBackend. The engine requests that explicit scope from
-Azure CLI; its default `user_impersonation` token is not sufficient for Rayfin's brokered
-exchange. Native Microsoft sign-in/consent may require operator interaction. This prerequisite
-is separate from SPA permission setup and must not be bypassed or replaced by copying a
-browser session. A refused/pending exchange is a failed deployment check, not failed Lakehouse data.
+Do not make Azure CLI direct-token exchange a deployment prerequisite. Its default token has
+`user_impersonation`; requesting `Item.Execute.All` returned `AADSTS65002`, which requires Microsoft
+API-owner preauthorization of the first-party CLI application, not additional tenant-admin consent.
+Rayfin's documented direct exchange needs that scope, whereas normal Fabric browser brokering works.
+Do not bypass this boundary, copy browser credentials, or substitute CLI tokens into the SPA.
 
 Live browser verification on October 23 used normal Fabric sign-in and received HTTP 200 from
 all nine connector entities: 3 facilities, 3 systems, 15 equipment, 90 instruments,
 3 weather locations, 3 areas, 9 variables, 72 observations and 48 forecasts. No legacy Fabric
 GraphQL item requests were observed for those SPA reads; SQL-backed work orders remained visible.
 The weather UI correctly showed no forecast in its current time window despite source rows.
-The canonical run applied the connector and passed backend CORS checks but stopped at the
-operator's direct-exchange prerequisite; it did **not** report final deployment `SUCCESS`.
+The initial canonical run applied the connector but stopped at the unsupported CLI exchange.
+That invalid check was removed in favor of explicit transport readiness and separate authenticated
+browser acceptance; deployment success alone does not certify the nine source reads.
 
 Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
 no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
