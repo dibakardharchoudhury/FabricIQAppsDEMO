@@ -246,14 +246,24 @@ pipeline permission to read them (for example *Key Vault Secrets User*), and add
 principal to the workspace as Contributor or Admin. The tenant must also leave *Service principals
 can call Fabric public APIs* enabled.
 
-Weather provisioning also imports and publishes the `Weather` Fabric Environment with a
-NumPy-1-compatible pinned set of `pandas`, `xarray`, `shapely`, `pyproj`, `adlfs`, `zarr` and
-`numcodecs`. Its Git-tracked `Setting/Sparkcompute.yml` explicitly selects Fabric Runtime 1.3
-(Spark 3.5 / Python 3.11), matching the verified published Weather Environment. Do not omit
-that part: a fresh workspace can otherwise select Runtime 2.0 while retaining the older
-library pins. The FEATURE deployment exposed this runtime drift and a failed library
-publication; publication must succeed before setup proceeds. No custom pool ID is copied
-between workspaces. The Git sync verifies that
+All project Spark notebooks require **Fabric Runtime 2.0 (Spark 4.1 / Python 3.13)**,
+including Weather, with no older-runtime fallback. Both Git sync and the standalone
+pipeline runner set the workspace default to 2.0 and verify readback before proceeding;
+they patch only the runtime setting, preserving unrelated pool and session configuration.
+They also verify every workspace Environment's **published** Spark compute runtime, across
+all inventory pages, and stop on an older or unreadable override rather than executing
+notebooks against it. They never downgrade or silently replace an operator's Environment.
+Unattached notebooks inherit that default. Weather notebooks attach to the Git-tracked
+`Weather` Environment, whose `Setting/Sparkcompute.yml` also explicitly selects 2.0.
+Its Python 3.13-compatible libraries use the official Runtime 2.0 NumPy 2.4.1 / pandas
+2.3.3 baseline, xarray 2025.10.1, shapely 2.1.2, pyproj 3.7.2 and adlfs 2025.8.0.
+Zarr 2.18.7 / numcodecs 0.15.1 retain Aurora's existing Zarr-2 reader contract.
+The previous NumPy-1 / pandas-2.1 pins are not compatible with this runtime; do not restore
+them or downgrade the runtime to make publication pass. Publication failures propagate.
+No custom pool ID is copied between workspaces. See the official
+[Runtime 2.0](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0) and
+[migration guide](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0-migration-guide).
+The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
 folder and binds all four to the project Lakehouse. The fetch notebooks read

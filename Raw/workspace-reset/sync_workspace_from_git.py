@@ -74,7 +74,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 try:
@@ -619,8 +619,83 @@ def configure_weather_schedule(
     print(f"{WEATHER_PIPELINE_NAME} schedule {action}: every six hours (UTC).")
 
 
+def ensure_spark_runtime(
+    request: Callable[..., requests.Response], workspace_id: str
+) -> None:
+    """Set and verify the project-wide Spark runtime without replacing other settings."""
+    url = f"{FABRIC_BASE}/workspaces/{workspace_id}/spark/settings"
+
+    def read_runtime() -> str:
+        response = request("GET", url)
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Spark runtime preflight failed: HTTP {response.status_code} {response.text}"
+            )
+        settings = response.json()
+        environment = settings.get("environment") if isinstance(settings, dict) else None
+        runtime = environment.get("runtimeVersion") if isinstance(environment, dict) else None
+        if not isinstance(runtime, str) or not runtime:
+            raise SystemExit("Spark runtime preflight failed: missing environment.runtimeVersion.")
+        return runtime
+
+    runtime = read_runtime()
+    if runtime != "2.0":
+        print(f"Spark runtime preflight: updating workspace runtime {runtime} -> 2.0...")
+        response = request("PATCH", url, json={"environment": {"runtimeVersion": "2.0"}})
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Spark runtime update failed: HTTP {response.status_code} {response.text}"
+            )
+        runtime = read_runtime()
+        if runtime != "2.0":
+            raise SystemExit(f"Spark runtime readback failed: expected 2.0, received {runtime}.")
+    print("Spark runtime preflight: verified workspace Runtime 2.0.")
+
+
+def verify_environment_runtimes(
+    request: Callable[..., requests.Response], workspace_id: str
+) -> None:
+    """Reject published environment overrides that could run notebooks on an older runtime."""
+    base = f"{FABRIC_BASE}/workspaces/{workspace_id}"
+    url: str | None = f"{base}/items?type=Environment"
+    while url:
+        response = request("GET", url)
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Environment runtime inventory failed: HTTP {response.status_code} {response.text}"
+            )
+        page = response.json()
+        if not isinstance(page, dict) or not isinstance(page.get("value"), list):
+            raise SystemExit("Environment runtime inventory failed: missing item list.")
+        for item in page["value"]:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise SystemExit("Environment runtime inventory failed: missing item identity.")
+            compute = request(
+                "GET", f"{base}/environments/{item['id']}/sparkcompute?beta=false"
+            )
+            if compute.status_code != 200:
+                raise SystemExit(
+                    f"Environment runtime readback failed for {item['id']}: "
+                    f"HTTP {compute.status_code} {compute.text}"
+                )
+            settings = compute.json()
+            runtime = settings.get("runtimeVersion") if isinstance(settings, dict) else None
+            if runtime != "2.0":
+                raise SystemExit(
+                    f"Environment {item.get('displayName') or item['id']} requires published "
+                    f"Runtime 2.0; received {runtime!r}. Publish the upgraded environment first."
+                )
+            print(f"Environment runtime preflight: verified {item['id']} on Runtime 2.0.")
+        url = page.get("continuationUri")
+        if url is not None and (
+            not isinstance(url, str) or not url.startswith(f"{base}/items?")
+        ):
+            raise SystemExit("Environment runtime inventory failed: invalid continuation URI.")
+
+
 def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) -> None:
     """Validate weather Git items, publish their Environment, and print secret guidance."""
+    ensure_spark_runtime(fab.request, workspace_id)
     items = fab.list_workspace_items(workspace_id)
     folders = fab.list_workspace_folders(workspace_id)
     notebook_folder = next(
@@ -736,6 +811,8 @@ def configure_weather_assets(fab: Fabric, workspace_id: str, git_updated: bool) 
         print("Weather Environment publish completed.")
     else:
         print("Weather Environment is already published; no publish required.")
+
+    verify_environment_runtimes(fab.request, workspace_id)
 
     # Git stores empty notebook dependencies, so every import unbinds these notebooks.
     print("Binding weather notebooks to the lakehouse and Environment...")

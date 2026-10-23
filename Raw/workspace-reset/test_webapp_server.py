@@ -122,11 +122,35 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIn('${p.name === "alert_email_to" ? "required" : ""}', html)
         self.assertNotIn('type="${p.name === "alert_email_to" ? "email" : "text"}"', html)
 
+    def test_pipeline_rejects_old_published_environment_before_starting(self):
+        fabric = Mock()
+        fabric.resolve_workspace_id.return_value = ("canonical-workspace", "DEV")
+        fabric.request.side_effect = [
+            Mock(status_code=200, json=Mock(return_value={"environment": {"runtimeVersion": "2.0"}})),
+            Mock(status_code=200, json=Mock(return_value={"value": [{"id": "weather", "displayName": "Weather"}]})),
+            Mock(status_code=200, json=Mock(return_value={"runtimeVersion": "1.3"})),
+        ]
+        with (
+            patch.object(sys, "argv", ["run_pipeline.py", "--tenant", "tenant.example",
+                                      "--workspace", "DEV", "--yes", "--no-wait"]),
+            patch.object(run_pipeline, "Fabric", return_value=fabric),
+            patch.object(run_pipeline, "ensure_key_vault_access") as key_vault,
+            self.assertRaisesRegex(SystemExit, "Weather requires published Runtime 2.0"),
+        ):
+            run_pipeline.main()
+        key_vault.assert_not_called()
+        fabric.start_pipeline.assert_not_called()
+
     def test_pipeline_api_worker_and_poll_preserve_required_agent_failure_and_success(self):
         for state, expected_status, expected_code in (("Completed", "succeeded", 0), ("Failed", "failed", 1)):
             with self.subTest(state=state):
                 fabric = Mock()
                 fabric.resolve_workspace_id.return_value = ("canonical-workspace", "DEV")
+                fabric.request.side_effect = [
+                    Mock(status_code=200, json=Mock(return_value={"environment": {"runtimeVersion": "2.0"}})),
+                    Mock(status_code=200, json=Mock(return_value={"value": [{"id": "weather"}]})),
+                    Mock(status_code=200, json=Mock(return_value={"runtimeVersion": "2.0"})),
+                ]
                 fabric.find_pipeline.return_value = ("pipeline-id", "01_Pipe_Setup")
                 fabric.start_pipeline.return_value = "https://mock.invalid/job"
                 reason = "Required Data Agent ontology runtime smoke failed: unsupported Ontology API"

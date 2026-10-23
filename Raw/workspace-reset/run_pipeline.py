@@ -48,6 +48,7 @@ import time
 from typing import Any
 
 from key_vault_preflight import PreflightError, ensure_key_vault_access
+from sync_workspace_from_git import ensure_spark_runtime, verify_environment_runtimes
 
 try:
     import requests
@@ -254,6 +255,8 @@ def main() -> int:
     # The action target is the source of truth. Notebooks require the canonical
     # GUID even when the user selected the workspace by display name.
     parameters["workspace_id"] = ws_id
+    ensure_spark_runtime(fab.request, ws_id)
+    verify_environment_runtimes(fab.request, ws_id)
     key_vault_uri = str(parameters.get("key_vault_uri") or "").strip()
     if key_vault_uri:
         try:

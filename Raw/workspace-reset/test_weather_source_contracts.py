@@ -6,14 +6,34 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
-    def test_weather_environment_pins_the_verified_runtime(self):
+    def test_weather_environment_requires_runtime_two_and_python_313_libraries(self):
         environment = ROOT / "Environments/Weather.Environment"
         compute = (environment / "Setting/Sparkcompute.yml").read_text(encoding="utf-8")
         libraries = (environment / "Libraries/PublicLibraries/environment.yml").read_text(encoding="utf-8")
-        self.assertIn("runtime_version: '1.3'", compute)
+        self.assertIn("runtime_version: '2.0'", compute)
         self.assertNotIn("instance_pool_id:", compute)
-        self.assertIn("numpy=1.26.4", libraries)
-        self.assertIn("pandas=2.1.4", libraries)
+        for package in ("numpy=2.4.1", "pandas=2.3.3", "xarray=2025.10.1",
+                        "shapely=2.1.2", "pyproj=3.7.2", "adlfs==2025.8.0",
+                        "zarr==2.18.7", "numcodecs==0.15.1"):
+            self.assertIn(package, libraries)
+        self.assertNotIn("numpy=1.", libraries)
+
+    def test_notebooks_inherit_runtime_without_bundled_environment_ids(self):
+        notebooks = list((ROOT / "Notebooks").glob("*.Notebook/notebook-content.py"))
+        raw_notebooks = list((ROOT / "Raw/RTI_Notebooks").glob("*.ipynb"))
+        self.assertTrue(notebooks)
+        self.assertTrue(raw_notebooks)
+        for path in notebooks:
+            header = path.read_text(encoding="utf-8").split("# MARKDOWN", 1)[0]
+            lines = [line.removeprefix("# META ") for line in header.splitlines()
+                     if line.startswith("# META ")]
+            metadata, _ = json.JSONDecoder().raw_decode("\n".join(lines))
+            self.assertFalse(metadata.get("dependencies", {}).get("environment"),
+                             str(path))
+        for path in raw_notebooks:
+            metadata = json.loads(path.read_text(encoding="utf-8")).get("metadata", {})
+            self.assertFalse(metadata.get("dependencies", {}).get("environment"),
+                             str(path))
 
     def test_scoped_area_run_does_not_execute_global_cleanup(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")

@@ -27,8 +27,9 @@
 # radiation averaged, and gusts maximised across every step inside the reporting
 # interval; `interval_hours` records how much of that interval the value really covers.
 #
-# Configure a Fabric Environment with `xarray`, `zarr<3`, `adlfs`, `shapely`, and
-# `pyproj`. Attach the Weather Lakehouse before running. Store the API key in Key
+# Use the project Weather Environment on Fabric Runtime 2.0 (Python 3.13), with
+# its pinned NumPy 2, pandas, xarray, Zarr 2, adlfs, shapely and pyproj libraries.
+# Attach the Weather Lakehouse before running. Store the API key in Key
 # Vault; never put it in notebook parameters.
 
 # PARAMETERS CELL ********************

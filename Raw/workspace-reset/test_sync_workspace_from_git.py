@@ -8,7 +8,10 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from sync_workspace_from_git import Fabric, configure_weather_assets, configure_weather_schedule
+from sync_workspace_from_git import (
+    Fabric, configure_weather_assets, configure_weather_schedule,
+    ensure_spark_runtime, verify_environment_runtimes,
+)
 
 LAKEHOUSE_ID = "lakehouse-id"
 LAKEHOUSE_NAME = "Energy_IQ_LakehouseRTI_V6"
@@ -99,6 +102,12 @@ class FakeFabric:
     def request(self, method, url, **kwargs):
         self.requests.append((method, url))
         self.request_kwargs.append(kwargs)
+        if url.endswith("/spark/settings"):
+            return FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}})
+        if "/items?type=Environment" in url:
+            return FakeResponse(200, {"value": [{"id": "environment-id", "displayName": "Weather"}]})
+        if "/sparkcompute?beta=false" in url:
+            return FakeResponse(200, {"runtimeVersion": "2.0"})
         if "/jobs/Pipeline/schedules" in url and method == "GET":
             return FakeResponse(200, {"value": []})
         if "/getDefinition" in url:
@@ -112,6 +121,81 @@ class FakeFabric:
             200,
             {"properties": {"publishDetails": {"state": self.publish_state}}},
         )
+
+
+class SparkRuntimeTests(unittest.TestCase):
+    def test_existing_runtime_two_requires_no_write(self):
+        request = Mock(return_value=FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}}))
+        ensure_spark_runtime(request, "workspace-id")
+        request.assert_called_once_with(
+            "GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace-id/spark/settings"
+        )
+
+    def test_upgrade_preserves_other_settings_and_verifies_readback(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3", "name": ""},
+                               "pool": {"customizeComputeEnabled": True}}),
+            FakeResponse(200),
+            FakeResponse(200, {"environment": {"runtimeVersion": "2.0"}}),
+        ])
+        ensure_spark_runtime(request, "workspace-id")
+        self.assertEqual([call.args[0] for call in request.call_args_list], ["GET", "PATCH", "GET"])
+        self.assertEqual(request.call_args_list[1].kwargs["json"],
+                         {"environment": {"runtimeVersion": "2.0"}})
+
+    def test_missing_or_malformed_runtime_fails_without_writing(self):
+        for body in ({}, {"environment": []}, {"environment": {"runtimeVersion": 2}}):
+            with self.subTest(body=body):
+                request = Mock(return_value=FakeResponse(200, body))
+                with self.assertRaisesRegex(SystemExit, "missing environment.runtimeVersion"):
+                    ensure_spark_runtime(request, "workspace-id")
+                self.assertEqual(request.call_count, 1)
+
+    def test_runtime_read_or_update_failure_propagates(self):
+        for responses in (
+            [FakeResponse(403, text="forbidden")],
+            [FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+             FakeResponse(400, text="invalid settings")],
+            [FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+             FakeResponse(200), FakeResponse(503, text="unavailable")],
+        ):
+            with self.subTest(responses=responses):
+                with self.assertRaisesRegex(SystemExit, "failed"):
+                    ensure_spark_runtime(Mock(side_effect=responses), "workspace-id")
+
+    def test_success_response_with_old_readback_is_rejected(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+            FakeResponse(200),
+            FakeResponse(200, {"environment": {"runtimeVersion": "1.3"}}),
+        ])
+        with self.assertRaisesRegex(SystemExit, "readback failed"):
+            ensure_spark_runtime(request, "workspace-id")
+
+    def test_all_environment_pages_must_publish_runtime_two(self):
+        request = Mock(side_effect=[
+            FakeResponse(200, {"value": [{"id": "weather"}],
+                               "continuationUri": "https://api.fabric.microsoft.com/v1/workspaces/workspace-id/items?continuationToken=next"}),
+            FakeResponse(200, {"runtimeVersion": "2.0"}),
+            FakeResponse(200, {"value": [{"id": "other"}]}),
+            FakeResponse(200, {"runtimeVersion": "1.3"}),
+        ])
+        with self.assertRaisesRegex(SystemExit, "other requires published Runtime 2.0"):
+            verify_environment_runtimes(request, "workspace-id")
+        self.assertEqual(request.call_count, 4)
+        self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+    def test_environment_inventory_and_compute_failures_are_not_suppressed(self):
+        for responses in (
+            [FakeResponse(403, text="forbidden")],
+            [FakeResponse(200, {"wrong": []})],
+            [FakeResponse(200, {"value": [{}]})],
+            [FakeResponse(200, {"value": [{"id": "weather"}]}), FakeResponse(503, text="unavailable")],
+            [FakeResponse(200, {"value": [{"id": "weather"}]}), FakeResponse(200, {})],
+            [FakeResponse(200, {"value": [], "continuationUri": "https://other.invalid/items"})],
+        ):
+            with self.subTest(responses=responses), self.assertRaises(SystemExit):
+                verify_environment_runtimes(Mock(side_effect=responses), "workspace-id")
 
 
 class FabricRequestTests(unittest.TestCase):
