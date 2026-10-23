@@ -142,7 +142,16 @@ of agent execution, delivery, writes or every user's permissions.
 Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
 no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
 seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted crew's independent
-direct-source verification. Do not delete that shared API or alter NB11 as part of this SPA migration.
+direct-source verification. Do not delete that shared API.
+For a fresh target without that API, the canonical engine first provisions the AppBackend/schema,
+then runs the current NB11 with Boolean `seed_demo_data=False`, before configuring Foundry.
+It verifies the live notebook's code against the repository before execution, enforces Runtime 2.0,
+waits at most 15 minutes for the notebook job, and refreshes the authoritative GraphQL identity.
+This bootstrap always attempts GraphQL and Data Agent SQL-source publication, but does not execute
+the operational demo MERGE or overwrite a previous demo-seed status. An active NB11 or mismatched
+notebook contract stops deployment instead of silently ignoring the non-seeding parameter.
+Sync the current Git branch before deploying a fresh target. Existing targets with a verified
+GraphQL ID do not rerun the notebook during ordinary app updates.
 SQL operational records, Eventhouse queries and the ontology-managed graph remain independent.
 See the [official connector contract](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
 
@@ -187,7 +196,8 @@ success is point-in-time evidence, not an availability guarantee.
    Missing graph binding stops the canonical engine before AppBackend/Foundry provisioning.
    A portal status of Complete with zero materialized nodes/edges is not usable graph readiness;
    resolve ineligible/unsupported source types rather than inventing a binding.
-4. For a fresh environment, finish **Seed & provision** and start the telemetry stream.
+4. For a fresh environment, explicitly finish **Seed & provision** to write demo operational data,
+   and start the telemetry stream. The deployment's source-only bootstrap does not seed those rows.
    Verify real source timestamps, not just a connected badge.
 5. Require `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it. Hosting readiness,
    agent execution, graph materialization and Teams/email delivery are separate acceptance gates.

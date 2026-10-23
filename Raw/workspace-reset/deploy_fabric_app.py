@@ -9,6 +9,8 @@ the local "Initialize Your Fabric Demo" web app and can also be run directly.
 from __future__ import annotations
 
 import argparse
+import ast
+import base64
 import hashlib
 import importlib.util
 import json
@@ -1952,6 +1954,86 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
         )
 
 
+def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
+    values, _ = current_rayfin_target()
+    graphql_id = _public_config_value(values, "RAYFIN_PUBLIC_STID_GRAPHQL_ID")
+    if graphql_id:
+        if not GUID_RE.fullmatch(graphql_id):
+            raise DeployError("The independent STID GraphQL item ID is invalid.")
+        return
+    notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
+    backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
+    if not GUID_RE.fullmatch(notebook_id) or not GUID_RE.fullmatch(backend_id):
+        raise DeployError("Fresh deployment requires verified NB11 and AppBackend identities.")
+    from sync_workspace_from_git import (
+        Fabric, ensure_spark_runtime, notebook_definition, verify_environment_runtimes,
+    )
+
+    fabric = Fabric(tenant)
+    definition = notebook_definition(fabric, workspace_id, notebook_id)
+    parts = [part for part in definition["parts"] if part["path"] == "notebook-content.ipynb"]
+    if len(parts) != 1:
+        raise DeployError("NB11 bootstrap contract could not be read as one notebook definition.")
+    notebook = json.loads(base64.b64decode(parts[0]["payload"]).decode("utf-8"))
+    code = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    expected = (SCRIPT_DIR.parent.parent / "Notebooks" /
+                "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+    if ast.dump(ast.parse(code)) != ast.dump(ast.parse(expected)):
+        raise DeployError(
+            "Live NB11 differs from this repository's verified non-seeding bootstrap contract. "
+            "Sync the current Git branch into the workspace before deploying; no notebook was run."
+        )
+    ensure_spark_runtime(fabric.request, workspace_id)
+    verify_environment_runtimes(fabric.request, workspace_id)
+    headers = fabric_headers(tenant)
+    backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
+    if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
+        raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
+    jobs_path = f"workspaces/{workspace_id}/items/{notebook_id}/jobs/instances"
+    jobs = fabric_get(jobs_path, headers)
+    if not isinstance(jobs.get("value"), list) or jobs.get("continuationToken") or jobs.get("continuationUri"):
+        raise DeployError("Cannot verify an idle NB11 from its complete job inventory.")
+    if any(job.get("status") in ("NotStarted", "InProgress") for job in jobs["value"]):
+        raise DeployError("NB11 is already active. Let it finish before retrying deployment.")
+    print("Bootstrapping GraphQL and the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
+    response = requests.post(
+        f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
+        headers=headers, json={"parameters": [
+            {"name": "sql_db_item_name", "value": backend["displayName"], "type": "Text"},
+            {"name": "seed_demo_data", "value": False, "type": "Boolean"},
+        ]}, timeout=60,
+    )
+    if response.status_code != 202:
+        raise DeployError(f"NB11 bootstrap start failed: HTTP {response.status_code} {response.text}")
+    location = response.headers.get("Location", "")
+    prefixes = [f"{FABRIC_BASE}/workspaces/{workspace_id}/{kind}/{notebook_id}/jobs/instances/"
+                for kind in ("items", "notebooks")]
+    if not any(location.startswith(prefix) and GUID_RE.fullmatch(location[len(prefix):]) for prefix in prefixes):
+        raise DeployError("NB11 bootstrap did not return a verified target-workspace job location.")
+    deadline = time.monotonic() + 15 * 60
+    last_status = None
+    while time.monotonic() < deadline:
+        result = fabric_get(location[len(FABRIC_BASE) + 1:], headers)
+        status = result.get("status")
+        if status != last_status:
+            print(f"NB11 bootstrap: {status} ({location})", flush=True)
+            last_status = status
+        if status == "Completed":
+            break
+        if status not in ("NotStarted", "InProgress"):
+            raise DeployError(f"NB11 bootstrap failed: {json.dumps(result)}")
+        time.sleep(4)
+    else:
+        raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
+    public = resolve_public_artifact_config(workspace_id, tenant, values)
+    if not GUID_RE.fullmatch(public.get("RAYFIN_PUBLIC_STID_GRAPHQL_ID", "")):
+        raise DeployError("NB11 completed but no verified independent STID GraphQL item was discovered.")
+    env_path = RAYFIN_DIR / ".env"
+    env_path.write_text(_rebind_public_env(env_path.read_text(encoding="utf-8"), public),
+                        encoding="utf-8", newline="\n")
+    print("Verified independent GraphQL identity refreshed before Foundry provisioning.", flush=True)
+
+
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     values, _ = current_rayfin_target()
     if not _public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"):
@@ -1963,6 +2045,7 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
             "Stopped before AppBackend or Foundry provisioning."
         )
     ensure_appbackend_identity(tenant, workspace_id)
+    ensure_hosted_source_prerequisites(tenant, workspace_id)
     foundry_spec = importlib.util.spec_from_file_location(
         "provision_foundry_agents", SCRIPT_DIR / "provision_foundry_agents.py"
     )

@@ -1759,11 +1759,15 @@ class CapabilityTests(unittest.TestCase):
         )
 
     def test_sql_graphql_scaffolding_runs_but_required_agent_failure_is_recorded(self):
-        for agents in ([], [{"id": "agent-id", "displayName": "agent"}]):
+        for agents, seed_demo_data in (
+            ([], True), ([], False),
+            ([{"id": "agent-id", "displayName": "agent"}], True),
+            ([{"id": "agent-id", "displayName": "agent"}], False),
+        ):
             ns = self.extension_namespace(agents)
             ns.update({
                 "resolve_sql_database": Mock(return_value=("sql-id", "server", "database")),
-                "sql_db_item_name": "sql", "seed_sql_database": Mock(),
+                "sql_db_item_name": "sql", "seed_sql_database": Mock(), "seed_demo_data": seed_demo_data,
                 "create_graphql_api": Mock(return_value={"id": "graphql-id"}),
                 "graphql_api_name": "graphql", "lakehouse_name": "lakehouse", "lakehouse_id": "lh-id",
                 "resolve_sql_analytics_endpoint_id": Mock(return_value="endpoint"),
@@ -1780,7 +1784,9 @@ class CapabilityTests(unittest.TestCase):
             end = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
             nodes = [node for node in tree.body[start:end] if not isinstance(node, ast.FunctionDef)]
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "scaffolding", "exec"), ns)
-            ns["seed_sql_database"].assert_called_once()
+            self.assertEqual(ns["seed_sql_database"].call_count, int(seed_demo_data))
+            self.assertEqual(ns["step_results"]["sql_seed"]["status"],
+                             "completed" if seed_demo_data else "not_requested")
             ns["create_graphql_api"].assert_called_once()
             ns["update_item_definition"].assert_called_once_with("graphql-id", {"parts": []})
             succeeds = bool(agents)
@@ -1791,6 +1797,16 @@ class CapabilityTests(unittest.TestCase):
             result = ns["step_results"]["data_agent_sql_source"]
             self.assertEqual(result["status"], "published" if succeeds else "failed")
             self.assertEqual(bool(ns["step_errors"]), not succeeds)
+
+    def test_nonseeding_bootstrap_preserves_previous_demo_seed_status(self):
+        tree = ast.parse(source("011"))
+        start = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
+        for seed_demo_data in (True, False):
+            ns = {"seed_demo_data": seed_demo_data, "step_results": {
+                "graphql": {"status": "configured"}, "sql_seed": {"status": "completed"},
+            }}
+            exec(compile(ast.Module(body=tree.body[start:start + 2], type_ignores=[]), "persist", "exec"), ns)
+            self.assertEqual("operational_sql_seed_status" in ns["persist"], seed_demo_data)
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
         tree = ast.parse(source("011"))

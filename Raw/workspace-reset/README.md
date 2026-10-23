@@ -301,7 +301,11 @@ misclassifying a successful query as malformed JSON. The evidence label is
 `ontology_context_facilities_smoke_v1`; this bounded check does not attest execution provenance,
 native ontology traversal, native graph readiness, telemetry/SQL joins, or browser access.
 All real execution, publication, transport, semantic and reconciliation failures still propagate.
-The corrected full workflow is being rechecked; the earlier failed run is not an accepted deployment.
+The corrected full setup pipeline then completed successfully through the local UI. Live Lakehouse
+SQL readback independently confirmed the Data Agent was ready/published and its bounded static smoke
+was verified. A separate NB09 follow-up persisted a complete 4,784-byte JSON receipt, including exact
+expected/returned facility rows, below the SQL endpoint's 8,000-byte string readback limit. These
+results do not certify SQL/telemetry joins, native traversal or agent delivery.
 
 The selected ontology's **Manage graph** page also reported all five entity types as
 **Ineligible**, with **Unsupported Datasource** details. Its displayed completed materialization
@@ -311,7 +315,24 @@ task-modified source parts and notebook functions were then restored and verifie
 retarget, speculative authoring change, or graph fallback was retained. The FEATURE application
 has not been deployed or runtime-accepted. Reusing the existing Foundry project would also
 rebind its stable workspace connections; use an isolated target-specific project before publishing
-another concurrently hosted workspace. Missing native graph binding now stops the app engine before
+another concurrently hosted workspace. A native UI-created, task-owned one-entity ontology did
+show an eligible Lakehouse binding. Adding its schema field alone to the target did not resolve
+eligibility; the public definition update also omitted the native source annotations. Both bounded
+target experiments were restored with exact guards and verified readback; no speculative source
+change was retained.
+
+The first actual app deployment reused the SPA, preserved its 39 redirects, and provisioned a new
+FEATURE AppBackend and isolated Foundry project/model without changing the original project.
+It then stopped because the hosted source digest requires the independent STID GraphQL item that
+NB11 had not yet created. The canonical flow now bootstraps current NB11 after AppBackend/schema
+creation and before Foundry, with Boolean `seed_demo_data=False`. GraphQL and Data Agent SQL-source
+publication remain mandatory; existing operational rows and demo-seed status are preserved.
+The engine verifies the live notebook code, Runtime 2.0 and idle state before starting, bounds its
+job wait to 15 minutes, propagates failures, and refreshes the verified public source identity.
+An ordinary deployment with an existing verified GraphQL ID avoids this extra notebook run.
+Explicit **Seed & provision** still seeds demo data later. A final hosted/runtime retry is required.
+
+Missing native graph binding now stops the app engine before
 AppBackend/Foundry provisioning, with the manual prerequisite instead of a late JSON parse failure.
 This guard does not make ineligible entities eligible or certify nonempty topology from binding
 JSON alone. All 48 pre-existing ARM resource IDs across

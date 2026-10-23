@@ -25,15 +25,15 @@
 
 # # 11 — Seed the operational SQL DB, wire GraphQL, add SQL source to the Data Agent
 # 
-# This notebook runs **after** the Hydro Operations web app (Rayfin) is deployed and its
-# `hydro-operations` **Fabric SQL Database** item + tables exist. It is designed to be
-# triggered on demand — for example, from the web app's **Seed demo data** button via the Fabric
-# job API (`jobType=RunNotebook`) — and is fully **idempotent**, so repeated runs are safe.
+# This notebook runs after the Hydro Operations AppBackend and its SQL Database tables exist.
+# The canonical deployer calls it with `seed_demo_data=False` when the independent GraphQL
+# prerequisite is missing, before provisioning Foundry. This does not write operational rows.
+# The web app's explicit **Seed & provision** action retains the default demo-data MERGE behavior.
 # 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
 # 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse,
-#    provisioning the web app's STID and Weather read endpoints.
+#    provisioning the hosted crew's independent source verification. The SPA uses its Lakehouse connector.
 # 3. **Data Agent** — adds the operational SQL Database to the live agent and
 #    **republishes**, preserving existing sources and custom settings. This step is
 #    independent of NB09's ontology result and requires no ontology source or runtime proof.
@@ -53,6 +53,7 @@
 # Required per-run target.
 # The calling webapp must supply its own Rayfin SQL Database name.
 sql_db_item_name = ""
+seed_demo_data = True
 
 # METADATA ********************
 
@@ -72,6 +73,9 @@ sql_db_item_name = ""
 # =========================
 
 from pyspark.sql import functions as F
+
+if not isinstance(seed_demo_data, bool):
+    raise ValueError("seed_demo_data must be a Boolean notebook parameter.")
 
 settings_table_name = "rti_demo_settings"
 
@@ -914,9 +918,15 @@ try:
     sql_db_item_id, sql_server, sql_database = resolve_sql_database()
     print(f"✅ Resolved SQL Database: {sql_db_item_name} (id={sql_db_item_id})")
     print(f"   Server: {sql_server}  DB: {sql_database}")
-    seed_sql_database(sql_server, sql_database)
-    step_results["sql_seed"] = {"status": "completed", "reason": ""}
-    print("✅ Operational seed applied (idempotent).")
+    if seed_demo_data:
+        seed_sql_database(sql_server, sql_database)
+        step_results["sql_seed"] = {"status": "completed", "reason": ""}
+        print("✅ Operational seed applied (idempotent).")
+    else:
+        step_results["sql_seed"] = {
+            "status": "not_requested", "reason": "Deployment bootstrap preserves operational records.",
+        }
+        print("Operational demo DML was not requested; existing records are unchanged.")
 except Exception as exc:  # noqa: BLE001 - best-effort seed with manual fallback
     step_results["sql_seed"] = {"status": "failed", "reason": str(exc)}
     step_errors.append(exc)
@@ -1208,9 +1218,11 @@ finally:
 # Persist discovered ids back to rti_demo_settings
 # ---------------------------------------------------------------------------
 persist = {
-    "operational_sql_seed_status": step_results["sql_seed"]["status"],
     "stid_graphql_deployment_status": step_results["graphql"]["status"],
 }
+
+if seed_demo_data:
+    persist["operational_sql_seed_status"] = step_results["sql_seed"]["status"]
 
 if stid_graphql_id:
     persist["stid_graphql_id"] = stid_graphql_id

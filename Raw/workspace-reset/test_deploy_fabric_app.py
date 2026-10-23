@@ -1,4 +1,5 @@
 import argparse
+import base64
 import importlib.util
 import json
 import os
@@ -86,6 +87,7 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
                     {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
                 )),
                 patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+                patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
                 patch.object(
                     DEPLOY.importlib.util, "spec_from_file_location",
                     side_effect=AssertionError("Foundry provisioning must not load without a graph binding."),
@@ -94,6 +96,7 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
                 with self.assertRaisesRegex(DEPLOY.DeployError, "Native Ontology graph binding is missing"):
                     DEPLOY.provision_foundry_agents("tenant", "workspace")
                 backend.assert_not_called()
+                sources.assert_not_called()
 
     def test_existing_binding_continues_to_the_existing_foundry_provisioner(self):
         binding = json.dumps({
@@ -105,13 +108,122 @@ class FoundryGraphPrerequisiteTests(unittest.TestCase):
                 {"RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": binding}, None,
             )),
             patch.object(DEPLOY, "ensure_appbackend_identity") as backend,
+            patch.object(DEPLOY, "ensure_hosted_source_prerequisites") as sources,
             patch.object(DEPLOY.importlib.util, "spec_from_file_location", return_value=Mock()),
             patch.object(DEPLOY.importlib.util, "module_from_spec", return_value=foundry),
             patch.dict(sys.modules, {DEPLOY.__name__: DEPLOY}),
         ):
             DEPLOY.provision_foundry_agents("tenant", "workspace")
         backend.assert_called_once_with("tenant", "workspace")
+        sources.assert_called_once_with("tenant", "workspace")
         foundry.provision.assert_called_once_with(DEPLOY, "tenant", "workspace")
+
+
+class HostedSourceBootstrapTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.rayfin = Path(self.directory.name)
+        self.env = self.rayfin / ".env"
+        self.env.write_text("RAYFIN_PUBLIC_STID_GRAPHQL_ID=\n", encoding="utf-8")
+        self.workspace = "11111111-1111-1111-1111-111111111111"
+        self.notebook = "22222222-2222-2222-2222-222222222222"
+        self.backend = "33333333-3333-3333-3333-333333333333"
+        self.graphql = "44444444-4444-4444-4444-444444444444"
+        self.values = {
+            "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": self.notebook,
+            "RAYFIN_PUBLIC_ITEM_ID": self.backend,
+        }
+        self.active = []
+        self.states = ["NotStarted", "InProgress", "Completed"]
+        self.location = (f"{DEPLOY.FABRIC_BASE}/workspaces/{self.workspace}/items/"
+                         f"{self.notebook}/jobs/instances/55555555-5555-5555-5555-555555555555")
+        self.response = Mock(status_code=202, headers={"Location": self.location})
+        expected = (DEPLOY.SCRIPT_DIR.parent.parent / "Notebooks" /
+                    "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+        notebook = {"cells": [{"cell_type": "code", "source": expected}]}
+        self.definition = {"parts": [{"path": "notebook-content.ipynb", "payload":
+                           base64.b64encode(json.dumps(notebook).encode()).decode()}]}
+
+        def read(path, headers):
+            if path.endswith(f"/items/{self.backend}"):
+                return {"id": self.backend, "type": "AppBackend", "displayName": "target-sql"}
+            if path.endswith("/jobs/instances"):
+                return {"value": self.active}
+            return {"status": self.states.pop(0), "failureReason": {"message": "real failure"}}
+
+        self.enterContext(patch.object(DEPLOY, "RAYFIN_DIR", self.rayfin))
+        self.enterContext(patch.object(DEPLOY, "current_rayfin_target", return_value=(self.values, None)))
+        self.headers = self.enterContext(patch.object(DEPLOY, "fabric_headers", return_value={}))
+        self.get = self.enterContext(patch.object(DEPLOY, "fabric_get", side_effect=read))
+        self.post = self.enterContext(patch.object(DEPLOY.requests, "post", return_value=self.response))
+        self.enterContext(patch.object(DEPLOY.time, "sleep"))
+        self.discover = self.enterContext(patch.object(
+            DEPLOY, "resolve_public_artifact_config",
+            return_value={"RAYFIN_PUBLIC_STID_GRAPHQL_ID": self.graphql}))
+        self.enterContext(patch("sync_workspace_from_git.Fabric"))
+        self.definition_read = self.enterContext(patch(
+            "sync_workspace_from_git.notebook_definition", return_value=self.definition))
+        self.runtime = self.enterContext(patch("sync_workspace_from_git.ensure_spark_runtime"))
+        self.environments = self.enterContext(patch("sync_workspace_from_git.verify_environment_runtimes"))
+
+    def test_missing_graphql_bootstraps_without_demo_dml_then_refreshes_identity(self):
+        DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.assertEqual(self.post.call_args.kwargs["json"], {"parameters": [
+            {"name": "sql_db_item_name", "value": "target-sql", "type": "Text"},
+            {"name": "seed_demo_data", "value": False, "type": "Boolean"},
+        ]})
+        self.runtime.assert_called_once()
+        self.environments.assert_called_once()
+        self.assertIn(self.graphql, self.env.read_text(encoding="utf-8"))
+        self.discover.assert_called_once_with(self.workspace, "tenant", self.values)
+
+    def test_existing_graphql_needs_no_notebook_or_demo_seed(self):
+        self.values["RAYFIN_PUBLIC_STID_GRAPHQL_ID"] = self.graphql
+        DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.post.assert_not_called()
+        self.headers.assert_not_called()
+        self.definition_read.assert_not_called()
+
+    def test_old_notebook_cannot_silently_ignore_the_nonseeding_parameter(self):
+        self.definition["parts"][0]["payload"] = base64.b64encode(
+            json.dumps({"cells": [{"cell_type": "code", "source": "seed_demo_data = True"}]}).encode()).decode()
+        with self.assertRaisesRegex(DEPLOY.DeployError, "Sync the current Git branch"):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.post.assert_not_called()
+        self.runtime.assert_not_called()
+
+    def test_active_notebook_is_not_restarted_with_different_seed_semantics(self):
+        self.active = [{"status": "InProgress"}]
+        with self.assertRaisesRegex(DEPLOY.DeployError, "already active"):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.post.assert_not_called()
+
+    def test_failed_notebook_propagates_without_rebinding_config(self):
+        for state in ("Failed", "Cancelled", "Unexpected"):
+            self.states = [state]
+            with self.subTest(state=state), self.assertRaisesRegex(DEPLOY.DeployError, "bootstrap failed"):
+                DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.discover.assert_not_called()
+        self.assertNotIn(self.graphql, self.env.read_text(encoding="utf-8"))
+
+    def test_untrusted_job_location_is_not_followed(self):
+        self.response.headers = {"Location": "https://example.invalid/job"}
+        with self.assertRaisesRegex(DEPLOY.DeployError, "verified target-workspace job"):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.discover.assert_not_called()
+
+    def test_notebook_wait_is_bounded_and_reports_existing_job(self):
+        with patch.object(DEPLOY.time, "monotonic", side_effect=[0, 901]):
+            with self.assertRaisesRegex(DEPLOY.DeployError, "exceeded 15 minutes"):
+                DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.discover.assert_not_called()
+
+    def test_completion_without_verified_graphql_identity_is_not_success(self):
+        self.discover.return_value = {"RAYFIN_PUBLIC_STID_GRAPHQL_ID": ""}
+        with self.assertRaisesRegex(DEPLOY.DeployError, "no verified independent STID"):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.assertNotIn(self.graphql, self.env.read_text(encoding="utf-8"))
 
 
 class DeployOrderTests(unittest.TestCase):

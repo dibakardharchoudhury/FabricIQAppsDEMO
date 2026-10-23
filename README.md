@@ -175,7 +175,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |
 | **RTI_010_build_operations_agent** | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline against v2; retires the verified obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies; failures propagate. | ✅ |
-| **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup; always extends the live Data Agent with SQL. Run by **Seed & provision**. | — |
+| **RTI_011_seed_sql_wire_graphql_agent** | Always configures independent STID GraphQL and the Data Agent SQL source. Fresh app deployment bootstraps it with `seed_demo_data=False`; explicit **Seed & provision** retains the default operational demo MERGE. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
 
 NB09 and NB10 persist diagnostic agent status in the same `rti_demo_settings` Delta table. Their
