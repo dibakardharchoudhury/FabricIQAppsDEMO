@@ -34,6 +34,32 @@ class CommandEncodingTests(unittest.TestCase):
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
+    def test_readback_requests_the_documented_execute_scope_in_the_target_tenant(self):
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: ["az", *args]),
+            patch.object(DEPLOY, "run_capture", return_value="operator-token") as capture,
+            patch.object(DEPLOY, "node24_script", return_value=["node", "validate-script"]),
+            patch.object(DEPLOY, "run_stream") as stream,
+        ):
+            DEPLOY.validate_lakehouse_connector_data("target-tenant", "https://app.example")
+        capture.assert_called_once_with([
+            "az", "account", "get-access-token", "--tenant", "target-tenant",
+            "--scope", "https://api.fabric.microsoft.com/Item.Execute.All",
+            "--query", "accessToken", "-o", "tsv",
+        ])
+        self.assertEqual(stream.call_args.kwargs["env"]["HYDRO_CONNECTOR_ENTRA_TOKEN"], "operator-token")
+        self.assertEqual(stream.call_args.kwargs["env"]["HYDRO_CONNECTOR_ORIGIN"], "https://app.example")
+
+    def test_missing_operator_consent_stops_readback_with_an_actionable_error(self):
+        with (
+            patch.object(DEPLOY, "az", side_effect=lambda *args: ["az", *args]),
+            patch.object(DEPLOY, "run_capture", side_effect=DEPLOY.DeployError("Consent required")),
+            patch.object(DEPLOY, "run_stream") as stream,
+        ):
+            with self.assertRaisesRegex(DEPLOY.DeployError, r"delegated Item\.Execute\.All"):
+                DEPLOY.validate_lakehouse_connector_data("target-tenant", "https://app.example")
+        stream.assert_not_called()
+
     def test_required_connector_generation_and_apply_must_both_succeed(self):
         receipt = {
             "status": "success",

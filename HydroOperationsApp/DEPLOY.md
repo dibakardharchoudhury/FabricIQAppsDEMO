@@ -111,6 +111,21 @@ session. This proves that session's source access, not every end user's permissi
 browser acceptance remains a separate check. Connector execution requires a deployed backend;
 local Vite uses that same backend, not a local Lakehouse emulation.
 
+The readback operator must acquire a target-tenant delegated Fabric `Item.Execute.All` token
+and have Execute permission on the AppBackend. The engine requests that explicit scope from
+Azure CLI; its default `user_impersonation` token is not sufficient for Rayfin's brokered
+exchange. Native Microsoft sign-in/consent may require operator interaction. This prerequisite
+is separate from SPA permission setup and must not be bypassed or replaced by copying a
+browser session. A refused/pending exchange is a failed deployment check, not failed Lakehouse data.
+
+Live browser verification on October 23 used normal Fabric sign-in and received HTTP 200 from
+all nine connector entities: 3 facilities, 3 systems, 15 equipment, 90 instruments,
+3 weather locations, 3 areas, 9 variables, 72 observations and 48 forecasts. No legacy Fabric
+GraphQL item requests were observed for those SPA reads; SQL-backed work orders remained visible.
+The weather UI correctly showed no forecast in its current time window despite source rows.
+The canonical run applied the connector and passed backend CORS checks but stopped at the
+operator's direct-exchange prerequisite; it did **not** report final deployment `SUCCESS`.
+
 Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
 no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
 seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted crew's independent

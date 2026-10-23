@@ -1755,12 +1755,24 @@ def validate_lakehouse_connector_apply(output: str) -> None:
 
 
 def validate_lakehouse_connector_data(tenant: str, hosting_url: str) -> None:
-    token = run_with_azure_cli_reauthentication(
-        tenant, "validating delegated Lakehouse connector reads",
-        lambda: run_capture(az("account", "get-access-token", "--resource",
-                               "https://analysis.windows.net/powerbi/api",
-                               "--query", "accessToken", "-o", "tsv")),
+    print(
+        "Requesting delegated Item.Execute.All for connector readback; "
+        "Azure CLI may require native Microsoft sign-in/consent.",
+        flush=True,
     )
+    try:
+        token = run_with_azure_cli_reauthentication(
+            tenant, "validating delegated Lakehouse connector reads",
+            lambda: run_capture(az("account", "get-access-token", "--tenant", tenant,
+                                   "--scope", "https://api.fabric.microsoft.com/Item.Execute.All",
+                                   "--query", "accessToken", "-o", "tsv")),
+        )
+    except DeployError as exc:
+        raise DeployError(
+            "Connector readback requires a delegated Item.Execute.All token in the target tenant "
+            "and Execute permission on the AppBackend. Complete the native Microsoft sign-in/"
+            f"consent prerequisite and retry the canonical deployment. Details: {exc}"
+        ) from exc
     run_stream(
         node24_script(APP_DIR / "scripts" / "validate-lakehouse-connector.mjs"),
         cwd=APP_DIR,
