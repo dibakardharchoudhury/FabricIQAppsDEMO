@@ -278,6 +278,15 @@ item result instead of attempting to find an unfinished item within 30 seconds. 
 also follows every inventory page. Failed or malformed operations still fail setup; no item
 is deleted or recreated to recover. These bounded checks do not certify the remaining setup,
 agent execution/delivery, native graph materialization or authenticated application runtime.
+The next rerun exposed a false source-mismatch error when Fabric returned valid native TMDL
+without private `ONT_*` annotations. Static binding identity is checked against the exact
+OneLake workspace/item URL, partition expression and physical table/column mappings;
+time-series bindings use the exact cluster/database/table resolved from target Fabric metadata.
+Private annotations are no longer authored or required, but conflicting ones, if present,
+still fail. An existing Direct Lake table with a missing source expression is rejected rather
+than silently retargeted. Unknown parts, existing mappings and strict readback verification
+remain preserved. The [official Ontology v2 definition](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition)
+provides the native backing-table contract.
 The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`

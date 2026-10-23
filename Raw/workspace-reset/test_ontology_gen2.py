@@ -458,6 +458,27 @@ class StructureTests(unittest.TestCase):
 
 
 class LakehouseTests(unittest.TestCase):
+    def test_native_directlake_without_private_annotations_is_idempotent(self):
+        initial = bound()
+        for path in ("tables/facilities.tmdl", "tables/signal_master.tmdl"):
+            initial = edit(initial, path, lambda s: re.sub(r"(?m)^[ \t]+annotation ONT_.*\n", "", s))
+        before = copy.deepcopy(initial)
+        result = binding_namespace()["_bind_gen2_parts"](initial, table_columns())[0]
+        self.assertEqual(result, before)
+        support._verify_definition(initial, result)
+
+    def test_existing_directlake_partition_requires_its_real_source_expression(self):
+        initial = [p for p in bound() if p["path"] != "expressions.tmdl"]
+        before = copy.deepcopy(initial)
+        with self.assertRaisesRegex(RuntimeError, "source expression"):
+            binding_namespace()["_bind_gen2_parts"](initial, table_columns())
+        self.assertEqual(initial, before)
+
+    def test_new_directlake_parts_do_not_author_unsupported_private_annotations(self):
+        for part in bound():
+            if part["path"].startswith("tables/"):
+                self.assertNotIn("annotation ONT_", support._decode_part(part))
+
     def test_m_comments_preserve_urls_and_strings_and_allow_quotes_in_nested_comments(self):
         literal = '"https://host//path ""/* literal */"""'
         call = 'AzureStorage.DataLake("https://host/workspace/lakehouse")'
@@ -521,8 +542,8 @@ class LakehouseTests(unittest.TestCase):
                 ns["_bind_gen2_parts"](initial, table_columns())
             self.assertEqual(initial, before)
         for replacement in (
-            lambda s: s.replace("ONT_WorkspaceId = workspace-a", "ONT_WorkspaceId = stale"),
-            lambda s: s.replace("ONT_ItemId = lakehouse-a", "ONT_ItemId = stale"),
+            lambda s: s + "\n\t\tannotation ONT_WorkspaceId = stale\n",
+            lambda s: s + "\n\t\tannotation ONT_ItemId = stale\n",
             lambda s: s.replace("sourceColumn: state", "sourceColumn: stale"),
         ):
             stale = edit(initial, "tables/facilities.tmdl", replacement)
@@ -561,13 +582,27 @@ class LakehouseTests(unittest.TestCase):
 
 
 class EventhouseTests(unittest.TestCase):
+    def test_native_eventhouse_without_private_annotations_is_idempotent(self):
+        ns = event_namespace()
+        initial, _ = ns["_bind_eventhouse_parts"](bound())
+        initial = edit(initial, "tables/OPCUAEvents.tmdl",
+                       lambda s: re.sub(r"(?m)^[ \t]+annotation ONT_.*\n", "", s))
+        before = copy.deepcopy(initial)
+        result, _ = ns["_bind_eventhouse_parts"](initial)
+        self.assertEqual(result, before)
+        support._verify_definition(initial, result)
+
+    def test_new_eventhouse_parts_do_not_author_unsupported_private_annotations(self):
+        result, _ = event_namespace()["_bind_eventhouse_parts"](bound())
+        self.assertNotIn("annotation ONT_", text(result, "tables/OPCUAEvents.tmdl"))
+
     def test_source_annotations_and_query_must_match_not_just_contain_expected_values(self):
         ns = event_namespace()
         initial, _ = ns["_bind_eventhouse_parts"](bound())
         for transform in (
-            lambda s: s.replace("ONT_ItemId = kql-id", "ONT_ItemId = kql-id-other"),
-            lambda s: s.replace("ONT_WorkspaceId = workspace-a", "ONT_WorkspaceId = workspace-a-other"),
-            lambda s: s.replace("ONT_ItemKind = KQLDatabase", "ONT_ItemKind = KQLDatabaseOther"),
+            lambda s: s + "\n\t\tannotation ONT_ItemId = kql-id-other\n",
+            lambda s: s + "\n\t\tannotation ONT_WorkspaceId = workspace-a-other\n",
+            lambda s: s + "\n\t\tannotation ONT_ItemKind = KQLDatabaseOther\n",
             lambda s: s.replace('Source = AzureDataExplorer.Contents(',
                                 '// Source = AzureDataExplorer.Contents(').replace(
                                     '\t\t\t\tin\n', '\t\t\t\t  Source = OtherSource\n\t\t\t\tin\n'),
@@ -687,11 +722,20 @@ class EventhouseTests(unittest.TestCase):
         crlf = [support._encode_part(part["path"], support._decode_part(part).replace("\n", "\r\n")) for part in first]
         _, changed = ns["_bind_eventhouse_parts"](crlf)
         self.assertFalse(changed)
-        for key in ("WORKSPACE_ID", "KQL_DB_ID", "CLUSTER_QUERY_URI"):
+        for key in ("CLUSTER_QUERY_URI", "KQL_DB_NAME"):
             other = event_namespace()
             other[key] = "different"
             with self.assertRaises(RuntimeError):
                 other["_bind_eventhouse_parts"](first)
+        annotated = edit(first, "tables/OPCUAEvents.tmdl", lambda s:
+                         s + "\n\t\tannotation ONT_WorkspaceId = workspace-a\n"
+                             "\t\tannotation ONT_ItemId = kql-id\n")
+        self.assertEqual(ns["_bind_eventhouse_parts"](annotated)[0], annotated)
+        for key in ("WORKSPACE_ID", "KQL_DB_ID"):
+            other = event_namespace()
+            other[key] = "different"
+            with self.assertRaises(RuntimeError):
+                other["_bind_eventhouse_parts"](annotated)
 
     def test_quoted_additional_backing_and_unrelated_backings_are_preserved(self):
         ns = event_namespace()

@@ -1248,6 +1248,8 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
         if len(sources) != 1 or sources[0].rstrip("/").casefold() != source_url.casefold():
             raise RuntimeError("Existing OneLake source mismatch; explicitly migrate bindings before retargeting")
     else:
+        if any(f"tables/{name}.tmdl" in result for name in entity_to_table):
+            raise RuntimeError("Existing Direct Lake tables have no verifiable source expression")
         expression = (
             f"expression {_quote_name(expression_name)} =\n\t\tlet\n"
             f'\t\t    Source = AzureStorage.DataLake("{source_url}", [HierarchicalNavigation=true])\n'
@@ -1285,7 +1287,7 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
             for annotation, value in (("ONT_WorkspaceId", workspace_id), ("ONT_ItemId", lakehouse_id),
                                       ("ONT_ItemKind", "Lakehouse")):
                 matches = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", partition)
-                if len(matches) != 1 or matches[0].casefold() != value.casefold():
+                if matches and (len(matches) != 1 or matches[0].casefold() != value.casefold()):
                     raise RuntimeError(f"Existing {table_path} source mismatch: {annotation}")
             for prop, dtype in static.items():
                 column = _object_block(table, "column", prop, 4)
@@ -1302,11 +1304,7 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
                 f"table {_quote_name(name)}\n\tlineageTag: {tag('table', name)}\n\n{columns}\n"
                 f"\tpartition {_quote_name(name)} = entity\n\t\tmode: directLake\n"
                 f"\t\tsource\n\t\t\tentityName: {_quote_name(source_table)}\n"
-                f"\t\t\texpressionSource: {_quote_name(expression_name)}\n\n"
-                f"\t\tannotation ONT_WorkspaceId = {workspace_id}\n"
-                f"\t\tannotation ONT_ItemId = {lakehouse_id}\n"
-                f"\t\tannotation ONT_ItemKind = Lakehouse\n"
-                f"\t\tannotation ONT_ItemName = {lakehouse_name}\n")
+                f"\t\t\texpressionSource: {_quote_name(expression_name)}\n")
             result[table_path] = _encode_part(table_path, table)
         backing = _direct_setting(text, "backingTable")
         if backing and _local_name(backing) != name:

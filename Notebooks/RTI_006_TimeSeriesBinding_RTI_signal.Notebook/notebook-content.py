@@ -1259,6 +1259,8 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
         if len(sources) != 1 or sources[0].rstrip("/").casefold() != source_url.casefold():
             raise RuntimeError("Existing OneLake source mismatch; explicitly migrate bindings before retargeting")
     else:
+        if any(f"tables/{name}.tmdl" in result for name in entity_to_table):
+            raise RuntimeError("Existing Direct Lake tables have no verifiable source expression")
         expression = (
             f"expression {_quote_name(expression_name)} =\n\t\tlet\n"
             f'\t\t    Source = AzureStorage.DataLake("{source_url}", [HierarchicalNavigation=true])\n'
@@ -1296,7 +1298,7 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
             for annotation, value in (("ONT_WorkspaceId", workspace_id), ("ONT_ItemId", lakehouse_id),
                                       ("ONT_ItemKind", "Lakehouse")):
                 matches = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", partition)
-                if len(matches) != 1 or matches[0].casefold() != value.casefold():
+                if matches and (len(matches) != 1 or matches[0].casefold() != value.casefold()):
                     raise RuntimeError(f"Existing {table_path} source mismatch: {annotation}")
             for prop, dtype in static.items():
                 column = _object_block(table, "column", prop, 4)
@@ -1313,11 +1315,7 @@ def _bind_lakehouse_definition(parts, entity_to_table, table_columns, workspace_
                 f"table {_quote_name(name)}\n\tlineageTag: {tag('table', name)}\n\n{columns}\n"
                 f"\tpartition {_quote_name(name)} = entity\n\t\tmode: directLake\n"
                 f"\t\tsource\n\t\t\tentityName: {_quote_name(source_table)}\n"
-                f"\t\t\texpressionSource: {_quote_name(expression_name)}\n\n"
-                f"\t\tannotation ONT_WorkspaceId = {workspace_id}\n"
-                f"\t\tannotation ONT_ItemId = {lakehouse_id}\n"
-                f"\t\tannotation ONT_ItemKind = Lakehouse\n"
-                f"\t\tannotation ONT_ItemName = {lakehouse_name}\n")
+                f"\t\t\texpressionSource: {_quote_name(expression_name)}\n")
             result[table_path] = _encode_part(table_path, table)
         backing = _direct_setting(text, "backingTable")
         if backing and _local_name(backing) != name:
@@ -2532,7 +2530,7 @@ def _bind_eventhouse_parts(parts):
         for annotation, expected in (("ONT_ItemId", KQL_DB_ID), ("ONT_WorkspaceId", WORKSPACE_ID),
                                      ("ONT_ItemKind", "KQLDatabase")):
             values = re.findall(r"(?m)^[ \t]+annotation " + annotation + r" = (.+?)\s*$", partition)
-            if values != [expected]:
+            if values and values != [expected]:
                 raise RuntimeError(f"Existing {event_path} has a different Eventhouse source: {annotation}")
         for name, dtype in columns:
             column = _object_block(table_text, "column", name, 4)
@@ -2545,19 +2543,13 @@ def _bind_eventhouse_parts(parts):
             f"\tcolumn {name}\n\t\tdataType: {dtype}\n"
             f"\t\tlineageTag: {_tmdl_tag('event-column', KQL_DB_ID, event_table, name)}\n"
             f"\t\tsourceColumn: {name}\n" for name, dtype in columns)
-        pinned = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         result[event_path] = (
             f"table {event_table}\n\tlineageTag: {_tmdl_tag('event-table', KQL_DB_ID, event_table)}\n\n"
             + column_text + "\n"
             + f"\tpartition {event_table} = m\n\t\tmode: directQuery\n"
               f"\t\tsource =\n\t\t\t\tlet\n"
               f'\t\t\t\t  Source = AzureDataExplorer.Contents("{CLUSTER_QUERY_URI}", "{KQL_DB_NAME}", "{event_table}")\n'
-              f"\t\t\t\tin\n\t\t\t\t  Source\n\n"
-              f"\t\tannotation ONT_WorkspaceId = {WORKSPACE_ID}\n"
-              f"\t\tannotation ONT_ItemId = {KQL_DB_ID}\n"
-              f"\t\tannotation ONT_ItemKind = KQLDatabase\n"
-              f"\t\tannotation ONT_ItemName = {KQL_DB_NAME}\n"
-              f"\t\tannotation ONT_PinnedAtUtc = {pinned}\n")
+              f"\t\t\t\tin\n\t\t\t\t  Source\n")
 
     backings = [block for block in _unnamed_blocks(entity, "additionalBackingTable", 4)
                 if _local_name(_direct_setting(block, "table") or "") == event_table]
