@@ -66,6 +66,116 @@ def json_part(path, value):
     }
 
 
+def data_agent_instruction_namespace():
+    ns = functions(
+        "009", "upsert_instruction_section", "build_stage_obj",
+        STAGE_CONFIG_SCHEMA_URL="stage-schema",
+    )
+    names = {
+        "AI_INSTRUCTIONS", "LEGACY_AI_INSTRUCTIONS",
+        "ASSET_RESOLUTION_MARKER", "ASSET_RESOLUTION_INSTRUCTIONS",
+        "MULTISOURCE_INSTRUCTIONS_MARKER", "MULTISOURCE_INSTRUCTIONS",
+        "CROSS_SOURCE_OPERATIONAL_MARKER", "CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS",
+        "GLOBAL_SCOPE_MARKER", "GLOBAL_SCOPE_INSTRUCTIONS",
+        "RUNNING_BAD_MARKER", "RUNNING_BAD_INSTRUCTIONS",
+        "RUNNING_HOT_MARKER", "RUNNING_HOT_INSTRUCTIONS",
+        "ADAPTIVE_RESPONSE_MARKER", "ADAPTIVE_RESPONSE_INSTRUCTIONS",
+        "MCP_FOLLOWUP_MARKER", "MCP_FOLLOWUP_INSTRUCTIONS",
+        "DIRECT_RUNTIME_ROUTING_MARKER", "DIRECT_RUNTIME_ROUTING_INSTRUCTIONS",
+    }
+    nodes = [
+        node for node in ast.parse(source("009")).body
+        if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)
+    ]
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "009-instructions", "exec"), ns)
+    return ns
+
+
+class DataAgentInstructionTests(unittest.TestCase):
+    def test_compact_policy_uses_ontology_context_and_actual_source_keys(self):
+        ns = data_agent_instruction_namespace()
+        text = ns["build_stage_obj"]({})["aiInstructions"]
+        self.assertLessEqual(len(text), 5500)
+        self.assertLessEqual(len(text.split()), 700)
+        for phrase in (
+            "Ontology v2 as semantic context", "associated Lakehouse", "associated Eventhouse",
+            "Source-native SQL/KQL", "not a bypass", "opcua_node_id", "equipment_id",
+            "equipmentId", "opcuaNodeId", "source-specific instructions",
+            "work orders, maintenance notifications, inspections, spare parts and 3D models",
+            "actual query results", "EVERY required returned identifier/count tuple",
+        ):
+            self.assertIn(phrase, text)
+        for phrase in (
+            "do not call the Ontology", "Do not search Ontology", "future ontology capability",
+            "ontology-only execution", "RTI Demo Hydropower Plant",
+        ):
+            self.assertNotIn(phrase, text)
+
+    def test_migration_preserves_custom_sql_sections_and_settings_idempotently(self):
+        ns = data_agent_instruction_namespace()
+        sql = "## Operational data (operations SQL)\nKeep the SQL policy exactly."
+        custom = "### Custom operator guidance\nKeep the maintenance policy exactly."
+        stage = {
+            "$schema": "custom-schema", "customOptions": {"enabled": True},
+            "aiInstructions": (
+                ns["LEGACY_AI_INSTRUCTIONS"]
+                + "\n\nOperator-added preamble."
+                + "\n\n### Direct Lakehouse and Eventhouse Sources\nobsolete direct-source policy"
+                + "\n\n### Authoritative source routing\nobsolete traversal-only policy"
+                + "\n\n" + sql + "\n\n" + custom
+            ),
+        }
+        original = copy.deepcopy(stage)
+        result = ns["build_stage_obj"](stage)
+        self.assertEqual(stage, original)
+        self.assertEqual(result["$schema"], stage["$schema"])
+        self.assertEqual(result["customOptions"], stage["customOptions"])
+        text = result["aiInstructions"]
+        self.assertTrue(text.startswith(ns["AI_INSTRUCTIONS"]))
+        for retained in ("Operator-added preamble.", sql, custom):
+            self.assertIn(retained, text)
+        for removed in ("obsolete", "### Direct Lakehouse and Eventhouse Sources", ns["LEGACY_AI_INSTRUCTIONS"]):
+            self.assertNotIn(removed, text)
+        self.assertEqual(text.count(ns["MULTISOURCE_INSTRUCTIONS_MARKER"]), 1)
+        self.assertEqual(ns["build_stage_obj"](result), result)
+
+    def test_owned_section_stops_before_any_markdown_heading(self):
+        ns = data_agent_instruction_namespace()
+        for level in range(1, 7):
+            suffix = "#" * level + " Unrelated section\nPreserve exactly."
+            with self.subTest(level=level):
+                result = ns["upsert_instruction_section"](
+                    "Custom preamble\n\n### Owned\nOld policy\n\n" + suffix,
+                    "### Owned", "### Owned\nNew policy",
+                )
+                self.assertEqual(
+                    result, "Custom preamble\n\n### Owned\nNew policy\n\n" + suffix,
+                )
+
+    def test_nb11_retains_compact_asset_guidance_and_only_appends_operational_policy(self):
+        ns = data_agent_instruction_namespace()
+        stage = ns["build_stage_obj"]({})
+        sql_policy = "\n\n## Operational data (operations SQL)\nExisting operational policy."
+        nb11 = functions(
+            "011", "build_stage_obj", STAGE_CONFIG_SCHEMA_URL="stage-schema",
+            OPERATIONAL_INSTRUCTIONS_MARKER="## Operational data (operations SQL)",
+            OPERATIONAL_INSTRUCTIONS=sql_policy,
+            ASSET_RESOLUTION_INSTRUCTIONS_MARKER=ns["ASSET_RESOLUTION_MARKER"],
+            ASSET_RESOLUTION_INSTRUCTIONS="Legacy asset resolution must not be appended.",
+        )
+        result = nb11["build_stage_obj"](stage)
+        self.assertEqual(result["aiInstructions"], stage["aiInstructions"] + sql_policy)
+        self.assertEqual(nb11["build_stage_obj"](result), result)
+        self.assertEqual(ns["build_stage_obj"](result), result)
+
+    def test_invalid_or_oversized_custom_instructions_are_rejected(self):
+        ns = data_agent_instruction_namespace()
+        with self.assertRaisesRegex(RuntimeError, "not a string"):
+            ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
+        with self.assertRaisesRegex(RuntimeError, "15,000"):
+            ns["build_stage_obj"]({"aiInstructions": "x" * 15000})
+
+
 class CapabilityTests(unittest.TestCase):
     def test_generation_policy(self):
         for number in ("009", "010"):
@@ -1065,6 +1175,7 @@ class CapabilityTests(unittest.TestCase):
             KUSTO_DATASOURCE_PATH="Files/Config/draft/kusto-source/datasource.json",
             STAGE_CONFIG_SCHEMA_URL="default-stage-schema", DATASOURCE_SCHEMA_URL="default-source-schema",
             DATASOURCE_TYPE="ontology", AI_INSTRUCTIONS="default ontology instructions",
+            LEGACY_AI_INSTRUCTIONS="legacy default ontology instructions",
             ASSET_RESOLUTION_MARKER="### Asset & Facility Resolution (Must Follow)",
             ASSET_RESOLUTION_INSTRUCTIONS="### Asset & Facility Resolution (Must Follow)\nResolve actual keys",
             COUNT_QUERY_GUIDANCE_MARKER="### Operational count queries",

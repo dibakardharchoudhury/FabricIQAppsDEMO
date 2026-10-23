@@ -380,6 +380,31 @@ The live NB10 definition was updated with the single-agent/guarded-retirement co
 preserving and verifying its cell metadata and target Lakehouse attachment.
 This verifies retirement and dependency preservation, not monitoring or Teams/email delivery.
 
+### Compact Data Agent instructions (October 23, 2026)
+
+NB09 now generates 674 words / 5,152 characters of general guidance, replacing the
+legacy instructions that discouraged ontology use. Ontology v2 provides semantic context;
+source-native queries against its associated Lakehouse/Eventhouse are normal execution,
+not a source fallback. Cross-source handoffs use exact `opcua_node_id` and
+`equipment_id` / SQL `equipmentId` identifiers. SQL source-specific guidance remains
+owned by NB11, which is unchanged. Custom sections and NB11's appended operational
+instructions survive reruns.
+
+In `ws-vteam-demoV3`, only the Data Agent's draft `aiInstructions` field was changed.
+Readback verified every source definition/selection, SQL source instruction, ontology
+context and published part unchanged. Live NB09's owned instruction code/prose was also
+updated without executing it, preserving its metadata and Lakehouse attachment.
+
+Draft testing did **not** validate the requested combined answer: the agent still reported
+that it could not stitch telemetry to static signal metadata. A separate facilities query
+reported no available query tool for the ontology-associated Lakehouse. These are observed
+agent responses, not independent proof of a missing ontology binding or a native service
+error. The draft remains unpublished; successful earlier published queries, with different
+direct-table selections, do not validate this draft. Instructions alone cannot create
+missing source access or execution capabilities. Investigate actual run steps and
+[downloaded ontology context](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-ontology-sources)
+before changing bindings or reattaching tables.
+
 ### Recheck after a Data Agent/Ontology service fix
 
 No ontology-generation downgrade, new agent mode, source fallback or application code switch is needed.

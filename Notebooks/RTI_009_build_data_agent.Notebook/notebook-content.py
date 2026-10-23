@@ -26,13 +26,14 @@
 # # 09 — Build a Data Agent over Ontology v2
 #
 # Uses `rti_demo_settings` to configure and publish a Fabric **Data Agent** with the
-# selected Ontology v2, then verifies it with a sample query. Existing sources and
-# custom configuration are preserved on reruns.
+# selected Ontology v2, then verifies it with a sample query. Ontology context guides
+# queries against its associated Lakehouse/Eventhouse; operational SQL guidance stays
+# owned by NB11. Existing sources and custom configuration are preserved on reruns.
 #
-# > **Known Fabric limitation (September 2026):** Ontology v2 support in Data Agents
-# > is pending. Publication can succeed while the final ontology query fails with
-# > "This API version is not supported for the specified Ontology item."
-# > Rerun verification after the Fabric product fix is available.
+# > **Known Fabric response:** After verified v2 publication, only the exact response
+# > "This API version is not supported for the specified Ontology item" is reported as
+# > a known product limitation. Other publication, source, runtime and readback failures
+# > propagate. Successful publication alone does not verify cross-source answers.
 #
 # Configuration and verification details: [deployment guide](../../Raw/workspace-reset/README.md#prerequisites).
 
@@ -830,271 +831,59 @@ def upsert_part(parts: list, path: str, obj: dict) -> list:
 # -------------------------------------------------------------------------
 # Agent instructions + ontology, Lakehouse and Eventhouse data sources
 # -------------------------------------------------------------------------
-AI_INSTRUCTIONS = (
-    "You are an expert on industrial turbine telemetry modelled as a Fabric Ontology.\n"
-    "- Real-time telemetry lives in the KQL Eventhouse and is exposed through the "
-    "`signal_master` entity time-series properties (`event_time`, `value`, `quality`).\n"
-    "- Static/reference data lives in the Lakehouse and is exposed through the "
-    "`signal_master`, `equipment`, `facilities`, `systems` and `instruments` entities.\n"
-    "- Every signal is keyed on `opcua_node_id`; join real-time readings to equipment "
-    "metadata using `opcua_node_id`, and roll up to sites via "
-    "`equipment_id` -> `facility_id` -> `system_id`.\n"
-    "- The `unit` property on `signal_master`/`instruments` tells you whether a reading "
-    "is pressure, temperature, flow, vibration or position.\n"
-    "- `quality` values are GOOD (normal), UNCERTAIN (degraded) and BAD (failure). "
-    "Use them to reason about equipment health.\n"
-    "- Prefer answers that combine live readings with equipment/facility context. "
-    "Keep answers short, clear and business-readable."
-) + """
+LEGACY_AI_INSTRUCTIONS = 'You are an expert on industrial turbine telemetry modelled as a Fabric Ontology.\n- Real-time telemetry lives in the KQL Eventhouse and is exposed through the `signal_master` entity time-series properties (`event_time`, `value`, `quality`).\n- Static/reference data lives in the Lakehouse and is exposed through the `signal_master`, `equipment`, `facilities`, `systems` and `instruments` entities.\n- Every signal is keyed on `opcua_node_id`; join real-time readings to equipment metadata using `opcua_node_id`, and roll up to sites via `equipment_id` -> `facility_id` -> `system_id`.\n- The `unit` property on `signal_master`/`instruments` tells you whether a reading is pressure, temperature, flow, vibration or position.\n- `quality` values are GOOD (normal), UNCERTAIN (degraded) and BAD (failure). Use them to reason about equipment health.\n- Prefer answers that combine live readings with equipment/facility context. Keep answers short, clear and business-readable.'
 
-### Asset & Facility Resolution (Must Follow)
+AI_INSTRUCTIONS = """You are a hydro-operations assistant. Use the selected Fabric Ontology v2 as semantic context and answer from actual query results. Ordinary questions are read-only; never invent data, tools, mappings, or errors."""
 
-1. **Turbine / Asset naming**
-- Treat all of the following as referring to the same turbine asset:
-- "turbine 5", "the 5th turbine", "unit 5", "asset 5", "T005"
-- Normalize turbine references as:
-- **Tag:** `T00N` (e.g., N=5 → `T005`)
-- **Equipment ID:** `EQUIP_RTI_T00N` (e.g., N=5 → `EQUIP_RTI_T005`)
-- When a user mentions a turbine by number or T‑code, always use both:
-- `equipment.tag = "T00N"` and/or
-- `equipment.equipment_id = "EQUIP_RTI_T00N"`
-in all `analyze_ontology` and `analyze_sql_database` queries.
-2. **Signal-based resolution**
-- When the user mentions an OPC UA node like `ns=2;s=T005.power_output`, `ns=2;s=T005.vibration_a`, etc.:
-- Use that `opcua_node_id` to look up `signal_master`,
-- From `signal_master`, take `equipment_id`, `system_id`, and `facility_id` as the authoritative context for the asset.
-- Prefer this resolved `equipment_id`/`facility_id` over the raw text (e.g., "turbine 5") when constructing tool queries.
-3. **Facility naming**
-- Map human facility names to IDs. For this environment:
-- "RTI demo plant", "RTI hydropower plant", "the demo plant", "facility 1", "site 1" →
-`facility_id = "FACILITY_RTI_001"`, `facility_name = "RTI Demo Hydropower Plant"`.
-- Use the normalized `facility_id` in ontology/SQL queries instead of the raw user phrase whenever facility filtering is required.
-4. **Tool query rewriting**
-- Before calling any `analyze_ontology` or `analyze_sql_database` tool:
-- Resolve turbines and facilities using the rules above.
-- Rewrite the natural-language query to use the **canonical IDs/tags** (`EQUIP_RTI_T00N`, `T00N`, `FACILITY_RTI_001`) instead of the user's free-text wording.
-- This ID normalization is required and does **not** change user intent; it only maps human phrasing to model identifiers.
-"""
-
-MULTISOURCE_INSTRUCTIONS_MARKER = "### Direct Lakehouse and Eventhouse Sources"
+MULTISOURCE_INSTRUCTIONS_MARKER = """### Ontology context and source execution"""
 ASSET_RESOLUTION_MARKER = "### Asset & Facility Resolution (Must Follow)"
-ASSET_RESOLUTION_INSTRUCTIONS = f"""
-{ASSET_RESOLUTION_MARKER}
+ASSET_RESOLUTION_INSTRUCTIONS = """### Asset & Facility Resolution (Must Follow)
 
-- Resolve asset numbers/tags in Lakehouse `dbo.{first_setting("silver_equipment_table", required=True)}`:
-  turbine 5 means tag T005; turbine 12 means T012. Use the actual equipment_id returned by
-  the source. Do not search Ontology to resolve assets for direct-source questions.
-- Resolve facility names by joining `facility_id` to
-  `dbo.{first_setting("silver_facilities_table", required=True)}`. Never use a hard-coded
-  demo facility name or infer the facility from the equipment identifier.
-- Resolve signal IDs and units in `dbo.{first_setting("silver_signal_master_table", required=True)}`.
-  Exact opcua_node_id is the telemetry join key. Combine reference lookups in one SQL query
-  when they share this Lakehouse; do not make a separate analysis call per table.
-"""
-MULTISOURCE_INSTRUCTIONS = f"""
+Resolve tags, facilities, exact opcua_node_id values, equipment identifiers and units through ontology-associated reference data. Turbine 5 suggests tag T005, not an invented equipment_id. Use actual bindings and canonical keys, not display-name guesses or schema samples."""
+MULTISOURCE_INSTRUCTIONS = """### Ontology context and source execution
 
-{MULTISOURCE_INSTRUCTIONS_MARKER}
-
-- Keep the Ontology v2 source as the semantic model for entity relationships and ontology-specific questions.
-- Use the `{lakehouse_name}` Lakehouse source for direct static/reference questions over
-  `{first_setting("silver_facilities_table", required=True)}`,
-  `{first_setting("silver_systems_table", required=True)}`,
-  `{first_setting("silver_equipment_table", required=True)}`,
-  `{first_setting("silver_instruments_table", required=True)}`, and
-  `{first_setting("silver_signal_master_table", required=True)}`.
-- Use the `{kql_db_name}` Eventhouse/KQL source and its `{kql_table_name}` table for live or
-  historical telemetry values, quality, trends, time windows, and aggregations.
-- `{kql_table_name}` columns are `event_time`, `opcua_node_id`, `value`, and `quality`.
-- Join or correlate sources only through canonical keys: `opcua_node_id`, `equipment_id`,
-  `facility_id`, and `system_id`. Never infer a relationship from display names.
-- When the operational SQL source is present, use it for work orders, maintenance notifications,
-  inspections, spare parts, and 3D model records. Do not answer those operational-record questions
-  from Lakehouse or Eventhouse telemetry.
-- A successful Lakehouse, Eventhouse, or SQL answer does not prove that Ontology v2 execution
-  succeeded. For an explicitly ontology-only request, use only the Ontology source and return its
-  real error if it cannot execute; do not silently substitute another source.
-- Prefer one authoritative source when it fully answers the question. Use multiple sources only
-  when the user asks for combined telemetry and asset/operational context.
-"""
+Use ontology context and its associated Lakehouse for static entities/relationships, and its associated Eventhouse for telemetry. Source-native SQL/KQL on these associated sources is normal ontology-backed execution, not a bypass; do not require duplicate separately attached tables or an ontology traversal endpoint. "Use the ontology" permits this execution unless the user explicitly restricts it.
+Use the existing SQL database for work orders, maintenance notifications, inspections, spare parts and 3D models. Follow its source-specific instructions; do not answer operational-record questions from telemetry."""
 
 CROSS_SOURCE_OPERATIONAL_MARKER = "### Cross-source operational joins"
-CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = f"""
+CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS = """### Cross-source operational joins
 
-{CROSS_SOURCE_OPERATIONAL_MARKER}
-
-- SQL operational tables use camelCase `equipmentId`; Lakehouse reference tables use snake_case
-  `equipment_id`. These are the same canonical equipment identifier and must be matched exactly.
-- `WorkOrders` has no facility column. Never query or filter it by `facilityId`/`facility_id`.
-- Open means `status NOT IN ('Completed','Cancelled')`. Never use `completedAt IS NULL`:
-  a completed order can have a null completion date. Never exclude Draft or add an active-asset
-  filter unless requested.
-- For counts/rankings, let SQL aggregate; do not fetch every work-order detail or ask separate
-  count/list questions. Retrieve one row per equipment with its open count and the overall total
-  in ONE SQL query:
-  SELECT equipmentId, COUNT_BIG(*) AS open_work_orders,
-         SUM(COUNT_BIG(*)) OVER () AS total_open_work_orders
-  FROM dbo.WorkOrders WHERE status NOT IN ('Completed','Cancelled')
-  GROUP BY equipmentId ORDER BY open_work_orders DESC, equipmentId;
-- Source analyzers do NOT share each other's results. For facility rollups, copy EVERY actual
-  returned (equipmentId, open_work_orders) tuple as literal data INTO the Lakehouse tool's
-  question, together with the requested SQL join/aggregation. Never tell it "use the previous
-  result" or refer to an unattached list: the tool cannot see that context.
-  Ask it to use those explicitly supplied tuples as a VALUES relation in ONE Lakehouse query.
-  If it reports missing tuples, repeat once with the actual tuples included in the tool question;
-  do not claim a missing schema or ask the user for data already returned by SQL. Left-join the complete
-  `dbo.{first_setting("silver_equipment_table", required=True)}` inventory and
-  `dbo.{first_setting("silver_facilities_table", required=True)}` on canonical keys.
-  Compute asset COUNT and open-work-order SUM by facility IN SQL, not by manually counting
-  prose or table rows. Include facilities with zero orders. Return facility names/type/country
-  from that same join, not a separate name lookup. SQL-pair values must come from the current
-  tool result, never examples or previous answers.
-- Conserve counts: every SQL equipment key must map exactly once; sum of the facility counts
-  must match total_open_work_orders. If keys are unmatched/duplicated or totals disagree, report
-  the discrepancy and correct the join once; never silently omit an order or invent counts.
-- Asset rankings use the same SQL counts, descending with tied ranks, and Lakehouse tags/facility
-  names when needed. Only include zero-count assets if requested; do not narrow assets to turbines
-  or a previous question's scope. Table and chart must use the SAME rows and human-readable labels.
-- Format facility rollups as a compact Markdown table with `Facility`, `Type`, `Country`, `Assets`,
-  and `Open WOs` columns plus a totals line, unless the user requests another format.
-"""
+Join Eventhouse telemetry to Lakehouse signal/instrument metadata by exact opcua_node_id; then match equipment_id to SQL equipmentId, and opcuaNodeId where applicable. Do not assume one source can directly query another.
+If source tools cannot share results, include EVERY required returned identifier/count tuple in the next tool request. Use supported SQL joins/VALUES and aggregate in the source, not by counting prose. Conserve totals; report unmatched/duplicate keys. Include zero-order facilities for fleet rollups.
+Open WorkOrders means status NOT IN ('Completed','Cancelled'); Draft is open, not completedAt IS NULL. WorkOrders has no facility column; resolve it through equipment."""
 
 GLOBAL_SCOPE_MARKER = "### Conversation scope"
-GLOBAL_SCOPE_INSTRUCTIONS = f"""
+GLOBAL_SCOPE_INSTRUCTIONS = """### Conversation scope
 
-{GLOBAL_SCOPE_MARKER}
-
-- Unless the latest user question explicitly narrows scope, answer across all facilities and all
-  assets. Do not infer scope from an application selection.
-- Keep conversational follow-up meaning within the current agent session, but do not carry an
-  earlier facility/asset filter into a later question unless the user explicitly refers to that
-  earlier scope.
-"""
+Use all facilities/assets unless the current question narrows scope. Resolve referential follow-ups, but do not inherit earlier filters into standalone questions or infer scope from an application selection."""
 
 RUNNING_BAD_MARKER = '### Canonical "running bad" questions'
-RUNNING_BAD_INSTRUCTIONS = f"""
+RUNNING_BAD_INSTRUCTIONS = """### Canonical "running bad" questions
 
-{RUNNING_BAD_MARKER}
-
-- "Running bad right now" means literal telemetry quality `BAD`, not a numeric threshold. Unless
-  overridden, query all active signals from Eventhouse first with one logical plan: filter the
-  30-minute time window and select the latest raw row using
-  `summarize arg_max(event_time, value, quality) by opcua_node_id`, then filter `toupper(quality) ==
-  "BAD"`. Never filter quality before `arg_max`, prefilter a signal type, or apply TOP/limit. Resolve
-  every returned node through active Lakehouse instrument/equipment rows and return every turbine
-  signal; the five-result default belongs only to "running hot".
-- Include tag, `equipment_id`, signal/instrument, node, value/unit, quality, and event time. Report
-  stale/missing data rather than widening scope.
-- Join all non-Completed/non-Cancelled work using only the affected `equipment_id` values. Do not
-  filter work by node/instrument. Mark same-signal only for matching node or instrument; otherwise
-  mark equipment-level. State the interpretation and window.
-"""
+"Running bad" means literal telemetry quality BAD. Unless overridden, query all active signals in a 30-minute window; select the latest raw row using summarize arg_max(event_time, value, quality) by opcua_node_id, then filter BAD. Never filter quality before arg_max, prefilter signal type, or limit results. Resolve active turbine metadata and return every match.
+Include tag, equipment/node/instrument, value/unit, quality and event time. Report stale/missing data without widening scope. Join all open work by affected equipment; do not filter work by node/instrument. Label same-signal only for matching node/instrument; otherwise equipment-level."""
 
 RUNNING_HOT_MARKER = '### Canonical "running hot" questions'
-RUNNING_HOT_INSTRUCTIONS = f"""
+RUNNING_HOT_INSTRUCTIONS = """### Canonical "running hot" questions
 
-{RUNNING_HOT_MARKER}
-
-- "Running hot right now" means `turbine_temp`, not quality or another signal. Unless overridden,
-  resolve each active turbine's temperature signal, use a 30-minute window, take its latest raw row,
-  rank descending, and return the five hottest when no threshold/count is supplied.
-- Include tag, equipment/instrument/node IDs, temperature/unit, quality, and event time. Report
-  stale/missing data. Rank alone does not mean abnormal/unsafe without an authoritative threshold.
-- Join all non-Completed/non-Cancelled work by equipment. Mark same-signal only for matching
-  temperature node/instrument; otherwise mark equipment-level. State scope, window, and rank rule.
-"""
+"Running hot" means turbine_temp. Unless overridden, resolve active turbine temperature signals, use a 30-minute window, take the latest raw row per signal and return the five hottest, descending. Include identifiers, temperature/unit, quality and event time; report missing/stale data. Rank alone is not abnormal/unsafe without an authoritative threshold. Join open work by equipment; distinguish same-signal from equipment-level."""
 
 ADAPTIVE_RESPONSE_MARKER = "### Adaptive response contract"
-ADAPTIVE_RESPONSE_INSTRUCTIONS = f"""
+ADAPTIVE_RESPONSE_INSTRUCTIONS = """### Adaptive response contract
 
-{ADAPTIVE_RESPONSE_MARKER}
-
-- Lead with the answer; state only material scope, time, freshness, rank, threshold, or assumptions.
-- Adapt rendering to evidence: prose for explanation, bullets for short lists, tables for tabular
-  rows, charts only when requested/useful. Never force one template. Tables keep only needed fields
-  while preserving material IDs, timestamps, units, quality, status, and priority consistently.
-- Sort by the question/rule. Use explicit `None`; distinguish zero, missing, stale, truncated, and
-  failed results. Never silently change signal, time, asset/facility, population, aggregation, or
-  source. Separate facts from interpretation/recommendations.
-- Cross-source joins use canonical keys and distinguish directly related from merely co-located
-  records. End with concise sources; hide tool narration unless it explains a limitation. Preserve
-  the same evidence and scope across Data Agent, Foundry, and Battle, while adapting presentation.
-- Use relevant headings: Findings, Open work, Recommendations, Limitations, Sources.
-- Charts/dashboards need the exact supporting rows in fenced csv with a header and a descriptive
-  heading. Numeric measures are plain numbers with units in column names; use timestamp for the
-  time axis and series for multiple signals. Do not mix incompatible units or invent KPI totals.
-"""
+Lead with the answer and material scope, time window and freshness. Adapt rendering to evidence: prose, bullets, tables or requested charts. Never force one template. Preserve identifiers, units, timestamps and status; distinguish zero, missing, stale, truncated and failed results. Separate facts from interpretation/recommendations. Keep evidence/scope consistent across Data Agent, Foundry, and Battle. End with concise sources and material limitations."""
 
 MCP_FOLLOWUP_MARKER = "### External MCP follow-ups and visualizations"
-MCP_FOLLOWUP_INSTRUCTIONS = f"""
+MCP_FOLLOWUP_INSTRUCTIONS = """### External MCP follow-ups and visualizations
 
-{MCP_FOLLOWUP_MARKER}
-
-- The external MCP client may wrap an explicitly referential follow-up in
-  `<recent_user_questions>` and `<current_user_question>` tags because each published MCP tool call
-  is otherwise stateless. Answer only `<current_user_question>`. Use the earlier user questions
-  solely to resolve references such as `this asset`, `same signal`, `it`, or a leading `or`; never
-  carry their filter into a standalone current question.
-- For a minimum/maximum/latest summary of one telemetry signal, constrain the exact
-  `opcua_node_id` and requested time window. Compute minimum and maximum from numeric `value`, and
-  obtain the latest row by greatest `event_time` while retaining that row's `value` and `quality`.
-  Return the latest timestamp. Reject and retry any result where the latest value is nonnumeric or
-  falls outside the computed minimum/maximum range.
-- When the user asks to plot, chart, graph, visualize, or show telemetry `visually`, a fenced `csv`
-  block is mandatory. Never say that this chat cannot render a chart and never return only plotting
-  instructions. For one signal use `event_time,value,quality`. For multiple signals use
-  `event_time,opcua_node_id,value,quality`; include every resolved signal, keep chronological order,
-  and keep the response to at most 200 total plot rows. If the raw series exceeds that bound, use
-  an appropriate time bin for a visual overview unless the user explicitly requested raw/no
-  averaging. Use a compact overview instead of filling the maximum: for a six-hour multi-signal
-  visual, use 15-minute bins unless the user requests another granularity; do not return raw or
-  near-raw points for that default overview. Query
-  `{kql_table_name}` directly for the resolved exact `opcua_node_id` values and
-  requested time window. For multiple signals, verify that the returned `opcua_node_id` set exactly
-  matches the resolved signal set and that every signal has at least one row. If the first
-  Eventhouse execution errors, returns no rows, or omits any resolved signal, retry that direct
-  query once before concluding that telemetry is unavailable; never describe a partial signal set
-  as the complete result and do not replace real values with an example schema. The web client
-  renders the returned CSV locally. Even if Fabric also generates a native
-  report/visualization file, include the fenced CSV because the external MCP result may not expose
-  that file.
-- The same fenced CSV requirement applies to non-telemetry charts, rankings, and work-order
-  counts. Use a descriptive categorical label column and numeric measure columns, with exactly
-  the same values as the answer table. Text bars and an offer to generate a chart later are not
-  a chart response. Do not requery data just to format a chart.
-"""
+When supplied, answer <current_user_question>; use <recent_user_questions> only to resolve explicit references, not as current data or inherited filters.
+For min/max/latest, use the same signal/window and retain the latest row's value, quality and timestamp; validate numeric consistency.
+For requested charts include actual rows in fenced csv: event_time,value,quality for one signal; event_time,opcua_node_id,value,quality for multiple signals; descriptive labels/measures for other charts. Reuse answer rows, chronological for telemetry, at most 200 total. For a six-hour overview use 15-minute bins unless overridden; disclose aggregation and never silently average/truncate raw requests. Identify missing signals, not a complete result."""
 
 DIRECT_RUNTIME_ROUTING_MARKER = "### Authoritative source routing"
-DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = f"""
+DIRECT_RUNTIME_ROUTING_INSTRUCTIONS = """### Authoritative source routing
 
-{DIRECT_RUNTIME_ROUTING_MARKER}
-
-- For normal user questions, do not call the Ontology analysis tool. The attached Ontology v2 must
-  remain configured for identity and future ontology capability, but its current query runtime is
-  not a prerequisite, fallback, retry, or cross-check for direct-source answers.
-- Use `{kql_db_name}` / `{kql_table_name}` directly for every current, latest, historical,
-  time-series, quality, trend, health, or telemetry question.
-- Use `{lakehouse_name}` directly for facilities, systems, equipment, instruments, signal
-  metadata, hierarchy lookup, and canonical ID resolution.
-- When a telemetry question names a turbine, equipment tag, or signal type rather than an exact
-  `opcua_node_id`, first resolve the exact node through Lakehouse `silver_equipment` and
-  `silver_signal_master`, then query Eventhouse with that node. Reuse an exact node already stated
-  in the current conversation. Never treat Kusto tool schema samples, example values, or a partial
-  distinct-value list as the complete signal inventory, and never report that an asset has no
-  telemetry mapping without checking the Lakehouse mapping tables.
-- Use the operational SQL source directly for work orders, notifications, inspections, spare
-  parts, and 3D-model records. Combine SQL with Lakehouse only through the documented canonical
-  keys when a facility or hierarchy rollup is required.
-- Call the Ontology tool only when the current user question explicitly requests the Ontology,
-  an ontology-only answer, or ontology-native semantic relationship execution. Do not infer that
-  request merely because the question mentions an asset, relationship, facility, or hierarchy.
-- If a direct source answers the question, return that answer without attempting Ontology and
-  without adding an Ontology-runtime warning. Referential follow-ups keep the same direct-source
-  routing unless the current question explicitly switches source.
-- Prefer one combined query per required source. Reuse the returned rows for reconciliation,
-  tables and CSV; do not perform separate schema searches, independent recounts, or repeated
-  executions when a successful query already returned the necessary evidence. Retry only a
-  concrete execution error, incomplete result, or failed key/total validation.
-"""
+Prefer one authoritative source; combine sources when required. Use only available tools and pass actual query results between them. Verify source/column availability before declaring a capability absent. A generated explanation or empty result does not prove missing ontology bindings: distinguish exact tool errors from interpretation and partial results from completed joins. Make at most one targeted corrective retry for an execution/coverage/validation failure. Never invent repairs or widen the requested window."""
 
 COUNT_QUERY_GUIDANCE_MARKER = "### Operational count queries"
 COUNT_QUERY_GUIDANCE = """
@@ -1295,7 +1084,11 @@ def upsert_instruction_section(instructions: str, marker: str, desired: str) -> 
     if marker_index < 0:
         return instructions.rstrip() + "\n\n" + desired
     section_start = instructions.rfind("\n", 0, marker_index) + 1
-    next_section = instructions.find("\n### ", marker_index + len(marker))
+    boundaries = [
+        instructions.find("\n" + "#" * level + " ", marker_index + len(marker))
+        for level in range(1, 7)
+    ]
+    next_section = min((index for index in boundaries if index >= 0), default=-1)
     prefix = instructions[:section_start].rstrip()
     suffix = instructions[next_section:].lstrip("\n") if next_section >= 0 else ""
     return prefix + "\n\n" + desired + (("\n\n" + suffix) if suffix else "")
@@ -1310,6 +1103,13 @@ def build_stage_obj(existing: dict) -> dict:
         raise RuntimeError("Existing agent instructions are not a string; refusing to replace custom configuration.")
     if not instructions:
         instructions = AI_INSTRUCTIONS
+    elif instructions.startswith(LEGACY_AI_INSTRUCTIONS):
+        instructions = AI_INSTRUCTIONS + instructions[len(LEGACY_AI_INSTRUCTIONS):]
+    legacy_source_marker = "### Direct Lakehouse and Eventhouse Sources"
+    if legacy_source_marker != MULTISOURCE_INSTRUCTIONS_MARKER and legacy_source_marker in instructions:
+        instructions = upsert_instruction_section(
+            instructions, legacy_source_marker, MULTISOURCE_INSTRUCTIONS,
+        )
     for marker, desired in (
         (ASSET_RESOLUTION_MARKER, ASSET_RESOLUTION_INSTRUCTIONS),
         (MULTISOURCE_INSTRUCTIONS_MARKER, MULTISOURCE_INSTRUCTIONS),

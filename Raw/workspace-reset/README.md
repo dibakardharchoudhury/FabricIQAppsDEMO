@@ -128,6 +128,18 @@ and real SQL/API failures still fail the always-attempted extension. NB11
 writes only its SQL-source status/reason, leaving NB09's deployment/publication/runtime results
 untouched. Independent SQL/GraphQL results are preserved before required failure is raised.
 
+NB09's general Data Agent policy is bounded to 700 words / 5,500 characters before
+operator or NB11 additions. Ontology v2 supplies semantic context; its associated Lakehouse
+and Eventhouse execute source-native queries. Correlate telemetry/reference rows by
+`opcua_node_id`, then operational SQL rows by `equipment_id` / `equipmentId` and, where
+applicable, `opcuaNodeId`. Instructions cannot create missing source access or runtime
+capabilities. NB11 retains ownership of SQL source-specific guidance. NB09 replaces only
+its owned instruction sections and known legacy preamble, preserving custom headings,
+settings and NB11's `## Operational data (...)` section. An instruction-only live correction
+must preserve all source definitions/selections, ontology bindings and published parts;
+test the edited draft separately. A successful published query does not validate different
+draft selections, and publishing can promote those unrelated draft changes.
+
 The authorized live correction updated only NB09/NB11/setup notebook definitions, preserving live
 metadata, attachments, configure/parameter cells, and unrelated parts. Only NB09 executed once:
 `b1818634-f77e-4dec-ab55-982460ecb101` correctly **failed** on the actual unsupported Ontology API
