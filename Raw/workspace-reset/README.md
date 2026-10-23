@@ -263,6 +263,14 @@ them or downgrade the runtime to make publication pass. Publication failures pro
 No custom pool ID is copied between workspaces. See the official
 [Runtime 2.0](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0) and
 [migration guide](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-2-0-migration-guide).
+On October 23, 2026, the local app successfully imported commit `87fde47` into
+`ws-FabricIQAppsDemoFEATURE` and published Weather on Runtime 2.0. Authoritative
+readback verified the workspace default, the published Environment runtime and all eight
+library versions above; 74 focused regression tests passed. This is configuration/publication
+acceptance, not a completed notebook or application runtime test. Setup remains blocked by
+HTTP 401 when the Key Vault-backed service principal lists workspace folders. Verify the
+principal stored under `clientid` has Contributor or Admin access to the target workspace;
+do not downgrade Spark or relax Key Vault networking to bypass that prerequisite.
 The Git sync verifies that
 `Weather_001_create_lakehouse`, `Weather_002_fetch_area_weather`,
 `Weather_003_fetch_ukmet`, and `Weather_020_area_calculations` are in the workspace `Notebooks`
