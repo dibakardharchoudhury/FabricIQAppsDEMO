@@ -736,7 +736,9 @@ sources. REST `/v1` URLs and environment suffixes such as `V9` are not ontology 
 Core ontology, SQL/GraphQL, dashboard, weather, and app-hosting completion do not establish agent
 readiness. Agent provisioning is always attempted; there are no agent mode or skip flags. Data
 Agent provisioning verifies v2 source identity/readback. Operations Agent provisioning retains
-separate Ontology/Eventhouse playbooks/actions, Teams, and email-alert setup. Real failures
+the ontology-backed playbook/actions, Teams, and email-alert setup. The separate
+Eventhouse-Knowledge agent is retired, not provisioned; NB10 verifies its identity and absence
+before clearing its settings, preserving shared telemetry and alert dependencies. Real failures
 propagate through RTI_009/010/011 and setup. Latest live attempts verified source
 publication and stopped-agent configuration, not complete capability readiness: the ontology MCP
 question failed with an unsupported API version even though its envelope said `isError: false`.
@@ -1045,7 +1047,9 @@ Fastest split of duties: ask the admin to do **1 and 4** and make you an **Owner
 
 Open **`01_Pipe_Setup`** in your workspace, fill its parameters ([root README](../README.md)), and
 run it. This creates the Lakehouse, Eventhouse, v2 ontology, and dashboard, and attempts Data Agent
-and both Operations Agent deployments without mode or skip flags. Real failures fail setup; NB09
+and the ontology-backed Operations Agent deployment without mode or skip flags. NB10 also retires
+the exact obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies.
+Real failures fail setup; NB09
 alone reports the exact documented temporary unsupported-Ontology-v2 product response without
 claiming runtime readiness. It does **not**
 create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.

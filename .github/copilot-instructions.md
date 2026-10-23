@@ -8,8 +8,11 @@ readback. Never restore generation-1 ontology or agent-source fallbacks. Retain 
 Operations Agent playbook/actions capabilities against the verified v2 ontology. REST `/v1`, app layout names,
 and environment suffixes are not ontology generations.
 
-Always provision the Data Agent and both Operations Agents; there are no agent mode flags or skip
-branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
+Always provision the Data Agent and the ontology-backed Operations Agent; there are no agent mode flags or skip
+branches. Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 removes it only
+after verifying the retained ontology agent and the retired folder/source identity, then clears
+its obsolete settings. Preserve the shared Eventhouse and SQL/KQL grounding.
+Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
 binding. Data Agent sources require matching verified v2 identity. NB09 reports the exact temporary
 Fabric response `This API version is not supported for the specified Ontology item` as a known
 product limitation after verified v2 publication; every other deployment, publication, runtime, and

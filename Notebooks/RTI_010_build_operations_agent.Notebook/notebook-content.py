@@ -23,20 +23,20 @@
 
 # MARKDOWN ********************
 
-# # Operations Agents over Ontology v2 and Eventhouse
+# # Operations Agent over Ontology v2
 #
-# `enabled` (default) and `auto` both attempt the complete deployment. Only explicit
-# `disabled` skips it. Live ontology generation and source identity are checked before writes.
+# Deployment is always attempted. Live ontology generation and source identity are checked before writes.
 # The existing BAD/UNCERTAIN playbook, Teams destination, parameterized email action,
 # and email pipeline are preserved. No instructions-only or component-dropping fallback
 # can report success. REST OperationsAgentV1 is an agent format, not ontology generation.
 # Product/API failures are persisted and raised, never inferred from a static issue gate.
 #
-# The existing agent retains its Ontology v2 source and instructions. A separate Operations
-# Agent is configured against the Eventhouse KQL database and `OPCUAEvents`. NB10 imports its
-# separate, API-verified KQL playbook, enriches events from the OneLake-backed
-# `silver_instruments` external table, and binds the resulting context to the same Teams/email
-# delivery architecture. Both agents remain STOPPED by default. Successful definition
+# The original agent retains its Ontology v2 Knowledge source, instructions, and SQL/KQL playbook.
+# The retired Eventhouse-Knowledge agent is never provisioned. After verifying the retained
+# agent, NB10 removes only the exact retired agent in the target folder after checking its
+# KQL database identity, verifies deletion, and clears its four obsolete settings.
+# Shared Eventhouse telemetry, silver tables, Teams, connections, and the email pipeline remain.
+# The retained agent remains STOPPED by default. Successful definition
 # readback means configured, not that monitoring, queries, Teams, or email delivery were exercised.
 # An OAuth2 Outlook connection requires interactive sign-in; missing connection fails setup
 # truthfully after creating the pipeline/agent scaffolding for completion and rerun.
@@ -84,7 +84,6 @@ target_folder_id = first_setting("target_folder_id", required=True)
 # deployment never depends on reading a reference agent in another workspace.
 ops_agent_name = first_setting("ops_agent_name", default="RTI_Demo_OpsAgent_V3")
 env_suffix = first_setting("env_suffix", required=True)
-eventhouse_ops_agent_name = f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}"
 # Ontology data source: the agent binds to the ontology built in 004-006, identified by
 # `ontology_name` (already in the settings table). CELL 1 resolves its live (plain) id by name and
 # binds it as the Knowledge data source ({id: plain, workspaceId: real}) — no id is hard-coded. Set
@@ -142,7 +141,6 @@ print("✅ Settings loaded")
 print("   Workspace ID      :", workspace_id)
 print("   Target folder ID  :", target_folder_id)
 print("   Ops Agent name    :", ops_agent_name)
-print("   Eventhouse agent  :", eventhouse_ops_agent_name)
 print("   Ontology name     :", ontology_name)
 print("   Ontology dsrc     :", ops_agent_ontology_datasource_id or "(resolve from ontology by name)")
 print("   Eventhouse source :", f"{eventhouse_kql_database_name}.{eventhouse_table_name}")
@@ -764,29 +762,6 @@ INSTRUCTIONS = '''*** Goals ***
 
 9. Use only properties available from the ontology when creating the alert context or recommending an action.'''
 
-EVENTHOUSE_INSTRUCTIONS = '''*** Goals ***
-- Monitor OPC UA signal quality using the `OPCUAEvents` Eventhouse table.
-- Notify operations when an OPC UA signal has failed or degraded.
-- Provide complete signal and instrument context and recommend the configured email action.
-
-*** Operational Instructions ***
-1. Monitor `OPCUAEvents`, using `opcua_node_id` to identify each signal.
-2. Create an alert for any row where `quality` is `"BAD"` or `"UNCERTAIN"`.
-3. Join `silver_instruments` on `opcua_node_id` to resolve `equipment_id`, `facility_id`, and `unit`.
-4. Include `opcua_node_id`, `equipment_id`, `facility_id`, `unit`, `quality`, `value`, and `event_time` in the alert context.
-5. Bind all six configured email action parameters from the matched event and instrument metadata.
-6. For every generated alert, trigger a Teams alert and recommend the configured email action.
-
-*** Semantic Instructions ***
-1. Each `OPCUAEvents` row represents an OPC UA signal event.
-2. `opcua_node_id` identifies the signal and joins to `silver_instruments.opcua_node_id`.
-3. `equipment_id`, `facility_id`, and `unit` come from the matching `silver_instruments` row.
-4. `quality`, `value`, and `event_time` come from `OPCUAEvents`.
-5. Use only `OPCUAEvents` and `silver_instruments` for alert context.'''
-
-# Fabric-generated one-rule KQL playbook, enriched from the existing silver_instruments table so
-# every required Teams/email action parameter is bound without changing the app telemetry path.
-EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64 = "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"
 
 # -------------------------------------------------------------------------
 # Embedded known-good agent definition — no dependency on any external agent.
@@ -820,18 +795,6 @@ ACTION_PARAMETERS = [
     {"name": "unit", "description": "The measurement unit of the signal_master signal."},
     {"name": "quality", "description": "The current OPC UA signal quality (BAD or UNCERTAIN)."},
     {"name": "event_time", "description": "The event_time timestamp of the latest signal_master reading."},
-]
-
-EVENTHOUSE_ACTION_PARAMETERS = [
-    {"name": "equipment_id",
-     "description": "The equipment_id from silver_instruments matched by opcua_node_id."},
-    {"name": "facility_id",
-     "description": "The facility_id from silver_instruments matched by opcua_node_id."},
-    {"name": "value", "description": "The current measured value from the OPCUAEvents row."},
-    {"name": "unit",
-     "description": "The measurement unit from silver_instruments matched by opcua_node_id."},
-    {"name": "quality", "description": "The current OPC UA quality from the OPCUAEvents row."},
-    {"name": "event_time", "description": "The event_time timestamp from the OPCUAEvents row."},
 ]
 
 
@@ -957,29 +920,6 @@ def build_configurations(should_run: Optional[bool] = None,
                     })
     if not keep_playbook:
         config.pop("playbook", None)
-    return config
-
-
-def build_eventhouse_configurations(kql_database_id: str, pipeline_id: str,
-                                    team_id: str, channel_id: str) -> dict:
-    config = build_configurations(
-        should_run=False, copy_playbook=False, team_id=team_id, channel_id=channel_id,
-        pipeline_id=pipeline_id,
-    )
-    config["configuration"]["instructions"] = EVENTHOUSE_INSTRUCTIONS
-    config["configuration"]["dataSources"] = {
-        kql_database_id: {
-            "id": kql_database_id,
-            "type": "KustoDatabase",
-            "workspaceId": workspace_id,
-        }
-    }
-    for action in config["configuration"]["actions"].values():
-        if action.get("kind") == "FabricJobAction":
-            action["parameters"] = [dict(parameter) for parameter in EVENTHOUSE_ACTION_PARAMETERS]
-    config["playbook"] = json.loads(zlib.decompress(
-        base64.b64decode(EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64)
-    ))
     return config
 
 
@@ -1113,49 +1053,55 @@ def verify_operations_readback(agent_id: str, ontology_id: str, configuration: d
     require_retained(configuration, actual)
 
 
-def verify_eventhouse_operations_readback(agent_id: str, kql_database_id: str,
-                                          configuration: dict) -> None:
-    actual = read_json_part(get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
-    expected_source = {
-        kql_database_id: {
-            "id": kql_database_id,
-            "type": "KustoDatabase",
-            "workspaceId": workspace_id,
+def retire_eventhouse_operations_agent() -> None:
+    retired_name = f"RTI_Demo_OpsAgent_Eventhouse_{env_suffix}"
+    saved_name = first_setting("eventhouse_ops_agent_name", default="")
+    saved_id = first_setting("eventhouse_ops_agent_id", default="")
+    if saved_name and saved_name != retired_name:
+        raise RuntimeError("Retired Operations Agent name differs from the target environment.")
+    item = find_item_by_name(retired_name, "OperationsAgent")
+    base_url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
+    if item:
+        agent_id = item["id"]
+        if (saved_id and saved_id != agent_id) or agent_id == first_setting("ops_agent_id", default=""):
+            raise RuntimeError("Retired Operations Agent identity conflicts with saved agent settings.")
+        database_id = resolve_kql_database_id()
+        saved_database_id = first_setting("eventhouse_ops_agent_kql_database_id", default="")
+        if saved_database_id and saved_database_id != database_id:
+            raise RuntimeError("Retired Operations Agent database differs from the target KQL database.")
+        configuration = read_json_part(
+            get_definition_parts(agent_id, "operationsAgents"), "Configurations.json")
+        expected_sources = {
+            database_id: {"id": database_id, "type": "KustoDatabase", "workspaceId": workspace_id},
         }
-    }
-    if actual.get("configuration", {}).get("dataSources") != expected_source:
-        raise RuntimeError("Eventhouse Operations Agent readback changed the KQL database source.")
-    if actual.get("shouldRun") is not False:
-        raise RuntimeError("Eventhouse Operations Agent must remain stopped after deployment.")
-    rules = (actual.get("playbook") or {}).get("RuleDefinitions") or {}
-    if len(rules) != 1:
-        raise RuntimeError("Eventhouse Operations Agent must retain its combined BAD/UNCERTAIN KQL rule.")
-    rule = next(iter(rules.values()))
-    if (rule.get("ClassExpression", {}).get("$type") != "kqldataquery"
-            or rule.get("RuleCondition") != {
-                "$type": "propertywhenistrue",
-                "DataPropertyName": "QualityIsBadOrUncertain",
-            }):
-        raise RuntimeError("Eventhouse Operations Agent readback changed its KQL rules.")
-    expected_bindings = {
-        "equipment_id": "agent:operationalSet:OPCUASignalEvent:EquipmentId",
-        "facility_id": "agent:operationalSet:OPCUASignalEvent:FacilityId",
-        "unit": "agent:operationalSet:OPCUASignalEvent:Unit",
-        "value": "agent:operationalSet:OPCUASignalEvent:Value",
-        "quality": "agent:operationalSet:OPCUASignalEvent:Quality",
-        "event_time": "agent:operationalSet:OPCUASignalEvent:Timestamp",
-    }
-    actual_bindings = {
-        binding.get("Name"): binding.get("Key")
-        for binding in rule.get("ActionBinding", {}).get("ParameterBindings", [])
-    }
-    if actual_bindings != expected_bindings:
-        raise RuntimeError("Eventhouse Operations Agent changed its email action bindings.")
-    expression = rule.get("ClassExpression", {}).get("Expression", "")
-    if ("['OPCUAEvents']" not in expression
-            or "external_table('silver_instruments')" not in expression):
-        raise RuntimeError("Eventhouse Operations Agent lost its event/instrument enrichment.")
-    require_retained(configuration, actual)
+        if configuration.get("configuration", {}).get("dataSources") != expected_sources:
+            raise RuntimeError("Refusing to delete an Operations Agent without the exact retired KQL source.")
+        response = api_request("DELETE", f"{base_url}/{agent_id}")
+        response.raise_for_status()
+        if response.status_code == 202:
+            location = response.headers.get("Location")
+            if not location:
+                raise RuntimeError("Retired Operations Agent deletion returned no operation URL.")
+            wait_for_lro(location)
+        elif response.status_code not in (200, 204):
+            raise RuntimeError(f"Unexpected retired Operations Agent deletion HTTP {response.status_code}.")
+        response = api_request("GET", f"{base_url}/{agent_id}")
+        if response.status_code != 404:
+            response.raise_for_status()
+            raise RuntimeError("Retired Operations Agent deletion was not confirmed by readback.")
+        print(f"Removed retired Operations Agent {retired_name} ({agent_id}).")
+    elif saved_id:
+        response = api_request("GET", f"{base_url}/{saved_id}")
+        if response.status_code != 404:
+            response.raise_for_status()
+            raise RuntimeError("Saved retired Operations Agent still exists outside the expected target identity.")
+    else:
+        print(f"No retired Operations Agent {retired_name} in the target folder.")
+    keys = ("'eventhouse_ops_agent_name', 'eventhouse_ops_agent_id', "
+            "'eventhouse_ops_agent_kql_database_id', 'eventhouse_ops_agent_should_run'")
+    spark.sql(f"DELETE FROM {settings_table_name} WHERE setting_name IN ({keys})")
+    if spark.sql(f"SELECT setting_name FROM {settings_table_name} WHERE setting_name IN ({keys})").take(1):
+        raise RuntimeError("Retired Operations Agent settings remain after cleanup.")
 
 
 def deploy_operations_agent(ontology_id: str) -> dict:
@@ -1198,45 +1144,20 @@ def deploy_operations_agent(ontology_id: str) -> dict:
             "ops_agent_should_run": str(ops_agent_should_run).lower()}
 
 
-def deploy_eventhouse_operations_agent(pipeline_id: str) -> dict:
-    if eventhouse_table_name != "OPCUAEvents":
-        raise RuntimeError(
-            f"Eventhouse Operations Agent requires table 'OPCUAEvents'; "
-            f"configured table is {eventhouse_table_name!r}."
-        )
-    kql_database_id = resolve_kql_database_id()
-    agent_id = create_operations_agent(
-        eventhouse_ops_agent_name,
-        f"Monitors {eventhouse_kql_database_name}.{eventhouse_table_name} for OPC UA quality alerts.",
-    ).get("id")
-    if not agent_id:
-        raise RuntimeError("Eventhouse Operations Agent creation returned no id.")
-    configuration = build_eventhouse_configurations(
-        kql_database_id, pipeline_id, ops_agent_teams_team_id, ops_agent_teams_channel_id)
-    update_operations_agent_definition(agent_id, configuration)
-    verify_eventhouse_operations_readback(
-        agent_id, kql_database_id, configuration)
-    return {
-        "eventhouse_ops_agent_id": agent_id,
-        "eventhouse_ops_agent_name": eventhouse_ops_agent_name,
-        "eventhouse_ops_agent_kql_database_id": kql_database_id,
-        "eventhouse_ops_agent_should_run": "false",
-    }
-
-
 result = check_agent_capability()
 persist_agent_status("deploying", "Provisioning the complete Operations Agent and email pipeline.")
 try:
     persist = deploy_operations_agent(result["ontology_id"])
-    persist.update(deploy_eventhouse_operations_agent(persist["email_pipeline_id"]))
+    retire_eventhouse_operations_agent()
     source = spark.createDataFrame(
         [{"setting_name": key, "setting_value": value} for key, value in persist.items()]
     ).withColumn("updated_utc", F.current_timestamp())
     merge_settings_with_retry(source)
-    reason = ("Ontology and Eventhouse configurations/playbooks retained by readback; "
-              "both agents stopped. Runtime actions not tested."
+    reason = ("Ontology configuration/playbook retained by readback; "
+              "agent stopped; retired Eventhouse agent/settings removed. Runtime actions not tested."
               if ops_agent_copy_playbook else
-              "Ontology and Eventhouse configurations retained by readback; generate both playbooks in the portal as requested. Runtime actions not tested.")
+              "Ontology configuration retained by readback; generate its playbook in the portal as requested. "
+              "Retired Eventhouse agent/settings removed. Runtime actions not tested.")
     persist_agent_status("configured", reason)
     result.update(status="configured", reason=reason)
 except Exception as exc:

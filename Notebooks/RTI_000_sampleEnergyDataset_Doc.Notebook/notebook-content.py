@@ -52,7 +52,7 @@
 # - Eventhouse & KQL DB
 # - Ontology v2 (TMDL entities, relationships, and data bindings)
 # - Native ontology-owned graph, enriched by KQL telemetry and operational SQL
-# - Required v2 Data Agent and full Operations Agent provisioning, with explicit opt-out
+# - Required v2 Data Agent and ontology-backed Operations Agent provisioning, with no skip flags
 #
 # **V2-only contract:** every selected live ontology must report integer
 # `properties.generation == 2`. Names such as `*_V9`, Fabric REST `/v1`, and ADLS Gen2
@@ -482,6 +482,10 @@
 # Success means `configured`, STOPPED by default; queries, monitoring, Teams and email
 # delivery still require live verification. `OperationsAgentV1` names the agent format,
 # not the ontology generation.
+# The separate Eventhouse-Knowledge Operations Agent is retired, not provisioned. After
+# verifying the retained ontology agent, NB10 checks the exact retired name/folder, saved
+# identity and KQL source before deleting it, verifies absence, and clears its four obsolete
+# settings. Shared telemetry, SQL/KQL grounding, Teams, Outlook and email pipeline remain.
 #
 # ### 11. RTI_011 – SQL seed, GraphQL, and required SQL Data Agent source
 # SQL seeding and GraphQL setup run independently of Data Agent availability.
@@ -493,11 +497,12 @@
 # verified ontology source is unchanged on the same agent/workspace, and invalidated
 # when that configuration changes. SQL and combined-source runtime remain unverified.
 #
-# Setup runs both agents only after NB06 has verified Ontology bindings and the native graph.
+# Setup runs the Data Agent and ontology-backed Operations Agent only after NB06 has verified
+# Ontology bindings and the native graph.
 # Before enabling Weather it requires
 # NB09 `ready` with separate `published`/runtime `verified` evidence and NB10 `configured`,
-# or each capability's explicit disabled/skipped
-# result. Missing, blocked or failed evidence cannot become green setup success.
+# or NB09's exact known product limitation. Missing, blocked or failed evidence cannot
+# become green setup success.
 #
 # ### Application consumption and graph boundary
 # HydroOperationsApp reads v2 TMDL and queries the ontology-managed GraphModel

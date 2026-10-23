@@ -1224,8 +1224,9 @@ including follow-ups and failure/recovery behavior.
 Prioritize work analysis and evidence assurance. Add parts/downtime planning only
 when their authoritative integrations exist; stock rows alone are insufficient.
 Do not introduce another LLM call for every ordinary factual query.
-The existing **two Fabric Operations Agents** retain their playbook/actions,
-Teams and email capabilities. These proposed specialists do not replace them,
+The **ontology-backed Fabric Operations Agent** retains its playbook/actions,
+Teams and email capabilities. The separate Eventhouse-Knowledge agent is retired without
+removing shared sources or alert dependencies. These proposed specialists do not replace the retained agent,
 and provisioning/configuration is not execution or delivery certification.
 
 ## 7.1 What is needed for a proper, evidence-based RCA?

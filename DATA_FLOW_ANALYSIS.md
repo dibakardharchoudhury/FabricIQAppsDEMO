@@ -137,7 +137,7 @@ flowchart TD
 | RTI_006 | `OPCUAEvents` and signal master | Maps node, timestamp, value, and quality columns, including standalone `event_time` | Eventhouse-backed ontology time series |
 | RTI_008 | `OPCUAEvents` | Builds KQL visual queries and parses turbine tags from node IDs | Real-Time Dashboard |
 | RTI_009 | Fully bound v2 ontology and capability policy | Attempts matching draft/published source configuration and requires a real ontology MCP functional check; required failures propagate | Live failure path validated: deployment/runtime failed on semantic error while publication/SQL-source status and all source/custom content were preserved |
-| RTI_010 | Fully bound v2 ontology, destinations, capability policy | Provisions Operations Agent, playbook/actions, Teams, and email-alert pipeline by default | Configured v2-backed artifacts; execution/delivery require live validation |
+| RTI_010 | Fully bound v2 ontology, destinations, capability policy | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline; removes only the verified retired Eventhouse-Knowledge agent/settings | Configured v2-backed artifacts; shared telemetry/alert dependencies retained; execution/delivery require live validation |
 | RTI_011 | Rayfin SQL item, Lakehouse, required Data Agent unless explicitly disabled | Seeds SQL, creates/binds GraphQL API; extends the verified v2-backed agent with SQL | Operational/GraphQL paths and verified published sources; required extension failures propagate |
 
 RTI_007 and RTI_011 are intentionally outside the setup DAG. They are run on demand by the application.

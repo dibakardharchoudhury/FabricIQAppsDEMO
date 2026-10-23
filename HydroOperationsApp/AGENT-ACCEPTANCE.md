@@ -1232,8 +1232,9 @@ Prioritize Ledger and validated RCA evidence checks before adding planning agent
 Add Quartermaster/Scheduler only when authoritative BOM/calendar/constraint data exist.
 Implement Relay with durable delivery tracking before enabling unattended alerts.
 Do not add all agents to every flow; route only when the requested capability needs them.
-The existing two Fabric Operations Agents remain provisioned with their playbook/actions,
-Teams and email capabilities; these proposed Foundry specialists do not replace them.
+The ontology-backed Fabric Operations Agent retains its playbook/actions, Teams and email
+capabilities; these proposed Foundry specialists do not replace it. The separate
+Eventhouse-Knowledge Operations Agent is retired, with shared sources and alert dependencies retained.
 
 ## Ten multi-turn acceptance flows
 

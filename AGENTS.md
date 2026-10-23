@@ -13,7 +13,7 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   bindings and unknown parts on reruns, and verify readback before publication.
 - REST `/v1`, definition schema versions, and `env_suffix` values such as `V9` are not
   ontology generations. Do not globally rename them to `v2`.
-- Always provision the Data Agent and both Operations Agents; there are no agent mode flags or skip
+- Always provision the Data Agent and the ontology-backed Operations Agent; there are no agent mode flags or skip
   branches. Preserve playbook/actions, Teams, email-alert provisioning, and standalone `event_time`
   binding. NB10 is configured/stopped, not runtime certified. `OperationsAgentV1` is the retained
   business configuration schema, not ontology generation. NB09 reports only the exact temporary
@@ -21,6 +21,10 @@ answering questions about Foundry agents, read the microsoft-foundry skill first
   product limitation after verified v2 publication; all other failures propagate. NB11 preserves
   compatible added SQL/custom content. The bounded smoke test does not attest execution provenance
   or certify SQL/combined-source runtime.
+- Never recreate the retired Eventhouse-Knowledge Operations Agent. NB10 verifies the retained
+  ontology agent, then removes only the exact retired agent after checking folder/source identity
+  and clears its obsolete settings. Preserve the shared Eventhouse, SQL/KQL grounding, email
+  pipeline, Outlook connection, and Teams destination.
 - RTI_011 always attempts the Data Agent SQL-source extension and propagates real extension failures.
   The app requires an explicitly bound ontology-managed
   native GraphModel for graph topology, with KQL/SQL enrichment only on native entities; no STID/FK

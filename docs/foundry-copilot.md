@@ -245,7 +245,9 @@ workspace/item before forwarding a question to MCP. Draft-only, missing, mismatc
 sources block invocation. Matching source identity is not runtime certification: product errors
 still propagate. See [the app's v2 contract](../HydroOperationsApp/README.md#ontology-v2-only)
 and [agent provisioning policies](../README.md#ontology-generations-and-optional-agents).
-The Data Agent and both Operations Agents are always provisioned; there are no agent-mode flags.
+The Data Agent and the ontology-backed Operations Agent are always provisioned; there are no agent-mode flags.
+The Eventhouse-Knowledge Operations Agent is retired; NB10 removes only the verified obsolete
+agent/settings while retaining shared telemetry, ontology SQL/KQL grounding, Teams, and email wiring.
 Foundry success is not evidence that the separate Data Agent, Operations
 Agent, playbook/actions, or alert delivery succeeded.
 

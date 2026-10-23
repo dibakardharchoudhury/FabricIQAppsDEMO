@@ -76,7 +76,7 @@ situation.
 
 The setup pipeline and **Run pipeline** form have no Data Agent or Operations Agent mode flags.
 The project always attempts agent provisioning against Ontology v2; existing v1 items are rejected
-rather than reused. The original Data Agent, Operations Agents, separate playbooks/actions, Teams,
+rather than reused. The original Data Agent, ontology-backed Operations Agent, playbook/actions, Teams,
 and email-alert provisioning are retained. Real failures propagate through RTI_009/010/011 and
 setup. Product support and execution must still be checked in the target tenant; restored
 implementation is not live certification. See
@@ -96,7 +96,7 @@ notebook user: it republishes/verifies the selected v2 source and makes a fresh 
 skipping because of the previous result. No code switch or workspace reset is needed. See the
 [recheck procedure](../../docs/foundry-deployment-and-multi-agent-setup.md#recheck-after-a-data-agentontology-service-fix)
 for exact status keys, preservation guarantees and separate acceptance gates.
-NB10 leaves both Operations Agents stopped; configuration does not prove delivery.
+NB10 leaves the ontology-backed Operations Agent stopped; configuration does not prove delivery.
 
 The ontology-backed agent now uses the October 23 working playbook: two SQL/KQL-grounded
 BAD/UNCERTAIN rules, `Id` mapped from `opcua_node_id`, and direct email action bindings.
@@ -108,14 +108,16 @@ The imported conditions remain state-based; **no 15-minute cooldown is implement
 See the [alert policy guidance](../../docs/foundry-deployment-and-multi-agent-setup.md#operations-agent-playbook-and-alert-frequency).
 
 The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
-agent when an operator chooses portal generation. The default remains `true`. RTI_010 also deploys
-the Eventhouse-backed agent with its separately generated and verified OPCUAEvents KQL playbook:
-one combined BAD/UNCERTAIN rule, the same parameterized Teams destination, and the same
-`Pipe_SendEmailAlert` action. The KQL rule enriches each `OPCUAEvents` row from the existing
-`silver_instruments` OneLake external table by `opcua_node_id`, binding `equipment_id`,
-`facility_id`, and `unit` along with the event value, quality, and timestamp. This does not alter
-the app's telemetry path.
-Both agents remain stopped by default, and API/readback failures never cause the notebook to
+agent when an operator chooses portal generation. The default remains `true`.
+The separate Eventhouse-Knowledge Operations Agent is retired. RTI_010 first verifies the
+retained ontology agent, then finds only `RTI_Demo_OpsAgent_Eventhouse_<suffix>` in the target
+folder. It checks saved identity and the exact target KQL database Knowledge source before
+deletion, requires an absence readback, and removes the four `eventhouse_ops_agent_*` settings.
+Missing retired agents are safe on rerun; identity conflicts or deletion/readback/settings
+cleanup failures propagate. Fresh RTI_001 runs no longer seed a name for the retired agent.
+The shared Eventhouse, silver tables, ontology agent's SQL/KQL grounding, Teams destination,
+Outlook connection, and `Pipe_SendEmailAlert` remain unchanged.
+The ontology agent remains stopped by default, and API/readback failures never cause the notebook to
 silently remove the playbook, Teams delivery, or actions.
 
 NB11 extends a live Data Agent with the operational SQL Database independently of NB09's

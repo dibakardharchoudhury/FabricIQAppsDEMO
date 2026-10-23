@@ -19,8 +19,11 @@ suffix when a replacement is needed. REST `/v1` and suffixes such as `V9` are un
 ontology generation.
 
 Report core setup, app hosting/auth, and agent execution/delivery separately. Agent provisioning is
-always attempted; there are no agent mode or skip flags. Retain both Operations Agents, their
-separate playbook/actions, Teams, and email-alert provisioning. Real failures propagate through
+always attempted; there are no agent mode or skip flags. Retain the ontology-backed Operations
+Agent, its playbook/actions, Teams, and email-alert provisioning. Never recreate the retired
+Eventhouse-Knowledge agent; preserve shared telemetry and the ontology agent's SQL/KQL grounding.
+NB10 verifies the retained agent before retiring the exact old agent and its settings.
+Real failures propagate through
 RTI_009/010/011 and setup. NB09 alone records Fabric's exact temporary unsupported-Ontology-v2
 response as `known_product_limitation` after verified v2 publication, without claiming runtime
 readiness. NB11 must preserve existing sources and custom content while adding SQL with exact

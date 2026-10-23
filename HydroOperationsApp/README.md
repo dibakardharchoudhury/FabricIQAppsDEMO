@@ -329,8 +329,10 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
 - **Lakehouse + Eventhouse** are produced by the RTI notebooks / `Pipe_Setup` — see the [root README](../README.md).
 - **Rayfin SQL** schema and seed are owned by this app (below).
 - **Agent provisioning is always attempted; there are no agent mode or skip flags.** RTI_010
-  retains both Operations Agents, their separate playbooks/actions, Teams, and
-  `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. Real failures propagate
+  retains the ontology-backed Operations Agent, its playbook/actions, Teams, and
+  `Pipe_SendEmailAlert` provisioning against the verified v2 ontology. The retired
+  Eventhouse-Knowledge agent and its settings are removed with identity/deletion readback checks;
+  shared telemetry, SQL/KQL grounding, and alert dependencies remain. Real failures propagate
   through RTI_009/010/011 and setup. Review deployment status/reasons and validate playbook execution
   and alert delivery; an Outlook connection, item creation, or completed job alone does not prove
   runtime readiness. The latest live NB10 attempt retained the full configuration after restoring

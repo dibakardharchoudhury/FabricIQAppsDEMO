@@ -302,10 +302,11 @@ engine**, not a second sequence of Rayfin/Entra/Foundry commands.
    interactively before starting. Do not substitute a service-principal token for the user's runtime tokens.
 2. **Prepare Fabric data.** For a new environment, import/sync the repository items and run `01_Pipe_Setup` with the
    [setup prerequisites and parameters](../Raw/workspace-reset/README.md#prerequisites), including Key Vault,
-   Teams and alert-recipient configuration. Always provision the Data Agent and both Operations Agents; do not
+   Teams and alert-recipient configuration. Always provision the Data Agent and the ontology-backed Operations Agent; do not
    skip agent branches. For an existing target, do not reset or recreate it for a routine deployment.
 3. **Verify Fabric agents.** Check NB09's published source identity and runtime result (Appendix B).
-   NB10 configures both Operations Agents stopped; inspect playbooks/actions, Teams and email wiring separately.
+   NB10 configures the ontology-backed Operations Agent stopped; inspect its playbook/actions, Teams and email wiring separately.
+   It retires only the exact obsolete Eventhouse-Knowledge agent/settings after identity and deletion checks.
    NB11 must retain and publish the operational SQL source. Notebook completion alone proves no delivery.
 4. **Materialize the native graph.** In the selected ontology use **Manage graph → select eligible
    entities/relationships → Continue → Materialize**. Resolve `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from
@@ -355,10 +356,29 @@ engine**, not a second sequence of Rayfin/Entra/Foundry commands.
 
 ## Appendix B: Fabric-side agents
 
-The Fabric Data Agent (`RTI_Demo_Agent_<suffix>`, RTI_009) and the Ontology and Eventhouse Operations Agents
+The Fabric Data Agent (`RTI_Demo_Agent_<suffix>`, RTI_009) and the ontology-backed Operations Agent
 (`RTI_Demo_OpsAgent_<suffix>`, RTI_010) are provisioned by the setup notebooks, always against ontology v2 with the
-separate playbooks, actions, Teams and email-alert wiring retained. Configuration or hosted-page success does not
+original playbook, actions, Teams and email-alert wiring retained. The separate Eventhouse-Knowledge
+Operations Agent is retired, not provisioned. NB10 verifies the retained agent, checks the retired
+agent's exact name/folder, saved identity and KQL source, deletes it, verifies absence, and clears
+its four obsolete settings. Shared sources and delivery dependencies are not removed.
+Configuration or hosted-page success does not
 certify their execution or delivery. See the [README](../README.md#ontology-generations-and-optional-agents).
+
+### Eventhouse-Knowledge agent retirement (October 23, 2026)
+
+In `ws-vteam-demoV3` (`9c73201e-b2e5-48eb-81b9-3526d320faca`), the bounded cleanup
+removed `RTI_Demo_OpsAgent_Eventhouse_V11` (`4f3e878f-afa8-40f4-a073-22813ed12d3f`)
+after verifying its target-folder and KQL database source identity. A successful temporary
+notebook job deleted and verified the four obsolete settings; the temporary notebook was
+then deleted and its absence verified. Item readback returned HTTP 404 for the retired agent.
+Exactly one Operations Agent remained in the target folder:
+`RTI_Demo_OpsAgent_V11` (`3b9f2f6d-e14a-4520-810d-6a9fc9c054d4`).
+Its complete definition and the shared `Pipe_SendEmailAlert` definition were unchanged
+from pre-cleanup snapshots. The ontology, Lakehouse, and KQL database remained present.
+The live NB10 definition was updated with the single-agent/guarded-retirement code while
+preserving and verifying its cell metadata and target Lakehouse attachment.
+This verifies retirement and dependency preservation, not monitoring or Teams/email delivery.
 
 ### Recheck after a Data Agent/Ontology service fix
 
@@ -422,8 +442,8 @@ avoid repeats while a state persists, but these are not timed reminders or a str
 cooldown. Use the portal's supported rule authoring/Copilot flow to generate and inspect a
 candidate, and validate both Teams and email behavior before adopting it. A timed cooldown
 needs a verified native mechanism or a durable, atomic shared notification gate covering
-both channels. This repository update leaves alert frequency, existing agents, and the
-Eventhouse-agent provisioning path unchanged.
+both channels. Retiring the separate Eventhouse-Knowledge agent does not change the retained
+ontology agent's alert frequency or SQL/KQL grounding.
 
 See [Operations Agent rule semantics](https://learn.microsoft.com/en-us/fabric/real-time-intelligence/operations-agent#understand-operations-agent-rules).
 

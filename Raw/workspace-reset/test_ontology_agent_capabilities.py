@@ -156,11 +156,11 @@ class CapabilityTests(unittest.TestCase):
 
     def operations_namespace(self):
         ns = functions(
-            "010", "build_configurations", "build_eventhouse_configurations",
+            "010", "build_configurations",
             "build_ontology_operations_playbook")
         names = {
-            "EMBEDDED_OPS_CONFIG_B64", "EMBEDDED_EVENTHOUSE_PLAYBOOK_ZLIB_B64",
-            "EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64", "ACTION_PARAMETERS", "EVENTHOUSE_ACTION_PARAMETERS",
+            "EMBEDDED_OPS_CONFIG_B64",
+            "EMBEDDED_ONTOLOGY_PLAYBOOK_ZLIB_B64", "ACTION_PARAMETERS",
         }
         nodes = [node for node in ast.parse(source("010")).body
                  if isinstance(node, ast.Assign) and any(assign_to(node, name) for name in names)]
@@ -326,94 +326,155 @@ class CapabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTP source failure"):
             ns["resolve_operations_query_bindings"]()
 
-    def test_eventhouse_operations_configuration_is_separate_and_stopped(self):
-        self.assertIn("import zlib", source("010"))
-        ns = self.operations_namespace()
-        ns["EVENTHOUSE_INSTRUCTIONS"] = "Monitor OPCUAEvents."
-        config = ns["build_eventhouse_configurations"](
-            "kql-database", "email-pipeline", "team", "channel")
-        self.assertFalse(config["shouldRun"])
-        self.assertEqual(config["configuration"]["instructions"], "Monitor OPCUAEvents.")
-        self.assertEqual(config["configuration"]["dataSources"], {
-            "kql-database": {
-                "id": "kql-database",
-                "type": "KustoDatabase",
-                "workspaceId": "workspace",
-            },
-        })
-        self.assertEqual(config["configuration"]["messageDestination"], {
-            "kind": "TeamsChannel",
-            "teamId": "team",
-            "channelId": "channel",
-        })
-        action = next(iter(config["configuration"]["actions"].values()))
-        self.assertEqual(action["connection"]["jobArtifactId"], "email-pipeline")
-        self.assertEqual(
-            {parameter["name"] for parameter in action["parameters"]},
-            {"equipment_id", "facility_id", "value", "unit", "quality", "event_time"},
-        )
-        self.assertTrue(all(
-            "signal_master" not in parameter["description"]
-            for parameter in action["parameters"]
-        ))
-        rules = config["playbook"]["RuleDefinitions"]
-        self.assertEqual(len(rules), 1)
-        rule = next(iter(rules.values()))
-        self.assertEqual(rule["RuleCondition"], {
-            "$type": "propertywhenistrue",
-            "DataPropertyName": "QualityIsBadOrUncertain",
-        })
-        self.assertIn(
-            "external_table('silver_instruments')",
-            rule["ClassExpression"]["Expression"],
-        )
-        self.assertEqual(
-            {
-                binding["Name"]: binding["Key"]
-                for binding in rule["ActionBinding"]["ParameterBindings"]
-            },
-            {
-                "equipment_id": "agent:operationalSet:OPCUASignalEvent:EquipmentId",
-                "facility_id": "agent:operationalSet:OPCUASignalEvent:FacilityId",
-                "unit": "agent:operationalSet:OPCUASignalEvent:Unit",
-                "value": "agent:operationalSet:OPCUASignalEvent:Value",
-                "quality": "agent:operationalSet:OPCUASignalEvent:Quality",
-                "event_time": "agent:operationalSet:OPCUASignalEvent:Timestamp",
-            },
-        )
 
-    def test_eventhouse_deployment_imports_generated_combined_playbook(self):
-        expected = {
-            "shouldRun": False,
-            "configuration": {
-                "instructions": "Monitor OPCUAEvents.",
-                "dataSources": {"kql": {
-                    "id": "kql", "type": "KustoDatabase", "workspaceId": "workspace",
-                }},
-                "actions": {"email": {"kind": "FabricJobAction"}},
-                "messageDestination": {
-                    "kind": "TeamsChannel", "teamId": "team", "channelId": "channel",
-                },
-            },
-            "playbook": {"RuleDefinitions": {"combined": {}}},
-        }
-        update = Mock()
-        verify = Mock()
+
+    def retirement_namespace(self, present=True, saved=None, responses=None):
+        values = saved or {}
+        spark = Mock()
+        spark.sql.return_value.take.return_value = []
         ns = functions(
-            "010", "deploy_eventhouse_operations_agent",
-            eventhouse_table_name="OPCUAEvents", resolve_kql_database_id=Mock(return_value="kql"),
-            create_operations_agent=Mock(return_value={"id": "agent"}),
-            eventhouse_ops_agent_name="RTI_Demo_OpsAgent_Eventhouse_V20",
-            eventhouse_kql_database_name="RTI_Demo_Eventhouse_V20",
-            build_eventhouse_configurations=Mock(return_value=expected),
-            ops_agent_teams_team_id="team", ops_agent_teams_channel_id="channel",
-            update_operations_agent_definition=update,
-            verify_eventhouse_operations_readback=verify,
+            "010", "retire_eventhouse_operations_agent",
+            env_suffix="V20", workspace_id="workspace", settings_table_name="rti_demo_settings",
+            FABRIC_API_BASE="https://api.fabric.microsoft.com",
+            first_setting=Mock(side_effect=lambda key, **kwargs: values.get(key, kwargs.get("default"))),
+            find_item_by_name=Mock(return_value={"id": "retired"} if present else None),
+            resolve_kql_database_id=Mock(return_value="kql"),
+            get_definition_parts=Mock(return_value=[]),
+            read_json_part=Mock(return_value={"configuration": {"dataSources": {
+                "kql": {"id": "kql", "type": "KustoDatabase", "workspaceId": "workspace"},
+            }}}),
+            api_request=Mock(side_effect=responses if responses is not None else [
+                Mock(status_code=200), Mock(status_code=404),
+            ]),
+            wait_for_lro=Mock(), spark=spark,
         )
-        result = ns["deploy_eventhouse_operations_agent"]("pipeline")
-        self.assertEqual(result["eventhouse_ops_agent_id"], "agent")
-        update.assert_called_once_with("agent", expected)
-        verify.assert_called_once_with("agent", "kql", expected)
+        return ns
+
+    def test_retirement_deletes_only_verified_agent_and_its_four_settings(self):
+        ns = self.retirement_namespace(saved={
+            "eventhouse_ops_agent_name": "RTI_Demo_OpsAgent_Eventhouse_V20",
+            "eventhouse_ops_agent_id": "retired",
+            "eventhouse_ops_agent_kql_database_id": "kql", "ops_agent_id": "retained",
+        })
+        ns["retire_eventhouse_operations_agent"]()
+        ns["find_item_by_name"].assert_called_once_with("RTI_Demo_OpsAgent_Eventhouse_V20", "OperationsAgent")
+        ns["get_definition_parts"].assert_called_once_with("retired", "operationsAgents")
+        self.assertEqual([call.args for call in ns["api_request"].call_args_list], [
+            ("DELETE", "https://api.fabric.microsoft.com/v1/workspaces/workspace/items/retired"),
+            ("GET", "https://api.fabric.microsoft.com/v1/workspaces/workspace/items/retired"),
+        ])
+        statements = [call.args[0] for call in ns["spark"].sql.call_args_list]
+        self.assertTrue(statements[0].startswith("DELETE FROM rti_demo_settings WHERE setting_name IN ("))
+        for statement in statements:
+            self.assertEqual(re.findall(r"'([^']+)'", statement), [
+                "eventhouse_ops_agent_name", "eventhouse_ops_agent_id",
+                "eventhouse_ops_agent_kql_database_id", "eventhouse_ops_agent_should_run",
+            ])
+
+    def test_retirement_is_idempotent_for_fresh_and_already_removed_agents(self):
+        for saved in ({}, {"eventhouse_ops_agent_id": "retired"}):
+            with self.subTest(saved=saved):
+                ns = self.retirement_namespace(present=False, saved=saved, responses=[Mock(status_code=404)])
+                ns["retire_eventhouse_operations_agent"]()
+                ns["resolve_kql_database_id"].assert_not_called()
+                ns["get_definition_parts"].assert_not_called()
+                self.assertFalse(any(call.args[0] == "DELETE" for call in ns["api_request"].call_args_list))
+                self.assertEqual(ns["spark"].sql.call_count, 2)
+
+    def test_retirement_rejects_conflicting_saved_identity(self):
+        for saved in (
+            {"eventhouse_ops_agent_name": "another-name"},
+            {"eventhouse_ops_agent_id": "another-agent"},
+            {"eventhouse_ops_agent_kql_database_id": "another-database"},
+            {"ops_agent_id": "retired"},
+        ):
+            with self.subTest(saved=saved):
+                ns = self.retirement_namespace(saved=saved)
+                with self.assertRaises(RuntimeError):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["api_request"].assert_not_called()
+                ns["spark"].sql.assert_not_called()
+
+    def test_retirement_never_deletes_ontology_or_unrelated_knowledge_agents(self):
+        for sources in (
+            {"ontology": {"id": "ontology", "type": "Ontology", "workspaceId": "workspace"}},
+            {"kql": {"id": "kql", "type": "KustoDatabase", "workspaceId": "another-workspace"}},
+            {"other": {"id": "other", "type": "KustoDatabase", "workspaceId": "workspace"}},
+            {},
+        ):
+            with self.subTest(sources=sources):
+                ns = self.retirement_namespace()
+                ns["read_json_part"].return_value = {"configuration": {"dataSources": sources}}
+                with self.assertRaisesRegex(RuntimeError, "exact retired KQL source"):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["api_request"].assert_not_called()
+                ns["spark"].sql.assert_not_called()
+
+    def test_retirement_waits_for_async_deletion_before_absence_readback(self):
+        ns = self.retirement_namespace(responses=[
+            Mock(status_code=202, headers={"Location": "operation-url"}), Mock(status_code=404),
+        ])
+        ns["retire_eventhouse_operations_agent"]()
+        ns["wait_for_lro"].assert_called_once_with("operation-url")
+
+    def test_retirement_failures_never_clear_settings(self):
+        for responses in (
+            [Mock(status_code=202, headers={})],
+            [Mock(status_code=200), Mock(status_code=200)],
+            [Mock(status_code=206)],
+            [Mock(status_code=403, raise_for_status=Mock(side_effect=RuntimeError("forbidden")))],
+        ):
+            with self.subTest(responses=responses):
+                ns = self.retirement_namespace(responses=responses)
+                with self.assertRaises(RuntimeError):
+                    ns["retire_eventhouse_operations_agent"]()
+                ns["spark"].sql.assert_not_called()
+        ns = self.retirement_namespace(responses=[
+            Mock(status_code=202, headers={"Location": "operation-url"}),
+        ])
+        ns["wait_for_lro"].side_effect = RuntimeError("delete failed")
+        with self.assertRaisesRegex(RuntimeError, "delete failed"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns["spark"].sql.assert_not_called()
+
+    def test_retirement_refuses_saved_agent_outside_target_folder(self):
+        ns = self.retirement_namespace(
+            present=False, saved={"eventhouse_ops_agent_id": "elsewhere"}, responses=[Mock(status_code=200)])
+        with self.assertRaisesRegex(RuntimeError, "outside the expected target identity"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns["spark"].sql.assert_not_called()
+        self.assertEqual(ns["api_request"].call_args.args[0], "GET")
+
+    def test_retirement_propagates_settings_cleanup_and_readback_failures(self):
+        ns = self.retirement_namespace(present=False)
+        ns["spark"].sql.side_effect = RuntimeError("Delta write failed")
+        with self.assertRaisesRegex(RuntimeError, "Delta write failed"):
+            ns["retire_eventhouse_operations_agent"]()
+        ns = self.retirement_namespace(present=False)
+        ns["spark"].sql.return_value.take.return_value = [{"setting_name": "eventhouse_ops_agent_id"}]
+        with self.assertRaisesRegex(RuntimeError, "settings remain"):
+            ns["retire_eventhouse_operations_agent"]()
+
+    def test_nb10_provisions_only_ontology_agent_before_retirement(self):
+        text = source("010")
+        tree = ast.parse(text)
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        for retired in ("deploy_eventhouse_operations_agent", "build_eventhouse_configurations",
+                        "verify_eventhouse_operations_readback"):
+            self.assertNotIn(retired, names)
+        deployment = next(node for node in tree.body if isinstance(node, ast.Try)
+                          and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                                  and child.func.id == "deploy_operations_agent" for child in ast.walk(node)))
+        calls = [node.func.id for node in ast.walk(deployment)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+        self.assertEqual(calls.count("deploy_operations_agent"), 1)
+        self.assertEqual(calls.count("retire_eventhouse_operations_agent"), 1)
+        self.assertIn("persist = deploy_operations_agent(result[\"ontology_id\"])\n"
+                      "    retire_eventhouse_operations_agent()", text)
+        self.assertNotIn("EMBEDDED_EVENTHOUSE_PLAYBOOK", text)
+        for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut"):
+            content = (ROOT / "Notebooks" / f"{name}.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+            self.assertNotIn("eventhouse_ops_agent", content)
 
     def test_operations_auth_selects_notebook_pbi_token(self):
         get_token = Mock(return_value="offline-token")

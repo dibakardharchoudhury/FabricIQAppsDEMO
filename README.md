@@ -53,7 +53,7 @@ STID/FK topology. See [the native graph contract](docs/knowledge-graph.md).
 | `entityRelationships.tmdl` | Semantic entity relationships. |
 | `relationships.tmdl` | Physical table joins referenced by semantic relationships or time-series backing; not additional semantic edges. |
 
-`01_Pipe_Setup` always attempts the Data Agent and both Operations Agents; it has no agent mode
+`01_Pipe_Setup` always attempts the Data Agent and the ontology-backed Operations Agent; it has no agent mode
 parameters or skip flags. No path bypasses generation-2 verification or falls back to a generation-1
 ontology. Agent configuration and source readback failures propagate through RTI_009, RTI_010,
 RTI_011, and setup. The one temporary exception is Fabric's exact
@@ -61,6 +61,14 @@ RTI_011, and setup. The one temporary exception is Fabric's exact
 the published v2 source identity. NB09 records that response as a known product limitation without
 claiming runtime readiness. Successful configuration still does not prove agent execution or alert
 delivery.
+
+The separate Eventhouse-Knowledge Operations Agent is retired and is never provisioned.
+After verifying the retained ontology agent, RTI_010 removes only the exact
+`RTI_Demo_OpsAgent_Eventhouse_<suffix>` in the target folder with the matching KQL database
+Knowledge source, verifies its absence, and deletes its four `eventhouse_ops_agent_*` settings.
+Identity conflicts and deletion/readback failures fail setup rather than deleting another agent.
+The original ontology Knowledge source, SQL/KQL playbook grounding, Teams destination,
+`Pipe_SendEmailAlert`, Outlook connection, Eventhouse, and silver tables are retained.
 
 RTI_009 tracks publication separately from functional validation. Healthy runtime status remains
 `data_agent_deployment_status=ready`, `data_agent_publication_status=published`, and
@@ -161,7 +169,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |
-| **RTI_010_build_operations_agent** | Provisions the Ontology and Eventhouse Operations Agents, separate playbooks, actions, Teams configuration, and email-alert pipeline against v2; failures propagate. | ✅ |
+| **RTI_010_build_operations_agent** | Provisions the ontology-backed Operations Agent, playbook/actions, Teams, and email-alert pipeline against v2; retires the verified obsolete Eventhouse-Knowledge agent/settings without deleting shared dependencies; failures propagate. | ✅ |
 | **RTI_011_seed_sql_wire_graphql_agent** | On-demand SQL seeding and STID GraphQL setup; always extends the live Data Agent with SQL. Run by **Seed & provision**. | — |
 | **RTI_Orchestrator_Setup** | Stage 2 driver: attaches the Lakehouse via `%%configure`, runs NB02–06, 08–10 and Weather_001, then enables Weather ingestion after all activities succeed. | Stage 2 |
 
