@@ -133,6 +133,7 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.values = {
             "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": self.notebook,
             "RAYFIN_PUBLIC_ITEM_ID": self.backend,
+            "RAYFIN_PUBLIC_LAKEHOUSE_ID": "66666666-6666-6666-6666-666666666666",
         }
         self.active = []
         self.states = ["NotStarted", "InProgress", "Completed"]
@@ -141,7 +142,12 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.response = Mock(status_code=202, headers={"Location": self.location})
         expected = (DEPLOY.SCRIPT_DIR.parent.parent / "Notebooks" /
                     "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
-        notebook = {"cells": [{"cell_type": "code", "source": expected}]}
+        notebook = {"cells": [{"cell_type": "code", "source": expected}], "metadata": {
+            "dependencies": {"lakehouse": {
+                "default_lakehouse": self.values["RAYFIN_PUBLIC_LAKEHOUSE_ID"],
+                "default_lakehouse_workspace_id": self.workspace,
+            }},
+        }}
         self.definition = {"parts": [{"path": "notebook-content.ipynb", "payload":
                            base64.b64encode(json.dumps(notebook).encode()).decode()}]}
 
@@ -198,6 +204,16 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(DEPLOY.DeployError, "already active"):
             DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.post.assert_not_called()
+
+    def test_other_workspace_lakehouse_binding_stops_before_execution(self):
+        part = self.definition["parts"][0]
+        notebook = json.loads(base64.b64decode(part["payload"]))
+        notebook["metadata"]["dependencies"]["lakehouse"]["default_lakehouse_workspace_id"] = "other"
+        part["payload"] = base64.b64encode(json.dumps(notebook).encode()).decode()
+        with self.assertRaisesRegex(DEPLOY.DeployError, "not bound to the selected workspace"):
+            DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.post.assert_not_called()
+        self.runtime.assert_not_called()
 
     def test_failed_notebook_propagates_without_rebinding_config(self):
         for state in ("Failed", "Cancelled", "Unexpected"):

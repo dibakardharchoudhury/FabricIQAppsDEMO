@@ -1963,8 +1963,9 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         return
     notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
     backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
-    if not GUID_RE.fullmatch(notebook_id) or not GUID_RE.fullmatch(backend_id):
-        raise DeployError("Fresh deployment requires verified NB11 and AppBackend identities.")
+    lakehouse_id = _public_config_value(values, "RAYFIN_PUBLIC_LAKEHOUSE_ID")
+    if not all(GUID_RE.fullmatch(value) for value in (notebook_id, backend_id, lakehouse_id)):
+        raise DeployError("Fresh deployment requires verified NB11, AppBackend and Lakehouse identities.")
     from sync_workspace_from_git import (
         Fabric, ensure_spark_runtime, notebook_definition, verify_environment_runtimes,
     )
@@ -1982,6 +1983,13 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         raise DeployError(
             "Live NB11 differs from this repository's verified non-seeding bootstrap contract. "
             "Sync the current Git branch into the workspace before deploying; no notebook was run."
+        )
+    binding = notebook.get("metadata", {}).get("dependencies", {}).get("lakehouse", {})
+    if (binding.get("default_lakehouse") != lakehouse_id
+            or binding.get("default_lakehouse_workspace_id") != workspace_id):
+        raise DeployError(
+            "NB11 is not bound to the selected workspace's Lakehouse. Complete target setup "
+            "before deploying; no notebook was run."
         )
     ensure_spark_runtime(fabric.request, workspace_id)
     verify_environment_runtimes(fabric.request, workspace_id)

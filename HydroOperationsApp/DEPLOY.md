@@ -145,7 +145,8 @@ seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted
 direct-source verification. Do not delete that shared API.
 For a fresh target without that API, the canonical engine first provisions the AppBackend/schema,
 then runs the current NB11 with Boolean `seed_demo_data=False`, before configuring Foundry.
-It verifies the live notebook's code against the repository before execution, enforces Runtime 2.0,
+It verifies the live notebook's code against the repository and its selected-workspace Lakehouse binding
+before execution, enforces Runtime 2.0,
 waits at most 15 minutes for the notebook job, and refreshes the authoritative GraphQL identity.
 This bootstrap always attempts GraphQL and Data Agent SQL-source publication, but does not execute
 the operational demo MERGE or overwrite a previous demo-seed status. An active NB11 or mismatched
