@@ -130,6 +130,15 @@ The initial canonical run applied the connector but stopped at the unsupported C
 That invalid check was removed in favor of explicit transport readiness and separate authenticated
 browser acceptance; deployment success alone does not certify the nine source reads.
 
+The subsequent canonical deployment of `2af7d5d` completed with `SUCCESS` and `DEPLOYED_APP_URL`.
+All three backend paths passed CORS/POST readiness, connector generation/application succeeded,
+and all 39 existing Entra SPA redirects were preserved. Post-deployment browser acceptance
+confirmed version `1.0.959`, repeated all nine HTTP 200 reads above with complete pagination,
+and observed no legacy Fabric GraphQL item requests. Independent SQL reads also returned HTTP 200:
+13 work orders, 30 inspections, 12 spare parts, 6 maintenance notifications and 15 asset 3D models.
+The selected facility showed 2 work orders. These are bounded read-only checks, not certification
+of agent execution, delivery, writes or every user's permissions.
+
 Rayfin connector packages are pinned to the existing 1.36.0 release. Source discovery reports
 no primary/foreign keys, so entities remain keyless and relationship-free. NB11 still owns SQL
 seeding, agent SQL wiring and the separate Fabric GraphQL API used by the hosted crew's independent
