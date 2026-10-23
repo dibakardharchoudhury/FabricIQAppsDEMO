@@ -634,6 +634,9 @@ class DeployOrderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir) / "tenant-id"
             config_dir.mkdir()
+            (config_dir / "azureProfile.json").write_text(
+                json.dumps({"subscriptions": [{"tenantId": "tenant-id"}]}), encoding="utf-8-sig",
+            )
             with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
                 reused = DEPLOY.prefer_tenant_scoped_azure_cli_config("TENANT-ID")
 
@@ -658,6 +661,31 @@ class DeployOrderTests(unittest.TestCase):
             os.environ.pop("AZURE_CONFIG_DIR", None)
         else:
             os.environ["AZURE_CONFIG_DIR"] = shared_config
+
+    def test_empty_or_other_tenant_cache_does_not_override_an_existing_identity(self):
+        for profile in (None, {}, {"installationId": "bootstrap-only"}, {"subscriptions": []},
+                        {"subscriptions": [{"tenantId": "other-tenant"}]}):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temp_dir:
+                config_dir = Path(temp_dir) / "tenant-id"
+                config_dir.mkdir()
+                if profile is not None:
+                    (config_dir / "azureProfile.json").write_text(json.dumps(profile), encoding="utf-8")
+                with (
+                    patch.dict(os.environ, {"AZURE_CONFIG_DIR": "existing-config"}),
+                    patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)),
+                ):
+                    self.assertFalse(DEPLOY.prefer_tenant_scoped_azure_cli_config("tenant-id"))
+                    self.assertEqual(os.environ["AZURE_CONFIG_DIR"], "existing-config")
+
+    def test_corrupt_tenant_profile_reports_an_explicit_failure(self):
+        for content in ("not-json", "[]", '{"subscriptions": null}', '{"subscriptions": ["invalid"]}'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as temp_dir:
+                config_dir = Path(temp_dir) / "tenant-id"
+                config_dir.mkdir()
+                (config_dir / "azureProfile.json").write_text(content, encoding="utf-8")
+                with patch.object(DEPLOY, "AZURE_CLI_SESSION_ROOT", Path(temp_dir)):
+                    with self.assertRaises(DEPLOY.DeployError):
+                        DEPLOY.prefer_tenant_scoped_azure_cli_config("tenant-id")
 
     def test_fresh_reauthentication_preserves_and_replaces_stale_cache(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")

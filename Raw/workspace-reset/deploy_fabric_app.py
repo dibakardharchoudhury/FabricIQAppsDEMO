@@ -546,6 +546,24 @@ def prefer_tenant_scoped_azure_cli_config(tenant: str) -> bool:
     config_dir = isolated_azure_cli_config(tenant)
     if not config_dir.is_dir():
         return False
+    profile_path = config_dir / "azureProfile.json"
+    try:
+        profile = json.loads(profile_path.read_text(encoding="utf-8-sig")) if profile_path.is_file() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DeployError(
+            f"Could not read the tenant-scoped Azure CLI profile at {profile_path}. "
+            "Use the local app's Switch button to refresh this tenant session."
+        ) from exc
+    accounts = profile.get("subscriptions", []) if isinstance(profile, dict) else None
+    if not isinstance(accounts, list) or any(not isinstance(account, dict) for account in accounts):
+        raise DeployError("The tenant-scoped Azure CLI profile has an invalid account list.")
+    if not any(str(account.get("tenantId") or "").casefold() == tenant.casefold() for account in accounts):
+        print(
+            "No target-tenant account in the tenant-scoped cache; retaining the existing "
+            "Azure CLI configuration for explicit tenant verification.",
+            flush=True,
+        )
+        return False
     os.environ["AZURE_CONFIG_DIR"] = str(config_dir)
     print(f"Reusing tenant-scoped Azure CLI session at {config_dir}.", flush=True)
     return True

@@ -412,6 +412,9 @@ tenant and workspace selected in the sidebar:
    STID/weather. It resolves the selected Lakehouse's SQL analytics endpoint ID from live
    metadata, reapplies the connector, and rejects missing/skipped/partial generation or apply
    receipts. No extra form parameters or manual GraphQL binding are needed for SPA reads.
+   An empty tenant-scoped Azure CLI cache never shadows an existing signed-in identity:
+   the engine selects a scoped cache only when its profile contains the target tenant,
+   then still verifies the active account's exact tenant before changing Fabric state.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send
