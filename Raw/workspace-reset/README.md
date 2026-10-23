@@ -415,6 +415,8 @@ tenant and workspace selected in the sidebar:
    An empty tenant-scoped Azure CLI cache never shadows an existing signed-in identity:
    the engine selects a scoped cache only when its profile contains the target tenant,
    then still verifies the active account's exact tenant before changing Fabric state.
+   Child Python/Azure CLI processes use UTF-8 output as well, so streamed Unicode
+   container-build logs do not crash Windows deployment under a legacy console code page.
 5. Run `npm run setup-live-auth` for SPA redirects, delegated ADX/Fabric permissions,
   and consent, then verify the live app returns HTML over HTTP 200. The final hard checks ensure
   the generated API URL targets the current capacity/workspace/AppBackend and send

@@ -238,6 +238,7 @@ def run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -260,7 +261,7 @@ def run_stream(
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd) if cwd else None,
-        env=env,
+        env={**(os.environ if env is None else env), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

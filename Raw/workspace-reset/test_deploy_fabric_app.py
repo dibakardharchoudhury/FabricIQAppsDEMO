@@ -2,6 +2,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,22 @@ SPEC = importlib.util.spec_from_file_location("deploy_fabric_app", MODULE_PATH)
 assert SPEC and SPEC.loader
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
+
+
+class CommandEncodingTests(unittest.TestCase):
+    def test_capture_child_can_print_unicode_even_with_legacy_parent_encoding(self):
+        with patch.dict(os.environ, {"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}):
+            output = DEPLOY.run_capture([sys.executable, "-c", "print('\\u2501')"])
+        self.assertEqual(output, "\u2501")
+
+    def test_stream_child_preserves_explicit_environment_and_prints_unicode(self):
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0", "ENCODING_TEST": "retained"}
+        output = DEPLOY.run_stream(
+            [sys.executable, "-c", "import os; assert os.environ['ENCODING_TEST'] == 'retained'; print('\\u2501')"],
+            env=env,
+        )
+        self.assertEqual(output, "\u2501")
+        self.assertEqual(env["PYTHONIOENCODING"], "cp1252")
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
