@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, call, patch
@@ -23,6 +24,24 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_missing_selected_project_never_creates_a_different_project(self):
+        endpoint = "https://selected.services.ai.azure.com/api/projects/hydro"
+        for saved in (False, True):
+            with self.subTest(saved=saved):
+                deploy = Mock()
+                deploy.DeployError = RuntimeError
+                deploy.current_rayfin_target.return_value = (
+                    {"RAYFIN_PUBLIC_FOUNDRY_PROJECT_ENDPOINT": endpoint} if saved else {}, None,
+                )
+                deploy.run_capture.return_value = "[]"
+                with patch.dict(os.environ, {
+                    "HYDRO_FOUNDRY_PROJECT_ENDPOINT": "" if saved else endpoint,
+                    "HYDRO_FOUNDRY_CREATE": "true",
+                }), patch.object(module, "_load_sibling") as load:
+                    with self.assertRaisesRegex(RuntimeError, "refusing to create"):
+                        module.provision(deploy, "tenant", "workspace")
+                load.assert_not_called()
+
     def test_transient_get_failures_retry_with_bounded_backoff(self):
         response = Mock(status_code=200)
         with patch.object(module.requests, "request", side_effect=[

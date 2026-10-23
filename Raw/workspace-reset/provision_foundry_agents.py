@@ -179,6 +179,12 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         return found
 
     candidates = discover(endpoint)
+    if endpoint and not candidates:
+        raise deploy.DeployError(
+            "The selected Foundry project endpoint was not found in the current subscription. "
+            "Verify the tenant, subscription and HYDRO_FOUNDRY_PROJECT_ENDPOINT; refusing to create "
+            "a different project in place of the selected one."
+        )
     project_module = _load_sibling("deploy_foundry_project")
     if not candidates and project_module.enabled():
         hosted_module = _load_sibling("deploy_hosted_agent")

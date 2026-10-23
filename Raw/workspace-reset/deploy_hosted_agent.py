@@ -259,11 +259,19 @@ def ensure_hosted_agent(
     writes = os.environ.get("HYDRO_PRODUCTION_WRITES_ENABLED", "").strip().lower()
     if writes not in ("", "true", "false"):
         raise deploy.DeployError("HYDRO_PRODUCTION_WRITES_ENABLED must be true or false.")
-    try:
-        previous = json.loads(live_environment.get("HYDRO_ORCHESTRATOR_CONFIG") or "{}")
-    except ValueError:
-        previous = {}
-    production_writes = writes == "true" if writes else bool(previous.get("production_writes_enabled", False))
+    production_writes = writes == "true"
+    if not writes and existing is not None:
+        message = (
+            "Cannot preserve the live production-write policy. Set HYDRO_PRODUCTION_WRITES_ENABLED "
+            "to true or false explicitly after reviewing the current agent."
+        )
+        try:
+            previous = json.loads(live_environment.get("HYDRO_ORCHESTRATOR_CONFIG", ""))
+        except (TypeError, ValueError) as error:
+            raise deploy.DeployError(message) from error
+        if not isinstance(previous, dict) or type(previous.get("production_writes_enabled")) is not bool:
+            raise deploy.DeployError(message)
+        production_writes = previous["production_writes_enabled"]
     orchestrator, fabric_source = compose_runtime_configuration(
         tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=spa_client_id, kusto_origin=kusto_origin,
         project_endpoint=endpoint, values=values, source_digest=source_digest, production_writes=production_writes,
@@ -297,11 +305,11 @@ def ensure_hosted_agent(
             raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
 
     ensure_azd_ready(deploy, tenant)
-    if AZD_ENVIRONMENT not in _azd_environment_names(deploy, project_dir):
-        _create_azd_environment(
-            deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,
-            registry=registry, subscription=subscription, connections=connections,
-        )
+    _configure_azd_environment(
+        deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,
+        registry=registry, subscription=subscription, connections=connections,
+        create=AZD_ENVIRONMENT not in _azd_environment_names(deploy, project_dir),
+    )
     for key, value in {**environment, "HYDRO_ORCHESTRATOR_IMAGE": f"{registry}.azurecr.io/{IMAGE_REPOSITORY}@{digest}"}.items():
         deploy.run_capture(
             deploy.command_argv("azd", "env", "set", key, value, "--environment", AZD_ENVIRONMENT), cwd=project_dir,
@@ -365,11 +373,11 @@ def ensure_azd_ready(deploy, tenant: str) -> None:
             deploy.run_stream(deploy.command_argv("azd", "extension", "install", extension))
 
 
-def _create_azd_environment(
+def _configure_azd_environment(
     deploy, *, project_dir: Path, project_id: str, endpoint: str, tenant: str, registry: str, subscription: str,
-    connections: list[dict],
+    connections: list[dict], create: bool,
 ) -> None:
-    """First deploy on this machine: create the azd environment from the live project (the folder is git-ignored)."""
+    """Rebind every publish to live project metadata, including environments created on an earlier run."""
     root = project_dir
     location = deploy.run_capture(deploy.az(
         "resource", "show", "--ids", project_id, "--api-version", "2025-06-01", "--query", "location", "-o", "tsv",
@@ -384,10 +392,13 @@ def _create_azd_environment(
     ]
     if len(names) != 1:
         raise deploy.DeployError(f"Expected exactly one Foundry connection to registry {registry}, found {len(names)}.")
-    print(f"Creating the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
-    deploy.run_capture(deploy.command_argv(
-        "azd", "env", "new", AZD_ENVIRONMENT, "--subscription", subscription, "--location", location, "--no-prompt",
-    ), cwd=root)
+    if create:
+        print(f"Creating the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
+        deploy.run_capture(deploy.command_argv(
+            "azd", "env", "new", AZD_ENVIRONMENT, "--subscription", subscription, "--location", location, "--no-prompt",
+        ), cwd=root)
+    else:
+        print(f"Refreshing the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
     values = azd_bootstrap_values(
         project_id=project_id, endpoint=endpoint, tenant=tenant, location=location, registry=registry,
         registry_id=registry_id, connection=names[0],

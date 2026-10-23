@@ -91,6 +91,11 @@ Evidence is a source-specific functional smoke test; **execution provenance is n
 SQL/combined-source answers are not certified. Failed or inconclusive checks fail, except for the
 exact temporary `This API version is not supported for the specified Ontology item` response after
 verified publication. That response is recorded as `known_product_limitation`, not readiness.
+After a Fabric service fix, rerun NB09 against the existing settings Lakehouse as the delegated
+notebook user: it republishes/verifies the selected v2 source and makes a fresh smoke query without
+skipping because of the previous result. No code switch or workspace reset is needed. See the
+[recheck procedure](../../docs/foundry-deployment-and-multi-agent-setup.md#recheck-after-a-data-agentontology-service-fix)
+for exact status keys, preservation guarantees and separate acceptance gates.
 NB10 leaves both Operations Agents stopped; configuration does not prove delivery.
 
 The existing `ops_agent_copy_playbook=false` setting remains supported for the ontology-backed
@@ -353,9 +358,12 @@ tenant and workspace selected in the sidebar:
    Fabric IQ connections, the four specialist prompt agents, and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
-   Set `HYDRO_FOUNDRY_PROJECT_ENDPOINT` (and optionally `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
-   `HYDRO_PRODUCTION_WRITES_ENABLED`) in the environment that launches this app. Requires `azd` with the
-   `azure.ai.agents` and `microsoft.foundry` extensions. See
+   Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,
+   `HYDRO_PRODUCTION_WRITES_ENABLED` in the launch environment). New project creation is an explicit,
+   billable opt-in. Requires `azd`; missing `azure.ai.agents` and `microsoft.foundry` extensions are installed
+   by the deployer. Native graph materialization remains a manual prerequisite; if the full workflow stops
+   there after setup, complete the ontology's Manage graph flow, resolve the explicit binding and resume
+   **Deploy app**, not another workspace reset. See
    [Foundry deployment and multi-agent setup](../../docs/foundry-deployment-and-multi-agent-setup.md).
 4. Sign Rayfin into the target tenant, provision the AppBackend and SQL schema, build
    and deploy static hosting, apply the generated hosting origin to backend auth, then always

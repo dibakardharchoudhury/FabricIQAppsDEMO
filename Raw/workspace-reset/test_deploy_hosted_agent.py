@@ -291,6 +291,39 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(fake.commands("az", "acr", "build"), [])
         self.assertEqual(len(fake.commands("azd", "deploy")), 1)
 
+    def test_existing_azd_environment_is_rebound_to_verified_project_and_registry_before_publish(self):
+        fake = FakeDeploy(registry_tags={self.tag(): DIGEST_A})
+        stale = agent(DIGEST_A, env={**environment(), "HYDRO_FABRIC_SOURCE_CONFIG": "{}"})
+        run(fake, [stale, agent()])
+        self.assertEqual(fake.commands("azd", "env", "new"), [])
+        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        self.assertEqual(sets["AZURE_AI_PROJECT_ID"], PROJECT_ID)
+        self.assertEqual(sets["AZURE_AI_PROJECT_ENDPOINT"], ENDPOINT)
+        self.assertEqual(sets["AZURE_TENANT_ID"], GUIDS["tenant"])
+        self.assertEqual(sets["AZURE_CONTAINER_REGISTRY_NAME"], "myreg")
+        self.assertEqual(sets["AZURE_AI_PROJECT_ACR_CONNECTION_NAME"], "reg-conn")
+        self.assertLess(
+            fake.log.index(fake.commands("azd", "env", "set")[0]),
+            fake.log.index(fake.commands("azd", "deploy")[0]),
+        )
+
+    def test_unreadable_or_non_boolean_live_write_policy_requires_an_explicit_override(self):
+        for raw in ("not-json", "[]", '{"production_writes_enabled":"false"}'):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}), \
+                 patch.object(hosted, "ACTIVATION_TIMEOUT_S", -1):
+                fake = FakeDeploy()
+                live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": raw})
+                with self.assertRaisesRegex(FakeDeploy.DeployError, "production-write policy"):
+                    run(fake, [live])
+                self.assertEqual(fake.commands("az", "acr", "build"), [])
+                self.assertEqual(fake.commands("azd", "deploy"), [])
+        with patch.dict(os.environ, {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
+            live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": "not-json"})
+            fake = FakeDeploy()
+            run(fake, [live, agent(DIGEST_B)])
+            sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+            self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
+
     def test_production_writes_are_preserved_from_the_live_agent_unless_overridden(self):
         fake = FakeDeploy()
         live = agent(DIGEST_A, env=environment(writes=True))

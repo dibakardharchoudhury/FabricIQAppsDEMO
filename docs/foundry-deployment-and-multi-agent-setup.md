@@ -4,7 +4,7 @@ How the Hydro multi-agent setup fits together, and how to deploy all of its Foun
 action**: the local deploy app or one command. Both run the same engine,
 [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
-## Deploy in 60 seconds
+## Start a deployment
 
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
 The Foundry extensions are installed for you. Everything else, including the Foundry project itself, can be created
@@ -17,7 +17,7 @@ by the deploy when you tick **Create the Foundry project if none exists**.
 | 3 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
 | 4 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
 
-That single run does everything on the Foundry side: the project (only if you opted in), connections, the four
+Once the prerequisites below are satisfied, that single run does the Foundry deployment: the project (only if you opted in), connections, the four
 prompt agents, the **Hosted Agent image build and publish**, and the final verification. Nothing needs to be run by
 hand. **It deploys into the selected Fabric workspace**, exactly as before; pick the target deliberately.
 
@@ -45,7 +45,7 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
 | Sparky | `hydro-fabric-iq-agent` | Prompt agent | same | Deployer |
 | Data Agent connection | `hydro-fabric-iq` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
 | Ontology connection | `hydro-fabric-ontology` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
-| Model | `gpt-5.6-sol` by default | Existing model deployment | `HYDRO_FOUNDRY_MODEL` | Must already exist |
+| Model | `gpt-5.6-sol` by default | Model deployment | `HYDRO_FOUNDRY_MODEL` | Existing project: must exist; opt-in project creation: template provisions it, subject to availability/quota |
 
 The Supervisor is the hosted runtime, **not a prompt agent**. There is no separate "Chief" prompt agent in the
 current code; earlier records that mention Chief or five agents are historical.
@@ -88,7 +88,7 @@ Phase 3 of the deployer's eight phases ([`provision_foundry_agents.py`](../Raw/w
 | 4. Prompt agents | Exports the four definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
 | 5. Image | Fingerprints every file the [Dockerfile](../HydroOperationsService/Dockerfile) packages; builds `hydro-orchestrator:src-<fingerprint>` in the project's ACR with `az acr build` | that tag already exists |
 | 6. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
-| 7. Publish | Sets the azd environment and runs `azd deploy hydro-orchestrator`; waits until the active version has the exact image digest and configuration | live agent already matches |
+| 7. Publish | Creates or refreshes the azd environment's project, tenant and registry identity from live metadata, applies runtime settings and publishes; waits until the active version has the exact image digest and configuration | live agent already matches |
 | 8. Verify | The existing gate: active, numeric version, immutable digest, source identity and native binding all match | never |
 
 The local app shows these as separate progress stages: *Foundry project*, *Foundry agents*, *Hosted Agent*.
@@ -108,7 +108,8 @@ Consequences:
   is derived from the tenant and workspace, so a rerun reuses the same resources instead of creating duplicates.
 - **Production writes are preserved.** The live agent's `production_writes_enabled` is kept. Set
   `HYDRO_PRODUCTION_WRITES_ENABLED=true|false` (or the form's *Work-order writes*) to change it deliberately. A
-  brand-new agent defaults to `false`.
+  brand-new agent defaults to `false`. An unreadable or non-boolean live policy stops deployment unless you explicitly
+  choose a write policy; it is never silently reset or coerced from a string.
 - **Versions are never deleted.** Each publish is a new immutable version.
 - The first run after pulling this feature builds and publishes once, because no fingerprint-tagged image exists yet.
 
@@ -123,15 +124,17 @@ Consequences:
 
 **Permissions**
 
-- To **create** a Foundry project: Owner or Contributor on the subscription (the template creates a resource group and
-  role assignments).
+- To **create** a Foundry project: permission to create the subscription's resources **and assign roles**
+  (for example Owner, or Contributor plus Role Based Access Control Administrator at the appropriate scope).
+  Contributor alone cannot create the template's role assignments.
 - To publish into an **existing** project: rights to create agent versions in it, and to run builds in its registry
   (for example Contributor on the registry). Chat users need **Foundry User** on the project.
 
 **Either already exists, or you tick *Create the Foundry project* (Section 4)**
 
-- A Foundry resource and project in the **same Entra tenant as the Fabric workspace**, in the capacity's region, with
-  **public network access** (the browser calls it directly).
+- A Foundry resource and project in the **same Entra tenant as the Fabric workspace**, with
+  **public network access** (the browser calls it directly). New projects default to the capacity's region;
+  model availability and quota must be checked for the selected region.
 - A ready model deployment (default `gpt-5.6-sol`), **exactly one** linked Application Insights resource, and an Azure
   Container Registry connected to the project as a `ContainerRegistry` connection.
 
@@ -159,7 +162,10 @@ Consequences:
    Values are validated by the local server and passed to the deployer as environment variables; nothing secret is
    collected. Blank fields fall back to the environment the app was launched with, then to discovery.
 4. Fresh data environment: use the **Full workflow** tab (GitHub sync, `01_Pipe_Setup`, deploy), or run those first.
-   An ordinary update needs none of that.
+   An ordinary update needs none of that. The workflow does not materialize the native graph: on a fresh target,
+   complete the selected ontology's **Manage graph → select eligible entities/relationships → Continue → Materialize**
+   flow and resolve the explicit graph binding before app deployment can succeed. If Full workflow stops at this
+   prerequisite after setup, complete it and resume with **Deploy app**, not a workspace reset or another full sync.
 5. Press **Deploy app** and watch the stages. Expect extra minutes when the project is created (about 10) or the image
    builds. The job limit is 90 minutes. The UI never passes `--push-config`, so commit `rayfin/rayfin.yml` yourself.
 6. Finish when you see `SUCCESS` and `DEPLOYED_APP_URL`, then test the app.
@@ -184,8 +190,9 @@ rerun it after any change, to any part of the stack.
 - Test one direct-source question, one multi-step question (Gauge → Sleuth → Fixer) and one Fabric IQ question.
   Hosting, agent execution, graph materialization and Teams/email delivery are **separate gates**.
 
-**Rollback.** Do not delete versions. Reactivate the last good one by redeploying its image digest with its
-preserved configuration (Appendix A, steps 2 to 4), then rerun the deployer.
+**Rollback.** Keep existing versions and deployment state. Use the last known-good source in a separate checkout and
+run the same canonical command against the intended target; it reuses/builds that source's image and verifies the
+current target configuration. Do not bypass the engine with a hand-published image or copy old cross-workspace settings.
 
 ## 6. Settings
 
@@ -230,14 +237,17 @@ the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFI
 | `Hosted Agent … did not become active with the expected image and configuration within 15 minutes: <reason>` | The new version failed to start or its settings differ. Check `azd ai agent monitor`, fix, rerun. |
 | `Rayfin created the backend but did not record its identity…` | Fresh-target bootstrap did not produce `rayfin/.env` values. Stop and report the output. |
 | `HYDRO_PRODUCTION_WRITES_ENABLED must be true or false.` | Fix the value. |
+| `Cannot preserve the live production-write policy…` | Review the existing agent, then deliberately select enabled/disabled in the local form or set `HYDRO_PRODUCTION_WRITES_ENABLED=true|false`. No implicit policy change is made. |
 | `Foundry definition readback failed for <agent>` | The live definition differs from the exported one after creation. Rerun; if persistent compare with `agentDefinitions.ts`. |
 | Browser 401 from Foundry | Foundry resource is in another tenant, or the user lacks **Foundry User**. |
 | Chat shows *Source limitations: the written briefing could not be verified* | Not a deployment fault: the briefing failed its checks and only verified tables are shown. |
 
 ## 8. Known limits
 
-**No deployment of this feature has been run.** It was verified by unit tests (fakes only; no cloud calls) and by
-read-only checks:
+**The newly automated build/publish/project-creation path has not been certified by a full live deployment.**
+Earlier hosted releases are recorded separately in the [implementation record](foundry-multi-agent-implementation.md);
+they do not certify this automation. Its existing evidence consists of unit tests (fakes only; no cloud calls) and
+the previously recorded read-only checks:
 
 | Verified | How |
 |---|---|
@@ -252,72 +262,55 @@ read-only checks:
 creation), the fresh-target AppBackend bootstrap (`rayfin up --exclude-services staticHosting`), and creating the azd
 environment on a machine that has none.
 
-- Creating a project provisions billable resources and is irreversible from this tool; remove them with `azd down` in
-  `~/.fabric-demo/foundry-project/<name>` (this deletes everything in that environment).
+- Creating a project provisions billable resources. This tool does not remove them; any cleanup is a separate,
+  explicitly approved operation after checking ownership and dependencies.
 - `az acr build` needs network access to the registry; private-only registries need a different build route.
 - Hosting readiness is not agent execution readiness; interactive acceptance remains a separate check.
 
-## Appendix A: the same steps by hand
+## Appendix A: manual operator setup (without the local web app)
 
-Only for diagnosis or recovery; the deployer does all of this. Run from the repository root.
+Manual setup means an operator performs the prerequisite portal/access steps and invokes the **same deployment
+engine**, not a second sequence of Rayfin/Entra/Foundry commands.
 
-1. **Build** (`<tag>` is the deployer's `src-…`, or any unique tag):
+1. **Select the target.** Sign in to the intended Azure tenant, select its subscription, record the Fabric workspace,
+   and check capacity availability. Complete Section 3's tool and permission checklist. If needed, sign in to azd
+   interactively before starting. Do not substitute a service-principal token for the user's runtime tokens.
+2. **Prepare Fabric data.** For a new environment, import/sync the repository items and run `01_Pipe_Setup` with the
+   [setup prerequisites and parameters](../Raw/workspace-reset/README.md#prerequisites), including Key Vault,
+   Teams and alert-recipient configuration. Always provision the Data Agent and both Operations Agents; do not
+   skip agent branches. For an existing target, do not reset or recreate it for a routine deployment.
+3. **Verify Fabric agents.** Check NB09's published source identity and runtime result (Appendix B).
+   NB10 configures both Operations Agents stopped; inspect playbooks/actions, Teams and email wiring separately.
+   NB11 must retain and publish the operational SQL source. Notebook completion alone proves no delivery.
+4. **Materialize the native graph.** In the selected ontology use **Manage graph → select eligible
+   entities/relationships → Continue → Materialize**. Resolve `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` from
+   authoritative lineage, or provide the documented operator-verified fallback using
+   [the graph binding procedure](knowledge-graph.md). Do not infer ownership by name or graph count.
+5. **Select Foundry.** For an existing project, verify model, registry and monitoring connections, then set its endpoint
+   if discovery is ambiguous. For a new project, explicitly opt into billable resource creation:
    ```powershell
-   az acr build --registry <acr> --image hydro-orchestrator:<tag> --platform linux/amd64 --file HydroOperationsService/Dockerfile .
-   $digest = az acr repository show --name <acr> --image hydro-orchestrator:<tag> --query digest -o tsv
+   $env:HYDRO_FOUNDRY_CREATE = "true" # Only when creation is intended.
+   # Optional: $env:HYDRO_FOUNDRY_LOCATION = "swedencentral"
    ```
-2. **Image and settings** in the azd environment `hydro-orchestrator` (`azd env new hydro-orchestrator` first on a new machine):
+   For an existing project instead:
    ```powershell
-   azd env set HYDRO_ORCHESTRATOR_IMAGE "<acr>.azurecr.io/hydro-orchestrator@$digest" --environment hydro-orchestrator
-   azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-5.6-sol --environment hydro-orchestrator
-   azd env set HYDRO_RUNTIME_STATE_DIR /home/session/hydro --environment hydro-orchestrator
+   $env:HYDRO_FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
    ```
-3. **Configurations**: build both JSON values from the deployer's target state with the script below, then apply them.
-4. **Publish and check**:
+   These are alternatives. If a specified endpoint cannot be found, stop and verify tenant/subscription/endpoint;
+   do not use project creation to work around missing access.
+6. **Deploy from the repository root:**
    ```powershell
-   azd deploy hydro-orchestrator --environment hydro-orchestrator --no-prompt
-   azd ai agent show --environment hydro-orchestrator --output json   # active, numeric version, your digest
+   python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config
    ```
-5. **Rerun the deployer** so it verifies the agent and updates the SPA.
-
-<details>
-<summary>Step 3 script (<code>compose.py</code>, save outside the repository)</summary>
-
-```python
-import argparse, json, pathlib, subprocess, sys
-sys.path.insert(0, "Raw/workspace-reset")
-from provision_foundry_agents import source_configuration_digest
-from deploy_hosted_agent import compose_runtime_configuration
-
-p = argparse.ArgumentParser()
-p.add_argument("--kusto-uri", required=True)        # Eventhouse query URI (origin only)
-p.add_argument("--project-endpoint", required=True)
-p.add_argument("--writes", action="store_true")
-p.add_argument("--apply", action="store_true")
-a = p.parse_args()
-
-env = {}
-for line in pathlib.Path("HydroOperationsApp/rayfin/.env").read_text(encoding="utf-8").splitlines():
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1); v = v.strip()
-        env[k.strip()] = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "\"'" else v
-tenant, workspace = env["RAYFIN_PUBLIC_TENANT_ID"], env["RAYFIN_PUBLIC_WORKSPACE_ID"]
-ontology = json.loads(env["RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"])["ontologyId"]
-orchestrator, fabric = compose_runtime_configuration(
-    tenant=tenant, workspace=workspace, ontology=ontology, spa_client_id=env["RAYFIN_PUBLIC_AAD_CLIENT_ID"],
-    kusto_origin=a.kusto_uri, project_endpoint=a.project_endpoint, values=env,
-    source_digest=source_configuration_digest(tenant, workspace, ontology, env), production_writes=a.writes)
-for key, value in (("HYDRO_ORCHESTRATOR_CONFIG", orchestrator), ("HYDRO_FABRIC_SOURCE_CONFIG", fabric)):
-    text = json.dumps(value, separators=(",", ":"))
-    if a.apply:
-        subprocess.run(["azd", "env", "set", key, text, "--environment", "hydro-orchestrator"], check=True)
-    else:
-        print(key, text.replace(env["RAYFIN_PUBLIC_PUBLISHABLE_KEY"], "pk-<masked>"))
-```
-
-Run it first without `--apply` to review, then with `--apply`.
-</details>
+   Add `--client-id <guid>` only when supplied or discovery is ambiguous. The engine owns connection/agent
+   definitions, image build, azd state, SPA permissions/consent, redirects, runtime/CORS and backend checks.
+   Stop on any printed administrator prerequisite; only perform the exact action it delegates to an administrator.
+   Do not hand-edit generated state or manually reconstruct the publish sequence.
+7. **Accept separately.** Require `SUCCESS` and `DEPLOYED_APP_URL`, normal browser sign-in, then run the
+   [ten-prompt matrix](../HydroOperationsApp/AGENT-TEST-PROMPTS.md) on the deployed build. Confirm specialist
+   invocations and source receipts, Fabric IQ retrieval, and explicit human approval/readback of a test work order
+   only when writes are intentionally enabled. Test Operations Agent execution and Teams/email delivery separately.
+   Record pending or failed gates rather than calling hosting success end-to-end acceptance.
 
 ## Appendix B: Fabric-side agents
 
@@ -325,6 +318,30 @@ The Fabric Data Agent (`RTI_Demo_Agent_<suffix>`, RTI_009) and the Ontology and 
 (`RTI_Demo_OpsAgent_<suffix>`, RTI_010) are provisioned by the setup notebooks, always against ontology v2 with the
 separate playbooks, actions, Teams and email-alert wiring retained. Configuration or hosted-page success does not
 certify their execution or delivery. See the [README](../README.md#ontology-generations-and-optional-agents).
+
+### Recheck after a Data Agent/Ontology service fix
+
+No ontology-generation downgrade, new agent mode, source fallback or application code switch is needed.
+NB09 selects Preview Runtime, publishes, verifies the live generation-2 source identity and issues a **new**
+bounded facilities query on every run. A previous `known_product_limitation` is not a sticky skip.
+
+1. In the target workspace, attach the existing settings Lakehouse and rerun
+   [RTI_009](../Notebooks/RTI_009_build_data_agent.Notebook/notebook-content.py) as the delegated notebook user
+   with permission to query the agent. Do not reset the workspace or replace the ontology/Data Agent.
+2. Inspect `rti_demo_settings`: require `data_agent_deployment_status=ready`,
+   `data_agent_publication_status=published` and `data_agent_runtime_status=verified`.
+   Review `data_agent_runtime_reason` and `data_agent_runtime_evidence` for the fresh result.
+   The exact unsupported-Ontology response remains a narrow known-product limitation **if still returned**;
+   all other failures propagate. Its absence alone is not a pass.
+3. NB09 preserves compatible SQL/custom sources on rerun. Run NB11 if its required operational SQL extension
+   has not completed; NB11's SQL-source status does not replace NB09's runtime result.
+4. With unchanged source identity, existing Foundry connections require no manual rebinding.
+   If deploying repository changes or changing target identity, use Section 4 or 5. The app deployer verifies
+   publication/identity, **not** NB09's runtime smoke. Then test an explicit Fabric IQ request through Sparky.
+
+The bounded facilities smoke is functional evidence only: it does not attest execution provenance or certify
+SQL/combined-source answers, the full multi-agent matrix, or Operations Agent delivery. The service fix has not
+been independently verified in a target tenant by this documentation review.
 
 ## References
 

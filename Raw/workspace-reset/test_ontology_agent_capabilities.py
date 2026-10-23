@@ -502,6 +502,7 @@ class CapabilityTests(unittest.TestCase):
                 "build_lakehouse_datasource_obj": Mock(return_value={}),
                 "build_kusto_datasource_obj": Mock(return_value={}),
                 "update_item_definition": Mock(), "enable_preview_runtime": Mock(),
+                "update_operational_source_guidance": Mock(side_effect=lambda parts: parts),
                 "publish_data_agent": Mock(), "persist_agent_status": status,
             })
             ns[fail_at].side_effect = RuntimeError("real failure")
@@ -642,6 +643,7 @@ class CapabilityTests(unittest.TestCase):
                 build_lakehouse_datasource_obj=Mock(return_value=lakehouse_source),
                 build_kusto_datasource_obj=Mock(return_value=kusto_source),
                 update_item_definition=Mock(), enable_preview_runtime=Mock(),
+                update_operational_source_guidance=Mock(side_effect=lambda parts: parts),
                 publish_data_agent=Mock(), persist_agent_status=Mock(),
                 is_known_ontology_v2_product_limitation=lambda reason: (
                     "api version is not supported" in reason.lower()
@@ -885,6 +887,12 @@ class CapabilityTests(unittest.TestCase):
             CROSS_SOURCE_OPERATIONAL_INSTRUCTIONS="\n### Cross-source operational joins\nCross-source guidance",
             GLOBAL_SCOPE_MARKER="### Conversation scope",
             GLOBAL_SCOPE_INSTRUCTIONS="\n### Conversation scope\nGlobal scope guidance",
+            RUNNING_BAD_MARKER='### Canonical "running bad" questions',
+            RUNNING_BAD_INSTRUCTIONS='\n### Canonical "running bad" questions\nBAD guidance',
+            RUNNING_HOT_MARKER='### Canonical "running hot" questions',
+            RUNNING_HOT_INSTRUCTIONS='\n### Canonical "running hot" questions\nHOT guidance',
+            ADAPTIVE_RESPONSE_MARKER="### Adaptive response",
+            ADAPTIVE_RESPONSE_INSTRUCTIONS="\n### Adaptive response\nAdaptive guidance",
             MCP_FOLLOWUP_MARKER="### External MCP follow-ups and visualizations",
             MCP_FOLLOWUP_INSTRUCTIONS=(
                 "\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
@@ -980,6 +988,9 @@ class CapabilityTests(unittest.TestCase):
             "\n\n### Direct Lakehouse and Eventhouse Sources\nNew guidance"
             "\n\n### Cross-source operational joins\nCross-source guidance"
             "\n\n### Conversation scope\nGlobal scope guidance"
+            '\n\n### Canonical "running bad" questions\nBAD guidance'
+            '\n\n### Canonical "running hot" questions\nHOT guidance'
+            "\n\n### Adaptive response\nAdaptive guidance"
             "\n\n### External MCP follow-ups and visualizations\nFollow-up and chart guidance"
             "\n\n### Authoritative source routing\nDirect routing guidance",
         )
@@ -1012,6 +1023,19 @@ class CapabilityTests(unittest.TestCase):
             ns["build_stage_obj"]({"aiInstructions": {"invalid": True}})
         with self.assertRaisesRegex(RuntimeError, "malformed"):
             ns["build_datasource_obj"]({"elements": None}, "ontology")
+
+        preserved = copy.deepcopy(state["parts"])
+        ns["probe_data_agent_ontology"].return_value = {
+            "status": "verified", "reason": "Fresh facilities smoke matched", "evidence": {"fresh": True},
+        }
+        exec(compile(ast.Module(body=[deployment], type_ignores=[]), "recovered-rerun", "exec"), ns)
+        final = ns["persist_agent_status"].call_args
+        self.assertEqual(final.args[0], "ready")
+        self.assertEqual(final.kwargs["publication_status"], "published")
+        self.assertEqual(final.kwargs["runtime_status"], "verified")
+        self.assertEqual(final.kwargs["runtime_evidence"], {"fresh": True})
+        self.assertEqual(ns["probe_data_agent_ontology"].call_count, 2)
+        self.assertEqual(state["parts"], preserved)
 
     def test_malformed_existing_agent_baseline_never_updates_or_publishes(self):
         tree = ast.parse(source("009"))

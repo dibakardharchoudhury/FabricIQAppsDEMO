@@ -77,26 +77,22 @@ The latest deployment refreshed Azure sign-in, preserved all 39 redirects and ve
 five updated Foundry definitions. Consent covers the current operator; an enterprise
 rollout still requires tenant-wide administrator consent.
 
-The separate [Agent Framework service](../HydroOperationsService/README.md)
-is deployed independently as a gated Foundry hosted coordinator and is not
-published by this Fabric-app command or enabled in the SPA. Its read-only diagnostic
-verified live v2/STID/telemetry and the RCA adapter invoked Sleuth v13 successfully.
-The backend now stages source-bound approval cards and accepts signed human
-decisions through a separate, disabled-by-default write provider. These paths
-have simulated SQL/SDK acceptance, not live production-write certification.
-Rayfin direct delegated exchange requires
-`services.auth.fabric.externalEntraExchange: true`; the repository now opts in,
-but the canonical deployment engine has not applied that change. This does not
-replace or disable the working embedded Fabric SSO/WO flow.
+Earlier migration diagnostics treated the
+[Agent Framework service](../HydroOperationsService/README.md) as a separate local/gated service.
+That is **not the current deployment contract**: the canonical engine now converges the Hosted
+Agent, four specialist prompt agents and SPA together. New hosted agents default to disabled
+production writes; existing verified boolean write policies are preserved unless explicitly overridden.
+Rayfin direct delegated exchange requires `services.auth.fabric.externalEntraExchange: true`;
+the canonical engine reapplies runtime/CORS and SQL settings on every deployment.
 See its [explicit authentication prerequisites](../HydroOperationsService/README.md#live-source-adapter-verified-access-and-blocking-prerequisites);
 do not treat a disabled exchange or missing delegated scope as an empty source.
-The latest read-only check returned `CapacityNotActive` for the existing
+An earlier read-only check returned `CapacityNotActive` for the existing
 capacity. Workspace/item metadata still confirms the ontology exists, but its
 live numeric generation cannot be reverified while capacity execution is paused.
 Do not replace the ontology, infer generation from its name, or bypass that gate.
-New cloud hosting/authentication
-requires approval and integration into this same deployment engine before rollout;
-do not publish the local validation service as an enterprise backend.
+Use the same deployment engine rather than publishing the local validation service separately.
+For current operator steps, including fresh-project creation, see
+[Foundry deployment and multi-agent setup](../docs/foundry-deployment-and-multi-agent-setup.md).
 
 ## Start here: choose your interface, not a different deployment process
 
@@ -159,7 +155,9 @@ ACR and publishes with azd when the packaged source or deployment target changed
 current subscription. `HYDRO_FOUNDRY_MODEL` selects an existing model deployment, defaulting
 to `gpt-5.6-sol`. In measured specialist tool-selection steps it was faster than `gpt-5-mini`
 at the same `low` reasoning effort (median 2.9 s versus 5.0 s) and did not emit the redundant
-parallel calls the mini model produced. It does not create a new Foundry account or silently select an ambiguous project.
+parallel calls the mini model produced. A new Foundry project/account and supporting resources are created only
+when no project is found and the operator explicitly opts in through the local form or
+`HYDRO_FOUNDRY_CREATE=true`; ambiguous discovery or an unresolved selected endpoint stops deployment.
 
 Separate Fabric IQ connections target the published Data Agent matching the live selected
 generation-2 ontology and the Ontology endpoint directly. The Data Agent keeps direct-table

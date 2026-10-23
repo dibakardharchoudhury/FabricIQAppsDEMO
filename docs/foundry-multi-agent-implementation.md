@@ -6,6 +6,34 @@ in repository commits and the linked acceptance records. It is not a release
 certificate. Earlier runs are retained as historical evidence, not relabelled
 as passes after a later code change.
 
+## October 23 deployment automation and operator-instruction review
+
+The local deploy app's **Deploy app** and **Full workflow** routes call the canonical Python deployment
+engine. Foundry project creation is billable opt-in; the engine converges both Fabric IQ connections,
+the four specialist prompt agents and the Hosted Agent's source-fingerprinted image/configuration.
+This review corrected three rerun/selection issues:
+
+- Existing azd environments now refresh project, tenant and registry identity from live metadata before publishing,
+  not only on their first creation.
+- An unreadable or non-boolean live production-write policy requires an explicit operator choice rather than a
+  silent default or string-to-boolean coercion.
+- A selected but undiscoverable Foundry endpoint cannot trigger creation of a different project.
+
+The [operator guide](foundry-deployment-and-multi-agent-setup.md) now includes end-to-end manual prerequisite
+steps followed by the same canonical command, removes the alternative hand-built publish/configuration recipe,
+and explains how to resume a fresh local workflow after native graph materialization. Contradictory local-only
+deployment prose is marked historical or replaced.
+
+No Data Agent notebook/runtime change is needed merely because Fabric fixes the Ontology service.
+NB09 already makes a fresh bounded query on every rerun; the guide documents exact status keys and the separate
+Sparky acceptance gate. The recovery contract exercises failed-to-verified reruns while retaining SQL/custom
+sources. Stale AST test fixtures were updated for existing notebook-owned guidance; production notebook logic
+and packaged notebook mirrors are unchanged.
+
+Validation: **251 deployment, launcher and ontology/agent contract tests passed**. This was a repository review,
+not a live deployment, project creation, signed-user multi-agent acceptance run or verification of the reported
+Fabric service fix. The prior same-build acceptance gates remain pending.
+
 ## October 12 v77 canonical-prompt release
 
 Hosted Agent v77 is active from commit `30ee16e` on immutable image

@@ -2,11 +2,12 @@
 
 **End-to-end change record:** [October 7-8 implementation, Agent Framework migration,
 agent roles, tests and remaining gates](foundry-multi-agent-implementation.md).
-Agent Framework is implemented locally, **not yet in the hosted app**.
+For current automated and manual-operator deployment steps, use
+[Foundry deployment and multi-agent setup](foundry-deployment-and-multi-agent-setup.md).
 
-> Current implementation: the app invokes persistent Foundry Prompt Agents through a project
-> endpoint. A real Supervisor emits delegation function calls; the client invokes separate
-> specialist agent identities and runs direct tools under the user's existing delegated identity.
+> Current implementation: the SPA invokes the `hydro-orchestrator` Foundry Hosted Agent.
+> Its Microsoft Agent Framework runtime plans bounded serial calls to four persistent specialist
+> Prompt Agents and executes source tools through the Node bridge under the user's delegated identity.
 > This is not native A2A transport or Foundry Workflows. Only the Fabric IQ specialist uses Fabric IQ;
 > Q&A/RCA do not use the Data Agent as an intermediary. See the
 > [role/routing and ten-flow acceptance report](../HydroOperationsApp/AGENT-ACCEPTANCE.md),
@@ -16,6 +17,13 @@ Agent Framework is implemented locally, **not yet in the hosted app**.
 > The project API uses `https://ai.azure.com/user_impersonation` and Foundry User RBAC.
 > Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
 > Shared presentation and safety tests do not certify live response parity or agent latency.
+
+## Historical migration and browser-coordinator reference
+
+The older diagnostics and browser-coordinated architecture below are retained as migration context,
+not current deployment instructions. Statements that the service is local-only, has not been wired into
+the SPA, or must be published separately are superseded by the current deployment guide linked above.
+They are not evidence about today's tenant capacity, source health or live acceptance.
 
 An isolated [Microsoft Agent Framework service](../HydroOperationsService/README.md)
 now validates durable execution boundaries locally, with synthetic providers and no
