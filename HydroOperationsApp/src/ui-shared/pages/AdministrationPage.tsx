@@ -17,7 +17,7 @@ export function AdministrationPage() {
     {
       n: 2,
       title: 'Seed & provision',
-      why: 'Loads demo work orders/inspections into SQL and publishes the STID GraphQL API + Data Agent (runs the RTI_011 notebook). Do this before Connect STID.',
+      why: 'Loads demo work orders/inspections into SQL and publishes the independent STID GraphQL API + Data Agent source (runs the RTI_011 notebook). Lakehouse connector reads do not depend on this step.',
       done: data.provisionState === 'complete',
       busy: data.provisionState === 'running' || Boolean(data.jobs.seed),
       action: 'Seed & provision',
@@ -35,7 +35,7 @@ export function AdministrationPage() {
     {
       n: 4,
       title: 'Connect STID',
-      why: 'Loads governed facility & asset metadata from the Lakehouse GraphQL API published in step 2.',
+      why: 'Loads governed facility & asset metadata through the delegated, read-only Lakehouse connector. No GraphQL API is required.',
       done: data.stidState === 'connected',
       busy: data.stidState === 'loading',
       action: 'Connect STID',

@@ -979,7 +979,7 @@ This solution uses **two separate Entra identities** — they are not interchang
 |---|---|---|
 | Entra app type | Confidential client — **has a secret** | Public client / **single-page app — no secret** |
 | Auth mode | **App-only** (client credentials) | **Delegated** (the signed-in user's token) |
-| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, STID GraphQL, Fabric REST, Foundry Agent Service |
+| Used by | `Pipe_Setup` → `RTI_001` / `RTI_011` notebooks | The browser app → Eventhouse, Lakehouse connector, Fabric REST, Foundry Agent Service |
 | Secret storage | **Azure Key Vault** (3 secrets) | none — no secret is ever stored |
 | Who provisions it | Platform/security admin, **before** Step 1 | Canonical orchestrator discovers/reuses or attempts creation; live-auth setup configures it |
 | Recorded in repo | KV secret **names** in `Pipe_Setup` params (not values) | `RAYFIN_PUBLIC_AAD_CLIENT_ID` in `rayfin/.env` |
@@ -1162,7 +1162,9 @@ and deployment state. Metadata-resolution failures stop before source writes or 
   `properties.parentEventhouseItemId`, then uses that database's `displayName` and
   `queryServiceUri`—not a same-named database belonging to another Eventhouse. Multiple eligible
   databases require a unique configured `RAYFIN_PUBLIC_KQL_DATABASE` name within that parent.
-- **STID:** resolve the target's `Hydro_STID_API` (or a target-verified configured
+- **Lakehouse connector:** resolve the target Lakehouse's live SQL analytics endpoint for
+  `hydrolakehouse`; SPA STID and weather reads do not depend on a GraphQL API or RTI_011.
+- **Independent STID GraphQL:** resolve the target's `Hydro_STID_API` (or a target-verified configured
   `RAYFIN_PUBLIC_STID_GRAPHQL_NAME`). If it has not been created by RTI_011 yet, clear stale
   GraphQL URL/ID overrides and let runtime discovery find the later-created API. The deployment
   does not invent an API item or query an old endpoint.
@@ -1271,8 +1273,9 @@ hosting origin plus `localhost:5173`; never remove existing registrations or rec
 origins merely because they remain in local configuration. Do not hand-edit `rayfin/rayfin.yml`
 `allowedRedirectUris` or run a separate `npm run up` to configure redirects. Manual portal changes
 are permitted only for the exact prerequisite action the script reports it lacks rights to perform.
-After successful deployment checks, a fresh app still needs operational seeding and STID binding
-through Step 7; hosting success does not establish native graph readiness.
+After successful deployment checks, a fresh app still needs operational seeding and independent
+STID GraphQL publication through Step 7. Lakehouse connector reads do not depend on that step;
+hosting success does not establish native graph readiness.
 
 ## 7. Seed & provision (RTI_011)
 
@@ -1291,7 +1294,9 @@ attest execution provenance or SQL/combined-source readiness. The revised NB09 l
 path was validated once with full multi-source
 preservation; neither NB11 nor full setup was executed in that bounded run. See the
 [authorized failure-path evidence](../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
-The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank.
+The hosted crew's independent GraphQL path retains runtime endpoint discovery — leave
+`RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank. The SPA reads STID and weather through `hydrolakehouse`,
+not this GraphQL API.
 
 > **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric
 > portal once and add the STID tables (`Facilities`, `Systems`, `Equipment`, `Instruments`).
@@ -1303,8 +1308,9 @@ The app discovers the GraphQL endpoint at runtime — leave `RAYFIN_PUBLIC_STID_
 
 ## 8. Switch on live auth (once per fresh deploy)
 
-The browser calls the Eventhouse (KQL) and STID GraphQL directly, each needing a delegated Entra
-permission. Run once after the first deploy of a fresh build (a rebuild gets a new hosting hostname):
+The browser uses delegated Entra access for Eventhouse (KQL), the Rayfin Lakehouse connector and
+the independent hosted crew sources. The canonical deployer runs live-auth setup automatically;
+the following commands document its operator-owned phase, not an alternative agent deploy flow:
 
 ```powershell
 az login                  # as an owner / Application Administrator
