@@ -14,6 +14,23 @@ the obsolete FEATURE `Hydro_STID_API` has been removed. See the
 for the remaining model-rate-limit and native-coverage failures; publication is
 not full business runtime acceptance.
 
+### Finding Weather in Foundry
+
+Open the [FEATURE project in Azure portal](https://portal.azure.com/#@ad340c84-1886-4202-a483-2da2cb9168eb/resource/subscriptions/dac16501-5c35-4c91-aff0-11af8de17f2e/resourceGroups/rg-hydro-foundry-884a839f3132/providers/Microsoft.CognitiveServices/accounts/ai-account-yz6usfcwfov5q/projects/ai-project-hydro-foundry-884a839f3132/overview),
+then use Foundry and select **`ai-project-hydro-foundry-884a839f3132` -> Agents**.
+Its account is `ai-account-yz6usfcwfov5q`, in resource group
+`rg-hydro-foundry-884a839f3132`. The separate Weather prompt agent is
+**`hydro-weather-agent`, version 1**.
+
+The older `foundryfabriciqappsdemo` project is a different deployment. Its
+orchestrator version 140 and specialist versions 16/21/25/20 match the older
+screenshots; that project does not contain Weather. Do not redeploy into another
+workspace's project to make its agent list match FEATURE. Publication in the
+correct project does not certify weather ingestion or a successful inference.
+
+The [Ontology_Test and operational-store review](ontology-test-review.md)
+records the read-only comparison and proposed FEATURE acceptance gates.
+
 ## Start a deployment
 
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
@@ -97,7 +114,7 @@ Phase 3 of the deployer's eight phases ([`provision_foundry_agents.py`](../Raw/w
 | 1. Foundry project | Verifies the selected subscription belongs to the Fabric tenant. Uses an explicitly selected or same-target saved project; otherwise discovers one, or **if you opted in** provisions a target-specific project with `Azure-Samples/azd-ai-starter-basic`: resource group, account/project, specified model, connected registry/monitoring and Log Analytics. Unrelated projects are not reused when creation is selected. Waits for role propagation | A project is selected, or you did not opt in |
 | 2. Checks | One Foundry project, model ready, one linked Application Insights, ontology generation 2, exactly one matching published Data Agent | never |
 | 3. Connections | Writes `hydro-fabric-iq` and `hydro-fabric-ontology` and reads them back | never |
-| 4. Prompt agents | Exports the four definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
+| 4. Prompt agents | Exports the five definitions, creates a new version only if a definition changed, reads each back | definition unchanged |
 | 5. Image | Fingerprints every file the [Dockerfile](../HydroOperationsService/Dockerfile) packages; builds `hydro-orchestrator:src-<fingerprint>` in the project's ACR with `az acr build` | that tag already exists |
 | 6. Configuration | Composes `HYDRO_ORCHESTRATOR_CONFIG` and `HYDRO_FABRIC_SOURCE_CONFIG` from the verified target | never (always compared) |
 | 7. Publish | Creates or refreshes the azd environment's project, tenant and registry identity from live metadata, applies runtime settings and publishes; waits until the active version has the exact image digest and configuration | live agent already matches |
