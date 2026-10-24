@@ -2361,7 +2361,9 @@ class FoundrySupervisor:
             ):
                 raise ToolInputError(
                     "A no-draft decision requires actual complete work-source coverage. "
-                    "Read the selected equipment's full open-work inventory, then retry the completion."
+                    "If affected equipment or condition evidence cannot be verified, use decision "
+                    "needs_clarification with a concise missing-data reason; do not invent targets or infer healthy "
+                    "operation from absent telemetry. Otherwise read the selected equipment's full open-work inventory."
                 )
             if role == "work-order" and any(item.tool == "propose_work_order" for item in self.evidence.values()):
                 raise SourceFailure("Fixer cannot both stage a proposal and complete a no-draft review.")
@@ -2694,39 +2696,63 @@ class FoundrySupervisor:
                         contract_missing = str(error).startswith(
                             "Data Agent quality/work evidence requires one inspectable JSON bundle;"
                         )
+                        coverage_incomplete = str(error).startswith(
+                            "Data Agent quality/work coverage is incomplete;"
+                        )
                         if completion_attempt == 0 and (
                             source_mismatch or source_refusal or identity_missing or contract_missing
+                            or coverage_incomplete
                         ):
                             logger.warning(
                                 "Foundry native agent returned %s; requesting one bounded same-source correction.",
                                 "the wrong connection" if source_mismatch
                                 else "a moderation/refusal payload" if source_refusal
                                 else "no inspectable quality/work JSON bundle" if contract_missing
+                                else "incomplete quality/work source coverage" if coverage_incomplete
                                 else "incomplete requested-identity coverage",
                             )
+                            if source_mismatch:
+                                repair_reason = "The prior call used the wrong native connection. "
+                            elif source_refusal:
+                                repair_reason = (
+                                    "The prior selected-source call returned moderation/refusal text "
+                                    "instead of domain evidence. "
+                                )
+                            elif coverage_incomplete:
+                                repair_reason = (
+                                    "The prior Data Agent reported incomplete source reads. Forward the complete "
+                                    "corrected assignment verbatim and retry the same selected Data Agent once. "
+                                )
+                            elif contract_missing:
+                                repair_reason = (
+                                    "The prior Data Agent result did not satisfy the machine-readable quality/work "
+                                    "contract. Pass the complete assignment verbatim to the Data Agent, including "
+                                    "requested_at_utc and all JSON fields. Require its source-backed JSON object, "
+                                    "not prose, Markdown tables or an object invented by you. "
+                                )
+                            else:
+                                repair_reason = (
+                                    "The prior selected-source result omitted the operator's resolved equipment "
+                                    "instance. Return actual instance values and relationships for every requested "
+                                    "resolved equipment ID. "
+                                )
                             active_context = {
                                 **context,
+                                "assignment": (
+                                    question + "\n\nCoverage correction: Repeat the assigned read-only Data Agent "
+                                    "request with actual complete source reads. For the total-telemetry coverage "
+                                    "query, apply the exact requested UTC window to OPCUAEvents, then use "
+                                    "summarize total_telemetry_rows_requested_window=count() WITHOUT a by clause. "
+                                    "This scalar aggregate returns one row even when its input is empty. Verify "
+                                    "the separate latest source timestamp, static-mapping count and open-work "
+                                    "availability count; an empty grouped BAD result is not the scalar total. "
+                                    "Keep failed reads incomplete and report their exact errors; never invent "
+                                    "completeness or turn a failed source into zero. Return the original JSON "
+                                    "contract using the same exact requested_at_utc."
+                                    if coverage_incomplete else question
+                                ),
                                 "native_source_repair": (
-                                    (
-                                        "The prior call used the wrong native connection. "
-                                        if source_mismatch
-                                        else (
-                                            "The prior selected-source call returned moderation/refusal text "
-                                            "instead of domain evidence. "
-                                            if source_refusal
-                                            else (
-                                                "The prior Data Agent result did not satisfy the machine-readable "
-                                                "quality/work contract. Pass the complete assignment verbatim to "
-                                                "the Data Agent, including requested_at_utc and all JSON fields. "
-                                                "Require its source-backed JSON object, not prose, Markdown tables "
-                                                "or an object invented by you. "
-                                                if contract_missing
-                                            else "The prior selected-source result omitted the operator's resolved "
-                                                 "equipment instance. Return actual instance values and relationships "
-                                                 "for every requested resolved equipment ID. "
-                                            )
-                                        )
-                                    )
+                                    repair_reason
                                     + f"Call only fabriciq-{native_source}, which is the backend-selected source for "
                                       "this step. Retry the same bounded factual request without broadening scope or "
                                       "substituting another connection. Do not return prose without a successful "
@@ -2765,59 +2791,59 @@ class FoundrySupervisor:
                 raise SourceFailure("Sleuth returned prose without its required grounded assessment.")
             if role == "fabric-iq":
                 for identity, native_result in native_results.items():
-                        native_units, native_presentation = _native_count_chart_metadata(native_result)
-                        if (
-                            request.charts_requested
-                            and native_presentation is not None
-                            and not isinstance(native_result.get("presentation"), dict)
-                        ):
-                            native_result["presentation"] = native_presentation
-                        native_text = next((
-                            value for key in ("response", "native_text")
-                            if isinstance((value := native_result.get(key)), str) and len(value) > 2400
-                        ), None)
-                        if native_text is not None:
-                            native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
-                        native_fields = tuple(
-                            key for key, value in native_result.items()
-                            if isinstance(value, list)
-                            and all(isinstance(item, dict) for item in value)
-                        )
-                        native_group_by: Literal["equipment_id", "facility_id"] | None = None
-                        if native_presentation is not None:
-                            chart_value = native_presentation.get("chart")
-                            x_key = chart_value.get("x_key") if isinstance(chart_value, dict) else None
-                            if x_key in ("equipment_id", "equipmentId"):
-                                native_group_by = "equipment_id"
-                            elif x_key in ("facility_id", "facilityId", "Station"):
-                                native_group_by = "facility_id"
-                        native_scopes: set[Literal["population", "focus"]] = {
-                            item.scope for item in self.answer_contract.requirements
-                            if item.kind == "native_claims" and item.authority == "native"
-                        } if self.answer_contract is not None else set()
-                        receipt = ToolEvidence(id=identity, source=request.source, tool=f"fabriciq-{native_source}",
-                                               arguments={"assignment": question}, completed_at=utc_now(),
-                                               result=native_result,
-                                               resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
-                                               column_units=native_units,
-                                               datasets=tuple(
-                                                   EvidenceDataset(
-                                                       kind="native_claims", field=field, authority="native",
-                                                       scope=scope, complete=True,
-                                                       identity_fields=("source_identity",),
-                                                       group_by=(
-                                                           native_group_by
-                                                           if native_presentation is not None
-                                                           and native_presentation.get("table_field") == field
-                                                           else None
-                                                       ),
-                                                       role="primary" if index == 0 else "support",
-                                                   )
-                                                   for scope in sorted(native_scopes)
-                                                   for index, field in enumerate(native_fields)
-                                               ),
-                                               limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
-                        self.evidence[receipt.id] = receipt
+                    native_units, native_presentation = _native_count_chart_metadata(native_result)
+                    if (
+                        request.charts_requested
+                        and native_presentation is not None
+                        and not isinstance(native_result.get("presentation"), dict)
+                    ):
+                        native_result["presentation"] = native_presentation
+                    native_text = next((
+                        value for key in ("response", "native_text")
+                        if isinstance((value := native_result.get(key)), str) and len(value) > 2400
+                    ), None)
+                    if native_text is not None:
+                        native_result["citation_fragments"] = list(_bounded_citation_fragments(native_text))
+                    native_fields = tuple(
+                        key for key, value in native_result.items()
+                        if isinstance(value, list)
+                        and all(isinstance(item, dict) for item in value)
+                    )
+                    native_group_by: Literal["equipment_id", "facility_id"] | None = None
+                    if native_presentation is not None:
+                        chart_value = native_presentation.get("chart")
+                        x_key = chart_value.get("x_key") if isinstance(chart_value, dict) else None
+                        if x_key in ("equipment_id", "equipmentId"):
+                            native_group_by = "equipment_id"
+                        elif x_key in ("facility_id", "facilityId", "Station"):
+                            native_group_by = "facility_id"
+                    native_scopes: set[Literal["population", "focus"]] = {
+                        item.scope for item in self.answer_contract.requirements
+                        if item.kind == "native_claims" and item.authority == "native"
+                    } if self.answer_contract is not None else set()
+                    receipt = ToolEvidence(id=identity, source=request.source, tool=f"fabriciq-{native_source}",
+                                           arguments={"assignment": question}, completed_at=utc_now(),
+                                           result=native_result,
+                                           resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
+                                           column_units=native_units,
+                                           datasets=tuple(
+                                               EvidenceDataset(
+                                                   kind="native_claims", field=field, authority="native",
+                                                   scope=scope, complete=True,
+                                                   identity_fields=("source_identity",),
+                                                   group_by=(
+                                                       native_group_by
+                                                       if native_presentation is not None
+                                                       and native_presentation.get("table_field") == field
+                                                       else None
+                                                   ),
+                                                   role="primary" if index == 0 else "support",
+                                               )
+                                               for scope in sorted(native_scopes)
+                                               for index, field in enumerate(native_fields)
+                                           ),
+                                           limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
+                    self.evidence[receipt.id] = receipt
                 if not native_results:
                     raise SourceFailure("Native specialist returned prose without a successful selected-source receipt.")
             if role == "work-order" and completed_report is None and not any(

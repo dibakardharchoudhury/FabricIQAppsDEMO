@@ -29,11 +29,20 @@ not separately against each intermediate Data Agent call. Accept exactly one
 unambiguous complete bundle; do not combine conflicting bundles or promote
 intermediate prose into evidence. Preserve all raw native receipts in the
 principal/run-scoped immutable journal before validation, including rejected
-responses, without logging their contents. Missing JSON can consume the existing
-single same-source correction budget; malformed/conflicting bundles, incomplete
-coverage and exhausted corrections still propagate. Sparky must forward the
+responses, without logging their contents. Missing JSON or incomplete source
+coverage can consume the existing single same-source correction budget. The
+coverage correction requests an ungrouped scalar telemetry count for the exact
+UTC window, separately from grouped BAD matches. Malformed/conflicting bundles,
+inconsistent counts, unbounded results and exhausted corrections still propagate.
+The budget is shared with existing native transport/identity corrections, not an
+additional retry loop. Sparky must forward the
 complete assignment and its machine-readable contract, with the exact as-of time,
 rather than substitute the original compound operator question.
+
+The published work-review schema bounds `reason` to 1000 characters and explicitly
+distinguishes `needs_clarification` for unavailable condition/identity data from
+`no_draft`, which still requires complete work-source coverage. An empty telemetry
+window is never a healthy-equipment finding or permission to invent a target.
 
 This describes code behavior; publication and authenticated runtime acceptance
 must be recorded separately.

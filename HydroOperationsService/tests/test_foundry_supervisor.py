@@ -1320,8 +1320,13 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                         "output": json.dumps({**bundle, "notes": "A different completed result."}),
                     }
                     output.insert(1, final)
-                elif self.mode == "native_quality_incomplete":
+                elif self.mode == "native_quality_incomplete" or (
+                    self.mode == "native_quality_incomplete_once" and round_number == 0
+                ):
                     bundle["coverage"]["work_complete"] = False
+                    first["output"] = json.dumps(bundle)
+                elif self.mode == "native_quality_inconsistent":
+                    bundle["coverage"]["affected_signal_count"] = 1
                     first["output"] = json.dumps(bundle)
         else:
             raise AssertionError(name)
@@ -1913,9 +1918,29 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
         self.assertEqual(self.tools.calls, 0)
 
-    async def test_native_quality_incomplete_coverage_propagates_without_format_retry(self):
+    async def test_native_quality_repeated_incomplete_coverage_propagates_after_one_source_repair(self):
         self.mode = "native_quality_incomplete"
         with self.assertRaisesRegex(SourceFailure, "coverage is incomplete"):
+            await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_quality_incomplete_coverage_retries_scalar_count_not_grouped_bad_rows(self):
+        self.mode = "native_quality_incomplete_once"
+        owner, _journal = await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertTrue(owner.evidence["native-call-1"].result["coverage"]["telemetry_complete"])
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "Coverage correction" in json.dumps(payload["input"])
+        )
+        self.assertIn("total_telemetry_rows_requested_window=count()", json.dumps(repair["input"]))
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_quality_inconsistent_counts_fail_without_a_source_retry(self):
+        self.mode = "native_quality_inconsistent"
+        with self.assertRaisesRegex(SourceFailure, "coverage is unbounded or inconsistent"):
             await self.invoke_quality_source()
         self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
         self.assertEqual(self.tools.calls, 0)

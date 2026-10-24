@@ -389,9 +389,11 @@ export function validateQualityWorkEvidence(question, result, requestedAt) {
     throw new Error('Data Agent quality/work evidence does not match the requested UTC day and as-of time.')
   }
   if (!Array.isArray(signals) || !Array.isArray(orders) || signals.length > 500 || orders.length > 500
-      || coverage?.telemetry_complete !== true || coverage?.work_complete !== true
-      || coverage.affected_signal_count !== signals.length || coverage.open_work_order_count !== orders.length) {
-    throw new Error('Data Agent quality/work coverage is incomplete, unbounded or inconsistent; missing data cannot be reported as zero.')
+      || coverage?.affected_signal_count !== signals.length || coverage?.open_work_order_count !== orders.length) {
+    throw new Error('Data Agent quality/work coverage is unbounded or inconsistent; missing data cannot be reported as zero.')
+  }
+  if (coverage.telemetry_complete !== true || coverage.work_complete !== true) {
+    throw new Error('Data Agent quality/work coverage is incomplete; missing data cannot be reported as zero.')
   }
   const identifier = value => typeof value === 'string' && Boolean(value.trim()) && value.length <= 200
   const equipment = new Set()
