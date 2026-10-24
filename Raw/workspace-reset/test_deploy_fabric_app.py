@@ -467,25 +467,33 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer scoped-token"}) as headers,
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *args: list(args)),
             patch.object(DEPLOY, "run_stream", return_value="Signed in (ambient token via RAYFIN_TOKEN)") as run,
+            patch.object(DEPLOY, "fabric_get", return_value={"id": "workspace-id"}) as probe,
         ):
-            DEPLOY.ensure_rayfin_login("target-tenant")
+            DEPLOY.ensure_rayfin_login("target-tenant", "workspace-id")
+            environment = DEPLOY.rayfin_environment("target-tenant")
             self.assertEqual(os.environ["RAYFIN_TOKEN"], "old-token")
             self.assertEqual(os.environ["RAYFIN_TENANT_ID"], "old-tenant")
 
-        headers.assert_called_once_with("target-tenant")
-        run.assert_called_once()
-        self.assertEqual(run.call_args.args[0], ["login", "status"])
-        self.assertEqual(run.call_args.kwargs["env"]["RAYFIN_TOKEN"], "scoped-token")
-        self.assertEqual(run.call_args.kwargs["env"]["RAYFIN_TENANT_ID"], "target-tenant")
+        self.assertEqual(headers.call_count, 2)
+        headers.assert_called_with("target-tenant")
+        run.assert_not_called()
+        self.assertEqual(probe.call_args.args[0], "workspaces/workspace-id")
+        self.assertEqual(probe.call_args.args[1]["Authorization"].removeprefix("Bearer "), "scoped-token")
+        self.assertEqual(environment["RAYFIN_TOKEN"], "scoped-token")
+        self.assertEqual(environment["RAYFIN_TENANT_ID"], "target-tenant")
 
-    def test_rayfin_login_rejects_unverified_or_expired_status(self):
+    def test_rayfin_login_rejects_a_mismatched_workspace_or_authentication_failure(self):
         with (
             patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer scoped-token"}),
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *args: list(args)),
             patch.object(DEPLOY, "run_stream", return_value="Tenant: target-tenant\nToken: expired or unavailable"),
+            patch.object(DEPLOY, "fabric_get", return_value={"id": "wrong-workspace"}) as probe,
         ):
-            with self.assertRaisesRegex(DEPLOY.DeployError, "tenant-scoped Azure CLI token"):
-                DEPLOY.ensure_rayfin_login("target-tenant")
+            with self.assertRaisesRegex(DEPLOY.DeployError, "did not verify the selected workspace"):
+                DEPLOY.ensure_rayfin_login("target-tenant", "workspace-id")
+            probe.side_effect = DEPLOY.DeployError("HTTP 401")
+            with self.assertRaisesRegex(DEPLOY.DeployError, "HTTP 401"):
+                DEPLOY.ensure_rayfin_login("target-tenant", "workspace-id")
 
     def test_rayfin_environment_rejects_empty_azure_cli_token(self):
         with patch.object(DEPLOY, "fabric_headers", return_value={"Authorization": "Bearer "}):

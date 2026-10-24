@@ -1780,13 +1780,17 @@ def rayfin_environment(tenant: str) -> dict[str, str]:
     return {**os.environ, "RAYFIN_TOKEN": token, "RAYFIN_TENANT_ID": tenant}
 
 
-def ensure_rayfin_login(tenant: str) -> None:
-    status = run_stream(
-        rayfin24("login", "status"), cwd=APP_DIR, env=rayfin_environment(tenant),
+def ensure_rayfin_login(tenant: str, workspace_id: str) -> None:
+    environment = rayfin_environment(tenant)
+    headers = {"Authorization": f"Bearer {environment['RAYFIN_TOKEN']}"}
+    workspace = fabric_get(f"workspaces/{workspace_id}", headers)
+    if str(workspace.get("id", "")).casefold() != workspace_id.casefold():
+        raise DeployError("The tenant-scoped Rayfin token did not verify the selected workspace.")
+    print(
+        "Verified the tenant-scoped ambient Rayfin token against the selected Fabric workspace; "
+        "every Rayfin command receives this identity explicitly.",
+        flush=True,
     )
-    if "signed in (ambient token via rayfin_token)" not in status.casefold():
-        raise DeployError("Rayfin did not accept the tenant-scoped Azure CLI token.")
-    print("Rayfin is using the tenant-scoped Azure CLI identity; its separate MSAL cache is not required.", flush=True)
 
 
 def export_frontend_env() -> None:
@@ -2009,7 +2013,7 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
         "can be configured against its identity.",
         flush=True,
     )
-    ensure_rayfin_login(tenant)
+    ensure_rayfin_login(tenant, workspace_id)
     run_rayfin_deployment(
         rayfin24("up", "--workspace-id", workspace_id, "--exclude-services", "staticHosting", "--yes"), tenant,
     )
@@ -2280,7 +2284,7 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
     provision_foundry_agents(args.tenant, workspace_id)
 
     timings.stage(4, "Authenticating Rayfin to the target tenant")
-    ensure_rayfin_login(tenant_id)
+    ensure_rayfin_login(tenant_id, workspace_id)
 
     timings.stage(5, "Provisioning backend, database schema, and static app")
     if reuse_deployment:

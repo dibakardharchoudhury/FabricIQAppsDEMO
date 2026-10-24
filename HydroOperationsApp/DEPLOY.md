@@ -52,6 +52,11 @@ Implemented optimizations:
 3. Retain the existing locked-dependency stamp, source-fingerprint/immutable-image reuse,
    and active-version comparison. An unchanged Hosted Agent is verified, not rebuilt.
    These existing caches are not claimed as newly implemented savings.
+4. Replace the redundant `rayfin login status` subprocess with a protected read of the
+   exact selected workspace using the same tenant-scoped ambient token supplied to every
+   Rayfin command. Mismatched workspace identity or authentication failure still stops
+   publication. The first timed run spent **83.187s** on the old diagnostic alone;
+   actual backend publication, connector and readiness checks are unchanged.
 
 No readiness gate is removed: every same-workspace deploy still reapplies backend
 runtime/CORS and SQL settings, applies/verifies the Lakehouse connector, preserves Entra

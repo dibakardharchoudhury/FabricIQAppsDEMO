@@ -41,6 +41,13 @@ Validated checks executed October 24, 2026 (UTC), before publication:
 - Static infrastructure/RBAC review: none changed; no provisioning, new grants or resources
   are requested. Existing immutable hosted image/version remains the publication comparison.
 - No ARM/Bicep/Docker infrastructure validation applies to this tool-only change.
+- First measured canonical deployment passed in 518.469 seconds (8m 38s), with all
+  mandatory checks. Its Rayfin login-status diagnostic alone consumed 83.187 seconds.
+- Follow-up replaces only that diagnostic with an authenticated exact-workspace read,
+  using the same scoped token explicitly supplied to every Rayfin command. Live probe:
+  2.000 seconds. Authentication errors and wrong-workspace responses fail closed.
+  All 197 affected tests passed again (12.487 seconds); Pylance verified both
+  production call sites are compatible. No configuration or infrastructure changed.
 
 ### All validation checks pass
 

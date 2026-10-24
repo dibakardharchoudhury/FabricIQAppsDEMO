@@ -642,7 +642,7 @@ class BackendBootstrapTests(unittest.TestCase):
              patch.object(DEPLOY, "rayfin24", side_effect=lambda *a: ["rayfin", *a]), \
              patch.object(DEPLOY, "run_rayfin_deployment") as up:
             DEPLOY.ensure_appbackend_identity("tenant", "workspace")
-        login.assert_called_once_with("tenant")
+        login.assert_called_once_with("tenant", "workspace")
         up.assert_called_once_with(
             ["rayfin", "up", "--workspace-id", "workspace", "--exclude-services", "staticHosting", "--yes"], "tenant")
 
