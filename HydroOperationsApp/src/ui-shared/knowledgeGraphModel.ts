@@ -33,16 +33,31 @@ export type KnowledgeEdge = {
 export type KnowledgeGraph = { nodes: KnowledgeNode[]; edges: KnowledgeEdge[]; error?: string }
 
 /** Read the contract used by the native query only after that query succeeds. */
+// Allow the native API's 120-second query budget plus graph/ontology discovery.
+export const NATIVE_GRAPH_LOAD_TIMEOUT_MS = 150_000
+
 export async function loadNativeGraphSnapshot(
   queryGraph: () => Promise<OntologyGraph | null>,
   readRefreshedContract: () => Promise<OntologyContract | null>,
 ): Promise<{ ontologyGraph: OntologyGraph | null; ontology: OntologyContract | null }> {
-  const ontologyGraph = await queryGraph()
-  if (!ontologyGraph) return { ontologyGraph: null, ontology: null }
-  const ontology = await readRefreshedContract()
-  if (!ontology || ontology.generation !== 2) throw new Error('The native graph has no verified generation-2 Ontology contract. Refresh discovery and retry.')
-  if (ontologyGraph.ontologyId && ontologyGraph.ontologyId !== ontology.id) throw new Error('Ontology selection changed during graph loading. Refresh discovery and retry.')
-  return { ontologyGraph, ontology }
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const load = async () => {
+    const ontologyGraph = await queryGraph()
+    if (!ontologyGraph) return { ontologyGraph: null, ontology: null }
+    const ontology = await readRefreshedContract()
+    if (!ontology || ontology.generation !== 2) throw new Error('The native graph has no verified generation-2 Ontology contract. Refresh discovery and retry.')
+    if (ontologyGraph.ontologyId && ontologyGraph.ontologyId !== ontology.id) throw new Error('Ontology selection changed during graph loading. Refresh discovery and retry.')
+    return { ontologyGraph, ontology }
+  }
+  try {
+    return await Promise.race([load(), new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(
+        `Ontology graph loading exceeded ${NATIVE_GRAPH_LOAD_TIMEOUT_MS / 1000} seconds. Retry after the Fabric graph refresh completes.`,
+      )), NATIVE_GRAPH_LOAD_TIMEOUT_MS)
+    })])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
 }
 
 const normalizeSearch = (value: unknown) => String(value ?? '').trim().toLowerCase()

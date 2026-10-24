@@ -46,6 +46,12 @@ Additive ontology publication does not certify those entities as materialized or
 certify Data Agent answers. Never run workspace-wide initialization merely to
 upgrade the app in an already populated workspace.
 
+Native graph page loading has a bounded 150-second deadline: the API can spend
+120 seconds on a query, with additional time for graph/ontology discovery. The
+former 30-second page deadline prematurely rejected observed successful cold
+queries taking 47–55 seconds. Failures still clear the displayed topology; this
+does not relax binding, completeness or materialization checks.
+
 Use the existing [local launcher](../Raw/workspace-reset/README.md#easiest-start--just-launch-it-no-commands-to-type).
 Select the target tenant and workspace, click **Load signed-in subscriptions**, and choose a
 subscription belonging to that tenant. Nothing changes the active Azure subscription just

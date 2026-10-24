@@ -133,8 +133,9 @@ run was deliberately not performed merely to obtain a timing number. The earlier
    Materialize** portal flow. No public materialization API was invented.
    Before the source-metadata repair below, the portal marked all 18 entities
    **Ineligible**, with **Unsupported Datasource** on the inspected core entity.
-   Eligibility after repair has not yet been verified; do not describe this as
-   merely a pending materialization click.
+   The post-repair portal check still reports all 18 entities **Ineligible**.
+   Do not describe additional projection as merely a pending materialization
+   click; the existing core graph's successful execution is a separate result.
 2. Hosting verification reached Fabric's protected sign-in gate, not an
    authenticated SPA session. A read-only operational connector probe using the
    existing Azure CLI token was rejected by the brokered token endpoint with
@@ -142,8 +143,11 @@ run was deliberately not performed merely to obtain a timing number. The earlier
    permission/consent configuration passed, but that does not add the permission
    to Azure CLI's separate client identity. A named-scope acquisition attempt was
    stopped when it did not complete; no CLI consent grants were changed and no
-   authentication bypass was used. Authenticated UI/connector acceptance remains
-   pending normal user sign-in.
+   authentication bypass was used. Authenticated UI/connector acceptance
+   subsequently passed through normal user sign-in in a working browser tab.
+   The hosted maintenance page displayed work order `WO-2841`, two T001
+   inspections, its notification and all 12 spare parts. All five observed
+   `hydrooperations` connector requests returned HTTP 200.
 3. Successful source publication and an active Hosted Agent do not certify Data
    Agent SQL/combined-source answers, execution provenance, Weather inference or
    data freshness. No such runtime certification is claimed.
@@ -169,13 +173,26 @@ the actual server readback was unchanged. NB11 now applies the same helper befor
 publication, preserving existing pin timestamps and rejecting identity conflicts.
 The related Python regression suites passed **217 tests**.
 
-This repairs source authoring, **not a verified graph-materialization result**.
-Afterward the shared Fabric portal remained in its loading shell; opening a new
-portal page encountered an aborted normal Microsoft sign-in navigation. The
-hosted app still reported **Please allow pop-ups and try again** after normal
-sign-in clicks. No tokens were injected, grants changed, graph APIs invented, or
-production work orders created. Post-repair graph eligibility/materialization,
-authenticated connector/UI reads and live agent answers remain acceptance gates.
+This repairs source authoring, **not a verified additional graph-materialization
+result**. A working fresh portal tab subsequently confirmed that all 18 entities
+still show **Ineligible**; WeatherLocation reports **Unsupported Datasource**.
+The existing selected native graph nevertheless executes and renders its
+previous materialized topology, with native provenance, asset navigation and SQL
+context for actual native equipment. Successful cold node/edge requests took
+47.233/54.733 seconds and warm requests 3.603/4.096 seconds. The old 30-second page
+deadline incorrectly rejected the successful cold load; the bounded snapshot
+loader now allows 150 seconds, with regression coverage for a 55-second query and
+fail-closed expiry.
+
+Normal hosted-app sign-in also succeeded in that working tab. No tokens were
+injected, grants changed, graph APIs invented, or production work orders created.
+Read-only Data Agent execution returned 90 active static signal mappings and
+the expected SQL counts (12/30/12/15/6). However, Eventhouse returned **zero total
+rows today**, with latest event time **2026-10-23T21:22:22.26164Z**; zero BAD rows
+must not be presented as healthy current telemetry. These are observed responses,
+not execution-provenance attestation. The deployed Weather prompt agent completed
+a role-only inference check; that does not certify weather freshness or tool
+execution. Extended graph materialization remains blocked by portal eligibility.
 The completed full deployment above was not repeated merely to test this
 metadata-only repair; its helper was exercised directly against the live API.
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseOntologyContract, type OntologyContract } from '../src/services/ontologyContract.ts'
 import { parseOntologyGraph, type OntologyGraph } from '../src/services/ontologyGraph.ts'
-import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
+import { buildKnowledgeGraph, isExactKnowledgeNodeMatch, knowledgeGraphFocusId, knowledgeGraphScope, loadNativeGraphSnapshot, matchesKnowledgeNodeQuery, NATIVE_GRAPH_LOAD_TIMEOUT_MS, type KnowledgeGraphInput } from '../src/ui-shared/knowledgeGraphModel.ts'
 import { selectOntology } from '../src/services/ontologyArtifactDiscovery.ts'
 import { createOntologyCache } from '../src/services/ontologyCache.ts'
 
@@ -191,6 +191,31 @@ test('page snapshot reads the native query-refreshed contract, never the earlier
   assert.deepEqual(events, ['native query started', 'native query finished', 'page reads refreshed contract'])
   assert.equal(snapshot.ontology, fresh)
   assert.equal(buildKnowledgeGraph(input(snapshot)).error, undefined)
+})
+
+test('page snapshot allows a successful 55-second cold native graph query', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const graph = { ...nativeGraph(), ontologyId: ontology.id }
+  const snapshot = loadNativeGraphSnapshot(
+    () => new Promise(resolve => setTimeout(() => resolve(graph), 55_000)),
+    async () => ontology,
+  )
+  context.mock.timers.tick(55_000)
+  assert.deepEqual(await snapshot, { ontologyGraph: graph, ontology })
+})
+
+test('page snapshot still fails closed at its bounded discovery/query deadline', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let contractReads = 0
+  const snapshot = loadNativeGraphSnapshot(() => new Promise(() => undefined), async () => {
+    contractReads++
+    return ontology
+  })
+  const rejected = assert.rejects(snapshot, /Ontology graph loading exceeded 150 seconds/)
+  assert.equal(NATIVE_GRAPH_LOAD_TIMEOUT_MS, 150_000)
+  context.mock.timers.tick(NATIVE_GRAPH_LOAD_TIMEOUT_MS)
+  await rejected
+  assert.equal(contractReads, 0)
 })
 
 test('page snapshot does not reuse cached contracts after graph failures or selection changes', async () => {
