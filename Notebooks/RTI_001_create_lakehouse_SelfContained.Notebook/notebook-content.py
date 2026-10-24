@@ -711,6 +711,11 @@ WEATHER_PROJECT_ENTITIES = {
     "InstrumentClassification": ("gold_instrument_classification", ("system_id", "signal_type")),
 }
 
+SQL_PROJECT_ENTITIES = {
+    "WorkOrder": "WorkOrders", "Inspection": "Inspections", "SparePart": "SpareParts",
+    "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications",
+}
+
 def project_identity_expression(keys):
     """Encode every natural-key member, including UTC timestamps, before hashing."""
     if not keys or any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", key) for key in keys):
@@ -719,6 +724,14 @@ def project_identity_expression(keys):
     return ("sha2(to_json(named_struct(" + members + "), map("
             "'timeZone', 'UTC', 'timestampFormat', 'yyyy-MM-dd HH:mm:ss.SSSSSS', "
             "'ignoreNullFields', 'false')), 256)")
+
+def project_source_expressions(workspace, lakehouse, database):
+    return [
+        f'expression {name} =\n\t\tlet\n\t\t    Source = AzureStorage.DataLake('
+        f'"https://onelake.dfs.fabric.microsoft.com/{workspace}/{item}", [HierarchicalNavigation=true])'
+        "\n\t\tin\n\t\t    Source\n"
+        for name, item in (("HydroProjectOperations", database), ("HydroProjectLakehouse", lakehouse))
+    ]
 
 
 def project_ontology_extension(parts, workspace, lakehouse, database, weather_columns, sql_columns, verify_existing=None):
@@ -757,10 +770,7 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
             table.extend((f"\tcolumn {column}", f"\t\tdataType: {kind}", f"\t\tsourceColumn: {column}"))
         table.extend((f"\tpartition {alias} = entity", "\t\tmode: directLake", "\t\tsource",
                       f"\t\t\tentityName: {physical}", "\t\t\tschemaName: dbo",
-                      f"\t\t\texpressionSource: {expression}",
-                      f"\t\tannotation ONT_WorkspaceId = {workspace}",
-                      f"\t\tannotation ONT_ItemId = {database if expression == 'HydroProjectOperations' else lakehouse}",
-                      f"\t\tannotation ONT_ItemKind = {'SQLDatabase' if expression == 'HydroProjectOperations' else 'Lakehouse'}"))
+                      f"\t\t\texpressionSource: {expression}"))
         entity.append("\tannotation HydroProjectExtension = 1")
         table.append("\tannotation HydroProjectExtension = 1")
         additions[f"entities/{name}.tmdl"] = "\n".join(entity) + "\n"
@@ -769,9 +779,7 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
         tables.append(alias)
         return alias
     aliases = {}
-    sql_entities = {"WorkOrder": "WorkOrders", "Inspection": "Inspections", "SparePart": "SpareParts",
-                    "Asset3DModel": "Asset3DModels", "MaintenanceNotification": "MaintenanceNotifications"}
-    for name, physical in sql_entities.items():
+    for name, physical in SQL_PROJECT_ENTITIES.items():
         aliases[name] = add_entity(name, physical, sql_columns[physical], ("id",), "HydroProjectOperations")
     for name, (physical, keys) in WEATHER_PROJECT_ENTITIES.items():
         aliases[name] = add_entity(name, physical, weather_columns[physical], keys, "HydroProjectLakehouse")
@@ -811,12 +819,7 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     for path, blocks in (
         ("relationships.tmdl", relationships),
         ("entityRelationships.tmdl", semantic),
-        ("expressions.tmdl", [
-            f'expression {name} =\n\t\tlet\n\t\t    Source = AzureStorage.DataLake('
-            f'"https://onelake.dfs.fabric.microsoft.com/{workspace}/{item}", [HierarchicalNavigation=true])'
-            "\n\t\tin\n\t\t    Source\n"
-            for name, item in (("HydroProjectOperations", database), ("HydroProjectLakehouse", lakehouse))
-        ]),
+        ("expressions.tmdl", project_source_expressions(workspace, lakehouse, database)),
     ):
         current = texts.get(path, "")
         for block in blocks:

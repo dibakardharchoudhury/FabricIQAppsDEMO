@@ -40,6 +40,7 @@ class ProjectExtensionTests(unittest.TestCase):
         text = base64.b64decode(indexed["tables/HydroProject_WeatherLatestForecast.tmdl"]["payload"]).decode()
         self.assertIn("entityName: weather_latest_forecasts", text)
         self.assertNotIn("entityName: WeatherLatestForecast", text)
+        self.assertNotIn("annotation ONT_", text)
         forecast = base64.b64decode(indexed["entities/WeatherLatestForecast.tmdl"]["payload"]).decode()
         self.assertEqual(forecast.count("keyProperty:"), 1)
         self.assertIn("keyProperty: ontology_key", forecast)
@@ -81,6 +82,15 @@ class ProjectExtensionTests(unittest.TestCase):
         self.assertIn("sha2(to_json(named_struct(", expression)
         with self.assertRaisesRegex(RuntimeError, "safe source columns"):
             support.project_identity_expression(("unsafe`",))
+
+    def test_source_expressions_verify_workspace_and_item_after_server_roundtrip(self):
+        expected = [part("expressions.tmdl", "\n".join(support.project_source_expressions("workspace", "lakehouse", "sql")))]
+        result = self.extend()
+        _verify_definition(expected, result)
+        for wrong in (support.project_source_expressions("foreign", "lakehouse", "sql"),
+                      support.project_source_expressions("workspace", "lakehouse", "foreign")):
+            with self.assertRaisesRegex(RuntimeError, "did not retain submitted"):
+                _verify_definition([part("expressions.tmdl", "\n".join(wrong))], result)
 
 
 class CopyCursor:

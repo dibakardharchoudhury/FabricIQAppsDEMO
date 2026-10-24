@@ -2190,23 +2190,30 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
         raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
     if not published_sql_source_ready(matches[0], workspace_id, databases[0]["id"]):
         return False
-    from operational_store_support import WEATHER_PROJECT_ENTITIES
+    from operational_store_support import WEATHER_PROJECT_ENTITIES, SQL_PROJECT_ENTITIES, project_source_expressions
+    from ontology_notebook_support import _verify_definition
     extension = read_data_agent_definition(
         sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies")
-    parts = {part["path"]: base64.b64decode(part["payload"]).decode("utf-8")
-             for part in extension["definition"]["parts"]}
-    entities = (*WEATHER_PROJECT_ENTITIES, "WorkOrder", "Inspection", "SparePart",
-                "Asset3DModel", "MaintenanceNotification")
-    for entity in entities:
-        table = parts.get(f"tables/HydroProject_{entity}.tmdl", "")
-        item_id = databases[0]["id"] if entity not in WEATHER_PROJECT_ENTITIES else _public_config_value(
-            values, "RAYFIN_PUBLIC_LAKEHOUSE_ID")
-        if not parts.get(f"entities/{entity}.tmdl") or not table:
-            return False
-        for annotation, expected in (("ONT_WorkspaceId", workspace_id), ("ONT_ItemId", item_id)):
-            actual = re.findall(r"(?m)^\s*annotation " + annotation + r" = (\S+)\s*$", table)
-            if actual != [expected]:
-                raise DeployError(f"Project ontology {entity} has mismatched {annotation}.")
+    expected = []
+    def require(path, text):
+        expected.append({"path": path, "payload": base64.b64encode(text.encode()).decode()})
+    for entity, physical in {**SQL_PROJECT_ENTITIES, **{
+            name: source[0] for name, source in WEATHER_PROJECT_ENTITIES.items()}}.items():
+        alias = "HydroProject_" + entity
+        expression = "HydroProjectLakehouse" if entity in WEATHER_PROJECT_ENTITIES else "HydroProjectOperations"
+        require(f"entities/{entity}.tmdl", f"entity {entity}\n\tbackingTable: {alias}\n")
+        require(f"tables/{alias}.tmdl",
+                f"table {alias}\n\tpartition {alias} = entity\n\t\tmode: directLake\n\t\tsource\n"
+                f"\t\t\tentityName: {physical}\n\t\t\tschemaName: dbo\n\t\t\texpressionSource: {expression}\n")
+    require("expressions.tmdl", "\n".join(project_source_expressions(
+        workspace_id, _public_config_value(values, "RAYFIN_PUBLIC_LAKEHOUSE_ID"), databases[0]["id"])))
+    actual_paths = {part["path"] for part in extension["definition"]["parts"]}
+    if any(part["path"] not in actual_paths for part in expected):
+        return False
+    try:
+        _verify_definition(expected, extension["definition"]["parts"])
+    except RuntimeError as exc:
+        raise DeployError(f"Project ontology source-binding readback failed: {exc}") from exc
     return True
 
 

@@ -29,6 +29,8 @@ Composite-grain weather/classification tables use a physical deterministic
 `ontology_key`, retaining every natural-key member and UTC timestamps. Fabric
 rejects repeated TMDL `keyProperty` declarations. NB11 adds/backfills this key
 column without replacing source values; the source notebooks retain it on refresh.
+Source identity is verified from the retained TMDL partition/expression bindings,
+not partition annotations that Fabric removes during definition readback.
 
 The SPA and Hosted Agent use the writable delegated `hydrooperations`
 `fabric-sqldatabase` connector. Lakehouse reads continue through `hydrolakehouse`;
