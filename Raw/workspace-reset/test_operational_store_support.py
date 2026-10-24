@@ -20,6 +20,9 @@ class ProjectExtensionTests(unittest.TestCase):
             self.parts.append(part(f"entities/{entity}.tmdl", f"entity {entity}\n\tbackingTable: {entity}\n"))
         self.weather = {table: dict.fromkeys(keys, "string")
                         for table, keys in support.WEATHER_PROJECT_ENTITIES.values()}
+        for table, keys in support.WEATHER_PROJECT_ENTITIES.values():
+            if len(keys) > 1:
+                self.weather[table]["ontology_key"] = "string"
         self.sql = {table: dict.fromkeys(columns, "string") for table, columns in support.OPERATIONAL_COLUMNS.items()}
 
     def extend(self, parts=None):
@@ -38,7 +41,8 @@ class ProjectExtensionTests(unittest.TestCase):
         self.assertIn("entityName: weather_latest_forecasts", text)
         self.assertNotIn("entityName: WeatherLatestForecast", text)
         forecast = base64.b64decode(indexed["entities/WeatherLatestForecast.tmdl"]["payload"]).decode()
-        self.assertEqual(forecast.count("keyProperty:"), 5)
+        self.assertEqual(forecast.count("keyProperty:"), 1)
+        self.assertIn("keyProperty: ontology_key", forecast)
         physical = base64.b64decode(indexed["relationships.tmdl"]["payload"]).decode()
         self.assertIn("HydroProject_WorkOrder.equipmentId", physical)
         self.assertNotIn("SparePart.equipmentId", physical)
@@ -60,6 +64,23 @@ class ProjectExtensionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing source key"):
             self.extend()
         self.assertEqual(before, self.parts)
+
+    def test_composite_identity_requires_a_physical_string_key(self):
+        self.weather["weather_latest_forecasts"].pop("ontology_key")
+        with self.assertRaisesRegex(RuntimeError, "verified physical ontology_key"):
+            self.extend()
+        self.weather["weather_latest_forecasts"]["ontology_key"] = "dateTime"
+        with self.assertRaisesRegex(RuntimeError, "verified physical ontology_key"):
+            self.extend()
+
+    def test_identity_encoding_includes_all_members_and_utc_timestamp_precision(self):
+        expression = support.project_identity_expression(("source_id", "location_id", "observed_at_utc"))
+        self.assertIn("'source_id', `source_id`, 'location_id', `location_id`, 'observed_at_utc', `observed_at_utc`", expression)
+        self.assertIn("'timeZone', 'UTC'", expression)
+        self.assertIn("HH:mm:ss.SSSSSS", expression)
+        self.assertIn("sha2(to_json(named_struct(", expression)
+        with self.assertRaisesRegex(RuntimeError, "safe source columns"):
+            support.project_identity_expression(("unsafe`",))
 
 
 class CopyCursor:

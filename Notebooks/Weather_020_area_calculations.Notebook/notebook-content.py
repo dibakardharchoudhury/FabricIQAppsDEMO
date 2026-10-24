@@ -388,6 +388,11 @@ serving = (
         "rainfall_volume_m3", "cumulative_rainfall_volume_m3",
         *SERVING_VARIABLES, "calculated_at_utc",
     )
+    .withColumn("ontology_key", F.sha2(F.to_json(F.struct(
+        "source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc",
+    ), {
+        "timeZone": "UTC", "timestampFormat": "yyyy-MM-dd HH:mm:ss.SSSSSS", "ignoreNullFields": "false",
+    }), 256))
 )
 serving.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLES["latest_forecasts"])
 
@@ -398,6 +403,9 @@ observed_serving = (
     .pivot("variable_id", SERVING_VARIABLES)
     .agg(F.first("value", ignorenulls=True))
     .withColumn("calculated_at_utc", F.current_timestamp())
+    .withColumn("ontology_key", F.sha2(F.to_json(F.struct("source_id", "location_id", "observed_at_utc"), {
+        "timeZone": "UTC", "timestampFormat": "yyyy-MM-dd HH:mm:ss.SSSSSS", "ignoreNullFields": "false",
+    }), 256))
 )
 observed_serving.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLES["latest_observations"])
 

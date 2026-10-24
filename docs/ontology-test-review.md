@@ -35,7 +35,9 @@ deployment verification is recorded separately below when completed.
 - Preserve the original five core entities, bindings and unknown definition parts.
 - Add five operational entities and eight weather/classification entities with
   actual physical source names and 13 physically backed semantic relationships.
-- Support ordered compound scalar keys in the application parser and RDF export.
+- Represent composite natural identities with a physical, deterministic string
+  `ontology_key`; emit exactly one TMDL `keyProperty`. Preserve all natural members,
+  including observation time and forecast reference/valid time.
 - Provision `HydroOperationalStore` during either NB01 setup variant; NB11 handles
   the explicit, verified legacy-record cutover for an existing workspace.
 - Route operational reads and approved writes through the delegated
@@ -45,9 +47,13 @@ deployment verification is recorded separately below when completed.
 - Keep native graph materialization separate; the original core projection is not
   replaced or reconstructed from SQL relationships.
 
-The parser compatibility finding below is the **pre-change** result. The updated
-parser accepts valid compound keys; the physical-source and relationship findings
-still prevent adopting the candidate unchanged.
+Fabric itself rejects the candidate's repeated `keyProperty` authoring, not just
+the app parser. A single comma-separated declaration is also rejected. The app
+therefore retains the same fail-closed singleton contract. NB11 backfills only the
+new physical key column in the three composite-grain tables, verifies nonnull and
+unique identities, and rejects conflicting pre-existing key values. The producer
+notebooks preserve those keys on refresh. JSON-encoded named key members are
+SHA-256 hashed with explicit UTC/microsecond timestamp formatting.
 
 ## Evidence and compatibility
 
@@ -142,17 +148,18 @@ Acceptance must cover **any BAD sample today**, including signals whose latest
 sample is GOOD, multiple samples and turbines with no open work. A latest-only
 answer does not satisfy the three requested BAD-quality workflows.
 
-### 4. Composite identities need real application support
+### 4. Composite identities need a valid physical scalar key
 
 `WeatherLatestObservation` declares `(source_id, location_id)`;
 `InstrumentClassification` declares `(system_id, signal_type)`.
-The app currently treats `keyProperty` as a singleton and rejects the first
-compound entity. Do not "fix" this by dropping one key member.
+Both Fabric's `updateDefinition` parser and the app reject repeated
+`keyProperty` declarations. This is an authoring error, not merely an app
+compatibility limitation. Do not "fix" it by dropping one natural-key member.
 
-Support and test ordered, scalar, unique key-property lists throughout contract
-parsing and consuming graph/enrichment paths before admitting those entities.
-Keep current single-key behavior unchanged. Separately verify historical weather
-record keys against their stated source/variable/location/time grains.
+Publish one physically backed scalar identity derived from every natural-key
+member. Observations also require `observed_at_utc`; forecast identity includes
+both reference and valid times. Keep single-key behavior unchanged and verify
+the physical source's complete grain before admitting an entity.
 
 `WeatherLatestForecast.source_item_id` is declared in the candidate; this review
 does **not** establish that it is missing from the physical source. Its existence,

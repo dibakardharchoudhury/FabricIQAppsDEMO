@@ -83,7 +83,7 @@ entity 'plant#Station''s sensors'
   assert.match(contract.warnings!.join(' '), /resource links/)
 })
 
-test('compound keys preserve declaration order and validate every member', () => {
+test('rejects repeated keyProperty declarations rejected by Fabric authoring', () => {
   const text = `entity weather
     backingTable: weather_latest_observations
     keyProperty: source_id
@@ -94,11 +94,12 @@ test('compound keys preserve declaration order and validate every member', () =>
     property location_id
         dataType: string
 `
-  const contract = parse([tmdl('entities/weather.tmdl', text)])
-  assert.deepEqual(contract.entityTypes[0].entityIdParts, ['provider-key', 'weather.location_id'])
-  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('keyProperty: location_id', 'keyProperty: source_id'))]), /duplicate keyProperty member/)
-  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('keyProperty: location_id', 'keyProperty: absent'))]), /does not reference a declared property/)
-  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('property location_id\n        dataType: string', 'property location_id\n        dataType: TimeSeries<string>'))]), /scalar primitive/)
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', text)]), /duplicate keyProperty declaration/)
+  const scalar = text.replace('    keyProperty: location_id\n', '')
+  const contract = parse([tmdl('entities/weather.tmdl', scalar)])
+  assert.deepEqual(contract.entityTypes[0].entityIdParts, ['provider-key'])
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', scalar.replace('keyProperty: source_id', 'keyProperty: absent'))]), /does not reference a declared property/)
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', scalar.replace('dataType: string', 'dataType: TimeSeries<string>'))]), /scalar primitive/)
 })
 
 test('retains Any primitive timeseries and complex structured timeseries metadata without claiming evaluation', () => {

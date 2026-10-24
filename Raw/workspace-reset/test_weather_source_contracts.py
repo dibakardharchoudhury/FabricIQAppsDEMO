@@ -10,6 +10,35 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_project_identity_producers_preserve_the_complete_natural_grain(self):
+        expected = {
+            "Weather_020_area_calculations": [
+                ["source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc"],
+                ["source_id", "location_id", "observed_at_utc"],
+            ],
+            "RTI_003_ingest_transform_medallion": [["system_id", "signal_type"]],
+            "RTI_003_ingest_transform_medallion_SelfContained": [["system_id", "signal_type"]],
+        }
+        for name, keys in expected.items():
+            source = (ROOT / "Notebooks" / (name + ".Notebook") / "notebook-content.py").read_text(encoding="utf-8")
+            raw = json.loads((ROOT / "Raw/RTI_Notebooks" / (name + ".ipynb")).read_text(encoding="utf-8"))
+            mirror = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+            self.assertEqual(ast.dump(ast.parse(source)), ast.dump(ast.parse(mirror)), name)
+            calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute) and node.func.attr == "withColumn"
+                     and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ontology_key"]
+            actual = []
+            for call in calls:
+                digest = call.args[1]
+                self.assertEqual(digest.func.attr, "sha2")
+                self.assertEqual(digest.args[1].value, 256)
+                encoding = digest.args[0]
+                self.assertEqual(ast.literal_eval(encoding.args[1]), {
+                    "timeZone": "UTC", "timestampFormat": "yyyy-MM-dd HH:mm:ss.SSSSSS", "ignoreNullFields": "false",
+                })
+                actual.append([arg.value for arg in encoding.args[0].args])
+            self.assertCountEqual(actual, keys, name)
+
     def test_aurora_discovers_recent_issues_without_valid_time_sorting(self):
         source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
         names = {"newest_stream_issue", "issue_items", "latest_complete_issue"}

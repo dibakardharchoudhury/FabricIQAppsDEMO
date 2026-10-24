@@ -86,8 +86,10 @@ def synchronize_operational_support(root=ROOT, check=False):
     support += "\n\nfrom collections import Counter\n\n" + "\n\n".join(helpers)
     marker = '"""Shared operational-store support embedded in NB01 and NB11; no local imports."""'
     pending = {}
-    for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
-                 "RTI_011_seed_sql_wire_graphql_agent"):
+    support_notebooks = ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
+                         "RTI_011_seed_sql_wire_graphql_agent")
+    for name in (*support_notebooks, "RTI_003_ingest_transform_medallion",
+                 "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations"):
         canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
         raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
         sections = canonical.read_text(encoding="utf-8").split(CELL)
@@ -97,8 +99,8 @@ def synchronize_operational_support(root=ROOT, check=False):
             if code.strip().startswith(marker):
                 matches.append(index)
                 sections[index] = "\n\n" + support + "\n\n" + METADATA + metadata
-        if len(matches) != 1:
-            raise RuntimeError(f"Expected one shared operational support cell in {canonical}")
+        if len(matches) != (1 if name in support_notebooks else 0):
+            raise RuntimeError(f"Unexpected shared operational support cell count in {canonical}")
         content = CELL.join(sections)
         compile(content, str(canonical), "exec")
         notebook = json.loads(raw.read_text(encoding="utf-8"))

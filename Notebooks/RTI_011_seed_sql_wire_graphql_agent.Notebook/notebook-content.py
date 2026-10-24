@@ -712,12 +712,21 @@ WEATHER_PROJECT_ENTITIES = {
     "WeatherVariable": ("weather_variables", ("variable_id",)),
     "WeatherLocation": ("weather_locations", ("location_id",)),
     "WeatherArea": ("weather_areas", ("area_id",)),
-    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id")),
+    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id", "observed_at_utc")),
     "WeatherLatestForecast": ("weather_latest_forecasts",
                               ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")),
     "WeatherIngestionRun": ("weather_ingestion_runs", ("run_id",)),
     "InstrumentClassification": ("gold_instrument_classification", ("system_id", "signal_type")),
 }
+
+def project_identity_expression(keys):
+    """Encode every natural-key member, including UTC timestamps, before hashing."""
+    if not keys or any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", key) for key in keys):
+        raise RuntimeError("Project identity requires explicit safe source columns.")
+    members = ", ".join(f"'{key}', `{key}`" for key in keys)
+    return ("sha2(to_json(named_struct(" + members + "), map("
+            "'timeZone', 'UTC', 'timestampFormat', 'yyyy-MM-dd HH:mm:ss.SSSSSS', "
+            "'ignoreNullFields', 'false')), 256)")
 
 
 def project_ontology_extension(parts, workspace, lakehouse, database, weather_columns, sql_columns, verify_existing=None):
@@ -740,6 +749,10 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     def add_entity(name, physical, columns, keys, expression):
         if not set(keys).issubset(columns):
             raise RuntimeError(f"Project ontology {name} is missing source key columns {set(keys) - set(columns)}.")
+        if len(keys) > 1:
+            if columns.get("ontology_key") != "string":
+                raise RuntimeError(f"Project ontology {name} requires its verified physical ontology_key.")
+            keys = ("ontology_key",)
         alias = "HydroProject_" + name
         entity = [f"entity {name}", f"\tbackingTable: {alias}"]
         entity.extend(f"\tkeyProperty: {key}" for key in keys)
@@ -1261,7 +1274,8 @@ def extend_selected_project_ontology():
         raise RuntimeError("Project extension requires verified live numeric Ontology generation 2.")
     def definition_request(action, parts=None):
         response = api_request("POST", base + "/" + action, data={"definition": {"parts": parts}} if parts else None)
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(f"Ontology {action} failed (HTTP {response.status_code}): {response.text}")
         if response.status_code == 202:
             location = response.headers.get("Location", "")
             parsed = urlparse(location)
@@ -1299,6 +1313,22 @@ def extend_selected_project_ontology():
             invalid = condition if invalid is None else invalid | condition
         if data.where(invalid).limit(1).count() or data.groupBy(*keys).count().where("count > 1").limit(1).count():
             raise RuntimeError(f"Weather ontology identity is null or nonunique for {physical}: {keys}.")
+        if len(keys) > 1:
+            expression = project_identity_expression(keys)
+            if "ontology_key" not in data.columns:
+                spark.sql(f"ALTER TABLE `{physical}` ADD COLUMNS (ontology_key STRING)")
+            elif weather_columns[physical]["ontology_key"] != "string":
+                raise RuntimeError(f"Existing ontology_key has an incompatible type in {physical}.")
+            elif data.where(sql_functions.col("ontology_key").isNotNull()
+                            & ~sql_functions.col("ontology_key").eqNullSafe(sql_functions.expr(expression))).limit(1).count():
+                raise RuntimeError(f"Existing ontology_key conflicts with its natural source identity in {physical}.")
+            spark.sql(f"UPDATE `{physical}` SET ontology_key = {expression} "
+                      "WHERE ontology_key IS NULL")
+            data = spark.read.table(physical)
+            if (data.where("ontology_key IS NULL").limit(1).count()
+                    or data.groupBy("ontology_key").count().where("count > 1").limit(1).count()):
+                raise RuntimeError(f"Physical ontology_key verification failed for {physical}.")
+            weather_columns[physical]["ontology_key"] = "string"
     schema_map = fetch_sql_table_schema(sql_server, sql_database, list(OPERATIONAL_COLUMNS))
     sql_columns = {table: {name: primitive(kind) for name, kind in columns} for table, columns in schema_map.items()}
     after = project_ontology_extension(
@@ -1360,7 +1390,7 @@ try:
 except Exception as exc:
     if provision_shared_store:
         spark._jvm.org.apache.log4j.LogManager.getLogger("HydroOperationalStore").error(
-            f"Shared-store preparation failed: {type(exc).__name__}: {exc}")  # noqa: BLE001 - best-effort seed with manual fallback
+            f"Shared-store preparation failed: {type(exc).__name__}: {exc}")
     step_results["sql_seed"] = {"status": "failed", "reason": str(exc)}
     step_errors.append(exc)
     print("⚠️ SQL seeding did not complete:")

@@ -704,12 +704,21 @@ WEATHER_PROJECT_ENTITIES = {
     "WeatherVariable": ("weather_variables", ("variable_id",)),
     "WeatherLocation": ("weather_locations", ("location_id",)),
     "WeatherArea": ("weather_areas", ("area_id",)),
-    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id")),
+    "WeatherLatestObservation": ("weather_latest_observations", ("source_id", "location_id", "observed_at_utc")),
     "WeatherLatestForecast": ("weather_latest_forecasts",
                               ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")),
     "WeatherIngestionRun": ("weather_ingestion_runs", ("run_id",)),
     "InstrumentClassification": ("gold_instrument_classification", ("system_id", "signal_type")),
 }
+
+def project_identity_expression(keys):
+    """Encode every natural-key member, including UTC timestamps, before hashing."""
+    if not keys or any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", key) for key in keys):
+        raise RuntimeError("Project identity requires explicit safe source columns.")
+    members = ", ".join(f"'{key}', `{key}`" for key in keys)
+    return ("sha2(to_json(named_struct(" + members + "), map("
+            "'timeZone', 'UTC', 'timestampFormat', 'yyyy-MM-dd HH:mm:ss.SSSSSS', "
+            "'ignoreNullFields', 'false')), 256)")
 
 
 def project_ontology_extension(parts, workspace, lakehouse, database, weather_columns, sql_columns, verify_existing=None):
@@ -732,6 +741,10 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     def add_entity(name, physical, columns, keys, expression):
         if not set(keys).issubset(columns):
             raise RuntimeError(f"Project ontology {name} is missing source key columns {set(keys) - set(columns)}.")
+        if len(keys) > 1:
+            if columns.get("ontology_key") != "string":
+                raise RuntimeError(f"Project ontology {name} requires its verified physical ontology_key.")
+            keys = ("ontology_key",)
         alias = "HydroProject_" + name
         entity = [f"entity {name}", f"\tbackingTable: {alias}"]
         entity.extend(f"\tkeyProperty: {key}" for key in keys)

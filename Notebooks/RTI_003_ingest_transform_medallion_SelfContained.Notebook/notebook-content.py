@@ -777,6 +777,9 @@ gold_inst_class_df = (
     .agg(
         F.countDistinct("opcua_node_id").alias("signal_count")
     )
+    .withColumn("ontology_key", F.sha2(F.to_json(F.struct("system_id", "signal_type"), {
+        "timeZone": "UTC", "timestampFormat": "yyyy-MM-dd HH:mm:ss.SSSSSS", "ignoreNullFields": "false",
+    }), 256))
 )
 
 (

@@ -216,7 +216,7 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
     }
     const keys = node.children.filter(child => child.text.startsWith('keyProperty:'))
       .map(child => name(child.text.slice('keyProperty:'.length).trim(), child))
-    if (new Set(keys).size !== keys.length) fail(node, 'duplicate keyProperty member.')
+    if (keys.length > 1) fail(node, 'duplicate keyProperty declaration; publish one physically backed scalar identity.')
     for (const key of keys) {
       if (!propertyMetadata[key]) fail(node, `keyProperty ${key} does not reference a declared property.`)
       if (!primitive.test(propertyMetadata[key].dataType)) fail(node, 'keyProperty must reference a scalar primitive property.')

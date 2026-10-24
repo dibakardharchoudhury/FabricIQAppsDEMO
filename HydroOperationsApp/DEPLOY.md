@@ -25,6 +25,11 @@ a write boundary on the original tables. Stale app clients receive an explicit
 old store. Conflicts, custom source columns, or incomplete migration receipts stop
 deployment for explicit remediation; no records are overwritten.
 
+Composite-grain weather/classification tables use a physical deterministic
+`ontology_key`, retaining every natural-key member and UTC timestamps. Fabric
+rejects repeated TMDL `keyProperty` declarations. NB11 adds/backfills this key
+column without replacing source values; the source notebooks retain it on refresh.
+
 The SPA and Hosted Agent use the writable delegated `hydrooperations`
 `fabric-sqldatabase` connector. Lakehouse reads continue through `hydrolakehouse`;
 no Lakehouse GraphQL item is created. The canonical deployer discovers and binds
