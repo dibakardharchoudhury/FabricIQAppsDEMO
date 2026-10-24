@@ -8,7 +8,48 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-Latest FEATURE verification (October 23): the local **Deploy app** action published
+## Current FEATURE connector retirement (October 24, 2026)
+
+The canonical deployment published **1.0.1036 (`d676b9e`)**, with
+`hydro-orchestrator:4` in Foundry project `ai-project-hydro-foundry-884a839f3132`.
+Deployment/backend/CORS checks passed and all 40 Entra SPA redirects were preserved.
+Weather is published separately as `hydro-weather-agent:1` in that same project.
+
+The obsolete FEATURE `Hydro_STID_API` item
+`22a87e66-5cd8-44e3-95fc-727c413ed689` was deleted after authenticated hosted source
+receipts verified complete Lakehouse equipment/instrument inventories for 15 turbines
+and 90 signals, plus complete independent SQL work inventory. Inventory comparison
+verified preservation of all **40 other workspace items**. A fresh signed-in SPA
+reload after deletion returned HTTP 200 from all four Lakehouse connector reads.
+AppBackend `/graphql` remains necessary for operational SQL; it is not the deleted
+Lakehouse GraphQLApi item.
+
+Cold-start Weather tool-contract validation and native-evidence permissions for the
+two compound quality/work prompts were corrected. Focused regressions cover the
+complete specialist manifest and full Python admission of all three exact prompts.
+Business runtime acceptance is still **not complete**:
+
+| Workflow | Observed result |
+|---|---|
+| BAD telemetry today + open work | Completed through Sparky on Hosted v3, but returned zero native claim rows with explicit unverified-coverage warnings, not a verified finding of no BAD telemetry. |
+| Same facts + work-order drafts | Hosted v4 reached Sparky then Fixer; the final response failed with model HTTP 429 after one rejected review-argument correction. No write was approved. |
+| Same facts + RCA + drafts | Hosted v4 rejected incomplete/inconsistent Data Agent quality/work coverage; Sleuth and Fixer did not start. Missing data was not converted to zero. |
+
+The separate direct-source quality check completed its source reads before Gauge
+hit model HTTP 429. Its receipt reports all 90 expected signals without readings in
+the requested six-hour window. The SPA also reports all 90 signals stale. An
+additional free-form inventory question hit a planner-contract rejection; it is
+not an accepted business prompt. These limits must not be reported as full agent
+readiness, successful draft creation, or fresh telemetry.
+
+NB11 was neither executed nor resynchronized during this routine deployment because
+its published Data Agent SQL source was already valid. Sync the revised repository
+notebook before explicitly rerunning an older live NB11, as required below; older
+notebook code can otherwise recreate the retired API.
+
+### Historical FEATURE verification (October 23)
+
+The local **Deploy app** action published
 **1.0.979 (`346a95c`)** with Hosted Agent v1 at
 <https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
 Canonical deployment, backend/CORS checks and preservation of all 40 SPA redirects

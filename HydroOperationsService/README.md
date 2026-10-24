@@ -1,5 +1,15 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Current FEATURE connector deployment
+
+FEATURE runs SPA **1.0.1036 (`d676b9e`)** and Hosted Agent **v4** in
+`ai-project-hydro-foundry-884a839f3132`; Weather is `hydro-weather-agent:1`.
+The legacy `Hydro_STID_API` was removed after authenticated hosted Lakehouse/SQL
+source reads, with all 40 other Fabric items preserved. Post-deletion SPA connector
+reads also passed. The [deployment record](../HydroOperationsApp/DEPLOY.md#current-feature-connector-retirement-october-24-2026)
+separately records model HTTP 429 failures, incomplete native Data Agent coverage,
+stale telemetry and the still-unaccepted compound business workflows.
+
 ## Scoped Data Agent quality/work workflows
 
 The three BAD-quality-today prompts documented in the
@@ -19,7 +29,7 @@ For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
-## Current v77 canonical-prompt release
+## Historical v77 canonical-prompt release
 
 Hosted Agent v77 is active from commit `30ee16e` on immutable image
 `sha256:f8568200db0a496e2aa95f86651e7619f5c860f8727d3cb1e42c9192c5fb04da`

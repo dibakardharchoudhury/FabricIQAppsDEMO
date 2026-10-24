@@ -4,6 +4,16 @@ How the Hydro multi-agent setup fits together, and how to deploy all of its Foun
 action**: the local deploy app or one command. Both run the same engine,
 [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
+The current FEATURE target is Foundry project
+`ai-project-hydro-foundry-884a839f3132`: `hydro-orchestrator:4` and the separate
+`hydro-weather-agent:1` are published there. Do not confuse this target-specific
+project with an older repository-local azd environment or another workspace's
+agents. Hosted source reads have verified the Lakehouse connector replacement and
+the obsolete FEATURE `Hydro_STID_API` has been removed. See the
+[current deployment and runtime acceptance record](../HydroOperationsApp/DEPLOY.md#current-feature-connector-retirement-october-24-2026)
+for the remaining model-rate-limit and native-coverage failures; publication is
+not full business runtime acceptance.
+
 ## Start a deployment
 
 **One-time setup** (Section 3 has the full checklist): `az login`, and install the Azure Developer CLI (`azd`).
