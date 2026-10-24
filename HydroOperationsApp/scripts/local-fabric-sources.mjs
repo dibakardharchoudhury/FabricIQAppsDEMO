@@ -356,7 +356,11 @@ export function validateQualityWorkEvidence(question, result, requestedAt) {
         for (const child of Object.values(value)) visit(child)
       }
     } else if (typeof value === 'string') {
-      const text = value.trim()
+      // Fabric appends this generated-file footer even to JSON-only responses.
+      const text = value.trim().replace(
+        /\r?\n\s*File\(s\) result_\d+\.json(?:,\s*result_\d+\.json)* were generated as a result of the query\.\s*$/,
+        '',
+      ).trim()
       let parsed
       try { parsed = JSON.parse(text) } catch (error) {
         if (!(error instanceof SyntaxError)) throw error

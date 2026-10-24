@@ -38,6 +38,10 @@ The budget is shared with existing native transport/identity corrections, not an
 additional retry loop. Sparky must forward the
 complete assignment and its machine-readable contract, with the exact as-of time,
 rather than substitute the original compound operator question.
+The JSON adapter removes only Fabric's exact `File(s) result_N.json ... were
+generated as a result of the query.` transport footer before parsing a complete
+JSON value. Arbitrary surrounding prose is not promoted to evidence, and the
+original response, including the footer, remains in the immutable audit.
 
 The published work-review schema bounds `reason` to 1000 characters and explicitly
 distinguishes `needs_clarification` for unavailable condition/identity data from

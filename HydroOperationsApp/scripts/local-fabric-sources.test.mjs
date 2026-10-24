@@ -143,6 +143,17 @@ test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and 
   const checked = validateQualityWorkEvidence(question, wrapped, clock)
   assert.deepEqual(checked.affected_signals, bundle.affected_signals)
   assert.deepEqual(checked.native_source_output, wrapped)
+  const generatedFiles = {
+    response: JSON.stringify(bundle) + '\n\nFile(s) result_0.json, result_1.json were generated as a result of the query.\n',
+  }
+  assert.deepEqual(validateQualityWorkEvidence(question, generatedFiles, clock).affected_signals, bundle.affected_signals)
+  assert.deepEqual(validateQualityWorkEvidence(question, generatedFiles, clock).native_source_output, generatedFiles)
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    response: JSON.stringify(bundle) + '\n\nAdditional unverified narrative.',
+  }, clock), /one inspectable JSON bundle/)
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    response: JSON.stringify(bundle) + '\n\nFile(s) result_0.json were generated as a result of the query.\nAdditional narrative.',
+  }, clock), /one inspectable JSON bundle/)
   assert.equal(checked.work_coverage_equipment_ids, undefined)
   assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).result.coverage.work_complete, true)
   assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).required, true)
