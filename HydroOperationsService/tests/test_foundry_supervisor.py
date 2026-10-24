@@ -256,6 +256,29 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_version_readback_includes_weather_function_contract(self):
+        def read_agent(request):
+            name = request.url.path.rsplit("/", 1)[-1]
+            version = next(item for item in self.versions.values() if item.name == name)
+            return httpx.Response(200, json={
+                "name": name,
+                "versions": {"latest": {
+                    "version": version.version,
+                    "definition": {"kind": "prompt", "model": version.model, "tools": list(version.tools)},
+                }},
+            })
+
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"},
+        ))
+        journal = RunJournal(self.root / "live-readback")
+        network = httpx.AsyncClient(transport=httpx.MockTransport(read_agent))
+        self.addAsyncCleanup(network.aclose)
+        with patch("hydro_orchestrator.foundry_supervisor.httpx.AsyncClient", return_value=network):
+            versions = await owner.versions(journal)
+        self.assertEqual(versions["weather"].name, "hydro-weather-agent")
+        self.assertEqual(versions["weather"].tools[0]["name"], "hydro_query")
+
     async def test_every_governed_direct_dataset_scope_has_a_deterministic_route(self):
         catalog = await self.bridge.call({"action": "source_contracts"})
         datasets = catalog["context"]["datasets"]

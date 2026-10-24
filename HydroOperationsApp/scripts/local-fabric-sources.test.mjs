@@ -16,6 +16,16 @@ const config = { workspace_id: id, ontology_id: id, database_id: id, eventhouse_
   api_url: `https://${id.replaceAll('-', '')}.pbidedicated.windows.net/webapi/capacities/${id}/workloads/baas/baasservice/automatic/v1/workspaces/${id}/appbackends/${id}`,
   configuration_digest: 'a'.repeat(64) }
 const metadata = { cluster: 'https://test.z.kusto.fabric.microsoft.com', database: 'test' }
+
+test('agent contracts include every function specialist, including weather', async () => {
+  const contracts = await handle({ action: 'agent_contracts' })
+  assert.deepEqual(Object.keys(contracts.tools).sort(),
+    Object.keys(contracts.names).filter(role => role !== 'fabric-iq').sort())
+  const weather = contracts.tools.weather.find(tool => tool.name === 'hydro_query')
+  assert.deepEqual(weather.parameters.properties.tool_name.enum,
+    ['query_weather', 'query_assets', 'visualize_dataset'])
+})
+
 const tokens = { graphql: 'test-graphql', kusto: 'test-kusto' }
 const node = 'ns=2;s=T005.turbine_temp'
 const table = (columns, rows) => ({ Columns: columns.map(ColumnName => ({ ColumnName })), Rows: rows })

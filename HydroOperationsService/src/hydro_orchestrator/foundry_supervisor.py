@@ -1896,7 +1896,9 @@ class FoundrySupervisor:
                 ):
                     raise SourceFailure("The live Fabric IQ agent must retain only its verified Data Agent connection.")
             else:
-                wanted = expected[role]
+                wanted = expected.get(role)
+                if not isinstance(wanted, list):
+                    raise SourceFailure(f"Shared {role} function contract is unavailable.")
                 for tool in wanted:
                     matches = [item for item in live_tools if item.get("name") == tool["name"]
                                and item.get("type") == "function"]
