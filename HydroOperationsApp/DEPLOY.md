@@ -42,10 +42,15 @@ additional free-form inventory question hit a planner-contract rejection; it is
 not an accepted business prompt. These limits must not be reported as full agent
 readiness, successful draft creation, or fresh telemetry.
 
-NB11 was neither executed nor resynchronized during this routine deployment because
-its published Data Agent SQL source was already valid. Sync the revised repository
-notebook before explicitly rerunning an older live NB11, as required below; older
-notebook code can otherwise recreate the retired API.
+The routine deployment did not execute NB11 because its published Data Agent SQL
+source was already valid. The subsequent retirement cleanup applied only the
+approved API-removal hunks to the live FEATURE NB11 and refreshed its obsolete
+introduction. Readback verified the intended Python AST, unchanged Lakehouse
+bindings and all other definition parts; existing SQL/custom behavior was
+preserved. Fabric normalized one Markdown comment during serialization without
+changing executable code. NB11 was not executed and no seed DML ran. Other
+workspaces with older notebook copies must still sync the revised repository
+notebook before explicitly rerunning NB11.
 
 ### Historical FEATURE verification (October 23)
 
