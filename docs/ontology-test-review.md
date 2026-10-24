@@ -456,6 +456,29 @@ automatic SQL endpoint added. FEATURE still has **44** ontology definition parts
 the original native graph schema remains five node types/four edge types.
 The final footer-only app deployment does not alter that ontology or copy data.
 
+### Short final verification follow-up
+
+Read-only checks at approximately October 24 **23:24-23:32 UTC** reconfirmed
+`hydro-weather-agent:1` as enabled through the Foundry API and displayed it as
+**Agent running** in the correct FEATURE project. `hydro-orchestrator:10` remains
+active. The working direct Weather portal link is now in the
+[Foundry guide](foundry-deployment-and-multi-agent-setup.md#finding-weather-in-foundry).
+
+The authenticated hosted app still reports **1.0.1055 / 489de40**. Its maintenance
+page read the selected turbine's existing **WO-2841**, inspection records, an
+existing notification and the spare-parts inventory through the deployed
+connectors. No records were edited or created. The earlier same-deployment four
+agent-route results above were reused rather than rerunning model requests or
+test suites.
+
+A fresh native-graph UI attempt remained on its loading screen during the bounded
+150-second observation. The shared browser page reported `visibility: hidden`;
+this observation does not establish a new graph-service or application-code
+cause, and is not a fresh successful graph-instance verification. The earlier
+successful native-core query/render and the separate expanded-graph portal
+eligibility blocker remain the established results. A foreground graph check is
+still needed before claiming current full graph readiness.
+
 ## Evidence and compatibility: pre-implementation assessment baseline
 
 The following table describes the original read-only assessment, before the

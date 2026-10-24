@@ -5,13 +5,13 @@ action**: the local deploy app or one command. Both run the same engine,
 [`deploy_fabric_app.py`](../Raw/workspace-reset/deploy_fabric_app.py).
 
 The current FEATURE target is Foundry project
-`ai-project-hydro-foundry-884a839f3132`: `hydro-orchestrator:4` and the separate
-`hydro-weather-agent:1` are published there. Do not confuse this target-specific
+`ai-project-hydro-foundry-884a839f3132`: `hydro-orchestrator:10` and the separate
+`hydro-weather-agent:1` are deployed there. Do not confuse this target-specific
 project with an older repository-local azd environment or another workspace's
 agents. Hosted source reads have verified the Lakehouse connector replacement and
 the obsolete FEATURE `Hydro_STID_API` has been removed. See the
-[current deployment and runtime acceptance record](../HydroOperationsApp/DEPLOY.md#current-feature-connector-retirement-october-24-2026)
-for the remaining model-rate-limit and native-coverage failures; publication is
+[current deployment and runtime acceptance record](ontology-test-review.md#latest-canonical-deployment-and-authenticated-acceptance-hosted-agent-10)
+for the verified workflows and remaining source/product prerequisites; publication is
 not full business runtime acceptance.
 
 ### Finding Weather in Foundry
@@ -21,6 +21,17 @@ then use Foundry and select **`ai-project-hydro-foundry-884a839f3132` -> Agents*
 Its account is `ai-account-yz6usfcwfov5q`, in resource group
 `rg-hydro-foundry-884a839f3132`. The separate Weather prompt agent is
 **`hydro-weather-agent`, version 1**.
+
+[Open the deployed Weather agent directly in Foundry](https://ai.azure.com/nextgen/r/2sFlAVw1TJGv8BGvjeF_Lg,rg-hydro-foundry-884a839f3132,,ai-account-yz6usfcwfov5q,ai-project-hydro-foundry-884a839f3132/build/agents/hydro-weather-agent/build?tid=ad340c84-1886-4202-a483-2da2cb9168eb).
+Read-only API and portal checks on October 24 at 23:24 UTC confirmed the agent
+is enabled, version 1, and displayed as **Agent running**. Its model is
+`gpt-5.6-sol` and its governed function tool is `hydro_query`.
+
+Weather is a prompt specialist executed through the hosted coordinator and its
+authorized Lakehouse bridge, not another standalone hosted service. A Foundry
+Playground-only conversation does not certify connector execution or forecast
+freshness. The authenticated app's Weather route completed, but forecast serving
+tables remain empty because scheduled Aurora ingestion fails with HTTP 401.
 
 The older `foundryfabriciqappsdemo` project is a different deployment. Its
 orchestrator version 140 and specialist versions 16/21/25/20 match the older
