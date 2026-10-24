@@ -85,6 +85,96 @@ def project_source_expressions(workspace, lakehouse, database):
     ]
 
 
+def project_ontology_source_metadata(parts, workspace, lakehouse, database):
+    """Pin authoritative source metadata on shared expressions, as Fabric retains it."""
+    workspace_id = workspace.get("id")
+    sources = {item.get("id"): item for item in (lakehouse, database)}
+    if (not workspace_id or not workspace.get("displayName")
+            or lakehouse.get("type") != "Lakehouse" or database.get("type") != "SQLDatabase"
+            or len(sources) != 2 or None in sources):
+        raise RuntimeError("Ontology source metadata requires authoritative workspace, Lakehouse and SQL identities.")
+    for item in sources.values():
+        if item.get("workspaceId", workspace_id) != workspace_id:
+            raise RuntimeError("Ontology source metadata belongs to another workspace.")
+    decode = lambda part: base64.b64decode(part["payload"]).decode("utf-8").replace("\r\n", "\n")
+    indexed = {part["path"]: part for part in parts}
+    if len(indexed) != len(parts) or "expressions.tmdl" not in indexed:
+        raise RuntimeError("Ontology source metadata requires unambiguous shared expressions.")
+    expression_items = {}
+    domains = {name: lakehouse["id"] for name in
+               ("facilities", "systems", "equipment", "instruments", "signal_master", *WEATHER_PROJECT_ENTITIES)}
+    domains.update({name: database["id"] for name in SQL_PROJECT_ENTITIES})
+    for entity, item_id in domains.items():
+        text = decode(indexed[f"entities/{entity}.tmdl"])
+        backing = re.findall(r"(?m)^\s*backingTable:\s*(.+?)\s*$", text)
+        if len(backing) != 1:
+            raise RuntimeError(f"Cannot pin an ambiguous ontology backing table for {entity}.")
+        table = backing[0].strip("'").replace("''", "'")
+        partition = decode(indexed[f"tables/{table}.tmdl"])
+        expressions = re.findall(r"(?m)^\s*expressionSource:\s*(.+?)\s*$", partition)
+        if len(expressions) != 1:
+            raise RuntimeError(f"Cannot pin an ambiguous ontology source for {entity}.")
+        name = expressions[0].strip("'").replace("''", "'")
+        if name in expression_items and expression_items[name] != item_id:
+            raise RuntimeError("An ontology expression cannot identify two different source items.")
+        expression_items[name] = item_id
+    original = decode(indexed["expressions.tmdl"])
+    seen = set()
+    def pin(match):
+        block = match[0]
+        name = match[1].strip("'").replace("''", "'")
+        if name not in expression_items:
+            return block
+        if name in seen:
+            raise RuntimeError(f"Duplicate ontology source expression {name}.")
+        seen.add(name)
+        item = sources[expression_items[name]]
+        expected = f"https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{item['id']}"
+        urls = re.findall(r'AzureStorage\.DataLake\(\s*"([^"]+)"', block)
+        if len(urls) != 1 or urls[0].rstrip("/").casefold() != expected.casefold():
+            raise RuntimeError(f"Ontology expression {name} does not match its authoritative source identity.")
+        properties = item.get("properties", {})
+        sql_endpoint = (properties.get("sqlEndpointProperties", {}).get("connectionString")
+                        if item["type"] == "Lakehouse" else properties.get("serverFqdn"))
+        sql_database = item.get("displayName") if item["type"] == "Lakehouse" else properties.get("databaseName")
+        values = {
+            "ONT_WorkspaceId": workspace_id, "ONT_ItemId": item["id"], "ONT_ItemKind": item["type"],
+            "ONT_ItemName": item.get("displayName"), "ONT_WorkspaceName": workspace["displayName"],
+            "ONT_SqlEndpoint": sql_endpoint, "ONT_SqlDatabase": sql_database,
+        }
+        for key, value in values.items():
+            if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
+                raise RuntimeError(f"Missing or invalid authoritative ontology source metadata: {key}.")
+            pattern = r"(?m)^\tannotation " + key + r" = (.+?)[ \t]*$"
+            existing = re.findall(pattern, block)
+            if len(existing) > 1:
+                raise RuntimeError(f"Duplicate ontology source metadata {name}.{key}.")
+            if existing:
+                if key in ("ONT_WorkspaceId", "ONT_ItemId", "ONT_ItemKind") and existing[0].casefold() != value.casefold():
+                    raise RuntimeError(f"Conflicting ontology source metadata {name}.{key}.")
+                block = re.sub(pattern, lambda _match: f"\tannotation {key} = {value}", block)
+            else:
+                block = block.rstrip() + f"\n\n\tannotation {key} = {value}\n"
+        pinned = re.findall(r"(?m)^\tannotation ONT_PinnedAtUtc = (.+?)[ \t]*$", block)
+        if len(pinned) > 1:
+            raise RuntimeError(f"Duplicate ontology source pin timestamp for {name}.")
+        if not pinned:
+            block = block.rstrip() + "\n\n\tannotation ONT_PinnedAtUtc = " + time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n"
+        return block.rstrip() + "\n\n"
+    updated = re.sub(r"(?ms)^expression (.+?) =\n.*?(?=^expression |\Z)", pin, original)
+    if seen != set(expression_items):
+        raise RuntimeError("An ontology source expression is missing or cannot be verified.")
+    if updated == original:
+        return parts
+    result = []
+    for part in parts:
+        if part["path"] == "expressions.tmdl":
+            part = {**part, "payload": base64.b64encode(updated.encode()).decode()}
+        result.append(part)
+    return result
+
+
 def project_ontology_extension(parts, workspace, lakehouse, database, weather_columns, sql_columns, verify_existing=None):
     """Add verified source-backed domains without changing existing core definitions."""
     by_path = {part["path"]: dict(part) for part in parts}

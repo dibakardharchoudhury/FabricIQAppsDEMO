@@ -18,6 +18,12 @@ class ProjectExtensionTests(unittest.TestCase):
                       part("unknown.json", '{"keep":"custom"}')]
         for entity in ("facilities", "systems", "equipment", "instruments", "signal_master"):
             self.parts.append(part(f"entities/{entity}.tmdl", f"entity {entity}\n\tbackingTable: {entity}\n"))
+            self.parts.append(part(f"tables/{entity}.tmdl",
+                                   f"table {entity}\n\tpartition {entity} = entity\n"
+                                   f"\t\tsource\n\t\t\tentityName: silver_{entity}\n"
+                                   "\t\t\texpressionSource: HydroCore\n"))
+        self.parts.append(part("expressions.tmdl", support.project_source_expressions(
+            "workspace", "lakehouse", "sql")[1].replace("HydroProjectLakehouse", "HydroCore")))
         self.weather = {table: dict.fromkeys(keys, "string")
                         for table, keys in support.WEATHER_PROJECT_ENTITIES.values()}
         for table, keys in support.WEATHER_PROJECT_ENTITIES.values():
@@ -34,8 +40,10 @@ class ProjectExtensionTests(unittest.TestCase):
         result = self.extend()
         indexed = {p["path"]: p for p in result}
         for original in self.parts:
-            if original["path"] != "model.tmdl":
+            if original["path"] not in ("model.tmdl", "expressions.tmdl"):
                 self.assertEqual(indexed[original["path"]], original)
+            else:
+                _verify_definition([original], [indexed[original["path"]]])
         self.assertEqual(result, self.extend(result))
         text = base64.b64decode(indexed["tables/HydroProject_WeatherLatestForecast.tmdl"]["payload"]).decode()
         self.assertIn("entityName: weather_latest_forecasts", text)
@@ -91,6 +99,68 @@ class ProjectExtensionTests(unittest.TestCase):
                       support.project_source_expressions("workspace", "lakehouse", "foreign")):
             with self.assertRaisesRegex(RuntimeError, "did not retain submitted"):
                 _verify_definition([part("expressions.tmdl", "\n".join(wrong))], result)
+
+    def source_metadata(self, parts):
+        return support.project_ontology_source_metadata(
+            parts, {"id": "workspace", "displayName": "Workspace"},
+            {"id": "lakehouse", "type": "Lakehouse", "displayName": "Lakehouse",
+             "properties": {"sqlEndpointProperties": {"connectionString": "lakehouse.example"}}},
+            {"id": "sql", "type": "SQLDatabase", "displayName": "Operations",
+             "properties": {"serverFqdn": "sql.example", "databaseName": "Operations-sql"}})
+
+    def test_source_metadata_pins_all_shared_sources_without_changing_partitions(self):
+        before = self.extend()
+        after = self.source_metadata(before)
+        for old, new in zip(before, after):
+            if old["path"] != "expressions.tmdl":
+                self.assertEqual(old, new)
+        expression = base64.b64decode(next(p for p in after if p["path"] == "expressions.tmdl")["payload"]).decode()
+        self.assertEqual(expression.count("annotation ONT_WorkspaceId = workspace"), 3)
+        self.assertEqual(expression.count("annotation ONT_ItemKind = Lakehouse"), 2)
+        self.assertEqual(expression.count("annotation ONT_ItemKind = SQLDatabase"), 1)
+        self.assertIn("annotation ONT_SqlDatabase = Operations-sql", expression)
+        self.assertEqual(expression.count("annotation ONT_PinnedAtUtc ="), 3)
+        with patch.object(support.time, "strftime", side_effect=AssertionError("A rerun must preserve source pin timestamps")):
+            self.assertEqual(after, self.source_metadata(after))
+
+    def test_source_metadata_rejects_conflicting_identity_and_preserves_unknown_annotations(self):
+        pinned = self.source_metadata(self.extend())
+        expression = next(p for p in pinned if p["path"] == "expressions.tmdl")
+        text = base64.b64decode(expression["payload"]).decode()
+        expression["payload"] = base64.b64encode(text.replace(
+            "\tannotation ONT_ItemId = lakehouse", "\tannotation ONT_ItemId = foreign", 1).encode()).decode()
+        before = copy.deepcopy(pinned)
+        with self.assertRaisesRegex(RuntimeError, "Conflicting ontology source metadata"):
+            self.source_metadata(pinned)
+        self.assertEqual(before, pinned)
+        expression["payload"] = base64.b64encode(
+            text.replace("\tannotation ONT_ItemId = lakehouse",
+                         "\tannotation CustomMetadata = keep\n\n\tannotation ONT_ItemId = lakehouse", 1).encode()).decode()
+        self.assertEqual(pinned, self.source_metadata(pinned))
+
+    def test_source_metadata_rejects_source_expression_drift(self):
+        before = self.extend()
+        expression = next(p for p in before if p["path"] == "expressions.tmdl")
+        expression["payload"] = base64.b64encode(
+            base64.b64decode(expression["payload"]).decode().replace("/workspace/lakehouse", "/foreign/lakehouse").encode()).decode()
+        with self.assertRaisesRegex(RuntimeError, "authoritative source identity"):
+            self.source_metadata(before)
+
+    def test_source_metadata_rejects_duplicate_and_missing_shared_sources(self):
+        for duplicate in (False, True):
+            before = self.extend()
+            expression = next(p for p in before if p["path"] == "expressions.tmdl")
+            text = base64.b64decode(expression["payload"]).decode()
+            if duplicate:
+                text += "\n" + support.project_source_expressions(
+                    "workspace", "lakehouse", "sql")[1].replace("HydroProjectLakehouse", "HydroCore")
+            else:
+                text = text.replace("expression HydroCore =", "expression Unrelated =")
+            expression["payload"] = base64.b64encode(text.encode()).decode()
+            snapshot = copy.deepcopy(before)
+            with self.assertRaisesRegex(RuntimeError, "Duplicate ontology source expression|expression is missing"):
+                self.source_metadata(before)
+            self.assertEqual(before, snapshot)
 
 
 class CopyCursor:

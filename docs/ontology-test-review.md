@@ -46,6 +46,9 @@ deployment verification and remaining acceptance limits are recorded below.
   archived base tables, and verify both draft and published definitions.
 - Keep native graph materialization separate; the original core projection is not
   replaced or reconstructed from SQL relationships.
+- NB11 pins complete source metadata on the three verified shared TMDL
+  expressions using live workspace/Lakehouse/SQL item metadata. Preserve existing
+  pin timestamps and unknown annotations; reject conflicting source identities.
 
 Fabric itself rejects the candidate's repeated `keyProperty` authoring, not just
 the app parser. A single comma-separated declaration is also rejected. The app
@@ -128,6 +131,10 @@ run was deliberately not performed merely to obtain a timing number. The earlier
 1. Additional graph entities/relationships still need the selected ontology's
    **Manage graph -> select eligible entities/relationships -> Continue ->
    Materialize** portal flow. No public materialization API was invented.
+   Before the source-metadata repair below, the portal marked all 18 entities
+   **Ineligible**, with **Unsupported Datasource** on the inspected core entity.
+   Eligibility after repair has not yet been verified; do not describe this as
+   merely a pending materialization click.
 2. Hosting verification reached Fabric's protected sign-in gate, not an
    authenticated SPA session. A read-only operational connector probe using the
    existing Azure CLI token was rejected by the brokered token endpoint with
@@ -140,6 +147,37 @@ run was deliberately not performed merely to obtain a timing number. The earlier
 3. Successful source publication and an active Hosted Agent do not certify Data
    Agent SQL/combined-source answers, execution provenance, Weather inference or
    data freshness. No such runtime certification is claimed.
+
+### Follow-up: source metadata and remaining browser boundary
+
+The portal's **Unsupported Datasource** finding matches the public report in
+[microsoft/skills-for-fabric#107](https://github.com/microsoft/skills-for-fabric/issues/107),
+but the reported partition-only workaround did not directly round-trip here.
+Adding metadata to only one table sharing an expression was rejected with
+`ALMOperationBadRequest`: the shared expression was missing a valid
+`ONT_WorkspaceId`. Submitting complete matching metadata across that source was
+accepted, and Fabric normalized the source identity onto **`expressions.tmdl`**,
+retaining only `ONT_PinnedAtUtc` on those partitions.
+
+The final repair therefore authors the retained canonical form, without weakening
+readback verification. All three managed shared expressions (core Lakehouse,
+project Lakehouse, independent SQL) now have the eight source annotations, derived
+from live workspace/item metadata rather than copied workspace names or endpoints.
+`updateDefinition` returned HTTP 200; exact scoped readback passed for every
+submitted setting and every original definition. A second authoring pass over
+the actual server readback was unchanged. NB11 now applies the same helper before
+publication, preserving existing pin timestamps and rejecting identity conflicts.
+The related Python regression suites passed **217 tests**.
+
+This repairs source authoring, **not a verified graph-materialization result**.
+Afterward the shared Fabric portal remained in its loading shell; opening a new
+portal page encountered an aborted normal Microsoft sign-in navigation. The
+hosted app still reported **Please allow pop-ups and try again** after normal
+sign-in clicks. No tokens were injected, grants changed, graph APIs invented, or
+production work orders created. Post-repair graph eligibility/materialization,
+authenticated connector/UI reads and live agent answers remain acceptance gates.
+The completed full deployment above was not repeated merely to test this
+metadata-only repair; its helper was exercised directly against the live API.
 
 ## Evidence and compatibility
 

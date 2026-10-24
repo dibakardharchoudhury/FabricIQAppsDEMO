@@ -65,6 +65,9 @@ capacity can belong to a different subscription. Its authoritative assignment is
   Missing permissions or quota stop the workflow rather than silently changing targets.
 - **Native graph:** the selected v2 ontology still requires its portal **Manage graph**
   materialization flow and authoritative lineage or an operator-verified explicit binding.
+  NB11 pins complete, live-verified Lakehouse/SQL source metadata on shared TMDL
+  expressions, preserving pin timestamps and rejecting identity conflicts. Definition
+  readback alone does not establish graph eligibility or materialization success.
   This is not an unattended REST provisioning step.
 
 ### Speed changes and measurements
