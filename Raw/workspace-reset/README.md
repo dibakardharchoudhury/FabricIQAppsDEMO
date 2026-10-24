@@ -70,6 +70,11 @@ separate, not hidden inside that app-only total.
 See [speed measurements and least-privilege handoff](../../HydroOperationsApp/DEPLOY.md#faster-deployment-and-a-simpler-operator-path)
 for the routine operator path, one-time administrator tasks, and the manual graph prerequisite.
 Neither an app deployment nor a timing receipt certifies business-agent execution or delivery.
+The October 24 FEATURE verification measured a warm app redeploy at **5m 51s**,
+versus **8m 38s** before the authentication-diagnostic replacement. All 40 workspace
+items and 40 SPA redirects were preserved. The linked timing comparison separates
+the directly measured authentication saving from other service-latency variation;
+it is not a fresh-workspace/setup-pipeline timing guarantee.
 
 ## What manual sync this replaces
 

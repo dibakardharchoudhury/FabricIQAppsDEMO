@@ -63,6 +63,49 @@ runtime/CORS and SQL settings, applies/verifies the Lakehouse connector, preserv
 redirects, checks consent, and verifies the hosted endpoint and real transport readiness.
 There are no agent-skip flags or additional routine-operator privilege requirements.
 
+#### Measured FEATURE verification: October 24, 2026
+
+Final canonical app deployment of source **`b9c32c8`** passed from
+**08:26:27 to 08:32:18 UTC** at
+<https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
+Both measured runs were warm same-workspace deployments with the existing Hosted Agent
+image verified/current, not newly built. The first already included token reuse and
+batched configuration; the second also replaced the slow login-status diagnostic.
+
+| App deployment section | First measured run | Final optimized run |
+|---|---:|---:|
+| 1. Tenant, workspace, capacity and Git readiness | 18.953s | 14.250s |
+| 2. SPA resolution and redirect/config preservation | 21.297s | 14.891s |
+| 3. Target/dependencies, published Data Agent sources, five specialists and Hosted Agent convergence | 157.313s | 119.578s |
+| 4. Tenant-scoped Rayfin authentication | 83.187s | 1.484s |
+| 5. Static-app build/publication (fresh targets also provision backend/schema) | 57.938s | 54.813s |
+| 6. Backend runtime/CORS, SQL, Lakehouse connector and redirect configuration | 50.781s | 40.203s |
+| 7. Browser permissions and consent setup/readback | 82.563s | 62.437s |
+| 8. Hosting, backend/connector transport, Entra checks and Git config persistence | 46.437s | 43.719s |
+| **Total** | **518.469s / 8m 38s** | **351.375s / 5m 51s** |
+
+The observed total reduction is **167.094s (32.2%)**. Authentication directly fell by
+**81.703s**; differences in otherwise unchanged sections include service/CLI latency
+variation and must not all be attributed to code changes. This is not a guaranteed
+fresh-tenant duration or an estimate of the unmeasured Git-sync/setup-pipeline stages.
+Agent convergence (about two minutes) and browser-consent setup (about one minute)
+remain the largest sections; they are not skipped to force a five-minute result.
+
+Final checks verified GraphQL preflight/POST 200/200, token preflight/POST 200/400,
+and protected Lakehouse connector preflight/POST 200/401. Those expected protected
+responses are transport readiness, not delegated query execution certification.
+All **40 workspace item IDs/types/names** exactly match the before snapshot; all
+**40 existing SPA redirects** remain. The retired `Hydro_STID_API` is absent.
+The assigned capacity remained **Active**, so no resume, resize or reassignment was
+performed. No setup pipeline, seed DML, new probe resources or approved work-order
+writes were introduced by these app redeployments.
+
+Validation: **197 focused deployment/hosted/UI tests**, Node 24 app build,
+mandatory environment validation, Python syntax/call-site checks, and local browser
+checks for subscription discovery, collapsed advanced settings and timing rendering.
+Test-only local servers were stopped. Existing business-agent coverage/rate-limit
+limitations below remain separate and are not certified by these deployments.
+
 The preceding changed-image release had these trustworthy measurements:
 
 | Component | Observed elapsed | Evidence / limitation |

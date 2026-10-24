@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Current approved deployment-optimization validation (October 24, 2026)
 
@@ -48,6 +48,15 @@ Validated checks executed October 24, 2026 (UTC), before publication:
   2.000 seconds. Authentication errors and wrong-workspace responses fail closed.
   All 197 affected tests passed again (12.487 seconds); Pylance verified both
   production call sites are compatible. No configuration or infrastructure changed.
+- Final canonical deployment of `b9c32c8` passed October 24, 2026, 08:26:27-08:32:18 UTC,
+  in 351.375 seconds (5m 51s). Authentication was 1.484 seconds, compared with 83.187
+  seconds in the first 518.469-second warm run. The observed overall reduction was
+  167.094 seconds / 32.2%; other sections also reflect service-latency variation.
+- Exact before/after inventory matches all 40 item IDs/types/names, all 40 prior SPA
+  redirects remain, and the retired API remains absent. Capacity still Active; no resume,
+  resize or reassignment. Hosted image unchanged and verified current.
+- All endpoint/CORS/SQL/connector/consent checks passed. No pipeline rerun, seed writes,
+  new probe resources or operational writes. Both owned browser-test servers stopped.
 
 ### All validation checks pass
 
