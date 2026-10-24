@@ -1169,7 +1169,7 @@ the exact obsolete Eventhouse-Knowledge agent/settings without deleting shared d
 Real failures fail setup; NB09
 alone reports the exact documented temporary unsupported-Ontology-v2 product response without
 claiming runtime readiness. It does **not**
-create the STID GraphQL API or seed the operational SQL DB — those happen in Step 7.
+seed the operational SQL DB — that happens in Step 7. No STID API is provisioned.
 
 > **Operations Agent provisioning includes playbook/actions, Teams, and email-alert wiring.**
 > Configure the run-as identity, Teams destination, and Outlook OAuth2 connection as described in
@@ -1231,10 +1231,10 @@ and deployment state. Metadata-resolution failures stop before source writes or 
   databases require a unique configured `RAYFIN_PUBLIC_KQL_DATABASE` name within that parent.
 - **Lakehouse connector:** resolve the target Lakehouse's live SQL analytics endpoint for
   `hydrolakehouse`; SPA STID and weather reads do not depend on a GraphQL API or RTI_011.
-- **Independent STID GraphQL:** resolve the target's `Hydro_STID_API` (or a target-verified configured
-  `RAYFIN_PUBLIC_STID_GRAPHQL_NAME`). If it has not been created by RTI_011 yet, clear stale
-  GraphQL URL/ID overrides and let runtime discovery find the later-created API. The deployment
-  does not invent an API item or query an old endpoint.
+- **No independent STID API:** hosted agents and the SPA use the same read-only
+  `hydrolakehouse` connector for assets and weather. Retired STID GraphQL overrides are removed
+  during target configuration; no item is discovered or created. AppBackend GraphQL and its
+  delegated Power BI token exchange remain necessary for operational SQL data.
 - Pipeline/notebook, Lakehouse, and dashboard pointers are similarly target-scoped. Missing
   optional artifacts clear old IDs; unverified Lakehouse SQL endpoint overrides are cleared.
   Ambiguous eligible names fail closed rather than selecting the first workspace item.
@@ -1340,8 +1340,10 @@ hosting origin plus `localhost:5173`; never remove existing registrations or rec
 origins merely because they remain in local configuration. Do not hand-edit `rayfin/rayfin.yml`
 `allowedRedirectUris` or run a separate `npm run up` to configure redirects. Manual portal changes
 are permitted only for the exact prerequisite action the script reports it lacks rights to perform.
-After successful deployment checks, a fresh app still needs operational seeding and independent
-STID GraphQL publication through Step 7. Lakehouse connector reads do not depend on that step;
+After successful deployment checks, a fresh app still needs operational seeding through Step 7.
+An existing verified published Data Agent SQL source avoids an unnecessary NB11 bootstrap;
+otherwise deployment runs the non-seeding source extension and verifies its published readback.
+Lakehouse connector reads do not depend on that step;
 hosting success does not establish native graph readiness.
 
 ## 7. Seed & provision (RTI_011)
@@ -1351,23 +1353,20 @@ hosting success does not establish native graph readiness.
 1. Open the deployed app and sign in (avatar button).
 2. Click **"Seed & provision"** in the header.
 
-It runs `RTI_011` in your workspace, which upserts the operational tables, creates + **auto‑binds**
-the STID **GraphQL API** to the Lakehouse SQL endpoint. It also always adds SQL to the live Data
+It runs `RTI_011` in your workspace, which upserts the operational tables and always adds SQL to the live Data
 Agent, preserving existing sources and custom configuration and verifying exact draft and published
-SQL-source readback. Missing agents and extension failures fail the notebook even if SQL/GraphQL
+SQL-source readback. Missing agents and extension failures fail the notebook even if SQL
 writes already succeeded. Successful configuration does not certify agent runtime. RTI_011 does
 not require or reinterpret NB09's ontology runtime status; the bounded NB09 smoke check does not
 attest execution provenance or SQL/combined-source readiness. The revised NB09 live limitation
 path was validated once with full multi-source
 preservation; neither NB11 nor full setup was executed in that bounded run. See the
 [authorized failure-path evidence](../docs/knowledge-graph.md#authorized-live-nb09-failure-path-validation).
-The hosted crew's independent GraphQL path retains runtime endpoint discovery — leave
-`RAYFIN_PUBLIC_STID_GRAPHQL_URL` blank. The SPA reads STID and weather through `hydrolakehouse`,
-not this GraphQL API.
+Both the hosted crew and SPA read STID and weather through `hydrolakehouse`.
+Sync the revised NB11 into Fabric before rerunning it: its historical item name remains unchanged,
+but it no longer creates or binds an independent GraphQL API. Retire an existing `Hydro_STID_API`
+only after the connector-backed deployment and authenticated agent reads have been verified.
 
-> **If auto‑bind fails** (see the notebook's STEP B output): open the GraphQL API item in the Fabric
-> portal once and add the STID tables (`Facilities`, `Systems`, `Equipment`, `Instruments`).
->
 > **Fallback (no RTI_011):** if `RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME` is blank, the app self‑seeds
 > demo rows only when a table is empty. For direct SQL, run
 > [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql) (`-v ActorOid=<your-oid>`) and

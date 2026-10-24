@@ -674,11 +674,11 @@ function validateCatalogArguments(entity, args) {
   }
 }
 
-export async function readAssetEntity(config, entityKey, args, token, fetcher = fetch) {
+export async function readAssetEntity(config, entityKey, args, token) {
   const entity = ASSET_ENTITIES.find(candidate => candidate.key === entityKey)
   if (!entity) throw new Error('Unknown asset catalog entity.')
   validateCatalogArguments(entity, args)
-  const rows = await readAssetInventory(config, entity, token, fetcher)
+  const rows = await readAssetInventory(config, entity, token)
   const shaped = shapeCatalogRows(entity, rows, args, false, true)
   return { ...shaped.result, _row_identities: shaped.rowIdentities, read_completed_at_utc: new Date().toISOString() }
 }
@@ -758,23 +758,16 @@ export function resolveIdentityScope(question, equipmentRows, facilityRows, sour
   }
 }
 
-async function readAssetInventory(config, entity, token, fetcher) {
-  const fields = entity.columns.map(column => column.name).join(' ')
-  return collectCatalogRows(entity, async cursor => {
-    const payload = await requestJson(`${fabric}/workspaces/${config.workspace_id}/graphqlapis/${config.graphql_id}/graphql`,
-      token, {
-        query: `query CatalogRead($cursor: String) {
-          records: ${entity.apiName ?? entity.physicalName}(first: 100, after: $cursor) {
-            hasNextPage endCursor items { ${fields} }
-          }
-        }`,
-        variables: { cursor: cursor ?? null },
-      }, fetcher)
-    if (!payload || payload.errors?.length || !payload.data?.records) {
-      throw new Error('Asset catalog query failed or omitted its data.')
-    }
-    return payload.data.records
-  })
+async function readAssetInventory(config, entity, token) {
+  const connectorEntity = { facilities: 'SilverFacilities', equipment: 'SilverEquipment', instruments: 'SilverInstruments' }[entity.key]
+  if (!connectorEntity) throw new Error('Unknown Lakehouse asset connector entity.')
+  return operationalRead(config, token, 'Lakehouse asset connector', client =>
+    collectCatalogRows(entity, async cursor => {
+      let query = client.connectors.hydrolakehouse[connectorEntity]
+        .select(entity.columns.map(column => column.name)).first(100)
+      if (cursor) query = query.after(cursor)
+      return query.executePaginated()
+    }))
 }
 
 export async function collectOperationRows(client, entityKey, args) {
@@ -832,7 +825,7 @@ export function attachInstrumentUnits(rows, instruments) {
 export async function readTelemetryWithUnits(config, metadata, query, tokens, fetcher = fetch) {
   const [reading, instruments] = await Promise.allSettled([
     readTelemetryQuery(metadata, query, tokens.kusto, fetcher),
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql),
   ])
   if (reading.status === 'rejected') throw reading.reason
   // Unit metadata is enrichment: a failed metadata read leaves the series valid but unattested.
@@ -851,7 +844,7 @@ export async function readStationPower(metadata, args, token, fetcher = fetch) {
 }
 
 export function runtimeConfiguration(input) {
-  const keys = ['tenant_id', 'workspace_id', 'ontology_id', 'eventhouse_id', 'database_id', 'graphql_id', 'appbackend_id', 'api_url', 'publishable_key']
+  const keys = ['tenant_id', 'workspace_id', 'ontology_id', 'eventhouse_id', 'database_id', 'lakehouse_id', 'appbackend_id', 'api_url', 'publishable_key']
   if (!input || typeof input !== 'object' || Array.isArray(input)
     || Object.keys(input).length !== keys.length || Object.keys(input).some(key => !keys.includes(key))
     || keys.slice(0, 7).some(key => typeof input[key] !== 'string' || !guid.test(input[key]))
@@ -885,7 +878,7 @@ export async function configuration() {
     ontology_id: binding.ontologyId,
     eventhouse_id: env.RAYFIN_PUBLIC_EVENTHOUSE_ID,
     database_id: env.RAYFIN_PUBLIC_KQL_DATABASE_ID,
-    graphql_id: env.RAYFIN_PUBLIC_STID_GRAPHQL_ID,
+    lakehouse_id: env.RAYFIN_PUBLIC_LAKEHOUSE_ID,
     appbackend_id: env.RAYFIN_PUBLIC_ITEM_ID,
   }
   if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))
@@ -914,14 +907,18 @@ export async function requestJson(url, token, body, fetcher = fetch) {
 
 export async function discover(config, token, fetcher = fetch) {
   const base = `${fabric}/workspaces/${config.workspace_id}`
-  const [workspace, ontology, database] = await Promise.all([
+  const [workspace, ontology, database, lakehouse] = await Promise.all([
     requestJson(base, token, undefined, fetcher),
     requestJson(`${base}/ontologies/${config.ontology_id}`, token, undefined, fetcher),
     requestJson(`${base}/kqlDatabases/${config.database_id}`, token, undefined, fetcher),
+    requestJson(`${base}/lakehouses/${config.lakehouse_id}`, token, undefined, fetcher),
   ])
   if (workspace.id !== config.workspace_id || ontology.id !== config.ontology_id
     || ontology.properties?.generation !== 2 || database.id !== config.database_id
-    || database.properties?.parentEventhouseItemId !== config.eventhouse_id) {
+    || database.properties?.parentEventhouseItemId !== config.eventhouse_id
+    || lakehouse.id !== config.lakehouse_id
+    || (lakehouse.workspaceId && lakehouse.workspaceId !== config.workspace_id)
+    || !guid.test(lakehouse.properties?.sqlEndpointProperties?.id ?? '')) {
     throw new Error('Live source identity or numeric ontology generation 2 verification failed.')
   }
   if (!guid.test(workspace.capacityId ?? '')) throw new Error('Workspace has no verified capacity.')
@@ -946,29 +943,13 @@ export async function discover(config, token, fetcher = fetch) {
   }
 }
 
-function pageItems(page, label) {
-  if (!page || page.hasNextPage !== false || !Array.isArray(page.items)) {
-    throw new Error(`${label} read is missing or incomplete; partial evidence is not accepted.`)
-  }
-  return page.items
-}
-
 export async function readTelemetry(config, metadata, equipmentId, tokens, fetcher = fetch) {
-  const payload = await requestJson(`${fabric}/workspaces/${config.workspace_id}/graphqlapis/${config.graphql_id}/graphql`,
-    tokens.graphql, {
-      query: `query MaintenanceIdentity($id: String!) {
-        equipment: silver_equipments(first: 2, filter: { equipment_id: { eq: $id } }) {
-          hasNextPage items { equipment_id }
-        }
-        instruments: silver_instruments(first: 101, filter: { equipment_id: { eq: $id } }) {
-          hasNextPage items { equipment_id opcua_node_id unit }
-        }
-      }`,
-      variables: { id: equipmentId },
-    }, fetcher)
-  if (payload.errors?.length) throw new Error('STID GraphQL returned errors; no evidence accepted.')
-  const equipment = pageItems(payload.data?.equipment, 'Equipment')
-  const instruments = pageItems(payload.data?.instruments, 'Instruments')
+  const [equipmentInventory, instrumentInventory] = await Promise.all([
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql),
+  ])
+  const equipment = equipmentInventory.filter(row => row.equipment_id === equipmentId)
+  const instruments = instrumentInventory.filter(row => row.equipment_id === equipmentId)
   if (equipment.length !== 1 || equipment[0].equipment_id !== equipmentId || !instruments.length
     || instruments.length > 100 || instruments.some(item => item.equipment_id !== equipmentId
       || typeof item.opcua_node_id !== 'string' || !item.opcua_node_id
@@ -1089,13 +1070,13 @@ export async function readWeatherEntity(config, entityKey, args, token) {
   return operationalRead(config, token, 'weather connector', client => collectWeatherRows(client, entityKey, args))
 }
 
-export async function readWorkBacklog(config, args, token, fetcher = fetch,
+export async function readWorkBacklog(config, args, token,
   readWorkInventory = () => operationalRead(config, token, 'work backlog',
     client => collectOperationInventory(client, OPERATIONS_ENTITIES.find(entity => entity.key === 'work_orders')))) {
   const readStartedAt = new Date().toISOString()
   const reads = await Promise.allSettled([
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'facilities'), token, fetcher),
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), token, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'facilities'), token),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), token),
     readWorkInventory(),
   ])
   const labels = ['facility inventory', 'equipment inventory', 'work-order inventory']
@@ -1129,8 +1110,8 @@ export async function readFleetSnapshot(config, metadata, temperature, args, tok
   const readStartedAt = new Date().toISOString()
   const labels = ['equipment metadata', 'instrument metadata', 'work-order inventory', 'telemetry']
   const reads = await Promise.allSettled([
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql, fetcher),
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql),
     readWorkInventory(),
     readTelemetryQuery(metadata, query, tokens.kusto, fetcher),
   ])
@@ -1148,16 +1129,16 @@ export async function readFleetSnapshot(config, metadata, temperature, args, tok
   }).result
 }
 
-export async function stageWorkOrder(config, args, priority, tokens, fetcher = fetch,
+export async function stageWorkOrder(config, args, priority, tokens,
   readExisting = () => readWork(config, args.equipment_id, tokens.graphql)) {
   const proposal = createWorkOrderProposal({
     equipmentId: args.equipment_id, instrumentId: args.instrument_id, opcuaNodeId: args.opcua_node_id,
     title: args.title, description: args.description, priority,
   })
   const [equipment, instruments, work] = await Promise.all([
-    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql, fetcher),
+    readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'equipment'), tokens.graphql),
     proposal.instrumentId || proposal.opcuaNodeId
-      ? readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql, fetcher)
+      ? readAssetInventory(config, ASSET_ENTITIES.find(entity => entity.key === 'instruments'), tokens.graphql)
       : Promise.resolve([]),
     readExisting(),
   ])
@@ -1186,7 +1167,7 @@ export async function stageWorkOrder(config, args, priority, tokens, fetcher = f
 }
 
 export async function submitApprovedWorkOrder(config, draft, edits, principalId, creationId, tokens, allowCreate,
-  fetcher = fetch, useClient) {
+  useClient) {
   if (!guid.test(principalId) || !guid.test(creationId) || typeof allowCreate !== 'boolean') {
     throw new Error('Work-order submission requires verified principal and creation identities.')
   }
@@ -1218,7 +1199,7 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
     const fresh = await stageWorkOrder(config, {
       equipment_id: checked.equipmentId, instrument_id: checked.instrumentId, opcua_node_id: checked.opcuaNodeId,
       title: checked.title, description: checked.description,
-    }, checked.priority, tokens, fetcher, () => collectWorkOrders(client, checked.equipmentId))
+    }, checked.priority, tokens, () => collectWorkOrders(client, checked.equipmentId))
     if (fresh.existing_work.some(row => row.title?.trim().toLowerCase() === checked.title.trim().toLowerCase())) {
       throw new WorkOrderSubmissionError('An open work order with this title already exists for this equipment. No SQL write was attempted.', false)
     }
@@ -1344,6 +1325,14 @@ export async function handle(request, deps = {}) {
   if (request.configuration_digest !== config.configuration_digest) throw new Error('Source configuration changed; restart the local source adapter.')
   const metadata = await discoverCached(config, request.tokens.fabric)
   if (request.action === 'discover') return metadata
+  if (request.action === 'verify_lakehouse_connector') {
+    const counts = Object.fromEntries(await Promise.all(ASSET_ENTITIES.map(async entity => {
+      const rows = await readAssetInventory(config, entity, request.tokens.graphql)
+      if (!rows.length) throw new Error(`Lakehouse connector returned no ${entity.key}; seeded source readiness failed.`)
+      return [entity.key, rows.length]
+    })))
+    return { source: metadata.source, counts }
+  }
   if (request.action === 'resolve_identity_scope') {
     const equipmentEntity = ASSET_ENTITIES.find(entity => entity.key === 'equipment')
     const facilityEntity = ASSET_ENTITIES.find(entity => entity.key === 'facilities')

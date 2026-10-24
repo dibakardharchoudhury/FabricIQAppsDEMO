@@ -34,7 +34,7 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
                                hydro-qa-agent   hydro-rca-agent   hydro-work-order-agent   hydro-fabric-iq-agent   hydro-weather-agent
                                   (Gauge)          (Sleuth)            (Fixer)                 (Sparky)              (Weather)
         Specialist tool calls are executed by the hosted runtime (Node source bridge) under the user's tokens:
-        STID GraphQL · Weather Lakehouse connector · Eventhouse KQL · AppBackend SQL · published Data Agent connection
+        Asset + Weather Lakehouse connector · Eventhouse KQL · AppBackend SQL · published Data Agent connection
 ```
 
 | Component | Foundry name | Kind | Defined in | Deployed by |

@@ -340,7 +340,7 @@ async function discover(env = {}, workspaceItems = items) {
   return { config, warnings, requests }
 }
 
-test('verified database and GraphQL IDs win over first items, including managed databases', async () => {
+test('verified database identity wins and obsolete STID API selections are ignored', async () => {
   const { config, warnings } = await discover({
     VITE_RAYFIN_EVENTHOUSE_ID: 'main',
     VITE_RAYFIN_KQL_DATABASE_ID: 'main-db',
@@ -350,23 +350,23 @@ test('verified database and GraphQL IDs win over first items, including managed 
   })
   assert.equal(config.eventhouseQueryUri, 'https://main.example')
   assert.equal(config.kqlDatabase, 'Telemetry')
-  assert.equal(config.graphqlUrl, graphql('stid'))
+  assert.equal(config.graphqlUrl, undefined)
   assert.deepEqual(warnings, [])
 })
 
-test('explicit names resolve only within the selected Eventhouse and select the STID API', async () => {
+test('explicit database names resolve only within the selected Eventhouse without a STID API', async () => {
   const { config, warnings } = await discover({
     VITE_RAYFIN_KQL_DATABASE: 'Telemetry',
     VITE_RAYFIN_STID_GRAPHQL_NAME: 'Hydro_STID_API',
   })
   assert.equal(config.kqlDatabase, 'Telemetry')
-  assert.equal(config.graphqlUrl, graphql('stid'))
+  assert.equal(config.graphqlUrl, undefined)
   assert.deepEqual(warnings, [])
 })
 
-test('explicit GraphQL URL is retained rather than replaced by an unrelated first API', async () => {
+test('obsolete STID GraphQL URL is not retained as a source', async () => {
   const { config } = await discover({ VITE_RAYFIN_STID_GRAPHQL_URL: graphql('stid') })
-  assert.equal(config.graphqlUrl, graphql('stid'))
+  assert.equal(config.graphqlUrl, undefined)
 })
 
 test('verified Eventhouse ID wins over a missing name instead of choosing the managed Eventhouse', async () => {
@@ -379,18 +379,18 @@ test('verified Eventhouse ID wins over a missing name instead of choosing the ma
   assert.deepEqual(warnings, [])
 })
 
-test('missing explicit API selection reports failure without switching to the first API', async () => {
+test('missing retired API cannot block discovery or select an unrelated API', async () => {
   const { config, warnings } = await discover({ VITE_RAYFIN_STID_GRAPHQL_ID: 'missing' })
   assert.equal(config.graphqlUrl, undefined)
-  assert.equal(warnings.length, 1)
-  assert.match(config.ontologyError, /configured STID GraphQL API was not found/)
+  assert.equal(warnings.length, 0)
+  assert.equal(config.ontologyError, undefined)
 })
 
-test('absent explicit selections preserve main first-database and first-API defaults', async () => {
-  const { config, warnings } = await discover()
+test('discovery succeeds with no GraphQL items and preserves scoped telemetry and notebook selection', async () => {
+  const { config, warnings } = await discover({}, items.filter(item => item.type !== 'GraphQLApi'))
   assert.equal(config.eventhouseQueryUri, 'https://main.example')
   assert.equal(config.kqlDatabase, 'Other database')
-  assert.equal(config.graphqlUrl, graphql('other-api'))
+  assert.equal(config.graphqlUrl, undefined)
   assert.equal(config.pipelineId, 'stream')
   assert.equal(config.postseedNotebookId, 'seed')
   assert.deepEqual(warnings, [])

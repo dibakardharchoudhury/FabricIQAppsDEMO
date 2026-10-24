@@ -1758,7 +1758,7 @@ class CapabilityTests(unittest.TestCase):
             )),
         )
 
-    def test_sql_graphql_scaffolding_runs_but_required_agent_failure_is_recorded(self):
+    def test_sql_scaffolding_never_creates_stid_api_and_required_agent_failure_is_recorded(self):
         for agents, seed_demo_data in (
             ([], True), ([], False),
             ([{"id": "agent-id", "displayName": "agent"}], True),
@@ -1787,8 +1787,10 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(ns["seed_sql_database"].call_count, int(seed_demo_data))
             self.assertEqual(ns["step_results"]["sql_seed"]["status"],
                              "completed" if seed_demo_data else "not_requested")
-            ns["create_graphql_api"].assert_called_once()
-            ns["update_item_definition"].assert_called_once_with("graphql-id", {"parts": []})
+            ns["create_graphql_api"].assert_not_called()
+            ns["update_item_definition"].assert_not_called()
+            self.assertNotIn("graphql", ns["step_results"])
+            self.assertNotIn("create_graphql_api", source("011"))
             succeeds = bool(agents)
             if succeeds:
                 ns["extend_data_agent_sql_source"].assert_called_once_with("agent-id")

@@ -25,6 +25,30 @@ def definition(stage="published", workspace="workspace", ontology="ontology"):
 
 
 class PublishedIdentityTests(unittest.TestCase):
+    def test_published_sql_requires_target_identity_and_all_selected_operational_tables(self):
+        tables = ["WorkOrders", "MaintenanceNotifications", "Inspections", "SpareParts", "Asset3DModels"]
+        source = {"type": "sql_database", "workspaceId": "workspace", "artifactId": "sql",
+                  "elements": [{"type": "sql_database.schema", "children": [
+                      {"type": "sql_database.table", "display_name": name, "is_selected": True, "children": []}
+                      for name in tables]}]}
+
+        def encoded(stage="published"):
+            return {"definition": {"parts": [{
+                "path": f"Files/Config/{stage}/sql-database-app/datasource.json",
+                "payload": base64.b64encode(json.dumps(source).encode()).decode(),
+            }]}}
+
+        self.assertTrue(module.published_sql_source_ready(encoded(), "workspace", "sql"))
+        self.assertFalse(module.published_sql_source_ready(encoded("draft"), "workspace", "sql"))
+        self.assertFalse(module.published_sql_source_ready(encoded(), "another", "sql"))
+        self.assertFalse(module.published_sql_source_ready(encoded(), "workspace", "another"))
+        source["elements"][0]["children"][0]["is_selected"] = False
+        self.assertFalse(module.published_sql_source_ready(encoded(), "workspace", "sql"))
+        with self.assertRaises(ValueError):
+            module.published_sql_source_ready({"definition": {"parts": [{
+                "path": "Files/Config/published/sql-database-app/datasource.json", "payload": "not-base64",
+            }]}}, "workspace", "sql")
+
     def test_missing_explicit_project_never_creates_a_different_project(self):
         endpoint = "https://selected.services.ai.azure.com/api/projects/hydro"
         for saved in (False, True):
@@ -236,14 +260,14 @@ class PublishedIdentityTests(unittest.TestCase):
         values = {
             "RAYFIN_PUBLIC_EVENTHOUSE_ID": ids[3],
             "RAYFIN_PUBLIC_KQL_DATABASE_ID": ids[4],
-            "RAYFIN_PUBLIC_STID_GRAPHQL_ID": ids[5],
+            "RAYFIN_PUBLIC_LAKEHOUSE_ID": ids[5],
             "RAYFIN_PUBLIC_ITEM_ID": ids[6],
             "RAYFIN_PUBLIC_API_URL": f"https://{'a' * 32}.pbidedicated.windows.net/workload",
             "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-runtime-contract",
         }
         config = {
             "tenant_id": ids[0], "workspace_id": ids[1], "ontology_id": ids[2],
-            "eventhouse_id": ids[3], "database_id": ids[4], "graphql_id": ids[5],
+            "eventhouse_id": ids[3], "database_id": ids[4], "lakehouse_id": ids[5],
             "appbackend_id": ids[6], "api_url": values["RAYFIN_PUBLIC_API_URL"],
             "publishable_key": values["RAYFIN_PUBLIC_PUBLISHABLE_KEY"],
         }

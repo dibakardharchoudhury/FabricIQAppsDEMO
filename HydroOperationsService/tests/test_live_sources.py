@@ -856,7 +856,7 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
         def configured(key):
             identities = {name: str(uuid4()) for name in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "graphql_id", "appbackend_id",
+                "database_id", "lakehouse_id", "appbackend_id",
             )}
             return json.dumps({**identities, "api_url": f"https://{'b' * 32}.pbidedicated.windows.net/workload",
                                "publishable_key": key})
@@ -1028,7 +1028,7 @@ class ContainerPackagingTests(unittest.TestCase):
             self.assertTrue((packaged / "HydroOperationsApp" / "node_modules" / "typescript").is_dir())
             config = {key: str(uuid4()) for key in (
                 "tenant_id", "workspace_id", "ontology_id", "eventhouse_id",
-                "database_id", "graphql_id", "appbackend_id",
+                "database_id", "lakehouse_id", "appbackend_id",
             )}
             config.update(api_url=f"https://{'a' * 32}.pbidedicated.windows.net/workload",
                           publishable_key="pk-synthetic-packaging-contract")

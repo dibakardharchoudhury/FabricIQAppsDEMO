@@ -12,6 +12,7 @@ import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWo
 
 const id = '11111111-1111-1111-1111-111111111111'
 const config = { workspace_id: id, ontology_id: id, database_id: id, eventhouse_id: id, appbackend_id: id,
+  lakehouse_id: id, publishable_key: 'pk-test',
   api_url: `https://${id.replaceAll('-', '')}.pbidedicated.windows.net/webapi/capacities/${id}/workloads/baas/baasservice/automatic/v1/workspaces/${id}/appbackends/${id}`,
   configuration_digest: 'a'.repeat(64) }
 const metadata = { cluster: 'https://test.z.kusto.fabric.microsoft.com', database: 'test' }
@@ -20,15 +21,36 @@ const node = 'ns=2;s=T005.turbine_temp'
 const table = (columns, rows) => ({ Columns: columns.map(ColumnName => ({ ColumnName })), Rows: rows })
 const telemetry = () => table(['opcua_node_id', 'event_time', 'value', 'quality'],
   [[node, new Date(Date.now() - 60000).toISOString(), 75, 'BAD']])
-const stid = () => ({ data: {
+const stid = () => ({
   equipment: { hasNextPage: false, items: [{ equipment_id: 'T005' }] },
-  instruments: { hasNextPage: false, items: [{ equipment_id: 'T005', opcua_node_id: node, unit: 'degC' }] },
-} })
+  instruments: { hasNextPage: false, items: [{ instrument_id: 'I005', equipment_id: 'T005', opcua_node_id: node, unit: 'degC' }] },
+})
 const response = body => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
 const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url => response(
   url.includes('/ontologies/') ? { id, properties: { generation } }
     : url.includes('/kqlDatabases/') ? { id, displayName: 'test', properties: { parentEventhouseItemId: id, queryServiceUri: cluster } }
+      : url.includes('/lakehouses/') ? { id, workspaceId: id, properties: { sqlEndpointProperties: { id } } }
       : { id, capacityId: id })
+
+const appBackendFetch = fetcher => async (url, options) => {
+  if (url.endsWith('/api/auth/v1/brokered/token')) {
+    return response({ accessToken: 'test-session', tokenType: 'Bearer', expiresIn: 300 })
+  }
+  return fetcher(url, options)
+}
+const assetResponse = (query, page) => {
+  const field = query.match(/\{\s*(\w+)\s*(?:\(|\{)/)?.[1]
+  assert.ok(field, 'SDK connector query must have an entity root')
+  return response({ data: { [field]: page } })
+}
+const inventoryFetch = assets => appBackendFetch(async (_url, options) => {
+  const query = JSON.parse(options.body).query
+  const key = query.includes('silverEquipments') ? 'equipment'
+    : query.includes('silverInstruments') ? 'instruments' : 'facilities'
+  const result = assetResponse(query, assets[key])
+  if (assets.errors) return response({ errors: assets.errors })
+  return result
+})
 
 test('every direct tool result carries governed evidence descriptors at the Node boundary', () => {
   const result = governedToolResult('query_signal_quality_snapshot', {
@@ -502,18 +524,19 @@ test('Rayfin operations use the Power BI delegated token required by direct exch
   assert.doesNotMatch(source, /signInWithEntraToken\(client\.auth, \{ entraToken: tokens\.fabric \}\)/)
 })
 
-test('backend drafts freshly verify target and complete work without a SQL write or model priority escalation', async () => {
+test('backend drafts freshly verify target and complete work without a SQL write or model priority escalation', async t => {
   const data = fleetData()
   const args = { equipment_id: 'T2', instrument_id: 'I2', title: 'Inspect signal',
     description: 'Operator-requested signal inspection.', priority: 'Critical' }
   const metadataFetch = async (_url, options) => {
     const query = JSON.parse(options.body).query
-    return response({ data: { records: { hasNextPage: false,
-      items: query.includes('silver_equipments') ? data.equipment : data.instruments } } })
+    return assetResponse(query, { hasNextPage: false,
+      items: query.includes('silverEquipments') ? data.equipment : data.instruments })
   }
+  t.mock.method(globalThis, 'fetch', appBackendFetch(metadataFetch))
   const existing = { rows: [{ id: 'W1', equipmentId: 'T2', workOrderNumber: 'WO1',
     title: 'Other work', status: 'Draft' }], read_completed_at: new Date().toISOString() }
-  const result = await stageWorkOrder(config, args, 'Medium', tokens, metadataFetch, async () => existing)
+  const result = await stageWorkOrder(config, args, 'Medium', tokens, async () => existing)
   assert.equal(result.proposal.priority, 'Medium')
   assert.equal(result.proposal.opcuaNodeId, data.instruments[1].opcua_node_id)
   assert.deepEqual(result.existing_work, existing.rows)
@@ -523,17 +546,21 @@ test('backend drafts freshly verify target and complete work without a SQL write
     { ...args, equipment_id: 'not-in-workspace' },
     { ...args, instrument_id: 'I1' },
     { ...args, opcua_node_id: data.instruments[0].opcua_node_id },
-  ]) await assert.rejects(stageWorkOrder(config, target, 'Medium', tokens, metadataFetch, async () => existing))
-  await assert.rejects(stageWorkOrder(config, args, 'Medium', tokens, metadataFetch,
+  ]) await assert.rejects(stageWorkOrder(config, target, 'Medium', tokens, async () => existing))
+  await assert.rejects(stageWorkOrder(config, args, 'Medium', tokens,
     async () => { throw new Error('EXCHANGE_NOT_ENABLED') }), /EXCHANGE_NOT_ENABLED/)
-  await assert.rejects(stageWorkOrder(config, args, 'Medium', tokens, metadataFetch,
+  await assert.rejects(stageWorkOrder(config, args, 'Medium', tokens,
     async () => ({ rows: [], read_completed_at: 'not-a-time' })), /complete work-source read/)
 })
 
-test('approved SQL submissions pin identity, check duplicates and reconcile lost acknowledgements without another write', async () => {
+test('approved SQL submissions pin identity, check duplicates and reconcile lost acknowledgements without another write', async t => {
   const data = fleetData()
-  const metadataFetch = async (_url, options) => response({ data: { records: { hasNextPage: false,
-    items: JSON.parse(options.body).query.includes('silver_equipments') ? data.equipment : data.instruments } } })
+  const metadataFetch = async (_url, options) => {
+    const query = JSON.parse(options.body).query
+    return assetResponse(query, { hasNextPage: false,
+      items: query.includes('silverEquipments') ? data.equipment : data.instruments })
+  }
+  t.mock.method(globalThis, 'fetch', appBackendFetch(metadataFetch))
   const draft = { equipment_id: 'T2', instrument_id: 'I2', opcua_node_id: data.instruments[1].opcua_node_id }
   const edits = { title: 'Inspect signal', description: 'Operator-reviewed inspection.', priority: 'High',
     equipmentId: 'must-not-override-target' }
@@ -556,7 +583,7 @@ test('approved SQL submissions pin identity, check duplicates and reconcile lost
     return { client, writes: () => writes }
   }
   const invoke = (fixture, allowCreate) => submitApprovedWorkOrder(config, draft, edits, id, creationId,
-    tokens, allowCreate, metadataFetch, async () => fixture.client)
+    tokens, allowCreate, async () => fixture.client)
   const normal = sql()
   const first = await invoke(normal, true)
   assert.equal(first.record.equipmentId, 'T2')
@@ -646,7 +673,7 @@ test('private row identities stay aligned after filter, projection and truncatio
 
 test('explicit runtime configuration is canonical, identity-bound and has no deployment-file dependency', async () => {
   const input = { tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id,
-    database_id: id, graphql_id: id, appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test' }
+    database_id: id, lakehouse_id: id, appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test' }
   const parsed = runtimeConfiguration(input)
   const reversed = Object.fromEntries(Object.entries(input).reverse())
   assert.equal(runtimeConfiguration(reversed).configuration_digest, parsed.configuration_digest)
@@ -792,17 +819,17 @@ test('complete population includes only active mapped signals while preserving e
   assert.equal(result.truncated, false)
 })
 
-test('backend fleet reader completes metadata pagination, uses authoritative Kusto, and never substitutes empty SQL work', async () => {
+test('backend fleet reader completes metadata pagination, uses authoritative Kusto, and never substitutes empty SQL work', async t => {
   const data = fleetData()
   let workReads = 0
   const fetcher = async (url, options) => {
     const body = JSON.parse(options.body)
     if (url.includes('/graphql')) {
-      const equipment = body.query.includes('silver_equipments')
+      const equipment = body.query.includes('silverEquipments')
       const rows = equipment ? data.equipment : data.instruments
-      const next = !body.variables.cursor
-      return response({ data: { records: { items: next ? rows.slice(0, 2) : rows.slice(2),
-        hasNextPage: next, endCursor: next ? 'next' : null } } })
+      const next = !Object.values(body.variables ?? {}).includes('next') && !body.query.includes('"next"')
+      return assetResponse(body.query, { items: next ? rows.slice(0, 2) : rows.slice(2),
+        hasNextPage: next, endCursor: next ? 'next' : null })
     }
     assert.match(body.csl, /arg_max\(event_time, value, quality\)/)
     assert.doesNotMatch(body.csl, /avg\(|where.*quality/)
@@ -819,6 +846,7 @@ test('backend fleet reader completes metadata pagination, uses authoritative Kus
     return response({ Tables: [table(['opcua_node_id', 'event_time', 'value', 'quality'],
       [...latest.values()].map(row => [row.opcua_node_id, row.event_time, row.value, row.quality]))] })
   }
+  t.mock.method(globalThis, 'fetch', appBackendFetch(fetcher))
   const workReader = async () => { workReads++; return data.workOrders }
   const hot = await readFleetSnapshot(config, metadata, true, {}, tokens, fetcher, workReader)
   const bad = await readFleetSnapshot(config, metadata, false, {}, tokens, fetcher, workReader)
@@ -831,9 +859,10 @@ test('backend fleet reader completes metadata pagination, uses authoritative Kus
   await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens, fetcher,
     async () => { const error = new TypeError('sensitive SDK detail'); error.code = 'EXCHANGE_NOT_ENABLED'; throw error }),
   /work-order inventory failed \(EXCHANGE_NOT_ENABLED\).*No partial fleet snapshot/)
-  await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens,
-    async () => response({ errors: [{ message: 'metadata failed' }] }), workReader),
-  /equipment metadata failed \(READ_FAILED\); instrument metadata failed \(READ_FAILED\)/)
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async () => response({ errors: [{ message: 'metadata failed' }] })))
+  await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens, fetcher, workReader),
+    /equipment metadata failed .*instrument metadata failed/)
+  t.mock.method(globalThis, 'fetch', appBackendFetch(fetcher))
   await assert.rejects(readFleetSnapshot(config, metadata, true, {}, tokens,
     async (url, options) => url.includes('/graphql') ? fetcher(url, options)
       : response({ Tables: [], HasErrors: true }), workReader), /error|partial/)
@@ -930,26 +959,29 @@ test('shared row shaping preserves typed cells and filters while excluding undec
   assert.ok(shapeCatalogRows(entity, rows, {}).result.rows.every(row => !Object.hasOwn(row, 'privateUserId')))
 })
 
-test('asset catalog reads every page before filtering and preserves exact column identity', async () => {
+test('asset catalog reads every page before filtering and preserves exact column identity', async t => {
   let reads = 0
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async (url, options) => {
+    assert.ok(url.endsWith('/graphql'))
+    assert.ok(url.includes('/hydrolakehouse/'))
+    assert.ok(!url.includes('/graphqlapis/'))
+    const body = JSON.parse(options.body)
+    assert.match(body.query, /silverEquipments/i)
+    assert.match(body.query, /hasNextPage/)
+    assert.match(body.query, /endCursor/)
+    reads++
+    if (reads === 1) {
+      return assetResponse(body.query, { hasNextPage: true, endCursor: 'next',
+        items: [{ equipment_id: 'T1', criticality: 2, privateUserId: 'not-public' }] })
+    }
+    assert.ok(body.query.includes('next') || Object.values(body.variables ?? {}).includes('next'))
+    return assetResponse(body.query, { hasNextPage: false,
+      items: [{ equipment_id: 'T2', criticality: 4, privateUserId: 'not-public' }] })
+  }))
   const result = await readAssetEntity(config, 'equipment', {
     where: [{ column: 'equipment_id', op: 'eq', value: 'T2' }],
     columns: ['equipment_id', 'criticality'],
-  }, 'test-graphql', async (url, options) => {
-    assert.ok(url.endsWith('/graphql'))
-    const body = JSON.parse(options.body)
-    assert.match(body.query, /records: silver_equipments/)
-    assert.match(body.query, /hasNextPage endCursor/)
-    reads++
-    if (reads === 1) {
-      assert.equal(body.variables.cursor, null)
-      return response({ data: { records: { hasNextPage: true, endCursor: 'next',
-        items: [{ equipment_id: 'T1', criticality: 2, privateUserId: 'not-public' }] } } })
-    }
-    assert.equal(body.variables.cursor, 'next')
-    return response({ data: { records: { hasNextPage: false,
-      items: [{ equipment_id: 'T2', criticality: 4, privateUserId: 'not-public' }] } } })
-  })
+  }, 'test-graphql')
   assert.equal(reads, 2)
   assert.deepEqual(result.rows, [{ equipment_id: 'T2', criticality: 4 }])
   assert.equal(typeof result.rows[0].criticality, 'number')
@@ -1008,7 +1040,8 @@ test('central identity resolution ignores unrelated numbers and rejects ambiguou
   ), /ambiguous/)
 })
 
-test('catalog input and upstream errors fail before returning source-shaped defaults', async () => {
+test('catalog input and upstream errors fail before returning source-shaped defaults', async t => {
+  t.mock.method(globalThis, 'fetch', () => assert.fail('Invalid arguments must not access the connector.'))
   for (const [entity, args] of [
     ['not-a-table', {}], ['equipment', { columns: ['privateUserId'] }],
     ['equipment', { columns: ['equipment_id', 'equipment_id'] }],
@@ -1019,8 +1052,8 @@ test('catalog input and upstream errors fail before returning source-shaped defa
       assert.fail('Invalid catalog arguments must be rejected before source access.')
     }))
   }
-  await assert.rejects(readAssetEntity(config, 'equipment', {}, 'test', async () =>
-    response({ errors: [{ message: 'upstream error' }], data: { records: { items: [] } } })), /query failed/)
+  t.mock.method(globalThis, 'fetch', appBackendFetch(async () => response({ errors: [{ message: 'upstream error' }] })))
+  await assert.rejects(readAssetEntity(config, 'equipment', {}, 'test'), /connector read failed/)
 })
 
 test('complete catalog reads reject duplicate identity, malformed pagination and over-bound populations', async () => {
@@ -1090,7 +1123,7 @@ test('live discovery verifies generation, ownership and current capacity', async
 
 test('discovery is memoized per configuration and bearer, coalesced, and never caches a failure', async () => {
   const runtime = {
-    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
     appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const digest = runtimeConfiguration(runtime).configuration_digest
@@ -1103,18 +1136,18 @@ test('discovery is memoized per configuration and bearer, coalesced, and never c
   const request = token => ({ action: 'discover', configuration_digest: digest, tokens: { fabric: token } })
   try {
     const [first, concurrent] = await Promise.all([handle(request('token-a')), handle(request('token-a'))])
-    assert.equal(calls, 3)
+    assert.equal(calls, 4)
     assert.deepEqual(first, concurrent)
     await handle(request('token-a'))
-    assert.equal(calls, 3)
+    assert.equal(calls, 4)
     await handle(request('token-b'))
-    assert.equal(calls, 6)
+    assert.equal(calls, 8)
     generation = 1
     await assert.rejects(handle(request('token-c')), /generation 2/)
     const afterFailure = calls
     generation = 2
     await handle(request('token-c'))
-    assert.equal(calls, afterFailure + 3)
+    assert.equal(calls, afterFailure + 4)
   } finally {
     globalThis.fetch = originalFetch
     if (originalConfig === undefined) delete process.env.HYDRO_FABRIC_SOURCE_CONFIG
@@ -1124,7 +1157,7 @@ test('discovery is memoized per configuration and bearer, coalesced, and never c
 
 test('serve mode answers id-tagged requests and isolates malformed input', () => {
   const runtime = {
-    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
     appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const input = [
@@ -1256,7 +1289,7 @@ test('abbreviations and short identifiers are equivalent to their long forms', (
 
 test('the approval action returns the committed write result after a successful or reconciled write', async () => {
   const runtime = {
-    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, graphql_id: id,
+    tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
     appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const digest = runtimeConfiguration(runtime).configuration_digest
@@ -1425,13 +1458,11 @@ test('generic telemetry reads preserve source columns and reject ambiguous or ov
   }
 })
 
-test('source read binds STID nodes, keeps raw BAD samples and uses shared latest query', async () => {
+test('source read binds connector nodes, keeps raw BAD samples and uses shared latest query', async t => {
+  t.mock.method(globalThis, 'fetch', inventoryFetch(stid()))
   const result = await readTelemetry(config, metadata, 'T005', tokens, async (url, options) => {
     const body = JSON.parse(options.body)
-    if (url.endsWith('/graphql')) {
-      assert.equal(body.variables.id, 'T005')
-      return response(stid())
-    }
+    assert.ok(!url.includes('/graphqlapis/'))
     assert.match(body.csl, /arg_max\(event_time, value, quality\)/)
     assert.ok(body.csl.includes(node))
     assert.equal(body.db, 'test')
@@ -1443,34 +1474,37 @@ test('source read binds STID nodes, keeps raw BAD samples and uses shared latest
   assert.deepEqual(result.missing_sources, [])
 })
 
-test('stale and missing measurements remain explicit instead of healthy defaults', async () => {
+test('stale and missing measurements remain explicit instead of healthy defaults', async t => {
   const assets = stid()
-  assets.data.instruments.items.push({ equipment_id: 'T005', opcua_node_id: 'other', unit: 'rpm' })
+  assets.instruments.items.push({ instrument_id: 'I006', equipment_id: 'T005', opcua_node_id: 'other', unit: 'rpm' })
+  t.mock.method(globalThis, 'fetch', inventoryFetch(assets))
   const measurement = telemetry()
   measurement.Rows[0][1] = new Date(Date.now() - 3600000).toISOString()
   const result = await readTelemetry(config, metadata, 'T005', tokens,
-    async url => response(url.endsWith('/graphql') ? assets : { Tables: [measurement] }))
+    async () => response({ Tables: [measurement] }))
   assert.deepEqual(result.missing_sources, ['measurements_for_some_mapped_signals', 'fresh_telemetry'])
 })
 
-test('ambiguous metadata and incomplete GraphQL reads cannot reach KQL', async () => {
+test('ambiguous metadata and incomplete connector reads cannot reach KQL', async t => {
   for (const alter of [
     assets => { assets.errors = [{ message: 'failed' }] },
-    assets => { assets.data.instruments.hasNextPage = true },
-    assets => { assets.data.instruments.items[0].unit = null },
-    assets => { assets.data.instruments.items[0].equipment_id = 'another' },
-    assets => { assets.data.instruments.items.push(assets.data.instruments.items[0]) },
-    assets => { assets.data.equipment.items = [] },
+    assets => { assets.instruments.hasNextPage = true },
+    assets => { assets.instruments.items[0].unit = null },
+    assets => { assets.instruments.items[0].equipment_id = 'another' },
+    assets => { assets.instruments.items.push(assets.instruments.items[0]) },
+    assets => { assets.equipment.items = [] },
   ]) {
     const assets = stid()
     alter(assets)
+    t.mock.method(globalThis, 'fetch', inventoryFetch(assets))
     let calls = 0
-    await assert.rejects(readTelemetry(config, metadata, 'T005', tokens, async () => { calls++; return response(assets) }))
-    assert.equal(calls, 1)
+    await assert.rejects(readTelemetry(config, metadata, 'T005', tokens, async () => { calls++; return response({}) }))
+    assert.equal(calls, 0)
   }
 })
 
-test('telemetry rejects empty, unknown, duplicate, non-numeric and future data', async () => {
+test('telemetry rejects empty, unknown, duplicate, non-numeric and future data', async t => {
+  t.mock.method(globalThis, 'fetch', inventoryFetch(stid()))
   for (const alter of [
     data => { data.Rows = [] },
     data => { data.Rows[0][0] = 'unmapped-node' },
@@ -1482,7 +1516,7 @@ test('telemetry rejects empty, unknown, duplicate, non-numeric and future data',
     const data = telemetry()
     alter(data)
     await assert.rejects(readTelemetry(config, metadata, 'T005', tokens,
-      async url => response(url.endsWith('/graphql') ? stid() : { Tables: [data] })))
+      async () => response({ Tables: [data] })))
   }
 })
 

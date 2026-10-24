@@ -664,7 +664,12 @@ binds a request to its sources; a changed configuration fails before source read
 The configured graph binding supplies the selected ontology ID only: this reader
 does not query, fabricate or certify native graph topology.
 
-STID resolves one exact equipment ID and its instrument IDs/units. The KQL query
+The same read-only `hydrolakehouse` connector used by the SPA resolves exact equipment
+and instrument IDs/units, with complete pagination and duplicate-identity rejection.
+No separate `Hydro_STID_API` is discovered, configured or provisioned. The source
+fingerprint pins the selected Lakehouse ID; live discovery verifies its SQL analytics
+endpoint identity. AppBackend GraphQL and delegated Power BI tokens remain for
+operational SQL reads and approval-gated writes. The KQL query
 returns the latest raw sample for each mapped signal within 24 hours, retains BAD
 quality samples, and labels missing samples and readings older than 30 minutes.
 It is not the fleet's 30-minute "running hot" query and does not invent a physical

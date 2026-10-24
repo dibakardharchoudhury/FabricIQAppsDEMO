@@ -695,7 +695,7 @@ model call it autonomously.
 | `401`/`403` from Foundry | Missing `Cognitive Services OpenAI User`, or the resource is in another tenant |
 | "Need admin approval" | A `.default` scope was requested instead of a named one |
 | Engine toggle missing | `RAYFIN_PUBLIC_FOUNDRY_*` unset, or the app wasn't rebuilt after setting them |
-| "Asset metadata is not connected" | STID GraphQL not yet consented — use **Connect** in the app once |
+| "Asset metadata is not connected" | Verify the selected Lakehouse SQL endpoint and read-only `hydrolakehouse` connector, then use **Connect** in the app |
 | "Weather data is not connected" | Check delegated sign-in, the selected Lakehouse and its `hydrolakehouse` connector binding; visiting another page is not a hosted-agent prerequisite |
 | "stopped after too many tool calls" | Hit the 6-iteration cap; narrow the question |
 | "disabled in Administration" | The tool or table was switched off in **Administration → Foundry Copilot** |

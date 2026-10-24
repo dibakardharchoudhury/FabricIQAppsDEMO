@@ -131,7 +131,7 @@ def compose_runtime_configuration(
     fabric_source: dict[str, object] = {
         "tenant_id": tenant, "workspace_id": workspace, "ontology_id": ontology,
         "eventhouse_id": values["RAYFIN_PUBLIC_EVENTHOUSE_ID"], "database_id": values["RAYFIN_PUBLIC_KQL_DATABASE_ID"],
-        "graphql_id": values["RAYFIN_PUBLIC_STID_GRAPHQL_ID"], "appbackend_id": values["RAYFIN_PUBLIC_ITEM_ID"],
+        "lakehouse_id": values["RAYFIN_PUBLIC_LAKEHOUSE_ID"], "appbackend_id": values["RAYFIN_PUBLIC_ITEM_ID"],
         "api_url": values["RAYFIN_PUBLIC_API_URL"], "publishable_key": values["RAYFIN_PUBLIC_PUBLISHABLE_KEY"],
     }
     return orchestrator, fabric_source

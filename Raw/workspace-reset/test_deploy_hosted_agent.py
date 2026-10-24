@@ -42,7 +42,7 @@ ENDPOINT = "https://res.services.ai.azure.com/api/projects/proj"
 PROJECT_ID = ("/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/res/projects/proj")
 VALUES = {
     "RAYFIN_PUBLIC_EVENTHOUSE_ID": GUIDS["eventhouse"], "RAYFIN_PUBLIC_KQL_DATABASE_ID": GUIDS["database"],
-    "RAYFIN_PUBLIC_STID_GRAPHQL_ID": GUIDS["graphql"], "RAYFIN_PUBLIC_ITEM_ID": GUIDS["appbackend"],
+    "RAYFIN_PUBLIC_LAKEHOUSE_ID": GUIDS["graphql"], "RAYFIN_PUBLIC_ITEM_ID": GUIDS["appbackend"],
     "RAYFIN_PUBLIC_API_URL": "https://" + "a" * 32 + ".pbidedicated.windows.net/x/",
     "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-test",
 }
@@ -210,7 +210,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(orchestrator["project_endpoint"], ENDPOINT)
         self.assertIs(orchestrator["production_writes_enabled"], False)
         self.assertEqual(set(fabric), {"tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id",
-                                       "graphql_id", "appbackend_id", "api_url", "publishable_key"})
+                                       "lakehouse_id", "appbackend_id", "api_url", "publishable_key"})
         self.assertIs(configuration(True)[0][0]["production_writes_enabled"], True)
 
     def test_the_hosted_config_passes_the_deployers_own_verification(self):
@@ -225,7 +225,7 @@ class ConfigurationTests(unittest.TestCase):
         values = {key: value for key, value in VALUES.items()}
         for key, name in (
             ("RAYFIN_PUBLIC_EVENTHOUSE_ID", "eventhouse"), ("RAYFIN_PUBLIC_KQL_DATABASE_ID", "database"),
-            ("RAYFIN_PUBLIC_STID_GRAPHQL_ID", "graphql"), ("RAYFIN_PUBLIC_ITEM_ID", "appbackend"),
+            ("RAYFIN_PUBLIC_LAKEHOUSE_ID", "graphql"), ("RAYFIN_PUBLIC_ITEM_ID", "appbackend"),
         ):
             values[key] = ids[name]
         values["RAYFIN_PUBLIC_API_URL"] = "https://" + "b" * 32 + ".pbidedicated.windows.net/other/"

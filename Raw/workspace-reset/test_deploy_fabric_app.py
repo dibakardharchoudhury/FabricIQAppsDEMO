@@ -172,8 +172,12 @@ class HostedSourceBootstrapTests(unittest.TestCase):
             "sync_workspace_from_git.notebook_definition", return_value=self.definition))
         self.runtime = self.enterContext(patch("sync_workspace_from_git.ensure_spark_runtime"))
         self.environments = self.enterContext(patch("sync_workspace_from_git.verify_environment_runtimes"))
+        self.source_ready = False
+        self.publication = self.enterContext(patch.object(
+            DEPLOY, "_published_operational_source_ready",
+            side_effect=lambda *args: self.source_ready or not self.states))
 
-    def test_missing_graphql_bootstraps_without_demo_dml_then_refreshes_identity(self):
+    def test_missing_published_sql_bootstraps_without_demo_dml_then_verifies_readback(self):
         DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertEqual(self.post.call_args.kwargs["json"], {"parameters": [
             {"name": "sql_db_item_name", "value": "target-sql", "type": "Text"},
@@ -181,14 +185,14 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         ]})
         self.runtime.assert_called_once()
         self.environments.assert_called_once()
-        self.assertIn(self.graphql, self.env.read_text(encoding="utf-8"))
-        self.discover.assert_called_once_with(self.workspace, "tenant", self.values)
+        self.assertEqual(self.publication.call_count, 2)
+        self.discover.assert_not_called()
 
-    def test_existing_graphql_needs_no_notebook_or_demo_seed(self):
-        self.values["RAYFIN_PUBLIC_STID_GRAPHQL_ID"] = self.graphql
+    def test_existing_published_sql_needs_no_notebook_or_demo_seed(self):
+        self.source_ready = True
         DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.post.assert_not_called()
-        self.headers.assert_not_called()
+        self.headers.assert_called_once()
         self.definition_read.assert_not_called()
 
     def test_old_notebook_cannot_silently_ignore_the_nonseeding_parameter(self):
@@ -235,9 +239,10 @@ class HostedSourceBootstrapTests(unittest.TestCase):
                 DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.discover.assert_not_called()
 
-    def test_completion_without_verified_graphql_identity_is_not_success(self):
-        self.discover.return_value = {"RAYFIN_PUBLIC_STID_GRAPHQL_ID": ""}
-        with self.assertRaisesRegex(DEPLOY.DeployError, "no verified independent STID"):
+    def test_completion_without_verified_sql_publication_is_not_success(self):
+        self.publication.side_effect = None
+        self.publication.return_value = False
+        with self.assertRaisesRegex(DEPLOY.DeployError, "SQL source publication could not be verified"):
             DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertNotIn(self.graphql, self.env.read_text(encoding="utf-8"))
 
@@ -1686,7 +1691,7 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             self.assertNotIn("workspaces/old", rebound)
             self.assertIn("RTI_Demo_Eventhouse_V3", rebound)
             self.assertIn(self.cluster, rebound)
-            self.assertIn(self.graphql, rebound)
+            self.assertNotIn("STID_GRAPHQL", rebound)
             self.assertEqual((rayfin_dir / ".env.local").read_text(encoding="utf-8"), "CLI-owned generated output")
 
     def test_fresh_template_cannot_reintroduce_stale_defaults(self):
@@ -1695,7 +1700,7 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
         rebound = DEPLOY._rebind_public_env(stale_template, resolved)
         self.assertNotIn("V6", rebound)
         self.assertNotIn("workspaces/old", rebound)
-        self.assertIn("RAYFIN_PUBLIC_STID_GRAPHQL_URL=https://api.fabric.microsoft.com/v1/workspaces/" + self.workspace, rebound)
+        self.assertNotIn("STID_GRAPHQL", rebound)
         self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], self.database)
         self.assertEqual(resolved["RAYFIN_PUBLIC_EVENTHOUSE_ID"], self.eventhouse)
 
@@ -1724,11 +1729,11 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
         self.items = [item for item in self.items if item["type"] != "GraphQLApi"]
         resolved = self.resolve()
         for key in [
-            "RAYFIN_PUBLIC_STID_GRAPHQL_URL", "RAYFIN_PUBLIC_STID_GRAPHQL_ID",
             "RAYFIN_PUBLIC_STREAM_PIPELINE_ID", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID",
             "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT",
         ]:
             self.assertEqual(resolved[key], "", key)
+        self.assertNotIn("RAYFIN_PUBLIC_STID_GRAPHQL_ID", resolved)
         self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE"], "RTI_Demo_Eventhouse_V3")
 
     def test_missing_optional_jobs_keep_discoverable_names_but_clear_stale_ids(self):
@@ -1792,13 +1797,12 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
         resolved = self.resolve({**self.config, "RAYFIN_PUBLIC_KQL_DATABASE": "Second database"})
         self.assertEqual(resolved["RAYFIN_PUBLIC_KQL_DATABASE_ID"], "second-database")
 
-    def test_duplicate_stid_candidates_fail_and_unrelated_graphql_is_not_selected(self):
+    def test_retired_stid_and_unrelated_graphql_items_are_not_deployment_dependencies(self):
         self.items.append({"id": "other-graphql", "type": "GraphQLApi", "displayName": "Hydro_STID_API"})
-        with self.assertRaisesRegex(DEPLOY.DeployError, "Ambiguous target-workspace GraphQLApi"):
-            self.resolve()
+        self.assertNotIn("RAYFIN_PUBLIC_STID_GRAPHQL_ID", self.resolve())
         self.items = [item for item in self.items if item["type"] != "GraphQLApi"]
         self.items.append({"id": "other-graphql", "type": "GraphQLApi", "displayName": "Unrelated API"})
-        self.assertEqual(self.resolve()["RAYFIN_PUBLIC_STID_GRAPHQL_URL"], "")
+        self.assertNotIn("RAYFIN_PUBLIC_STID_GRAPHQL_URL", self.resolve())
 
     def test_graph_binding_is_preserved_only_when_operator_mapping_is_target_scoped(self):
         self.items.extend([

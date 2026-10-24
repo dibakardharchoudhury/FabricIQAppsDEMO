@@ -499,7 +499,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 patch.object(workspace, "_verify_schedules_disabled"),
                 patch.object(workspace, "_verify_data"),
             ):
-                workspace.finish()
+                workspace.finish(lakehouse_counts={"facilities": 3, "equipment": 15, "instruments": 135})
             self.assertEqual(run.call_args_list[0].args, (
                 "RTI_011_seed_sql_wire_graphql_agent", "Notebook", {
                     "parameters": [
@@ -532,7 +532,7 @@ class FeatureWorkspaceTests(unittest.TestCase):
                 events = []
                 workspace.configure_app.side_effect = lambda path: events.append("configure")
                 workspace.prepare.side_effect = lambda: events.append("prepare")
-                workspace.finish.side_effect = lambda: events.append("finish")
+                workspace.finish.side_effect = lambda **kwargs: events.append("finish")
 
                 def readiness(step):
                     events.append(step)
@@ -562,6 +562,9 @@ class FeatureWorkspaceTests(unittest.TestCase):
                         patch.object(deploy, "validate_fabric_app", return_value=item_id),
                         patch.object(deploy, "validate_hosted_page", return_value="verified"),
                         patch.object(deploy, "validate_lakehouse_connector_apply"),
+                        patch.object(deploy, "verify_lakehouse_connector", return_value={
+                            "facilities": 3, "equipment": 15, "instruments": 135,
+                        }),
                         patch.object(deploy, "validate_rayfin_publishable_key", return_value="pk-test"),
                         patch.object(deploy, "validate_spa_redirect_preservation"),
                         patch.object(deploy, "validate_entra_live_auth_with_reauth", side_effect=lambda *args: readiness("auth-ready")),

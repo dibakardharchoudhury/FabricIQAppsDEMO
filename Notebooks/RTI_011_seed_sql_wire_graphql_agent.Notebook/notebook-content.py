@@ -23,22 +23,21 @@
 
 # MARKDOWN ********************
 
-# # 11 — Seed the operational SQL DB, wire GraphQL, add SQL source to the Data Agent
+# # 11 — Seed the operational SQL DB and add its source to the Data Agent
 # 
 # This notebook runs after the Hydro Operations AppBackend and its SQL Database tables exist.
-# The canonical deployer calls it with `seed_demo_data=False` when the independent GraphQL
+# The canonical deployer calls it with `seed_demo_data=False` when the published SQL source
 # prerequisite is missing, before provisioning Foundry. This does not write operational rows.
 # The web app's explicit **Seed & provision** action retains the default demo-data MERGE behavior.
 # 
 # 1. **Seed** — connects to the `hydro-operations` SQL Database T-SQL endpoint (SPN) and
 #    runs the idempotent `MERGE` seed (embedded `SEED_SQL`).
-# 2. **GraphQL** — creates (or reuses) the STID `GraphQlApi` item over the Lakehouse,
-#    provisioning the hosted crew's independent source verification. The SPA uses its Lakehouse connector.
-# 3. **Data Agent** — adds the operational SQL Database to the live agent and
+# 2. **Data Agent** — adds the operational SQL Database to the live agent and
 #    **republishes**, preserving existing sources and custom settings. This step is
 #    independent of NB09's ontology result and requires no ontology source or runtime proof.
 #
-# SQL seed and GraphQL run independently of Data Agent availability. The SQL source step
+# Lakehouse asset and weather reads use the app's read-only connector; no STID API is provisioned.
+# SQL seed runs independently of Data Agent availability. The SQL source step
 # always extends the provisioned Data Agent with the SQL source. Real failures are surfaced after saving the per-step results.
 # Exact SQL draft/published readback confirms publication, not runtime verification.
 # 
@@ -100,7 +99,6 @@ def first_setting(*names, required: bool = False, default: str = None):
 
 
 workspace_id = first_setting("workspace_id", required=True)
-target_folder_id = first_setting("target_folder_id", default=None)
 
 # The Rayfin app publishes its operational store as a Fabric SQL Database item.
 # OLD CODE sql_db_item_name = first_setting("operational_sql_db_name", "rayfin_app_name", default="hydro-operations")
@@ -112,11 +110,6 @@ if not sql_db_item_name:
         "sql_db_item_name was not supplied. "
         "RTI_011 refuses to guess which Rayfin SQL Database to seed."
     )
-
-# STID GraphQL item over the Lakehouse (consumed by the web app's STID panel).
-graphql_api_name = first_setting("stid_graphql_name", default="Hydro_STID_API")
-lakehouse_id = first_setting("lakehouse_id", required=True)
-lakehouse_name = first_setting("lakehouse_name", default="Energy_IQ_LakehouseRTI_V6")
 
 # Published Data Agent created by RTI_009.
 data_agent_name = first_setting("data_agent_name", default=None)
@@ -134,8 +127,6 @@ key_vault_client_secret_secret = first_setting("key_vault_client_secret_secret",
 print("✅ Settings loaded")
 print("   Workspace ID       :", workspace_id)
 print("   SQL Database item   :", sql_db_item_name)
-print("   GraphQL API name    :", graphql_api_name)
-print("   Lakehouse name      :", lakehouse_name)
 print("   Data Agent name     :", data_agent_name)
 print("   Data Agent id       :", data_agent_id or "(resolve by name)")
 
@@ -150,7 +141,7 @@ print("   Data Agent id       :", data_agent_id or "(resolve by name)")
 
 # =========================
 # CELL 1
-# Seed SQL -> create GraphQL -> add SQL source to the Data Agent -> republish
+# Seed SQL -> add SQL source to the Data Agent -> republish
 # =========================
 
 import json
@@ -165,7 +156,6 @@ import notebookutils  # Fabric notebook utility
 
 FABRIC_API_BASE = "https://api.fabric.microsoft.com"
 DATA_AGENT_ITEM_TYPE = "DataAgent"
-GRAPHQL_ITEM_TYPE = "GraphQLApi"
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
@@ -214,66 +204,6 @@ SQL_TABLES = [
      "Digital-twin / 3D model registry per equipment. Columns: id, equipmentId, "
      "modelName, format (GLB/IFC/OBJ/USDZ), modelUrl, thumbnailUrl, fileSizeMb, "
      "version, updatedByOid, updatedAt."),
-]
-
-# --- STID GraphQL API binding over the Lakehouse SQL analytics endpoint ------
-# The web app (HydroOperationsApp) issues exactly this query, so the GraphQL API
-# must expose the configured silver, canonical weather, and serving weather tables with
-# these fields (identity-mapped to the lakehouse columns). graphqlType is the generated query field name.
-GRAPHQL_DEFINITION_SCHEMA_URL = (
-    "https://developer.microsoft.com/json-schemas/fabric/item/graphqlApi/"
-    "definition/1.0.0/schema.json"
-)
-GRAPHQL_DEFINITION_PATH = "graphql-definition.json"
-GRAPHQL_OBJECTS = [
-    ("silver_facilities",
-     ["facility_id", "facility_name", "type", "country", "lat", "lon", "commissioned_date"]),
-    ("silver_systems",
-     ["system_id", "facility_id", "system_name", "oag_rds_system_code"]),
-    ("silver_equipment",
-     ["equipment_id", "facility_id", "system_id", "equipment_type_code", "equipment_type_name",
-      "tag", "manufacturer", "model", "criticality", "install_date", "status", "is_active"]),
-    ("silver_instruments",
-     ["opcua_node_id", "tag", "instrument_id", "equipment_id", "system_id", "facility_id",
-      "unit", "instrument_type", "is_active"]),
-        ("weather_sources",
-         ["source_id", "source_name", "source_type", "provider", "license", "endpoint",
-            "active", "updated_at_utc"]),
-        ("weather_ingestion_runs",
-         ["run_id", "source_id", "source_item_id", "data_kind", "reference_time_utc",
-            "started_at_utc", "completed_at_utc", "status", "row_count", "error_message"]),
-        ("weather_locations",
-         ["location_id", "location_name", "latitude", "longitude", "elevation_m",
-            "metadata_json", "updated_at_utc"]),
-        ("weather_areas",
-         ["area_id", "area_name", "geometry_geojson", "crs", "metadata_json", "updated_at_utc"]),
-        ("weather_observations",
-         ["source_id", "variable_id", "location_id", "latitude", "longitude",
-            "observed_at_utc", "observed_date", "value", "unit", "quality", "source_item_id",
-            "run_id", "ingested_at_utc"]),
-        ("weather_forecasts",
-         ["source_id", "variable_id", "location_id", "latitude", "longitude",
-            "reference_time_utc", "valid_time_utc", "valid_date", "lead_hours", "interval_hours",
-            "value", "unit", "ensemble_member", "source_item_id", "run_id", "ingested_at_utc"]),
-        ("weather_area_metrics",
-            ["source_id", "variable_id", "area_id", "data_kind", "forecast_type", "reference_time_utc",
-            "valid_time_utc", "lead_hours", "interval_hours", "area_coverage_fraction",
-            "area_weighted_value", "unit", "rainfall_volume_m3", "cumulative_value",
-            "cumulative_rainfall_volume_m3", "contributing_cell_count", "aggregation_method",
-            "source_item_id", "run_id", "calculated_at_utc"]),
-        ("weather_variables",
-         ["variable_id", "canonical_name", "canonical_unit", "aggregation_kind",
-            "description", "updated_at_utc"]),
-        ("weather_latest_forecasts",
-         ["source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc",
-            "lead_hours", "precipitation_interval_hours", "cumulative_precipitation",
-            "rainfall_volume_m3", "cumulative_rainfall_volume_m3", "precipitation",
-            "temperature", "pressure", "relative_humidity", "dew_point", "solar_radiation",
-            "wind_speed", "wind_gust", "wind_direction", "calculated_at_utc"]),
-        ("weather_latest_observations",
-         ["source_id", "location_id", "observed_at_utc", "precipitation", "temperature",
-            "pressure", "relative_humidity", "dew_point", "solar_radiation", "wind_speed",
-            "wind_gust", "wind_direction", "calculated_at_utc"]),
 ]
 
 OPERATIONAL_INSTRUCTIONS_MARKER = f"## Operational data ({sql_db_item_name} SQL)"
@@ -710,64 +640,6 @@ def upsert_part(parts: list, path: str, obj: dict) -> list:
     return parts
 
 
-def resolve_sql_analytics_endpoint_id(
-    parent_name: str, parent_kind: str = "sqldatabase", parent_id: Optional[str] = None
-) -> Optional[str]:
-    """Resolve the SQL analytics endpoint (a separate SQLEndpoint workspace item) that
-    mirrors a Lakehouse or Fabric SQL Database. Data Agent `data_warehouse` sources and
-    GraphQL `SqlAnalyticsEndpoint` datasources must reference THIS id — not the parent
-    Lakehouse/SQLDatabase item id. Returns None if it can't be resolved (callers fall back
-    to the parent id so behaviour degrades gracefully)."""
-    # 1) Lakehouses expose their endpoint id directly in item properties.
-    if parent_kind == "lakehouse" and parent_id:
-        resp = api_request("GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/lakehouses/{parent_id}")
-        if resp is not None and resp.status_code == 200 and resp.content:
-            props = (resp.json() or {}).get("properties", {}) or {}
-            ep_id = (props.get("sqlEndpointProperties") or {}).get("id")
-            if ep_id:
-                return ep_id
-    # 2) Otherwise list workspace items of type SQLEndpoint and match by display name.
-    resp = api_request(
-        "GET", f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items", params={"type": "SQLEndpoint"}
-    )
-    if resp is not None and resp.status_code == 200 and resp.content:
-        items = (resp.json() or {}).get("value", []) or []
-        target = (parent_name or "").lower()
-        for it in items:  # exact display-name match first
-            if (it.get("displayName") or "").lower() == target:
-                return it.get("id")
-        for it in items:  # then a contains match (endpoints are sometimes suffixed)
-            if target and target in (it.get("displayName") or "").lower():
-                return it.get("id")
-    return None
-
-
-def build_graphql_definition(source_endpoint_id: str) -> dict:
-    """Bind the app GraphQL API to the Lakehouse SQL analytics endpoint, exposing
-    the configured silver, canonical weather, and serving weather tables."""
-    objects = []
-    for table, cols in GRAPHQL_OBJECTS:
-        objects.append({
-            "graphqlType": table,
-            "sourceObject": f"dbo.{table}",
-            "sourceObjectType": "Table",
-            "actions": {"Query": "Enabled", "Query_by_pk": "Enabled"},
-            "fieldMappings": {c: c for c in cols},
-            "relationships": [],
-        })
-    return {
-        "$schema": GRAPHQL_DEFINITION_SCHEMA_URL,
-        "datasources": [
-            {
-                "sourceItemId": source_endpoint_id,
-                "sourceWorkspaceId": workspace_id,
-                "sourceType": "SqlAnalyticsEndpoint",
-                "objects": objects,
-            }
-        ],
-    }
-
-
 # ---------------------------------------------------------------------------
 # STEP A — Seed the operational SQL Database (idempotent MERGE via SPN + pyodbc)
 # ---------------------------------------------------------------------------
@@ -939,75 +811,7 @@ except Exception as exc:  # noqa: BLE001 - best-effort seed with manual fallback
 
 
 # ---------------------------------------------------------------------------
-# STEP B — Create (or reuse) the STID GraphQL API item over the Lakehouse
-# ---------------------------------------------------------------------------
-def create_graphql_api(name: str) -> Optional[dict]:
-    existing = find_item_by_name(name, item_type=GRAPHQL_ITEM_TYPE)
-    if existing:
-        print(f"✅ Reusing existing GraphQL API: {name} (id={existing.get('id')})")
-        return existing
-    body = {"displayName": name, "type": GRAPHQL_ITEM_TYPE}
-    if target_folder_id:
-        body["folderId"] = target_folder_id
-    url = f"{FABRIC_API_BASE}/v1/workspaces/{workspace_id}/items"
-    response = api_request("POST", url, data=body, timeout=120)
-    if response.status_code in (200, 201):
-        created = response.json() if response.content else {}
-        print(f"✅ Created GraphQL API: {name} (id={created.get('id')})")
-        return created
-    if response.status_code == 202:
-        operation_url = response.headers.get("Location")
-        if operation_url:
-            wait_for_lro(operation_url)
-        created = find_item_by_name(name, item_type=GRAPHQL_ITEM_TYPE) or {}
-        print(f"✅ Created GraphQL API (via LRO): {name} (id={created.get('id')})")
-        return created
-    raise RuntimeError(f"Failed to create GraphQL API: {response.status_code} {response.text}")
-
-
-stid_graphql_id = None
-print("\n=== STEP B — STID GraphQL API item ===")
-try:
-    graphql_item = create_graphql_api(graphql_api_name)
-    stid_graphql_id = (graphql_item or {}).get("id")
-
-    # Bind the GraphQL API to the Lakehouse SQL analytics endpoint and expose every
-    # silver, canonical weather, and serving weather table in GRAPHQL_OBJECTS.
-    lakehouse_endpoint_id = resolve_sql_analytics_endpoint_id(
-        lakehouse_name, parent_kind="lakehouse", parent_id=lakehouse_id
-    )
-    if not lakehouse_endpoint_id:
-        raise RuntimeError(
-            f"Could not resolve the SQL analytics endpoint of Lakehouse '{lakehouse_name}'. "
-            "Ensure the lakehouse (and its SQL endpoint) exists, then re-run."
-        )
-    print(f"✅ Lakehouse SQL analytics endpoint id: {lakehouse_endpoint_id}")
-
-    gql_definition = get_item_definition(stid_graphql_id)
-    gql_parts = definition_parts(gql_definition, allow_empty=True)
-    gql_parts = upsert_part(
-        gql_parts, GRAPHQL_DEFINITION_PATH, build_graphql_definition(lakehouse_endpoint_id)
-    )
-    print(f"Applying GraphQL definition: {len(GRAPHQL_OBJECTS)} object(s) over dbo Lakehouse tables")
-    update_item_definition(stid_graphql_id, {"parts": gql_parts})
-    step_results["graphql"] = {"status": "configured", "reason": ""}
-    print(
-        f"🌐 GraphQL API '{graphql_api_name}' bound to '{lakehouse_name}' — exposing "
-        + ", ".join(t for t, _ in GRAPHQL_OBJECTS)
-    )
-except Exception as exc:  # noqa: BLE001 - best-effort; portal creation is the fallback
-    step_results["graphql"] = {"status": "failed", "reason": str(exc)}
-    step_errors.append(exc)
-    print("⚠️ GraphQL API creation/binding did not complete:")
-    print("   ", exc)
-    print(
-        f"   Manual fallback: open '{graphql_api_name}' → Get data → Lakehouse SQL analytics "
-        f"endpoint of '{lakehouse_name}' → expose every table listed in GRAPHQL_OBJECTS."
-    )
-
-
-# ---------------------------------------------------------------------------
-# STEP C — Add the SQL Database as a Data Agent source and republish
+# STEP B — Add the SQL Database as a Data Agent source and republish
 # ---------------------------------------------------------------------------
 def resolve_data_agent_id() -> Optional[str]:
     # Never trust a persisted data_agent_id blindly — the agent may have been deleted/rebuilt
@@ -1198,7 +1002,7 @@ def persist_sql_extension_status(result: dict) -> None:
      .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute())
 
 
-print("\n=== STEP C — Data Agent SQL source ===")
+print("\n=== STEP B — Data Agent SQL source ===")
 step_results["data_agent_sql_source"] = {
     "status": "failed", "reason": "SQL source step did not complete; inspect the raised exception.",
 }
@@ -1219,15 +1023,10 @@ finally:
 # ---------------------------------------------------------------------------
 # Persist discovered ids back to rti_demo_settings
 # ---------------------------------------------------------------------------
-persist = {
-    "stid_graphql_deployment_status": step_results["graphql"]["status"],
-}
+persist = {}
 
 if seed_demo_data:
     persist["operational_sql_seed_status"] = step_results["sql_seed"]["status"]
-
-if stid_graphql_id:
-    persist["stid_graphql_id"] = stid_graphql_id
 
 if persist:
     from delta.tables import DeltaTable

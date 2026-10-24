@@ -28,7 +28,7 @@ export function requireDataAgentEndpoint(endpoint: string | undefined, generatio
   requireV2Generation(generation)
   if (endpoint) return endpoint
   throw new Error(
-    'No published Fabric Data Agent was found in this workspace. SQL/GraphQL provisioning does not confirm agent readiness. '
+    'No published Fabric Data Agent was found in this workspace. SQL provisioning does not confirm agent readiness. '
     + 'Ontology v2 source onboarding may be blocked. '
     + 'Check data_agent_deployment_status and data_agent_deployment_reason in the shared notebook configuration, then publish a supported Data Agent separately and refresh discovery.',
   )

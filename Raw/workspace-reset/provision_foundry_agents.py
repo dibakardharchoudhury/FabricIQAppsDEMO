@@ -68,6 +68,53 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
         raise RuntimeError("No published Data Agent source matches the selected Ontology v2.")
 
 
+def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: dict) -> dict:
+    response = request_with_read_retry(
+        "POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/dataAgents/{agent_id}/getDefinition",
+        headers=headers, timeout=60,
+    )
+    response.raise_for_status()
+    if response.status_code == 202:
+        location = definition_operation_url(response.headers["Location"])
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            operation_response = request_with_read_retry("GET", location, headers=headers, timeout=60)
+            operation_response.raise_for_status()
+            operation = operation_response.json()
+            if operation["status"] == "Succeeded":
+                response = request_with_read_retry("GET", location + "/result", headers=headers, timeout=60)
+                response.raise_for_status()
+                break
+            if operation["status"] in ("Failed", "Cancelled"):
+                raise deploy.DeployError(f"Data Agent definition read failed: {operation}")
+            time.sleep(2)
+        else:
+            raise deploy.DeployError("Data Agent definition read timed out.")
+    return response.json()
+
+
+def published_sql_source_ready(definition: dict, workspace: str, sql_id: str) -> bool:
+    required = {"WorkOrders", "MaintenanceNotifications", "Inspections", "SpareParts", "Asset3DModels"}
+    for part in definition.get("definition", {}).get("parts", []):
+        path = part.get("path", "")
+        if not path.startswith("Files/Config/published/") or not path.endswith("/datasource.json"):
+            continue
+        source = json.loads(base64.b64decode(part["payload"], validate=True).decode("utf-8"))
+        if (source.get("type") != "sql_database" or source.get("workspaceId") != workspace
+                or source.get("artifactId") != sql_id):
+            continue
+        selected = set()
+        pending = list(source.get("elements", []))
+        while pending:
+            element = pending.pop()
+            if element.get("type") == "sql_database.table" and element.get("is_selected") is True:
+                selected.add(element.get("display_name"))
+            pending.extend(element.get("children", []))
+        if required.issubset(selected):
+            return True
+    return False
+
+
 def linked_application_insights(connections: list[dict]) -> str:
     insights = {
         connection["properties"]["target"]
@@ -115,7 +162,7 @@ def source_configuration_digest(tenant: str, workspace: str, ontology: str, valu
         "ontology_id": ontology,
         "eventhouse_id": values.get("RAYFIN_PUBLIC_EVENTHOUSE_ID", ""),
         "database_id": values.get("RAYFIN_PUBLIC_KQL_DATABASE_ID", ""),
-        "graphql_id": values.get("RAYFIN_PUBLIC_STID_GRAPHQL_ID", ""),
+        "lakehouse_id": values.get("RAYFIN_PUBLIC_LAKEHOUSE_ID", ""),
         "appbackend_id": values.get("RAYFIN_PUBLIC_ITEM_ID", ""),
         "api_url": values.get("RAYFIN_PUBLIC_API_URL", ""),
         "publishable_key": values.get("RAYFIN_PUBLIC_PUBLISHABLE_KEY", ""),
@@ -344,7 +391,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
         for key in (
             "RAYFIN_PUBLIC_EVENTHOUSE_ID",
             "RAYFIN_PUBLIC_KQL_DATABASE_ID",
-            "RAYFIN_PUBLIC_STID_GRAPHQL_ID",
+            "RAYFIN_PUBLIC_LAKEHOUSE_ID",
             "RAYFIN_PUBLIC_ITEM_ID",
             "RAYFIN_PUBLIC_API_URL",
             "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
@@ -362,21 +409,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
     agents = [item for item in items if item["type"] == "DataAgent" and item["displayName"].startswith("RTI_Demo_Agent_")]
     selected = []
     for agent in agents:
-        response = request("POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/dataAgents/{agent['id']}/getDefinition", fabric_headers)
-        if response.status_code == 202:
-            location = definition_operation_url(response.headers["Location"])
-            deadline = time.monotonic() + 180
-            while time.monotonic() < deadline:
-                operation = request("GET", location, fabric_headers).json()
-                if operation["status"] == "Succeeded":
-                    response = request("GET", location + "/result", fabric_headers)
-                    break
-                if operation["status"] in ("Failed", "Cancelled"):
-                    raise deploy.DeployError(f"Data Agent definition read failed: {operation}")
-                time.sleep(2)
-            else:
-                raise deploy.DeployError("Data Agent definition read timed out.")
-        definition = response.json()
+        definition = read_data_agent_definition(deploy, workspace, agent["id"], fabric_headers)
         try:
             verify_published_identity(definition, workspace, ontology)
         except RuntimeError:

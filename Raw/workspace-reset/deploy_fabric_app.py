@@ -1348,7 +1348,6 @@ def resolve_public_artifact_config(
     ):
         raise DeployError("The target Eventhouse's KQL database has no valid HTTPS queryServiceUri or display name.")
 
-    graphql = select("GraphQLApi", "RAYFIN_PUBLIC_STID_GRAPHQL_NAME", r"Hydro_STID_API")
     pipeline = select("DataPipeline", "RAYFIN_PUBLIC_STREAM_PIPELINE_NAME", r"02_Pipe_Stream")
     notebook = select("Notebook", "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_NAME", r"RTI_011_seed_sql_wire_graphql_agent")
     lakehouse = select(
@@ -1381,9 +1380,6 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_KQL_DATABASE": str(database["displayName"]),
         "RAYFIN_PUBLIC_KQL_DATABASE_ID": str(database["id"]),
         "RAYFIN_PUBLIC_KQL_CLUSTER_URI": cluster_uri.rstrip("/"),
-        "RAYFIN_PUBLIC_STID_GRAPHQL_NAME": str(graphql["displayName"]) if graphql else "",
-        "RAYFIN_PUBLIC_STID_GRAPHQL_ID": str(graphql["id"]) if graphql else "",
-        "RAYFIN_PUBLIC_STID_GRAPHQL_URL": f"{FABRIC_BASE}/workspaces/{workspace_id}/graphqlapis/{graphql['id']}/graphql" if graphql else "",
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT": "",
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
@@ -1468,6 +1464,8 @@ def _rebind_public_env(text: str, values: dict[str, str]) -> str:
     lines = []
     for line in text.splitlines():
         key = line.split("=", 1)[0].strip()
+        if re.fullmatch(r"(?:VITE_)?RAYFIN_PUBLIC_STID_GRAPHQL_(?:NAME|ID|URL)", key):
+            continue
         if "=" in line and key in values:
             line = line_for(key, values[key])
             remaining.pop(key, None)
@@ -1974,16 +1972,18 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
 def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     values, _ = current_rayfin_target()
-    graphql_id = _public_config_value(values, "RAYFIN_PUBLIC_STID_GRAPHQL_ID")
-    if graphql_id:
-        if not GUID_RE.fullmatch(graphql_id):
-            raise DeployError("The independent STID GraphQL item ID is invalid.")
-        return
     notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
     backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
     lakehouse_id = _public_config_value(values, "RAYFIN_PUBLIC_LAKEHOUSE_ID")
     if not all(GUID_RE.fullmatch(value) for value in (notebook_id, backend_id, lakehouse_id)):
         raise DeployError("Fresh deployment requires verified NB11, AppBackend and Lakehouse identities.")
+    headers = fabric_headers(tenant)
+    backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
+    if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
+        raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
+    if _published_operational_source_ready(workspace_id, values, backend["displayName"], headers):
+        print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
+        return
     from sync_workspace_from_git import (
         Fabric, ensure_spark_runtime, notebook_definition, verify_environment_runtimes,
     )
@@ -2011,17 +2011,13 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         )
     ensure_spark_runtime(fabric.request, workspace_id)
     verify_environment_runtimes(fabric.request, workspace_id)
-    headers = fabric_headers(tenant)
-    backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
-    if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
-        raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
     jobs_path = f"workspaces/{workspace_id}/items/{notebook_id}/jobs/instances"
     jobs = fabric_get(jobs_path, headers)
     if not isinstance(jobs.get("value"), list) or jobs.get("continuationToken") or jobs.get("continuationUri"):
         raise DeployError("Cannot verify an idle NB11 from its complete job inventory.")
     if any(job.get("status") in ("NotStarted", "InProgress") for job in jobs["value"]):
         raise DeployError("NB11 is already active. Let it finish before retrying deployment.")
-    print("Bootstrapping GraphQL and the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
+    print("Bootstrapping the Data Agent SQL source through NB11; no operational demo DML.", flush=True)
     response = requests.post(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
         headers=headers, json={"parameters": [
@@ -2051,14 +2047,77 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         time.sleep(4)
     else:
         raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
-    public = resolve_public_artifact_config(workspace_id, tenant, values)
-    if not GUID_RE.fullmatch(public.get("RAYFIN_PUBLIC_STID_GRAPHQL_ID", "")):
-        raise DeployError("NB11 completed but no verified independent STID GraphQL item was discovered.")
-    env_path = RAYFIN_DIR / ".env"
-    env_path.write_text(_rebind_public_env(env_path.read_text(encoding="utf-8"), public),
-                        encoding="utf-8", newline="\n")
-    print("Verified independent GraphQL identity refreshed before Foundry provisioning.", flush=True)
+    if not _published_operational_source_ready(workspace_id, values, backend["displayName"], headers):
+        raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
+    print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
 
+
+def _published_operational_source_ready(workspace_id, values, sql_name, headers) -> bool:
+    from provision_foundry_agents import (
+        published_sql_source_ready, read_data_agent_definition, verify_published_identity,
+    )
+
+    binding = json.loads(_public_config_value(values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))
+    ontology_id = binding["ontologyId"]
+    ontology = fabric_get(f"workspaces/{workspace_id}/ontologies/{ontology_id}", headers)
+    if ontology.get("id") != ontology_id or type(ontology.get("properties", {}).get("generation")) is not int \
+            or ontology["properties"]["generation"] != 2:
+        raise DeployError("Data Agent SQL publication requires a verified numeric generation-2 Ontology.")
+    items = _workspace_artifacts(workspace_id, headers)
+    databases = [item for item in items if item["type"] == "SQLDatabase" and item["displayName"] == sql_name]
+    if len(databases) != 1:
+        raise DeployError("Cannot resolve exactly one operational SQL Database for this AppBackend.")
+    matches = []
+    for agent in items:
+        if agent["type"] != "DataAgent" or not agent["displayName"].startswith("RTI_Demo_Agent_"):
+            continue
+        definition = read_data_agent_definition(sys.modules[__name__], workspace_id, agent["id"], headers)
+        try:
+            verify_published_identity(definition, workspace_id, ontology_id)
+        except RuntimeError:
+            continue
+        matches.append(definition)
+    if len(matches) != 1:
+        raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
+    return published_sql_source_ready(matches[0], workspace_id, databases[0]["id"])
+
+
+def verify_lakehouse_connector(tenant: str) -> dict[str, int]:
+    command = [str(node24_executable()), "--import", "tsx", str(APP_DIR / "scripts" / "local-fabric-sources.mjs")]
+
+    def invoke(payload: dict) -> dict:
+        result = subprocess.run(
+            command, cwd=APP_DIR, input=json.dumps(payload), capture_output=True,
+            text=True, encoding="utf-8", timeout=120, check=False,
+        )
+        lines = [line.removeprefix("__HYDRO_RESULT__=") for line in result.stdout.splitlines()
+                 if line.startswith("__HYDRO_RESULT__=")]
+        if len(lines) != 1:
+            raise DeployError("Lakehouse connector verification returned no unambiguous source receipt.")
+        envelope = json.loads(lines[0])
+        if result.returncode or envelope.get("ok") is not True:
+            raise DeployError(f"Lakehouse connector verification failed: {envelope.get('error', 'source read failed')}")
+        return envelope["result"]
+
+    configuration = invoke({"action": "configuration"})
+    power_bi_token = run_with_azure_cli_reauthentication(
+        tenant, "verifying the Lakehouse connector",
+        lambda: run_capture(az("account", "get-access-token", "--tenant", tenant,
+                              "--resource", "https://analysis.windows.net/powerbi/api",
+                              "--query", "accessToken", "-o", "tsv")),
+    )
+    result = invoke({
+        "action": "verify_lakehouse_connector", "configuration_digest": configuration["configuration_digest"],
+        "tokens": {"fabric": fabric_headers(tenant)["Authorization"].removeprefix("Bearer ").strip(),
+                   "graphql": power_bi_token},
+    })
+    counts = result.get("counts")
+    if (not isinstance(counts, dict) or set(counts) != {"facilities", "equipment", "instruments"}
+            or any(type(count) is not int or count <= 0 for count in counts.values())):
+        raise DeployError("Lakehouse connector did not return complete nonempty asset inventories.")
+    print(f"Verified connector source readiness with the deployment identity: {counts}. "
+          "This does not certify signed-in SPA or Foundry agent execution.", flush=True)
+    return counts
 
 def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
     values, _ = current_rayfin_target()
@@ -2249,7 +2308,7 @@ def deploy(args: argparse.Namespace) -> None:
         )
     if feature_workspace:
         try:
-            feature_workspace.finish()
+            feature_workspace.finish(lakehouse_counts=verify_lakehouse_connector(tenant_id))
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
     print(f"DEPLOYED_APP_URL={hosting_url}", flush=True)

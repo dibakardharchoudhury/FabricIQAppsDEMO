@@ -691,7 +691,7 @@ class FeatureWorkspace:
             if any(schedule.get("enabled") for schedule in response.json().get("value", [])):
                 raise FeatureWorkspaceError(f"Feature {name} schedule must remain disabled.")
 
-    def finish(self) -> None:
+    def finish(self, *, lakehouse_counts: dict[str, int]) -> None:
         self._run("RTI_011_seed_sql_wire_graphql_agent", "Notebook", {
             "parameters": [
                 {"name": "sql_db_item_name", "value": "hydro-operations-ui", "type": "Text"},
@@ -700,33 +700,15 @@ class FeatureWorkspace:
         })
         self._run("02_Pipe_Stream", "DataPipeline")
         self._verify_schedules_disabled()
-        self._verify_data()
+        self._verify_data(lakehouse_counts)
         self.state["setup_completed"] = True
         self._save()
-        print("Feature workspace setup, SQL seed, GraphQL provisioning and demo stream completed.", flush=True)
+        print("Feature workspace setup, SQL seed, Data Agent SQL publication and demo stream completed.", flush=True)
 
-    def _verify_data(self) -> None:
-        graphql = self._item("Hydro_STID_API", "GraphQLApi")
-        query = """query FeatureReadiness {
-            facilities: silver_facilities(first: 20) { items { facility_id } }
-            equipment: silver_equipments(first: 100) { items { equipment_id } }
-            instruments: silver_instruments(first: 500) { items { instrument_id } }
-        }"""
-        graphql_counts = {}
-        for attempt in range(12):
-            response = self.fabric.request(
-                "POST", f"{self.base}/graphqlapis/{graphql['id']}/graphql", json={"query": query},
-            )
-            check_response(response, "Read feature STID data", {200})
-            payload = response.json()
-            graphql_counts = {key: len((payload.get("data") or {}).get(key, {}).get("items") or [])
-                              for key in ("facilities", "equipment", "instruments")}
-            if not payload.get("errors") and all(graphql_counts.values()):
-                break
-            print("  STID GraphQL publication is not ready; waiting.", flush=True)
-            time.sleep(10)
-        else:
-            raise FeatureWorkspaceError("STID GraphQL did not return the seeded facility/asset/signal data.")
+    def _verify_data(self, lakehouse_counts: dict[str, int]) -> None:
+        if (set(lakehouse_counts) != {"facilities", "equipment", "instruments"}
+                or any(type(count) is not int or count <= 0 for count in lakehouse_counts.values())):
+            raise FeatureWorkspaceError("Lakehouse connector did not verify the seeded facility/asset/signal data.")
         name = f"RTI_Demo_Eventhouse_{self.config.env_suffix}"
         eventhouse = self._item(name, "Eventhouse")
         response = self.fabric.request("GET", f"{self.base}/eventhouses/{eventhouse['id']}")
@@ -752,6 +734,6 @@ class FeatureWorkspace:
                 time.sleep(10)
             else:
                 raise FeatureWorkspaceError("The feature Eventhouse has no queryable demo telemetry.")
-        self.state["verification"] = {"stid_counts": graphql_counts, "telemetry_count": rows[0][0],
+        self.state["verification"] = {"stid_counts": lakehouse_counts, "telemetry_count": rows[0][0],
                                       "latest_telemetry_time": rows[0][1]}
-        print(f"  Verified STID {graphql_counts}; telemetry rows: {rows[0][0]}.", flush=True)
+        print(f"  Verified Lakehouse connector {lakehouse_counts}; telemetry rows: {rows[0][0]}.", flush=True)

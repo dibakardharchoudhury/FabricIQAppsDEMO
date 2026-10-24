@@ -35,11 +35,8 @@ const weatherPipelineName = '03_Pipe_Weather'
 const eventhouseName = (import.meta.env.VITE_RAYFIN_EVENTHOUSE_NAME as string | undefined) ?? 'RTI_Demo_Eventhouse_V6'
 const eventhouseId = import.meta.env.VITE_RAYFIN_EVENTHOUSE_ID as string | undefined
 const kqlDatabaseId = import.meta.env.VITE_RAYFIN_KQL_DATABASE_ID as string | undefined
-const graphqlId = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_ID as string | undefined
-const graphqlName = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_NAME as string | undefined
 const kqlDashboardName = (import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_NAME as string | undefined) ?? 'RTI_Demo_OPCUA_TelemetryStats_V6'
 const configuredOntologyName = import.meta.env.VITE_RAYFIN_ONTOLOGY_NAME as string | undefined
-const graphqlUrlOverride = import.meta.env.VITE_RAYFIN_STID_GRAPHQL_URL as string | undefined
 const configuredEventhouseQueryUri = import.meta.env.VITE_RAYFIN_KQL_CLUSTER_URI as string | undefined
 const configuredKqlDatabase = import.meta.env.VITE_RAYFIN_KQL_DATABASE as string | undefined
 const configuredMapAgentName = import.meta.env.VITE_RAYFIN_MAP_DATA_AGENT_NAME as string | undefined
@@ -114,7 +111,7 @@ async function fabricToken(interactive: boolean, scopes = FABRIC_SCOPES): Promis
 
 // ---- Workspace artifact discovery (resolve ids/URIs by display name, never hardcode) ----
 type WorkspaceItem = { id: string; type: string; displayName: string; folderId?: string }
-type ResolvedConfig = OntologyDiscovery & { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; graphqlUrl?: string; dataAgentUrl?: string; dataAgentId?: string; kqlDashboardId?: string }
+type ResolvedConfig = OntologyDiscovery & { pipelineId?: string; postseedNotebookId?: string; eventhouseQueryUri?: string; kqlDatabase?: string; dataAgentUrl?: string; dataAgentId?: string; kqlDashboardId?: string }
 let configCache: ResolvedConfig | null = null
 let configPromise: Promise<ResolvedConfig | null> | undefined
 let configRevision = 0
@@ -131,7 +128,6 @@ function envConfig(): ResolvedConfig {
     postseedNotebookId: import.meta.env.VITE_RAYFIN_POSTSEED_NOTEBOOK_ID as string | undefined,
     eventhouseQueryUri: configuredEventhouseQueryUri,
     kqlDatabase: configuredKqlDatabase,
-    graphqlUrl: graphqlUrlOverride,
     kqlDashboardId: import.meta.env.VITE_RAYFIN_KQL_DASHBOARD_ID as string | undefined,
   }
 }
@@ -175,7 +171,7 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
   const token = await fabricToken(interactive)
   if (!token) {
     // Not signed in / no discovery consent — use env fallback when it carries anything usable.
-    return (env.eventhouseQueryUri || env.pipelineId || env.graphqlUrl || env.postseedNotebookId) ? env : null
+    return (env.eventhouseQueryUri || env.pipelineId || env.postseedNotebookId) ? env : null
   }
   try {
     const items = await listItems(token)
@@ -207,17 +203,6 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
         console.warn(`Get Eventhouse failed (${res.status}) — telemetry query URI unresolved.`, (await res.text()).slice(0, 300))
       }
     }
-    // Fabric doesn't expose a GraphQL item's endpoint, but api.fabric.microsoft.com serves
-    // queries directly at this deterministic path when no explicit URL is configured.
-    const gql = graphqlId
-      ? items.find(i => i.type === 'GraphQLApi' && i.id === graphqlId)
-      : graphqlName ? find('GraphQLApi', graphqlName) : items.find(i => i.type === 'GraphQLApi')
-    if ((graphqlId || graphqlName) && !gql && !graphqlUrlOverride) {
-      throw new Error('The configured STID GraphQL API was not found in this workspace. Run SQL/GraphQL provisioning and refresh discovery.')
-    }
-    const graphqlUrl = graphqlUrlOverride || (gql
-      ? `https://api.fabric.microsoft.com/v1/workspaces/${requireWorkspaceId()}/graphqlapis/${gql.id}/graphql`
-      : undefined)
     // Published Data Agents use Fabric's official MCP-over-Streamable-HTTP endpoint.
     const dashboard = find('KQLDashboard', kqlDashboardName) ?? items.find(i => i.type === 'KQLDashboard')
     const semantic = await discoverOntology(items, configuredOntologyName, {
@@ -244,7 +229,6 @@ async function discoverConfig(interactive: boolean, revision: number): Promise<R
       postseedNotebookId: notebook?.id ?? env.postseedNotebookId,
       eventhouseQueryUri: eventhouseQueryUri ?? env.eventhouseQueryUri,
       kqlDatabase: kqlDatabase ?? env.kqlDatabase,
-      graphqlUrl: graphqlUrl ?? env.graphqlUrl,
       dataAgentUrl,
       dataAgentId: da?.id,
       kqlDashboardId: dashboard?.id ?? env.kqlDashboardId,
