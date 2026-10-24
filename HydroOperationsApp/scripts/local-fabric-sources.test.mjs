@@ -145,6 +145,25 @@ test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and 
   assert.deepEqual(checked.native_source_output, wrapped)
   assert.equal(checked.work_coverage_equipment_ids, undefined)
   assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).result.coverage.work_complete, true)
+  const narrated = { content: [{ type: 'text',
+    text: `Data Agent result:\n\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`\nSource notes are not part of the evidence.` }] }
+  assert.deepEqual(validateQualityWorkEvidence(question, narrated, clock).affected_signals, bundle.affected_signals)
+  assert.deepEqual(validateQualityWorkEvidence(question, {
+    content: `\`\`\`sql\nSELECT 1\n\`\`\`\nResult:\n\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`\nSources.`,
+  }, clock).affected_signals, bundle.affected_signals)
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    content: `Unstructured prose ${JSON.stringify(bundle)}`,
+  }, clock), /one inspectable JSON bundle/)
+  const conflicting = { ...bundle, coverage: { ...bundle.coverage, work_complete: false } }
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    content: `\`\`\`json\n${JSON.stringify(conflicting)}\n\`\`\`\nNo complete work read.`,
+  }, clock), /coverage is incomplete/)
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    content: `\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`\n\`\`\`json\n${JSON.stringify(conflicting)}\n\`\`\``,
+  }, clock), /one inspectable JSON bundle/)
+  assert.throws(() => validateQualityWorkEvidence(question, {
+    content: `\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`\n\`\`\`json\n{\n\`\`\``,
+  }, clock), /malformed JSON/)
   for (const mutate of [
     value => { value.coverage.work_complete = false },
     value => { value.coverage.affected_signal_count = 0 },

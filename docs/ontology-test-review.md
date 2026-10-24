@@ -202,17 +202,21 @@ The canonical deployment of `a6b0b76` completed from **20:37:23 to 20:45:45 UTC*
 in **501.671 seconds (8m 21.671s)**. It reused the verified operational SQL source
 without NB11 or demo DML, and printed `SUCCESS` and `DEPLOYED_APP_URL`.
 
-| Canonical deployment section | Seconds |
-|---|---:|
-| Tenant, workspace and capacity verification | 15.750 |
-| SPA resolution and redirect preservation snapshot | 15.875 |
-| Target/source verification and agent convergence | 163.718 |
-| Tenant-scoped Rayfin authentication | 1.516 |
-| Static application build/publication | 132.156 |
-| Backend runtime/database settings and both connectors | 71.875 |
-| Browser sign-in permissions and consent verification | 55.813 |
-| Hosting, endpoint, CORS and protected transport readiness | 44.968 |
-| **Total** | **501.671** |
+The subsequent `b62309a` request-contract deployment passed from **20:52:05 to
+21:05:54 UTC**, including a new immutable Hosted Agent image and activation of
+`hydro-orchestrator:6`. Remote image build `dt6` succeeded in 137.481 seconds.
+
+| Canonical deployment section | `a6b0b76`, warm seconds | `b62309a`, new-image seconds |
+|---|---:|---:|
+| Tenant, workspace and capacity verification | 15.750 | 14.641 |
+| SPA resolution and redirect preservation snapshot | 15.875 | 13.609 |
+| Target/source verification and agent convergence | 163.718 | 389.735 |
+| Tenant-scoped Rayfin authentication | 1.516 | 1.859 |
+| Static application build/publication | 132.156 | 214.172 |
+| Backend runtime/database settings and both connectors | 71.875 | 82.656 |
+| Browser sign-in permissions and consent verification | 55.813 | 58.735 |
+| Hosting, endpoint, CORS and protected transport readiness | 44.968 | 53.375 |
+| **Total** | **501.671** | **828.782 (13m 48.782s)** |
 
 All 40 original SPA redirects remained registered. The authenticated browser
 loaded build `a6b0b76`; deployment checks themselves still do not certify agent
@@ -239,8 +243,32 @@ latest telemetry `2026-10-23T21:22:22.26164Z`. Its requested-window total field 
 null and explicitly disclosed as a limitation. The source-wide open-work count is
 not a count of work against affected turbines; no healthy-current-telemetry or
 execution-provenance claim follows from this result. All **57** focused bridge
-tests passed. Hosted deployment and all three authenticated workflow checks for
-this request change remain pending.
+tests passed.
+
+Authenticated `b62309a` acceptance then completed the facts workflow through
+Sparky and Supervisor in **79 seconds**. It explicitly reported unavailable
+current-day evidence, not healthy turbines, and retained the native-connection
+SQL/provenance limitation. The draft and RCA/draft workflows failed closed at
+Sparky in **64/76 seconds**, with the same inspectable-JSON rejection; downstream
+specialists did not execute and no work order was created.
+
+An independently reproduced parser gap rejected a valid JSON fence followed by
+source notes. Parsing now accepts exactly one valid evidence bundle in explicit
+JSON/unlabelled fences, ignores surrounding prose as evidence, skips other code
+languages, and rejects malformed JSON or conflicting bundles. All original
+identity, UTC-window, open-status, completeness and bound checks remain.
+The actual captured fenced failure response now reaches the proper incomplete
+coverage rejection rather than being mistaken for absent JSON. All 57 bridge
+tests pass, including ambiguous/malformed/failed-coverage cases. Publication and
+authenticated acceptance of this parser correction remain pending.
+
+The Weather specialist was actually dispatched, but its live forecast attempt
+failed in **22.3 seconds** with upstream HTTP 429. Read-only ARM inspection
+confirmed the shared model is provisioned at **20,000 tokens/minute and 20
+requests/minute** (`DataZoneStandard`, capacity 20); no quota or capacity was
+changed. Separately, successful Lakehouse connector reads returned no weather
+locations/areas or current forecast rows. Do not claim a fresh forecast, successful
+Weather tool execution, or an ingestion repair from agent publication alone.
 
 ## Evidence and compatibility
 

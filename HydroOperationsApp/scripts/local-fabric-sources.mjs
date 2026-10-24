@@ -356,10 +356,19 @@ export function validateQualityWorkEvidence(question, result, requestedAt) {
         for (const child of Object.values(value)) visit(child)
       }
     } else if (typeof value === 'string') {
-      const text = value.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1')
+      const text = value.trim()
       let parsed
       try { parsed = JSON.parse(text) } catch (error) {
         if (!(error instanceof SyntaxError)) throw error
+        for (const [, language, body] of text.matchAll(/^[ \t]*```([^\r\n]*)\r?\n([\s\S]*?)^[ \t]*```[ \t]*\r?$/gm)) {
+          if (language.trim() && language.trim().toLowerCase() !== 'json') continue
+          let block
+          try { block = JSON.parse(body) } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error
+            throw new Error('Data Agent quality/work evidence contains malformed JSON.')
+          }
+          if (block && typeof block === 'object') visit(block)
+        }
         return
       }
       if (parsed && typeof parsed === 'object') visit(parsed)
