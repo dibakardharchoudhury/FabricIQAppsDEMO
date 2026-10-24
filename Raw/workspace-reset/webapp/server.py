@@ -943,6 +943,30 @@ def api_login():
     return job_response(job_id)
 
 
+@app.get("/api/subscriptions")
+def api_subscriptions():
+    cmd = "az account list --all -o json" if os.name == "nt" else ["az", "account", "list", "--all", "-o", "json"]
+    try:
+        proc = subprocess.run(
+            cmd, shell=(os.name == "nt"), capture_output=True, text=True, timeout=40, creationflags=NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return jsonify(error=f"Could not list signed-in subscriptions: {exc}"), 503
+    if proc.returncode != 0:
+        return jsonify(error=(proc.stderr or proc.stdout or "Azure CLI subscription discovery failed").strip()[:500]), 503
+    try:
+        accounts = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return jsonify(error="Azure CLI returned invalid subscription JSON."), 502
+    if not isinstance(accounts, list) or any(not isinstance(account, dict) for account in accounts):
+        return jsonify(error="Azure CLI returned an invalid subscription list."), 502
+    return jsonify(subscriptions=[
+        {"id": account["id"], "name": account.get("name", account["id"]), "tenantId": account["tenantId"]}
+        for account in accounts
+        if account.get("state") == "Enabled" and account.get("id") and account.get("tenantId")
+    ])
+
+
 @app.get("/api/whoami")
 def api_whoami():
     """Report the identity of the current `az login` session (best-effort, cached)."""

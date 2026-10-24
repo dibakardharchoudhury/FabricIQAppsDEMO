@@ -1,6 +1,7 @@
 import argparse
 import base64
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -32,6 +33,37 @@ class CommandEncodingTests(unittest.TestCase):
         )
         self.assertEqual(output, "\u2501")
         self.assertEqual(env["PYTHONIOENCODING"], "cp1252")
+
+
+class DeploymentTimingTests(unittest.TestCase):
+    def test_ordered_durations_and_total_are_machine_readable(self):
+        with patch.object(DEPLOY.time, "monotonic", side_effect=[10, 10, 15, 23]), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            timings = DEPLOY.DeploymentTimings()
+            timings.stage(1, "Identity")
+            timings.stage(2, "SPA")
+            timings.finish(True)
+        summary = json.loads(output.getvalue().split("DEPLOY_TIMINGS=", 1)[1])
+        self.assertEqual(summary["total_seconds"], 13)
+        self.assertEqual([step["seconds"] for step in summary["steps"]], [5, 8])
+        self.assertEqual([step["status"] for step in summary["steps"]], ["completed", "completed"])
+        self.assertEqual(summary["status"], "succeeded")
+
+    def test_failure_is_reported_without_swallowing_the_error_or_retaining_tokens(self):
+        def fail(args, timings):
+            timings.stage(1, "Identity")
+            DEPLOY._FABRIC_TOKEN_CACHE[("tenant", "")] = (9999999999, "private")
+            raise DEPLOY.DeployError("permission denied")
+
+        with patch.object(DEPLOY, "_deploy", side_effect=fail), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(DEPLOY.DeployError, "permission denied"):
+                DEPLOY.deploy(argparse.Namespace())
+        summary = json.loads(output.getvalue().split("DEPLOY_TIMINGS=", 1)[1])
+        self.assertEqual(summary["steps"][-1]["status"], "failed")
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(DEPLOY._FABRIC_TOKEN_CACHE, {})
+        self.assertNotIn("private", output.getvalue())
 
 
 class LakehouseConnectorReceiptTests(unittest.TestCase):
@@ -248,6 +280,10 @@ class HostedSourceBootstrapTests(unittest.TestCase):
 
 
 class DeployOrderTests(unittest.TestCase):
+    def setUp(self):
+        DEPLOY._FABRIC_TOKEN_CACHE.clear()
+        self.addCleanup(DEPLOY._FABRIC_TOKEN_CACHE.clear)
+
     def test_inactive_capacity_stops_before_configuration_changes(self):
         workspace = "11111111-1111-1111-1111-111111111111"
         capacity = "22222222-2222-2222-2222-222222222222"
@@ -789,7 +825,9 @@ class DeployOrderTests(unittest.TestCase):
 
         with (
             patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
-            patch.object(DEPLOY, "run_capture", side_effect=[missing, "fabric-token"]) as run_capture,
+            patch.object(DEPLOY, "run_capture", side_effect=[
+                missing, json.dumps({"accessToken": "fabric-token", "expires_on": 4102444800}),
+            ]) as run_capture,
             patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
         ):
             headers = DEPLOY.fabric_headers("tenant-id")
@@ -804,7 +842,9 @@ class DeployOrderTests(unittest.TestCase):
     def test_fabric_token_uses_the_requested_tenant_without_reauthentication(self):
         with (
             patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)),
-            patch.object(DEPLOY, "run_capture", return_value="fabric-token") as run_capture,
+            patch.object(DEPLOY, "run_capture", return_value=json.dumps({
+                "accessToken": "fabric-token", "expires_on": 4102444800,
+            })) as run_capture,
             patch.object(DEPLOY, "reauthenticate_azure_cli") as reauthenticate,
         ):
             headers = DEPLOY.fabric_headers("target-tenant")
@@ -815,10 +855,37 @@ class DeployOrderTests(unittest.TestCase):
             [
                 "account", "get-access-token", "--tenant", "target-tenant",
                 "--resource", "https://api.fabric.microsoft.com",
-                "--query", "accessToken", "-o", "tsv",
+                "-o", "json",
             ],
         )
         reauthenticate.assert_not_called()
+
+    def test_fabric_token_cache_is_expiry_tenant_and_cli_config_scoped(self):
+        with patch.object(DEPLOY, "az", side_effect=lambda *args: list(args)), \
+             patch.object(DEPLOY.time, "time", return_value=1000) as clock, \
+             patch.object(DEPLOY, "run_capture", return_value=json.dumps({
+                 "accessToken": "fabric-token", "expires_on": 2000,
+             })) as capture, patch.dict(os.environ, {"AZURE_CONFIG_DIR": "config-a"}):
+            DEPLOY.fabric_headers("tenant-a")
+            DEPLOY.fabric_headers("TENANT-A")
+            self.assertEqual(capture.call_count, 1)
+            DEPLOY.fabric_headers("tenant-b")
+            with patch.dict(os.environ, {"AZURE_CONFIG_DIR": "config-b"}):
+                DEPLOY.fabric_headers("tenant-a")
+            self.assertEqual(capture.call_count, 3)
+            clock.return_value = 1900
+            DEPLOY.fabric_headers("tenant-a")
+            self.assertEqual(capture.call_count, 4)
+
+    def test_fabric_token_metadata_fails_closed(self):
+        tenant = "11111111-1111-1111-1111-111111111111"
+        for metadata in ([], {}, {"accessToken": "token", "expires_on": 0},
+                         {"accessToken": "token", "expires_on": 4102444800, "tenant": "wrong"}):
+            with self.subTest(metadata=metadata), \
+                 patch.object(DEPLOY, "run_capture", return_value=json.dumps(metadata)):
+                with self.assertRaises(DEPLOY.DeployError):
+                    DEPLOY.fabric_headers(tenant)
+        self.assertEqual(DEPLOY._FABRIC_TOKEN_CACHE, {})
 
     def test_existing_tenant_scoped_cache_is_reused_by_new_process(self):
         shared_config = os.environ.get("AZURE_CONFIG_DIR")

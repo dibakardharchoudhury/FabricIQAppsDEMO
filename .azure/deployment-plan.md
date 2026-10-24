@@ -1,6 +1,58 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validated
+
+## Current approved deployment-optimization validation (October 24, 2026)
+
+This section supersedes the historical target below for the current request.
+Reuse the existing FEATURE deployment; no new infrastructure, workspace Git import,
+setup-pipeline execution, seed writes, capacity resize or resource deletion.
+The user requested timing, speed and onboarding improvements and authorized resuming
+only the assigned capacity if it pauses.
+
+- Tenant: `ad340c84-1886-4202-a483-2da2cb9168eb`.
+- Subscription: `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+- FEATURE workspace: `c7da7c28-0dee-4f45-bc9e-5628bb882732`.
+- Assigned capacity: `0f4dac6b-ad68-483d-8027-3d8bf9655d53`, Sweden Central.
+- Existing Foundry project: `ai-project-hydro-foundry-884a839f3132`.
+- Recipe: existing Python AZCLI/REST orchestrator; no separate azd deployment.
+- Command: `python Raw\workspace-reset\deploy_fabric_app.py --tenant ad340c84-1886-4202-a483-2da2cb9168eb --workspace c7da7c28-0dee-4f45-bc9e-5628bb882732 --push-config`.
+- Validate deployment/hosted/UI regressions and `npm run validate-env`; then one
+  measured canonical redeployment, preserving all 40 workspace items and all
+  40 existing SPA redirects. AppBackend CORS/SQL/connector checks remain mandatory.
+- No fresh subscription/tenant is provisioned for testing. Least-privilege guidance
+  distinguishes routine operation from one-time administrator preparation.
+- Hosted deployment/readback does not certify the separate blocked business prompts.
+
+### Current validation proof
+
+Validated checks executed October 24, 2026 (UTC), before publication:
+
+- `python -m unittest test_deploy_fabric_app test_deploy_hosted_agent test_webapp_server`
+  from `Raw\workspace-reset`: 197 passed, 13.126 seconds.
+- Node 24 `npm run validate-env`: passed; then `npm run build`: passed (Vite 35.22 seconds).
+- Pylance syntax checks for the deployment engine and hosted publisher: no syntax errors.
+- Live GET of selected workspace verified capacity ID, F8, Sweden Central, state Active.
+  ARM lineage is `/subscriptions/078b9318-a6c7-4069-9045-a1bee6102239/resourceGroups/rg_fabric/providers/Microsoft.Fabric/capacities/fabcapswc`.
+  No resume was necessary. This is distinct from the selected Foundry subscription.
+- Live preservation baseline: all 40 Fabric items and all 40 SPA redirects captured.
+- Local loopback browser check: both advanced groups collapsed and containing creation
+  controls; subscription discovery returned 92 enabled signed-in subscription entries.
+- Static infrastructure/RBAC review: none changed; no provisioning, new grants or resources
+  are requested. Existing immutable hosted image/version remains the publication comparison.
+- No ARM/Bicep/Docker infrastructure validation applies to this tool-only change.
+
+### All validation checks pass
+
+- [x] Core AZCLI/auth/configuration validation: current target subscription/tenant read;
+  `npm run validate-env`; focused deployment/hosted/UI tests (197 passed).
+- [x] Build verification: existing app build and local zero-build deployment UI.
+- [x] Static role verification: no IaC, role assignments or Azure resources changed.
+- [x] Record current proof and resolve any failures before setting Validated.
+
+Recipe adaptation: this update changes an existing Python/REST deployment tool, not ARM
+infrastructure. Bicep build/ARM what-if/new Docker build are not applicable; retain the
+canonical publisher's immutable image comparison and do not create probe resources.
 
 Updated: 2026-09-25
 
@@ -130,6 +182,13 @@ Service references:
 - https://learn.microsoft.com/rest/api/microsoftfabric/fabric-capacities/resume
 
 ## 7. Validation proof
+
+### Current deployment-tool optimization (October 24, 2026)
+
+The current target and executed validation evidence are recorded in
+[Current validation proof](#current-validation-proof) above; they supersede the
+historical deployments below. The azure-validate workflow completed its recipe,
+build, static-role, proof and error-resolution steps before this status change.
 
 ### Administration full map update (2026-09-25T11:25Z)
 

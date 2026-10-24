@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +22,63 @@ SPEC.loader.exec_module(SERVER)
 class WorkspaceActionTests(unittest.TestCase):
     def setUp(self):
         self.client = SERVER.app.test_client()
+
+    def test_subscription_discovery_returns_only_enabled_metadata_without_mutating_azure(self):
+        accounts = [
+            {"id": "sub-a", "name": "Demo", "tenantId": "tenant-a", "state": "Enabled", "user": {"name": "private"}},
+            {"id": "sub-b", "tenantId": "tenant-b", "state": "Disabled"},
+        ]
+        with patch.object(SERVER.subprocess, "run", return_value=Mock(
+            returncode=0, stdout=json.dumps(accounts),
+        )) as run:
+            response = self.client.get("/api/subscriptions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"subscriptions": [
+            {"id": "sub-a", "name": "Demo", "tenantId": "tenant-a"},
+        ]})
+        command = run.call_args.args[0]
+        self.assertIn("account list", command if isinstance(command, str) else " ".join(command))
+        self.assertEqual(run.call_args.kwargs["timeout"], 40)
+
+    def test_subscription_discovery_reports_cli_and_shape_errors(self):
+        for result, expected in (
+            (Mock(returncode=1, stderr="Please sign in", stdout=""), 503),
+            (Mock(returncode=0, stdout="not-json"), 502),
+            (Mock(returncode=0, stdout="{}"), 502),
+            (Mock(returncode=0, stdout="[1]"), 502),
+        ):
+            with self.subTest(expected=expected), patch.object(SERVER.subprocess, "run", return_value=result):
+                response = self.client.get("/api/subscriptions")
+                self.assertEqual(response.status_code, expected)
+                self.assertTrue(response.get_json()["error"])
+        with patch.object(SERVER.subprocess, "run", side_effect=subprocess.TimeoutExpired("az", 40)):
+            self.assertEqual(self.client.get("/api/subscriptions").status_code, 503)
+
+    def test_timing_renderer_handles_success_failure_escaping_and_invalid_receipts(self):
+        page = (SERVER.STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        functions = (
+            page[page.index("function renderDeploymentTimings("):page.index('document.querySelectorAll("[data-load-subscriptions]")')]
+            + page[page.index("function escapeHtml("):page.index("// mm:ss")]
+            + page[page.index("function formatElapsed("):page.index("// Starts a job")]
+        )
+        script = functions + """
+const assert = require("node:assert/strict");
+assert.equal(renderDeploymentTimings([]), "");
+const receipt = {status:"succeeded", total_seconds:65, steps:[
+  {section:1, label:"<b>Identity</b>", seconds:65, status:"completed"}
+]};
+const render = (value) => renderDeploymentTimings(["[deploy] DEPLOY_TIMINGS=" + JSON.stringify(value)]);
+const html = render(receipt);
+assert.ok(html.includes("01:05"));
+assert.ok(html.includes("&lt;b&gt;Identity&lt;/b&gt;"));
+assert.ok(!html.includes("<b>Identity</b>"));
+assert.ok(render({...receipt,status:"failed"}).includes("(failed)"));
+assert.ok(render({steps:"invalid"}).includes('role="alert"'));
+assert.ok(render({...receipt,total_seconds:-1}).includes('role="alert"'));
+assert.ok(renderDeploymentTimings(["DEPLOY_TIMINGS={"]).includes('role="alert"'));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def assert_exclusive_action(self, endpoint: str, payload: dict):
         starter = "_start_workflow" if endpoint == "/api/full-workflow" else "_start"

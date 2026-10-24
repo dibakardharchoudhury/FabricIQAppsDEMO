@@ -374,13 +374,14 @@
           <div class="grid">
             <label>SPA client id (optional)
               <input id="workflowDeployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+            <label>Azure subscription ID
+              <input id="workflowAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
           </div>
-          <div class="foundry-block">
-            <strong>Foundry (agents and Hosted Agent)</strong>
+          <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
+          <details class="foundry-block">
+            <summary>Advanced / first-time Foundry setup</summary>
             <p class="hint">Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires the Azure Developer CLI (<code>azd</code>).</p>
             <div class="grid">
-              <label>Azure subscription ID
-                <input id="workflowAzureSubscriptionId" type="text" placeholder="Blank: active subscription, verified in the target tenant" /></label>
               <label>Operator-verified ontology graph binding (JSON)
                 <textarea id="workflowOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
               <label>Foundry project endpoint
@@ -410,7 +411,7 @@
               <label>Model capacity (required when creating)
                 <input id="workflowFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
             </div>
-          </div>
+          </details>
         </section>
       </div>
       <aside class="notice">
@@ -488,13 +489,14 @@
       <div class="grid">
         <label>SPA client id (optional)
           <input id="deployClientId" type="text" placeholder="Blank: discover by name, then create if absent" /></label>
+        <label>Azure subscription ID
+          <input id="deployAzureSubscriptionId" type="text" list="azureSubscriptionOptions" placeholder="Choose a signed-in subscription or enter its ID" /></label>
       </div>
-      <div class="foundry-block">
-        <strong>Foundry (agents and Hosted Agent)</strong>
-        <p class="hint">Every deploy converges connections, four specialists and the <code>hydro-orchestrator</code> Hosted Agent. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
+      <button type="button" data-load-subscriptions>Load signed-in subscriptions</button>
+      <details class="foundry-block">
+        <summary>Advanced / first-time Foundry setup</summary>
+        <p class="hint">Every deploy converges connections, five specialists and the <code>hydro-orchestrator</code> Hosted Agent. Target-specific values are verified, not copied from another workspace. Blank fields use launch-environment settings or unambiguous live discovery. Creating a project requires an available model version, SKU and capacity. Requires <code>azd</code>; missing Foundry extensions are installed for you.</p>
         <div class="grid">
-          <label>Azure subscription ID
-            <input id="deployAzureSubscriptionId" type="text" placeholder="Blank: active subscription, verified in the target tenant" /></label>
           <label>Operator-verified ontology graph binding (JSON)
             <textarea id="deployOntologyGraphBinding" rows="3" placeholder="Blank: authoritative ontology-to-graph lineage. Otherwise provide workspaceId, ontologyId and graphModelId after portal materialization."></textarea></label>
           <label>Foundry project endpoint
@@ -524,7 +526,7 @@
           <label>Model capacity (required when creating)
             <input id="deployFoundryModelCapacity" type="number" min="1" step="1" placeholder="Positive capacity within your quota" disabled /></label>
         </div>
-      </div>
+      </details>
       <button id="deployBtn" class="primary" disabled style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 10px 26px -10px rgba(16,185,129,.85)">Deploy Fabric app</button>
       <div id="deployPanel"><pre class="output muted">Output will appear here.</pre></div>
     </div>
@@ -547,6 +549,9 @@
     </main>
   </div>
 
+  <datalist id="azureSubscriptionOptions"></datalist>
+  <p id="subscriptionDiscoveryStatus" role="status"></p>
+  <p class="foot">Routine deployment: select tenant, workspace and subscription; leave discovered settings blank. First-time consent, tenant enablement and resource-scoped access may need an administrator. Native graph materialization remains a separate portal prerequisite.</p>
   <p class="foot">No build step &middot; secrets stay local &middot; run with <code>python webapp\server.py</code></p>
 </div>
 
@@ -594,6 +599,7 @@ function renderPanel(el, job) {
        <div class="progress-head"><span class="status ${statusCls}">${label}</span><span class="meta"><span class="elapsed" title="Elapsed time">${elapsed}</span><span class="pct">${pct}%</span></span></div>
        <div class="bar"><div class="fill ${statusCls}" style="width:${pct}%"></div></div>
        ${phaseProgress}
+       ${renderDeploymentTimings(job.lines || [])}
        <pre class="output ${statusCls}">${escapeHtml((job.lines || []).join("\n") || "\u2026")}${escapeHtml(err)}${escapeHtml(tail)}</pre>
      </div>`;
   el.querySelectorAll(".workflow-phase-group").forEach((group) => {
@@ -608,6 +614,52 @@ function renderPanel(el, job) {
     if (out) out.scrollTop = out.scrollHeight;
   }
 }
+
+function renderDeploymentTimings(lines) {
+  const raw = [...lines].reverse().find((line) => line.includes("DEPLOY_TIMINGS="));
+  if (!raw) return "";
+  try {
+    const data = JSON.parse(raw.slice(raw.indexOf("DEPLOY_TIMINGS=") + "DEPLOY_TIMINGS=".length));
+    if (!data || !Array.isArray(data.steps) || !Number.isFinite(data.total_seconds) || data.total_seconds < 0 ||
+        !["succeeded", "failed"].includes(data.status) || data.steps.some((step) =>
+          !step || typeof step.label !== "string" || !Number.isFinite(step.seconds) || step.seconds < 0 ||
+          !Number.isInteger(step.section) || step.section < 1 || step.section > 8 ||
+          !["completed", "failed"].includes(step.status))) {
+      throw new Error("Invalid deployment timing receipt");
+    }
+    const rows = data.steps.map((step) => `<tr><td>${step.section}. ${escapeHtml(step.label)}</td><td>${formatElapsed(step.seconds * 1000)}</td><td>${escapeHtml(step.status)}</td></tr>`).join("");
+    return `<section aria-label="Deployment timings"><h3>App deployment timings (${escapeHtml(data.status)})</h3><table><thead><tr><th>Section</th><th>Elapsed</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table><p>Total: ${formatElapsed(data.total_seconds * 1000)}. Setup-pipeline time is separate.</p></section>`;
+  } catch (error) {
+    return `<p class="error" role="alert">Could not read deployment timings: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+document.querySelectorAll("[data-load-subscriptions]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const status = $("subscriptionDiscoveryStatus");
+    status.textContent = "Loading signed-in Azure subscriptions...";
+    try {
+      const response = await fetch("/api/subscriptions");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (!Array.isArray(data.subscriptions)) throw new Error("Invalid subscription list");
+      $("azureSubscriptionOptions").replaceChildren(...data.subscriptions.map((subscription) => {
+        const option = document.createElement("option");
+        option.value = subscription.id;
+        option.label = `${subscription.name} (tenant ${subscription.tenantId})`;
+        return option;
+      }));
+      status.textContent = data.subscriptions.length
+        ? "Subscriptions loaded. Choose one belonging to your target tenant; deployment verifies the match."
+        : "No enabled subscriptions found. Sign in to the target tenant or request access from its Azure administrator.";
+    } catch (error) {
+      status.textContent = `Subscription discovery failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
 
 const WORKFLOW_PHASE_GROUPS = [
   { key: "sync", title: "GitHub Sync", prefix: "Sync \u00b7", component: "GitHub sync" },

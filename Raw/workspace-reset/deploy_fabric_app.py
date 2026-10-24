@@ -78,6 +78,39 @@ APP_DIR = REPO_ROOT / "HydroOperationsApp"
 RAYFIN_DIR = APP_DIR / "rayfin"
 DEPENDENCY_STAMP = APP_DIR / "node_modules" / ".fabric-demo-package-lock.sha256"
 AZURE_CLI_SESSION_ROOT = Path(tempfile.gettempdir()) / "fabric-demo-azure-cli"
+_FABRIC_TOKEN_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+
+
+class DeploymentTimings:
+    def __init__(self) -> None:
+        self.started = time.monotonic()
+        self.started_at = datetime.now(UTC).isoformat()
+        self.steps: list[dict[str, Any]] = []
+        self.step_started = self.started
+
+    def _close(self, status: str, now: float) -> None:
+        if self.steps and self.steps[-1]["status"] == "running":
+            step = self.steps[-1]
+            step.update(seconds=round(now - self.step_started, 3), status=status)
+            print(f"TIMING [{step['section']}/8] {step['seconds']:.3f}s {status}: {step['label']}", flush=True)
+
+    def stage(self, section: int, label: str) -> None:
+        now = time.monotonic()
+        self._close("completed", now)
+        self.steps.append({"section": section, "label": label, "status": "running", "seconds": 0})
+        self.step_started = now
+        print(f"[{section}/8] {label}", flush=True)
+
+    def finish(self, succeeded: bool) -> None:
+        now = time.monotonic()
+        self._close("completed" if succeeded else "failed", now)
+        print("DEPLOY_TIMINGS=" + json.dumps({
+            "started_at": self.started_at,
+            "finished_at": datetime.now(UTC).isoformat(),
+            "total_seconds": round(now - self.started, 3),
+            "status": "succeeded" if succeeded else "failed",
+            "steps": self.steps,
+        }, separators=(",", ":")), flush=True)
 
 
 class DeployError(RuntimeError):
@@ -663,6 +696,7 @@ def run_with_azure_cli_reauthentication(
             raise
 
     try:
+        _FABRIC_TOKEN_CACHE.clear()
         reauthenticate_azure_cli(tenant, operation)
     except DeployError as exc:
         raise AzureCliReauthenticationError(str(exc)) from exc
@@ -680,6 +714,11 @@ def run_with_azure_cli_reauthentication(
 
 
 def fabric_headers(tenant: str) -> dict[str, str]:
+    key = (tenant.casefold(), os.environ.get("AZURE_CONFIG_DIR", ""))
+    cached = _FABRIC_TOKEN_CACHE.get(key)
+    if cached is not None and cached[0] > time.time() + 120:
+        return {"Authorization": f"Bearer {cached[1]}"}
+    _FABRIC_TOKEN_CACHE.pop(key, None)
     command = az(
         "account",
         "get-access-token",
@@ -687,16 +726,28 @@ def fabric_headers(tenant: str) -> dict[str, str]:
         tenant,
         "--resource",
         "https://api.fabric.microsoft.com",
-        "--query",
-        "accessToken",
         "-o",
-        "tsv",
+        "json",
     )
-    token = run_with_azure_cli_reauthentication(
+    output = run_with_azure_cli_reauthentication(
         tenant,
         "accessing the Fabric workspace",
         lambda: run_capture(command),
     )
+    try:
+        metadata = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise DeployError("Azure CLI did not return valid Fabric token metadata.") from error
+    if not isinstance(metadata, dict):
+        raise DeployError("Azure CLI Fabric token metadata must be an object.")
+    token, expires = metadata.get("accessToken"), metadata.get("expires_on")
+    if not isinstance(token, str) or not token.strip() or type(expires) is not int:
+        raise DeployError("Azure CLI Fabric token metadata requires accessToken and expires_on; upgrade Azure CLI.")
+    if expires <= time.time():
+        raise DeployError("Azure CLI returned an expired Fabric token; sign in again.")
+    if GUID_RE.fullmatch(tenant) and str(metadata.get("tenant", "")).casefold() != tenant.casefold():
+        raise DeployError("Azure CLI returned a Fabric token for a different tenant.")
+    _FABRIC_TOKEN_CACHE[key] = (expires, token)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -2142,7 +2193,19 @@ def provision_foundry_agents(tenant: str, workspace_id: str) -> None:
 
 
 def deploy(args: argparse.Namespace) -> None:
-    print("[1/8] Checking Azure tenant and Fabric workspace", flush=True)
+    _FABRIC_TOKEN_CACHE.clear()
+    timings = DeploymentTimings()
+    succeeded = False
+    try:
+        _deploy(args, timings)
+        succeeded = True
+    finally:
+        _FABRIC_TOKEN_CACHE.clear()
+        timings.finish(succeeded)
+
+
+def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
+    timings.stage(1, "Checking Azure tenant and Fabric workspace")
     if args.push_config:
         validate_git_push_ready()
     prefer_tenant_scoped_azure_cli_config(args.tenant)
@@ -2164,7 +2227,7 @@ def deploy(args: argparse.Namespace) -> None:
         except (FeatureWorkspaceError, ValueError, OSError) as exc:
             raise DeployError(f"Feature bootstrap configuration failed: {exc}") from exc
 
-    print("[2/8] Resolving the tenant SPA app registration", flush=True)
+    timings.stage(2, "Resolving the tenant SPA app registration")
     client_id = resolve_spa(args.client_id, tenant_id)
     if not client_id:
         raise DeployError(
@@ -2201,7 +2264,7 @@ def deploy(args: argparse.Namespace) -> None:
         except FeatureWorkspaceError as exc:
             raise DeployError(str(exc)) from exc
 
-    print("[3/8] Resetting local Rayfin deployment state", flush=True)
+    timings.stage(3, "Preparing target configuration and agents")
     reuse_deployment = prepare_rayfin_env(
         tenant_id,
         workspace_id,
@@ -2216,10 +2279,10 @@ def deploy(args: argparse.Namespace) -> None:
     run_stream(node24_script(APP_DIR / "scripts" / "validate-env.mjs"), cwd=APP_DIR)
     provision_foundry_agents(args.tenant, workspace_id)
 
-    print("[4/8] Authenticating Rayfin to the target tenant", flush=True)
+    timings.stage(4, "Authenticating Rayfin to the target tenant")
     ensure_rayfin_login(tenant_id)
 
-    print("[5/8] Provisioning backend, database schema, and static app", flush=True)
+    timings.stage(5, "Provisioning backend, database schema, and static app")
     if reuse_deployment:
         print("Existing backend is healthy; deploying static content without reprovisioning it.", flush=True)
         command = rayfin24("up", "staticapp", "deploy")
@@ -2231,7 +2294,7 @@ def deploy(args: argparse.Namespace) -> None:
         raise DeployError("Rayfin completed without reporting a Fabric hosting URL.")
     hosting_url = urls[-1]
 
-    print("[6/8] Adding the current app URL to the preserved redirect configuration", flush=True)
+    timings.stage(6, "Adding the current app URL to the preserved redirect configuration")
     rayfin_redirects = write_rayfin_redirects(
         _unique_redirect_uris(
             original_entra_redirects,
@@ -2263,7 +2326,7 @@ def deploy(args: argparse.Namespace) -> None:
     )
     validate_lakehouse_connector_apply(connector_output)
 
-    print("[7/8] Setting up browser sign-in (redirect, permissions, and consent)", flush=True)
+    timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:
         try:
             run_with_azure_cli_reauthentication(
@@ -2284,7 +2347,7 @@ def deploy(args: argparse.Namespace) -> None:
             "SPA configuration was skipped because no usable Application (client) ID is available."
         )
 
-    print("[8/8] Checking the hosted page, Fabric backend, and sign-in readiness", flush=True)
+    timings.stage(8, "Checking the hosted page, Fabric backend, and sign-in readiness")
     item_id = validate_fabric_app(workspace_id, args.tenant)
     hosting_state = validate_hosted_page(hosting_url, workspace_id, item_id, args.tenant)
     api_url = validate_rayfin_endpoint_contract(capacity_id, workspace_id, item_id)

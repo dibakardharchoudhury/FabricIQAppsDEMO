@@ -140,6 +140,13 @@ class FakeDeploy:
     def commands(self, *prefix):
         return [argv for argv in self.log if argv[:len(prefix)] == list(prefix)]
 
+    def environment_settings(self):
+        return dict(
+            assignment.split("=", 1)
+            for argv in self.commands("azd", "env", "set")
+            for assignment in argv[3:argv.index("--environment")]
+        )
+
 
 def run(fake, live, **overrides):
     """Run the convergence against a sequence of live agent states (the last one repeats)."""
@@ -312,7 +319,8 @@ class ConvergenceTests(unittest.TestCase):
         self.assertIn("--no-logs", build)
         self.assertNotIn("--no-wait", build)
         self.assertEqual(build[build.index("--timeout") + 1], "1200")
-        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        sets = fake.environment_settings()
+        self.assertEqual(len(fake.commands("azd", "env", "set")), 1)
         self.assertEqual(sets["HYDRO_ORCHESTRATOR_IMAGE"], f"myreg.azurecr.io/hydro-orchestrator@{DIGEST_B}")
         self.assertEqual(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
         self.assertEqual(sets["AZURE_AI_MODEL_DEPLOYMENT_NAME"], "model-x")
@@ -364,7 +372,7 @@ class ConvergenceTests(unittest.TestCase):
         stale = agent(DIGEST_A, env={**environment(), "HYDRO_FABRIC_SOURCE_CONFIG": "{}"})
         run(fake, [stale, agent()])
         self.assertEqual(fake.commands("azd", "env", "new"), [])
-        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        sets = fake.environment_settings()
         self.assertEqual(sets["AZURE_AI_PROJECT_ID"], PROJECT_ID)
         self.assertEqual(sets["AZURE_AI_PROJECT_ENDPOINT"], ENDPOINT)
         self.assertEqual(sets["AZURE_TENANT_ID"], GUIDS["tenant"])
@@ -389,7 +397,7 @@ class ConvergenceTests(unittest.TestCase):
             live = agent(env={**environment(), "HYDRO_ORCHESTRATOR_CONFIG": "not-json"})
             fake = FakeDeploy()
             run(fake, [live, agent(DIGEST_B)])
-            sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+            sets = fake.environment_settings()
             self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
 
     def test_production_writes_are_preserved_from_the_live_agent_unless_overridden(self):
@@ -397,12 +405,12 @@ class ConvergenceTests(unittest.TestCase):
         live = agent(DIGEST_A, env=environment(writes=True))
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": ""}):
             run(fake, [live, live, agent(DIGEST_B, env=environment(writes=True))])
-        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        sets = fake.environment_settings()
         self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], True)
         fake = FakeDeploy()
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "false"}):
             run(fake, [live, live, agent(DIGEST_B)])
-        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        sets = fake.environment_settings()
         self.assertIs(json.loads(sets["HYDRO_ORCHESTRATOR_CONFIG"])["production_writes_enabled"], False)
         with patch.dict("os.environ", {"HYDRO_PRODUCTION_WRITES_ENABLED": "maybe"}):
             with self.assertRaisesRegex(FakeDeploy.DeployError, "true or false"):
@@ -418,7 +426,8 @@ class ConvergenceTests(unittest.TestCase):
         order = [argv[:3] for argv in fake.log if argv[:3] in (["azd", "env", "new"], ["azd", "env", "set"], ["azd", "deploy", "hydro-orchestrator"])]
         self.assertEqual(order[0], ["azd", "env", "new"])
         self.assertEqual(order[-1], ["azd", "deploy", "hydro-orchestrator"])
-        names = {argv[3] for argv in fake.commands("azd", "env", "set")}
+        names = set(fake.environment_settings())
+        self.assertEqual(len(fake.commands("azd", "env", "set")), 1)
         self.assertTrue({"AZURE_AI_PROJECT_ENDPOINT", "AZURE_CONTAINER_REGISTRY_NAME", "HYDRO_ORCHESTRATOR_IMAGE"} <= names)
 
     def test_a_version_that_never_becomes_current_fails_with_the_reason(self):
@@ -571,7 +580,8 @@ class ProjectCreationTests(unittest.TestCase):
         init = fake.commands("azd", "init")[0]
         self.assertEqual(init[init.index("-t") + 1], project.TEMPLATE)
         name = init[init.index("-e") + 1]
-        sets = {argv[3]: argv[4] for argv in fake.commands("azd", "env", "set")}
+        sets = fake.environment_settings()
+        self.assertEqual(len(fake.commands("azd", "env", "set")), 1)
         self.assertEqual({key: sets[key] for key in (
             "AZURE_SUBSCRIPTION_ID", "AZURE_LOCATION", "AZURE_AI_DEPLOYMENTS_LOCATION", "ENABLE_HOSTED_AGENTS",
             "ENABLE_CAPABILITY_HOST", "ENABLE_MONITORING")}, {
@@ -645,7 +655,7 @@ class BackendBootstrapTests(unittest.TestCase):
 
     def test_the_deployer_runs_it_immediately_before_foundry_provisioning(self):
         import inspect
-        source = inspect.getsource(DEPLOY.deploy)
+        source = inspect.getsource(DEPLOY._deploy)
         self.assertLess(source.index('"validate-env.mjs"'), source.index("provision_foundry_agents("))
         provisioning = inspect.getsource(DEPLOY.provision_foundry_agents)
         self.assertLess(provisioning.index("ensure_appbackend_identity("),

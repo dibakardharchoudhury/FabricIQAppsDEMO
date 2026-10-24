@@ -311,15 +311,15 @@ def ensure_hosted_agent(
             raise deploy.DeployError(f"The registry has no {IMAGE_REPOSITORY}:{tag} after the build completed.")
 
     ensure_azd_ready(deploy, tenant)
-    _configure_azd_environment(
+    bootstrap = _configure_azd_environment(
         deploy, project_dir=project_dir, project_id=project_id, endpoint=endpoint, tenant=tenant,
         registry=registry, subscription=subscription, connections=connections,
         create=AZD_ENVIRONMENT not in _azd_environment_names(deploy, project_dir),
     )
-    for key, value in {**environment, "HYDRO_ORCHESTRATOR_IMAGE": f"{registry}.azurecr.io/{IMAGE_REPOSITORY}@{digest}"}.items():
-        deploy.run_capture(
-            deploy.command_argv("azd", "env", "set", key, value, "--environment", AZD_ENVIRONMENT), cwd=project_dir,
-        )
+    set_azd_environment(deploy, project_dir, AZD_ENVIRONMENT, {
+        **bootstrap, **environment,
+        "HYDRO_ORCHESTRATOR_IMAGE": f"{registry}.azurecr.io/{IMAGE_REPOSITORY}@{digest}",
+    })
     deploy.run_stream(
         deploy.command_argv("azd", "deploy", AGENT_NAME, "--environment", AZD_ENVIRONMENT, "--no-prompt"),
         cwd=project_dir,
@@ -379,10 +379,17 @@ def ensure_azd_ready(deploy, tenant: str) -> None:
             deploy.run_stream(deploy.command_argv("azd", "extension", "install", extension))
 
 
+def set_azd_environment(deploy, directory: Path, name: str, values: dict[str, str]) -> None:
+    deploy.run_capture(deploy.command_argv(
+        "azd", "env", "set", *(f"{key}={value}" for key, value in values.items()),
+        "--environment", name,
+    ), cwd=directory)
+
+
 def _configure_azd_environment(
     deploy, *, project_dir: Path, project_id: str, endpoint: str, tenant: str, registry: str, subscription: str,
     connections: list[dict], create: bool,
-) -> None:
+) -> dict[str, str]:
     """Rebind every publish to live project metadata, including environments created on an earlier run."""
     root = project_dir
     location = deploy.run_capture(deploy.az(
@@ -405,11 +412,7 @@ def _configure_azd_environment(
         ), cwd=root)
     else:
         print(f"Refreshing the azd environment {AZD_ENVIRONMENT} from the live Foundry project.", flush=True)
-    values = azd_bootstrap_values(
+    return azd_bootstrap_values(
         project_id=project_id, endpoint=endpoint, tenant=tenant, location=location, registry=registry,
         registry_id=registry_id, connection=names[0],
     )
-    for key, value in values.items():
-        deploy.run_capture(
-            deploy.command_argv("azd", "env", "set", key, value, "--environment", AZD_ENVIRONMENT), cwd=root,
-        )

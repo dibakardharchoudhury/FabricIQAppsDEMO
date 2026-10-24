@@ -101,10 +101,7 @@ def ensure_foundry_project(
         "ENABLE_HOSTED_AGENTS": "true", "ENABLE_CAPABILITY_HOST": "false", "ENABLE_MONITORING": "true",
         "AI_PROJECT_DEPLOYMENTS": deployments,
     }
-    for key, value in settings.items():
-        deploy.run_capture(
-            deploy.command_argv("azd", "env", "set", key, value, "--environment", name), cwd=directory,
-        )
+    hosted.set_azd_environment(deploy, directory, name, settings)
     print(
         f"Foundry: provisioning environment {name} in {location} (Foundry account, project, model {model}, "
         "container registry, Application Insights). This takes about 5-10 minutes.", flush=True,

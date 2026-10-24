@@ -8,6 +8,91 @@ Architecture: [README.md](README.md) · [root README](../README.md) ·
 End-to-end changes and migration status:
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).
 
+## Faster deployment and a simpler operator path
+
+Use the existing [local launcher](../Raw/workspace-reset/README.md#easiest-start--just-launch-it-no-commands-to-type).
+Select the target tenant and workspace, click **Load signed-in subscriptions**, and choose a
+subscription belonging to that tenant. Nothing changes the active Azure subscription just
+because it appears in this list; the deployer verifies the selected subscription and tenant.
+Subscription discovery uses Azure CLI account metadata, not directory-wide Graph permissions.
+The selected Azure subscription locates Foundry resources; the workspace's assigned Fabric
+capacity can belong to a different subscription. Its authoritative assignment is read separately.
+
+- **Prepared workspace / app update:** use **Deploy app**. Leave the SPA/Foundry overrides
+  blank when live discovery is unambiguous. Advanced settings are collapsed by default.
+  Existing resources, application registrations and work-order write policy are reused.
+- **New workspace:** use the existing serial **Initialize everything** workflow:
+  Git sync, Key Vault/setup pipeline, then the same app deployment engine. Review the
+  sync's resource-removal implications before using it in a populated workspace.
+- **No Foundry project yet:** open **Advanced / first-time Foundry setup** and explicitly
+  opt into billable provisioning. Supply a region-supported model/version/SKU/capacity.
+  Missing permissions or quota stop the workflow rather than silently changing targets.
+- **Native graph:** the selected v2 ontology still requires its portal **Manage graph**
+  materialization flow and authoritative lineage or an operator-verified explicit binding.
+  This is not an unattended REST provisioning step.
+
+### Speed changes and measurements
+
+The canonical deployer now prints each section's monotonic duration and outcome, followed
+by a `DEPLOY_TIMINGS=` JSON receipt with UTC start/end, total seconds, and ordered
+`steps` (`section`, `label`, `seconds`, `status`). Failure also emits the completed
+sections plus the failed section; errors still propagate. The local UI renders this
+receipt as a timing table. These eight sections measure **app deployment**, not a separate
+Git sync/setup-pipeline run or the user-operated graph prerequisite.
+
+Implemented optimizations:
+
+1. Batch all verified bootstrap/runtime `azd env set KEY=VALUE ...` assignments into
+   **one CLI process per Hosted Agent publication**, instead of one per setting.
+   Fresh Foundry infrastructure configuration also uses one batch.
+2. Reuse the Fabric access token **only inside the current deployment process**, keyed by
+   tenant and Azure CLI configuration. The actual CLI `expires_on` controls expiry with
+   a two-minute refresh margin; reauthentication and deployment exit clear the cache.
+   No token is added to reports, repository files or browser storage.
+3. Retain the existing locked-dependency stamp, source-fingerprint/immutable-image reuse,
+   and active-version comparison. An unchanged Hosted Agent is verified, not rebuilt.
+   These existing caches are not claimed as newly implemented savings.
+
+No readiness gate is removed: every same-workspace deploy still reapplies backend
+runtime/CORS and SQL settings, applies/verifies the Lakehouse connector, preserves Entra
+redirects, checks consent, and verifies the hosted endpoint and real transport readiness.
+There are no agent-skip flags or additional routine-operator privilege requirements.
+
+The preceding changed-image release had these trustworthy measurements:
+
+| Component | Observed elapsed | Evidence / limitation |
+|---|---:|---|
+| ACR image build | 2m 12.634s | Successful run `dt4` start/finish timestamps; queue 0.253s. |
+| Hosted Agent publication | About 55s | `azd` deployment console; separate from ACR build. |
+| Vite production build | 24.19s | Build console; not the whole static-app publish. |
+| Entire prior app deployment | More than 10m | It exceeded the 600-second initial command wait; exact section clocks were not recorded. |
+
+A warm redeploy and a changed-image deployment are different workloads. Do not subtract
+the ACR build from a warm run and claim it as a new optimization, or invent historical
+per-section durations. Fresh-tenant consent, resource provisioning, Spark/pipeline execution,
+quota and portal graph materialization add work beyond an app redeploy.
+
+### Least privilege: operator versus one-time administrator preparation
+
+There is no honest "any tenant with no administrator involvement" guarantee. Tenant policy,
+admin consent, capacity availability, model quota and Fabric preview availability still apply.
+The routine operator should reuse administrator-prepared resources rather than request
+Global Administrator or subscription Owner.
+
+| Area | Routine operator path | One-time / exceptional preparation |
+|---|---|---|
+| Fabric | Workspace/item read, create, update and execute access required by the selected workflow. Git connection/setup can require workspace Admin; app updates do not need another full Git import. | Fabric administrator enables required tenant features/API access. Capacity owner supplies an active assigned capacity. |
+| SPA / sign-in | Reuse the verified existing app and already-consented permissions; redirect/permission updates go through `setup-live-auth`, not manual portal edits. App ownership can cover registration updates subject to tenant policy. | Authorized Entra administrator approves consent or creates/assigns the SPA if operator app registration is blocked. Ownership alone does not authorize tenant-wide consent. |
+| Existing Foundry / ACR | Grant only required project/registry operations: agent and connection management, model invocation, registry metadata/read, and cloud-build/image-publish access. Keep grants at project, account or registry scope as supported. | Resource owner assigns scoped Foundry and ACR roles; builds need more than pull-only access. Managed identity grants are prepared by someone allowed to assign roles. |
+| New Azure resources | Leave **Create Foundry** off and reuse the prepared project when subscription-wide creation rights are unavailable. | Explicit provisioning needs resource-group creation/write and any required role-assignment/provider-registration rights; these are not tenant roles. Supply available model quota. |
+| Key Vault / notebook setup | Reuse approved credentials and private connectivity; never expose secrets to the UI/logs. | Vault/resource owner prepares secret access and approves required private endpoints; tenant administrator prepares any required notebook identity/API allow-list. |
+| Graph / operational delivery | Operator materializes the selected ontology graph and validates actual agent execution separately. | Teams/email/Operations Agent permissions and delivery remain separate requirements, not proven by app hosting. |
+
+If the selected capacity pauses, the deployer stops before publication instead of silently
+resuming billable infrastructure. An explicitly authorized operator with capacity-scoped
+resume rights can resume **that assigned capacity** and rerun; no resizing, reassignment
+or broad capacity-administrator role is required merely to deploy the app.
+
 ## Current FEATURE connector retirement (October 24, 2026)
 
 The canonical deployment published **1.0.1036 (`d676b9e`)**, with

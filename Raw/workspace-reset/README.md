@@ -56,6 +56,21 @@ the locked npm packages (including Rayfin) under Node 24. It signs you in to Azu
 `http://127.0.0.1:5000`** automatically. Keep the window open while you use it; close
 it (or press Ctrl+C) to stop.
 
+For the simplest deployment, choose the target tenant/workspace, then use **Load signed-in
+subscriptions** instead of copying a subscription GUID. The list shows tenant IDs and does
+not switch Azure subscriptions. Use **Deploy app** for an existing prepared workspace; only
+use **Initialize everything** when Git sync and data setup are actually needed. Foundry
+overrides and explicitly billable first-time provisioning are under **Advanced / first-time
+Foundry setup**. Blank overrides use verified discovery, never another tenant's saved target.
+
+Every app deployment now records its eight section durations, including the failed section
+if it stops. The local progress panel shows the final timing table; `DEPLOY_TIMINGS=` in the
+log is the machine-readable receipt. Full-workflow Git sync and setup-pipeline time are
+separate, not hidden inside that app-only total.
+See [speed measurements and least-privilege handoff](../../HydroOperationsApp/DEPLOY.md#faster-deployment-and-a-simpler-operator-path)
+for the routine operator path, one-time administrator tasks, and the manual graph prerequisite.
+Neither an app deployment nor a timing receipt certifies business-agent execution or delivery.
+
 ## What manual sync this replaces
 
 In the Fabric portal the manual flow is:
