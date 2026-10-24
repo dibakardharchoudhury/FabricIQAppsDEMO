@@ -138,13 +138,14 @@ export function serializeNativeKnowledgeGraph(
   for (const node of [...graph.nodes].sort((left, right) => left.oid.localeCompare(right.oid))) {
     const entity = entities.get(node.entityTypeId!)!
     const subject = nodeIri(graph.graphModelId, node.oid)
-    const keyName = Object.entries(entity.properties)
-      .find(([, propertyId]) => entity.entityIdParts.includes(propertyId))?.[0]
+    const keyNames = entity.entityIdParts.map(propertyId =>
+      Object.entries(entity.properties).find(([, id]) => id === propertyId)?.[0])
+    const keyValues = keyNames.map(name => name ? node.properties[name] : undefined)
+    const label = keyValues.length && keyValues.every(value => value !== undefined && value !== null)
+      ? keyValues.map(String).join(' / ') : node.oid
     lines.push(statement(subject, 'a', iri(classIri(ontology.id, entity.id))))
     if (owl) lines.push(statement(subject, 'a', 'owl:NamedIndividual'))
-    lines.push(statement(subject, 'rdfs:label', textLiteral(String(
-      keyName ? node.properties[keyName] ?? node.oid : node.oid,
-    ))))
+    lines.push(statement(subject, 'rdfs:label', textLiteral(label)))
     for (const [name, value] of Object.entries(node.properties).sort(([left], [right]) => left.localeCompare(right))) {
       if (value === undefined || value === null) continue
       lines.push(statement(

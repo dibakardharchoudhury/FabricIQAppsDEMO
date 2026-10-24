@@ -30,7 +30,8 @@ def source(number):
 
 
 def functions(number, *names, **overrides):
-    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib}
+    namespace = {"Optional": Optional, "json": json, "base64": base64, "zlib": zlib,
+                 "provision_shared_store": False}
     namespace.update(overrides)
     tree = ast.parse(source(number))
     included = set(names) | {"definition_parts", "is_ontology_context_path"}
@@ -1804,10 +1805,10 @@ class CapabilityTests(unittest.TestCase):
         tree = ast.parse(source("011"))
         start = next(i for i, node in enumerate(tree.body) if assign_to(node, "persist"))
         for seed_demo_data in (True, False):
-            ns = {"seed_demo_data": seed_demo_data, "step_results": {
+            ns = {"seed_demo_data": seed_demo_data, "provision_shared_store": False, "step_results": {
                 "graphql": {"status": "configured"}, "sql_seed": {"status": "completed"},
             }}
-            exec(compile(ast.Module(body=tree.body[start:start + 2], type_ignores=[]), "persist", "exec"), ns)
+            exec(compile(ast.Module(body=tree.body[start:start + 3], type_ignores=[]), "persist", "exec"), ns)
             self.assertEqual("operational_sql_seed_status" in ns["persist"], seed_demo_data)
 
     def test_sql_extension_failure_is_persisted_and_reraised(self):
@@ -1825,6 +1826,7 @@ class CapabilityTests(unittest.TestCase):
                 "persist_sql_extension_status": Mock(),
                 "step_results": {"data_agent_sql_source": {"status": "failed", "reason": "failure"}},
                 "step_errors": [],
+                "provision_shared_store": False,
                 "json": json,
             }
             ns[failing_call].side_effect = PermissionError("forbidden")
@@ -1906,6 +1908,7 @@ class CapabilityTests(unittest.TestCase):
                 "agent", {"status": "allowed", "reason": ""})),
             "extend_data_agent_sql_source": Mock(return_value=result),
             "persist_sql_extension_status": Mock(), "step_results": {}, "step_errors": [], "json": json,
+            "provision_shared_store": False,
         }
         exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
         self.assertEqual(ns["step_results"]["data_agent_sql_source"], result)
@@ -1922,6 +1925,18 @@ class CapabilityTests(unittest.TestCase):
         result = json.loads(ns["notebookutils"].notebook.exit.call_args.args[0])
         self.assertEqual(result["status"], "completed")
         self.assertFalse(result["agent_ready"])
+
+    def test_failed_shared_store_preparation_does_not_switch_agent_sources(self):
+        attempt = next(node for node in ast.parse(source("011")).body
+                       if isinstance(node, ast.Try) and node.finalbody
+                       and "resolve_agent_extension_target" in ast.unparse(node))
+        ns = {"provision_shared_store": True, "step_errors": [RuntimeError("copy verification failed")],
+              "step_results": {}, "resolve_agent_extension_target": Mock(),
+              "extend_data_agent_sql_source": Mock(), "persist_sql_extension_status": Mock(), "json": json}
+        exec(compile(ast.Module(body=[attempt], type_ignores=[]), "extension", "exec"), ns)
+        ns["resolve_agent_extension_target"].assert_not_called()
+        ns["extend_data_agent_sql_source"].assert_not_called()
+        self.assertEqual(ns["step_results"]["data_agent_sql_source"]["status"], "failed")
 
     def test_sql_status_ignores_legacy_runtime_fields(self):
         spark = SimpleNamespace(createDataFrame=Mock())

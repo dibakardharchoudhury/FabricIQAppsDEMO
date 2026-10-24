@@ -908,7 +908,7 @@ export async function resumeWeatherNotebooks(onStatus: JobProgress | undefined, 
   return runWeatherSequence(onStatus, sinceIso)
 }
 
-/** Run the RTI_011 post-seed notebook (seed SQL + publish GraphQL API + Data Agent SQL source),
+/** Run the RTI_011 post-seed notebook (seed shared SQL + Data Agent SQL source),
  *  polling to completion so the caller can show progress. Rediscovers new items on success. */
 export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgress): Promise<JobStatus> => {
   const postseedNotebookId = await resolvePostseedNotebookId()
@@ -924,13 +924,13 @@ export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgr
       parameters: [
         {
           name: 'sql_db_item_name',
-          value: 'hydro-operations-ui',
+          value: 'HydroOperationalStore',
           type: 'Text',
         },
       ],
     },
   )
-  // The notebook publishes new items (GraphQL API, Data Agent source) — force a fresh discovery.
+  // Refresh the Data Agent source publication after the explicit seed operation.
   if (status === 'Completed') clearWorkspaceConfigCache()
   return status
 })

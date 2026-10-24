@@ -214,9 +214,13 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
       reserve(`property:${identity.name}.${propertyName}`, child)
       propertyMetadata[propertyName] = metadata
     }
-    const key = namedField(node, 'keyProperty')
-    if (key && !propertyMetadata[key]) fail(node, `keyProperty ${key} does not reference a declared property.`)
-    if (key && !primitive.test(propertyMetadata[key].dataType)) fail(node, 'keyProperty must reference a scalar primitive property.')
+    const keys = node.children.filter(child => child.text.startsWith('keyProperty:'))
+      .map(child => name(child.text.slice('keyProperty:'.length).trim(), child))
+    if (new Set(keys).size !== keys.length) fail(node, 'duplicate keyProperty member.')
+    for (const key of keys) {
+      if (!propertyMetadata[key]) fail(node, `keyProperty ${key} does not reference a declared property.`)
+      if (!primitive.test(propertyMetadata[key].dataType)) fail(node, 'keyProperty must reference a scalar primitive property.')
+    }
     const entityId = namedField(node, 'lineageTag') ?? identity.name
     reserve(`id:${entityId}`, node)
     const additionalBackingTables = node.children.filter(child => child.text === 'additionalBackingTable').map(child => {
@@ -230,7 +234,7 @@ export function parseTmdlContract(id: string, displayName: string, parts: Defini
     entityTypes.push({
       ...identity,
       id: entityId,
-      entityIdParts: key ? [propertyMetadata[key].id] : [],
+      entityIdParts: keys.map(key => propertyMetadata[key].id),
       properties: Object.fromEntries(Object.entries(propertyMetadata).map(([key, value]) => [key, value.id])),
       propertyMetadata,
       sourceTable: namedField(node, 'backingTable'),

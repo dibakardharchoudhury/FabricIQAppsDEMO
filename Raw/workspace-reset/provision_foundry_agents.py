@@ -68,9 +68,11 @@ def verify_published_identity(definition: dict, workspace: str, ontology: str) -
         raise RuntimeError("No published Data Agent source matches the selected Ontology v2.")
 
 
-def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: dict) -> dict:
+def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: dict, *, collection="dataAgents") -> dict:
+    if collection not in ("dataAgents", "ontologies"):
+        raise ValueError("Unsupported Fabric definition collection.")
     response = request_with_read_retry(
-        "POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/dataAgents/{agent_id}/getDefinition",
+        "POST", f"{deploy.FABRIC_BASE}/workspaces/{workspace}/{collection}/{agent_id}/getDefinition",
         headers=headers, timeout=60,
     )
     response.raise_for_status()
@@ -86,10 +88,10 @@ def read_data_agent_definition(deploy, workspace: str, agent_id: str, headers: d
                 response.raise_for_status()
                 break
             if operation["status"] in ("Failed", "Cancelled"):
-                raise deploy.DeployError(f"Data Agent definition read failed: {operation}")
+                raise deploy.DeployError(f"{collection} definition read failed: {operation}")
             time.sleep(2)
         else:
-            raise deploy.DeployError("Data Agent definition read timed out.")
+            raise deploy.DeployError(f"{collection} definition read timed out.")
     return response.json()
 
 
@@ -164,13 +166,14 @@ def source_configuration_digest(tenant: str, workspace: str, ontology: str, valu
         "database_id": values.get("RAYFIN_PUBLIC_KQL_DATABASE_ID", ""),
         "lakehouse_id": values.get("RAYFIN_PUBLIC_LAKEHOUSE_ID", ""),
         "appbackend_id": values.get("RAYFIN_PUBLIC_ITEM_ID", ""),
+        "operational_sql_database_id": values.get("RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID", ""),
         "api_url": values.get("RAYFIN_PUBLIC_API_URL", ""),
         "publishable_key": values.get("RAYFIN_PUBLIC_PUBLISHABLE_KEY", ""),
     }
     if any(not re.fullmatch(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         config[key],
-    ) for key in tuple(config)[:7]):
+    ) for key in tuple(config)[:8]):
         raise RuntimeError("Hosted source identity is incomplete; all selected item IDs must be verified GUIDs.")
     api = urlparse(config["api_url"])
     if (api.scheme != "https" or api.username or api.password or api.port or api.query or api.fragment
@@ -393,6 +396,7 @@ def provision(deploy, tenant: str, workspace: str) -> None:
             "RAYFIN_PUBLIC_KQL_DATABASE_ID",
             "RAYFIN_PUBLIC_LAKEHOUSE_ID",
             "RAYFIN_PUBLIC_ITEM_ID",
+            "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID",
             "RAYFIN_PUBLIC_API_URL",
             "RAYFIN_PUBLIC_PUBLISHABLE_KEY",
         )

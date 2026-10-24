@@ -7,6 +7,7 @@ import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
 import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
+import { operationalConnectorConfig } from '../src/services/operationalConnector.ts'
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
@@ -781,7 +782,7 @@ export async function collectOperationRows(client, entityKey, args) {
 
 async function collectOperationInventory(client, entity) {
   return collectCatalogRows(entity, async cursor => {
-    let query = client.data[entity.apiName ?? entity.physicalName].select(entity.columns.map(column => column.name))
+    let query = client.connectors.hydrooperations[entity.apiName ?? entity.physicalName].select(entity.columns.map(column => column.name))
       .orderBy({ [entity.identityColumn]: 'asc' }).first(100)
     if (cursor) query = query.after(cursor)
     return query.executePaginated()
@@ -844,10 +845,10 @@ export async function readStationPower(metadata, args, token, fetcher = fetch) {
 }
 
 export function runtimeConfiguration(input) {
-  const keys = ['tenant_id', 'workspace_id', 'ontology_id', 'eventhouse_id', 'database_id', 'lakehouse_id', 'appbackend_id', 'api_url', 'publishable_key']
+  const keys = ['tenant_id', 'workspace_id', 'ontology_id', 'eventhouse_id', 'database_id', 'lakehouse_id', 'appbackend_id', 'operational_sql_database_id', 'api_url', 'publishable_key']
   if (!input || typeof input !== 'object' || Array.isArray(input)
     || Object.keys(input).length !== keys.length || Object.keys(input).some(key => !keys.includes(key))
-    || keys.slice(0, 7).some(key => typeof input[key] !== 'string' || !guid.test(input[key]))
+    || keys.slice(0, 8).some(key => typeof input[key] !== 'string' || !guid.test(input[key]))
     || typeof input.publishable_key !== 'string' || !/^pk-\S+$/.test(input.publishable_key)
     || typeof input.api_url !== 'string') {
     throw new Error('Explicit runtime source configuration is missing or invalid.')
@@ -880,6 +881,7 @@ export async function configuration() {
     database_id: env.RAYFIN_PUBLIC_KQL_DATABASE_ID,
     lakehouse_id: env.RAYFIN_PUBLIC_LAKEHOUSE_ID,
     appbackend_id: env.RAYFIN_PUBLIC_ITEM_ID,
+    operational_sql_database_id: env.RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID,
   }
   if (Object.values(identity).some(value => typeof value !== 'string' || !guid.test(value))
     || binding.workspaceId !== identity.workspace_id) throw new Error('Explicit source identities are missing or inconsistent.')
@@ -907,11 +909,12 @@ export async function requestJson(url, token, body, fetcher = fetch) {
 
 export async function discover(config, token, fetcher = fetch) {
   const base = `${fabric}/workspaces/${config.workspace_id}`
-  const [workspace, ontology, database, lakehouse] = await Promise.all([
+  const [workspace, ontology, database, lakehouse, operationalStore] = await Promise.all([
     requestJson(base, token, undefined, fetcher),
     requestJson(`${base}/ontologies/${config.ontology_id}`, token, undefined, fetcher),
     requestJson(`${base}/kqlDatabases/${config.database_id}`, token, undefined, fetcher),
     requestJson(`${base}/lakehouses/${config.lakehouse_id}`, token, undefined, fetcher),
+    requestJson(`${base}/sqlDatabases/${config.operational_sql_database_id}`, token, undefined, fetcher),
   ])
   if (workspace.id !== config.workspace_id || ontology.id !== config.ontology_id
     || ontology.properties?.generation !== 2 || database.id !== config.database_id
@@ -920,6 +923,10 @@ export async function discover(config, token, fetcher = fetch) {
     || (lakehouse.workspaceId && lakehouse.workspaceId !== config.workspace_id)
     || !guid.test(lakehouse.properties?.sqlEndpointProperties?.id ?? '')) {
     throw new Error('Live source identity or numeric ontology generation 2 verification failed.')
+  }
+  if (operationalStore.id !== config.operational_sql_database_id || operationalStore.type !== 'SQLDatabase'
+    || (operationalStore.workspaceId && operationalStore.workspaceId !== config.workspace_id)) {
+    throw new Error('Live operational SQL connector identity verification failed.')
   }
   if (!guid.test(workspace.capacityId ?? '')) throw new Error('Workspace has no verified capacity.')
   const api = new URL(config.api_url)
@@ -999,7 +1006,7 @@ export async function collectWorkOrders(client, equipmentId) {
   const cursors = new Set()
   let cursor
   for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
-    let query = client.data.WorkOrder.select(['id', 'workOrderNumber', 'equipmentId', 'instrumentId', 'opcuaNodeId', 'title', 'description', 'status', 'priority'])
+    let query = client.connectors.hydrooperations.WorkOrder.select(['id', 'workOrderNumber', 'equipmentId', 'instrumentId', 'opcuaNodeId', 'title', 'description', 'status', 'priority'])
       .where({ equipmentId: { eq: equipmentId } }).orderBy({ id: 'asc' }).first(100)
     if (cursor) query = query.after(cursor)
     const page = await query.executePaginated()
@@ -1023,7 +1030,7 @@ export async function collectWorkOrders(client, equipmentId) {
 async function operationalRead(config, token, label, read) {
   const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
     publishableKey: config.publishable_key, authStorage: false,
-    connectors: { hydrolakehouse: lakehouseConnectorConfig } })
+    connectors: { hydrolakehouse: lakehouseConnectorConfig, hydrooperations: operationalConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: token })
     return await read(client)
@@ -1183,7 +1190,7 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
   let writeAttempted = false
   const execute = async client => {
     const readBack = async () => {
-      const rows = await client.data.WorkOrder.select(Object.keys(expected))
+      const rows = await client.connectors.hydrooperations.WorkOrder.select(Object.keys(expected))
         .where({ id: { eq: creationId } }).first(2).execute()
       if (!Array.isArray(rows) || rows.length > 1) throw new Error('Work-order creation identity is ambiguous.')
       if (!rows.length) return undefined
@@ -1205,7 +1212,7 @@ export async function submitApprovedWorkOrder(config, draft, edits, principalId,
     }
     try {
       writeAttempted = true
-      await client.data.WorkOrder.create({ ...expected, instrumentId: checked.instrumentId,
+      await client.connectors.hydrooperations.WorkOrder.create({ ...expected, instrumentId: checked.instrumentId,
         opcuaNodeId: checked.opcuaNodeId, createdAt: new Date() })
     } catch (error) {
       const reconciled = await readBack()

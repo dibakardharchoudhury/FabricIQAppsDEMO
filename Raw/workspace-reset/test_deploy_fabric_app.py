@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -162,10 +163,14 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.notebook = "22222222-2222-2222-2222-222222222222"
         self.backend = "33333333-3333-3333-3333-333333333333"
         self.graphql = "44444444-4444-4444-4444-444444444444"
+        self.legacy = "77777777-7777-7777-7777-777777777777"
+        self.operational = "88888888-8888-8888-8888-888888888888"
+        self.ontology = "99999999-9999-9999-9999-999999999999"
         self.values = {
             "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID": self.notebook,
             "RAYFIN_PUBLIC_ITEM_ID": self.backend,
             "RAYFIN_PUBLIC_LAKEHOUSE_ID": "66666666-6666-6666-6666-666666666666",
+            "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": json.dumps({"ontologyId": self.ontology}),
         }
         self.active = []
         self.states = ["NotStarted", "InProgress", "Completed"]
@@ -186,12 +191,15 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         def read(path, headers):
             if path.endswith(f"/items/{self.backend}"):
                 return {"id": self.backend, "type": "AppBackend", "displayName": "target-sql"}
+            if path.endswith("/items"):
+                return {"value": [{"id": self.legacy, "type": "SQLDatabase", "displayName": "target-sql"}]}
             if path.endswith("/jobs/instances"):
                 return {"value": self.active}
             return {"status": self.states.pop(0), "failureReason": {"message": "real failure"}}
 
         self.enterContext(patch.object(DEPLOY, "RAYFIN_DIR", self.rayfin))
         self.enterContext(patch.object(DEPLOY, "current_rayfin_target", return_value=(self.values, None)))
+        self.binding = self.enterContext(patch.object(DEPLOY, "bind_operational_store_env"))
         self.headers = self.enterContext(patch.object(DEPLOY, "fabric_headers", return_value={}))
         self.get = self.enterContext(patch.object(DEPLOY, "fabric_get", side_effect=read))
         self.post = self.enterContext(patch.object(DEPLOY.requests, "post", return_value=self.response))
@@ -207,13 +215,16 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.source_ready = False
         self.publication = self.enterContext(patch.object(
             DEPLOY, "_published_operational_source_ready",
-            side_effect=lambda *args: self.source_ready or not self.states))
+            side_effect=lambda *args, **kwargs: self.source_ready or not self.states))
 
     def test_missing_published_sql_bootstraps_without_demo_dml_then_verifies_readback(self):
         DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertEqual(self.post.call_args.kwargs["json"], {"parameters": [
-            {"name": "sql_db_item_name", "value": "target-sql", "type": "Text"},
+            {"name": "sql_db_item_name", "value": "HydroOperationalStore", "type": "Text"},
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
+            {"name": "provision_shared_store", "value": True, "type": "Boolean"},
+            {"name": "legacy_sql_db_item_id", "value": self.legacy, "type": "Text"},
+            {"name": "project_ontology_item_id", "value": self.ontology, "type": "Text"},
         ]})
         self.runtime.assert_called_once()
         self.environments.assert_called_once()
@@ -226,6 +237,18 @@ class HostedSourceBootstrapTests(unittest.TestCase):
         self.post.assert_not_called()
         self.headers.assert_called_once()
         self.definition_read.assert_not_called()
+
+    def test_native_fabric_source_retains_and_verifies_dependency_metadata(self):
+        source = (DEPLOY.SCRIPT_DIR.parent.parent / "Notebooks" /
+                  "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
+        notebook = json.loads(base64.b64decode(self.definition["parts"][0]["payload"]))
+        metadata = re.search(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)", source)
+        block = "".join(f"# META {line}\n" for line in json.dumps(notebook["metadata"], indent=2).splitlines())
+        source = source[:metadata.start(1)] + block + source[metadata.end(1):]
+        self.definition["parts"] = [{"path": "notebook-content.py",
+                                    "payload": base64.b64encode(source.encode()).decode()}]
+        DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
+        self.post.assert_called_once()
 
     def test_old_notebook_cannot_silently_ignore_the_nonseeding_parameter(self):
         self.definition["parts"][0]["payload"] = base64.b64encode(
@@ -1249,7 +1272,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "ensure_deploy_dependencies"),
             patch.object(DEPLOY, "ensure_rayfin_login"),
             patch.object(DEPLOY, "export_frontend_env"),
-            patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}, {"RAYFIN_TOKEN": "connector"}]),
+            patch.object(DEPLOY, "rayfin_environment", side_effect=[{"RAYFIN_TOKEN": "first"}, {"RAYFIN_TOKEN": "refreshed"}, {"RAYFIN_TOKEN": "connector"}, {"RAYFIN_TOKEN": "operational"}]),
             patch.object(DEPLOY, "provision_foundry_agents") as provision_agents,
             patch.object(
                 DEPLOY,
@@ -1265,6 +1288,8 @@ class DeployOrderTests(unittest.TestCase):
                     "backend updated",
                     json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
                                 "results": [{"name": "hydrolakehouse", "status": "success"}]}),
+                    json.dumps({"status": "success", "generate": [{"name": "hydrooperations", "status": "generated"}],
+                                "results": [{"name": "hydrooperations", "status": "success"}]}),
                     "live auth configured",
                 ],
             ) as run_stream,
@@ -1282,7 +1307,7 @@ class DeployOrderTests(unittest.TestCase):
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
         self.assertEqual(run_stream.call_args_list[1].kwargs["env"]["RAYFIN_TOKEN"], "first")
         self.assertEqual(run_stream.call_args_list[2].kwargs["env"]["RAYFIN_TOKEN"], "refreshed")
-        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[4].kwargs["env"])
+        self.assertNotIn("RAYFIN_TOKEN", run_stream.call_args_list[5].kwargs["env"])
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
 
     @patch.object(DEPLOY, "provision_foundry_agents")
@@ -1321,8 +1346,8 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(DEPLOY, "rayfin24", side_effect=lambda *arguments: list(arguments)),
             patch.object(DEPLOY, "node24_script", side_effect=lambda script, *args: [script.stem]),
             patch.object(DEPLOY, "run_stream", side_effect=lambda command, **kwargs:
-                         json.dumps({"status": "success", "generate": [{"name": "hydrolakehouse", "status": "generated"}],
-                                     "results": [{"name": "hydrolakehouse", "status": "success"}]})
+                         json.dumps({"status": "success", "generate": [{"name": command[4], "status": "generated"}],
+                                     "results": [{"name": command[4], "status": "success"}]})
                          if command[:3] == ["up", "connector", "apply"] else f"Hosting URL: {hosting_url}") as run_stream,
             patch.object(
                 DEPLOY.requests,
@@ -1344,7 +1369,7 @@ class DeployOrderTests(unittest.TestCase):
         ):
             DEPLOY.deploy(args)
 
-        self.assertEqual(run_stream.call_count, 5)
+        self.assertEqual(run_stream.call_count, 6)
         provision_agents.assert_called_once_with(args.tenant, "workspace-id")
         self.assertEqual(run_stream.call_args_list[0].args[0], ["validate-env"])
         self.assertEqual(run_stream.call_args_list[1].args[0], ["up", "staticapp", "deploy"])
@@ -1353,7 +1378,8 @@ class DeployOrderTests(unittest.TestCase):
             ["up", "--workspace-id", "workspace-id", "--exclude-services", "staticHosting", "--yes"],
         )
         self.assertEqual(run_stream.call_args_list[3].args[0], ["up", "connector", "apply", "--name", "hydrolakehouse", "--json"])
-        self.assertEqual(run_stream.call_args_list[4].args[0], ["setup-live-auth"])
+        self.assertEqual(run_stream.call_args_list[4].args[0], ["up", "connector", "apply", "--name", "hydrooperations", "--json"])
+        self.assertEqual(run_stream.call_args_list[5].args[0], ["setup-live-auth"])
         hosting_get.assert_called_once_with(hosting_url, headers={"Accept": "text/html"}, timeout=60, allow_redirects=False)
         output = "\n".join(str(call.args[0]) for call in printed.call_args_list)
         self.assertIn("HOSTING_VERIFICATION=protected-sign-in-gate", output)

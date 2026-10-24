@@ -1,4 +1,4 @@
-"""Distribute embedded support and code only for the owned 004/005/006 notebooks.
+"""Distribute ontology support to 004/005/006 and shared-store support to 001/011.
 
 Preserves canonical headers and notebook/cell metadata. Never discovers or writes
 other notebooks. All generated sources are compiled before any file is written.
@@ -7,12 +7,14 @@ From the repository root:
     python Raw\\workspace-reset\\sync_ontology_notebooks.py --check
     python Raw\\workspace-reset\\sync_ontology_notebooks.py --sync
 
-Edit ontology_notebook_support.py, then run --sync to refresh embedded copies
+Edit ontology_notebook_support.py or operational_store_support.py, then run --sync to refresh embedded copies
 and Raw mirrors. --check is read-only and fails on drift. The default is --sync.
 No colleague Downloads files are required.
 """
 import argparse
+import ast
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,11 +74,76 @@ def synchronize(root=ROOT, check=False):
     return tuple(pending)
 
 
+def synchronize_operational_support(root=ROOT, check=False):
+    support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8").strip()
+    ontology_support = (root / "Raw/workspace-reset/ontology_notebook_support.py").read_text(encoding="utf-8")
+    shared_names = {"_normal_text", "_decode_part", "_parts_by_path", "_identifier_parts",
+                    "_structural_lines", "_json_contains", "_verify_definition"}
+    helpers = [ast.get_source_segment(ontology_support, node) for node in ast.parse(ontology_support).body
+               if isinstance(node, ast.FunctionDef) and node.name in shared_names]
+    if len(helpers) != len(shared_names):
+        raise RuntimeError("Shared ontology readback verifier could not be distributed completely.")
+    support += "\n\nfrom collections import Counter\n\n" + "\n\n".join(helpers)
+    marker = '"""Shared operational-store support embedded in NB01 and NB11; no local imports."""'
+    pending = {}
+    for name in ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
+                 "RTI_011_seed_sql_wire_graphql_agent"):
+        canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
+        raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
+        sections = canonical.read_text(encoding="utf-8").split(CELL)
+        matches = []
+        for index in range(1, len(sections)):
+            code, metadata = sections[index].split(METADATA, 1)
+            if code.strip().startswith(marker):
+                matches.append(index)
+                sections[index] = "\n\n" + support + "\n\n" + METADATA + metadata
+        if len(matches) != 1:
+            raise RuntimeError(f"Expected one shared operational support cell in {canonical}")
+        content = CELL.join(sections)
+        compile(content, str(canonical), "exec")
+        notebook = json.loads(raw.read_text(encoding="utf-8"))
+        def identity(kind, source):
+            first = next((line.strip() for line in source.splitlines()
+                          if line.strip() and not line.lstrip().startswith("#")), "")
+            return kind, first
+        existing = {}
+        for cell in notebook["cells"]:
+            existing.setdefault(identity(cell["cell_type"], "".join(cell["source"])), []).append(cell)
+        chunks = re.split(r"(?m)^# (CELL|PARAMETERS CELL|MARKDOWN) \*+[ \t]*$", content)
+        cells = []
+        for index in range(1, len(chunks), 2):
+            kind, body = chunks[index], chunks[index + 1].split(METADATA, 1)[0].strip()
+            cell_type = "markdown" if kind == "MARKDOWN" else "code"
+            if cell_type == "markdown":
+                body = "\n".join(line[2:] if line.startswith("# ") else line[1:] if line.startswith("#") else line
+                                 for line in body.splitlines())
+            else:
+                compile(body, f"{raw} cell {len(cells)}", "exec")
+            matches = existing.get(identity(cell_type, body), [])
+            cell = dict(matches.pop(0)) if matches else {"cell_type": cell_type, "metadata": {}}
+            cell["source"] = (body + "\n").splitlines(keepends=True) if body else []
+            cell["metadata"] = dict(cell.get("metadata", {}))
+            if cell_type == "code":
+                cell.update(execution_count=None, outputs=[])
+            if kind == "PARAMETERS CELL":
+                cell["metadata"]["tags"] = ["parameters"]
+            cells.append(cell)
+        notebook["cells"] = cells
+        pending[canonical] = content
+        pending[raw] = json.dumps(notebook, ensure_ascii=False, indent=1) + "\n"
+    changed = {path: content for path, content in pending.items() if path.read_text(encoding="utf-8") != content}
+    if check and changed:
+        raise RuntimeError("Operational notebook distribution drift; run --sync:\n" + "\n".join(map(str, changed)))
+    if not check:
+        for path, content in changed.items():
+            path.write_text(content, encoding="utf-8", newline="\n")
+    return tuple(pending)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="Check embedded support and Raw mirrors without writing")
-    modes.add_argument("--sync", action="store_true", help="Refresh only 004/005/006 (the default)")
+    modes.add_argument("--sync", action="store_true", help="Refresh owned ontology and operational notebooks (the default)")
     arguments = parser.parse_args()
-    for destination in synchronize(check=arguments.check):
+    for destination in (*synchronize(check=arguments.check), *synchronize_operational_support(check=arguments.check)):
         print(destination)

@@ -18,6 +18,14 @@ See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
 
 Two ways to run everything:
 
+Both NB01 Lakehouse setup variants also provision `HydroOperationalStore` as an
+independent Fabric SQLDatabase and initialize its operational schema without demo
+records. On an existing workspace, the app deployer's NB11 bootstrap performs an
+explicit, field-verified copy/cutover from the retained app-owned database, preserves
+custom Data Agent content and applies the writable `hydrooperations` connector.
+Do not rerun full setup or Git import to perform this upgrade. See the
+[independent-store deployment contract](../../HydroOperationsApp/DEPLOY.md#independent-operational-sql-lifecycle).
+
 For **app deployment only**, start with the
 [deployment interface chooser](../../HydroOperationsApp/DEPLOY.md#start-here-choose-your-interface-not-a-different-deployment-process).
 The local **Deploy app** action and command-line deployment use the same

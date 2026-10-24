@@ -256,19 +256,20 @@ class PublishedIdentityTests(unittest.TestCase):
                 module.hosted_runtime_identity(invalid)
 
     def test_source_digest_matches_runtime_configuration_contract(self):
-        ids = [f"{index:08x}-1111-4111-8111-{index:012x}" for index in range(1, 8)]
+        ids = [f"{index:08x}-1111-4111-8111-{index:012x}" for index in range(1, 9)]
         values = {
             "RAYFIN_PUBLIC_EVENTHOUSE_ID": ids[3],
             "RAYFIN_PUBLIC_KQL_DATABASE_ID": ids[4],
             "RAYFIN_PUBLIC_LAKEHOUSE_ID": ids[5],
             "RAYFIN_PUBLIC_ITEM_ID": ids[6],
+            "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": ids[7],
             "RAYFIN_PUBLIC_API_URL": f"https://{'a' * 32}.pbidedicated.windows.net/workload",
             "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-runtime-contract",
         }
         config = {
             "tenant_id": ids[0], "workspace_id": ids[1], "ontology_id": ids[2],
             "eventhouse_id": ids[3], "database_id": ids[4], "lakehouse_id": ids[5],
-            "appbackend_id": ids[6], "api_url": values["RAYFIN_PUBLIC_API_URL"],
+            "appbackend_id": ids[6], "operational_sql_database_id": ids[7], "api_url": values["RAYFIN_PUBLIC_API_URL"],
             "publishable_key": values["RAYFIN_PUBLIC_PUBLISHABLE_KEY"],
         }
         expected = hashlib.sha256(json.dumps(config, separators=(",", ":")).encode()).hexdigest()

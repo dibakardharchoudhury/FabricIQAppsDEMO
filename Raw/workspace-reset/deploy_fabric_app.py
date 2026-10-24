@@ -1435,7 +1435,17 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID": sql_endpoint_id,
         "RAYFIN_PUBLIC_ONTOLOGY_NAME": "",
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
+        "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
     }
+    from operational_store_support import OPERATIONAL_STORE_NAME, OPERATIONAL_STORE_DESCRIPTION
+    stores = [item for item in items if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME]
+    if len(stores) > 1:
+        raise DeployError("Multiple shared operational stores match the explicit setup name.")
+    if stores:
+        store = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)
+        if store.get("description") != OPERATIONAL_STORE_DESCRIPTION or store.get("id") != stores[0]["id"]:
+            raise DeployError("Shared operational SQL identity/ownership marker verification failed.")
+        values["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"] = store["id"]
     for prefix, item, default_name in [
         ("STREAM_PIPELINE", pipeline, "02_Pipe_Stream"),
         ("POSTSEED_NOTEBOOK", notebook, "RTI_011_seed_sql_wire_graphql_agent"),
@@ -1809,7 +1819,7 @@ def run_rayfin_deployment(command: list[str], tenant: str) -> str:
         export_frontend_env()
 
 
-def validate_lakehouse_connector_apply(output: str) -> None:
+def validate_lakehouse_connector_apply(output: str, connector_name: str = "hydrolakehouse") -> None:
     """Rayfin can exit zero on partial connector failure; require both steps."""
     records = []
     for line in output.splitlines():
@@ -1826,7 +1836,7 @@ def validate_lakehouse_connector_apply(output: str) -> None:
     for key, status in (("generate", "generated"), ("results", "success")):
         rows = receipt.get(key)
         if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
-                or rows[0].get("name") != "hydrolakehouse" or rows[0].get("status") != status):
+                or rows[0].get("name") != connector_name or rows[0].get("status") != status):
             raise DeployError(f"Lakehouse connector {key} was missing, skipped or failed.")
 
 
@@ -2008,6 +2018,9 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
     static hosting) first. Existing targets already carry the identity and skip this entirely."""
     if appbackend_identity_present():
         return
+    values, _ = current_rayfin_target()
+    if not GUID_RE.fullmatch(_public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")):
+        raise DeployError("Complete the current shared Lakehouse/SQL setup before creating an AppBackend.")
     print(
         "No AppBackend exists for this target yet; creating it (without static hosting) so the Hosted Agent "
         "can be configured against its identity.",
@@ -2026,6 +2039,8 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
 
 def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
+    from operational_store_support import OPERATIONAL_STORE_NAME
+
     values, _ = current_rayfin_target()
     notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
     backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
@@ -2036,7 +2051,12 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
     if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
         raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
-    if _published_operational_source_ready(workspace_id, values, backend["displayName"], headers):
+    legacy = [item for item in _workspace_artifacts(workspace_id, headers)
+              if item["type"] == "SQLDatabase" and item["displayName"] == backend["displayName"]]
+    if len(legacy) != 1:
+        raise DeployError("The AppBackend's exact legacy SQL item could not be verified.")
+    if _published_operational_source_ready(workspace_id, values, OPERATIONAL_STORE_NAME, headers, required=False):
+        bind_operational_store_env(workspace_id, headers)
         print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
         return
     from sync_workspace_from_git import (
@@ -2045,11 +2065,21 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
 
     fabric = Fabric(tenant)
     definition = notebook_definition(fabric, workspace_id, notebook_id)
-    parts = [part for part in definition["parts"] if part["path"] == "notebook-content.ipynb"]
+    parts = [part for part in definition["parts"]
+             if part["path"] in ("notebook-content.ipynb", "notebook-content.py")]
     if len(parts) != 1:
         raise DeployError("NB11 bootstrap contract could not be read as one notebook definition.")
-    notebook = json.loads(base64.b64decode(parts[0]["payload"]).decode("utf-8"))
-    code = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    source = base64.b64decode(parts[0]["payload"]).decode("utf-8")
+    if parts[0]["path"].endswith(".py"):
+        code = source
+        metadata = re.search(r"(?m)^# METADATA \*+\n\n((?:# META[^\n]*\n)+)", source)
+        if metadata is None:
+            raise DeployError("Native NB11 has no verifiable dependency metadata.")
+        notebook = {"metadata": json.loads("\n".join(
+            line.removeprefix("# META ") for line in metadata[1].splitlines()))}
+    else:
+        notebook = json.loads(source)
+        code = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
     expected = (SCRIPT_DIR.parent.parent / "Notebooks" /
                 "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py").read_text(encoding="utf-8")
     if ast.dump(ast.parse(code)) != ast.dump(ast.parse(expected)):
@@ -2076,8 +2106,12 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     response = requests.post(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
         headers=headers, json={"parameters": [
-            {"name": "sql_db_item_name", "value": backend["displayName"], "type": "Text"},
+            {"name": "sql_db_item_name", "value": OPERATIONAL_STORE_NAME, "type": "Text"},
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
+            {"name": "provision_shared_store", "value": True, "type": "Boolean"},
+            {"name": "legacy_sql_db_item_id", "value": legacy[0]["id"], "type": "Text"},
+            {"name": "project_ontology_item_id", "value": json.loads(_public_config_value(
+                values, "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING"))["ontologyId"], "type": "Text"},
         ]}, timeout=60,
     )
     if response.status_code != 202:
@@ -2102,12 +2136,28 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         time.sleep(4)
     else:
         raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
-    if not _published_operational_source_ready(workspace_id, values, backend["displayName"], headers):
+    if not _published_operational_source_ready(workspace_id, values, OPERATIONAL_STORE_NAME, headers):
         raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
+    bind_operational_store_env(workspace_id, headers)
     print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
 
 
-def _published_operational_source_ready(workspace_id, values, sql_name, headers) -> bool:
+def bind_operational_store_env(workspace_id, headers) -> None:
+    from operational_store_support import OPERATIONAL_STORE_NAME, OPERATIONAL_STORE_DESCRIPTION
+    stores = [item for item in _workspace_artifacts(workspace_id, headers)
+              if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME]
+    if len(stores) != 1:
+        raise DeployError("The shared operational SQL Database could not be resolved exactly.")
+    item = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)
+    if item.get("id") != stores[0]["id"] or item.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise DeployError("The shared operational SQL Database failed identity verification.")
+    path = RAYFIN_DIR / ".env"
+    path.write_text(_rebind_public_env(path.read_text(encoding="utf-8"), {
+        "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": item["id"],
+    }), encoding="utf-8")
+
+
+def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
     from provision_foundry_agents import (
         published_sql_source_ready, read_data_agent_definition, verify_published_identity,
     )
@@ -2120,6 +2170,8 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers)
         raise DeployError("Data Agent SQL publication requires a verified numeric generation-2 Ontology.")
     items = _workspace_artifacts(workspace_id, headers)
     databases = [item for item in items if item["type"] == "SQLDatabase" and item["displayName"] == sql_name]
+    if not databases and not required:
+        return False
     if len(databases) != 1:
         raise DeployError("Cannot resolve exactly one operational SQL Database for this AppBackend.")
     matches = []
@@ -2134,7 +2186,26 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers)
         matches.append(definition)
     if len(matches) != 1:
         raise DeployError("Exactly one published Data Agent must match the verified v2 Ontology.")
-    return published_sql_source_ready(matches[0], workspace_id, databases[0]["id"])
+    if not published_sql_source_ready(matches[0], workspace_id, databases[0]["id"]):
+        return False
+    from operational_store_support import WEATHER_PROJECT_ENTITIES
+    extension = read_data_agent_definition(
+        sys.modules[__name__], workspace_id, ontology_id, headers, collection="ontologies")
+    parts = {part["path"]: base64.b64decode(part["payload"]).decode("utf-8")
+             for part in extension["definition"]["parts"]}
+    entities = (*WEATHER_PROJECT_ENTITIES, "WorkOrder", "Inspection", "SparePart",
+                "Asset3DModel", "MaintenanceNotification")
+    for entity in entities:
+        table = parts.get(f"tables/HydroProject_{entity}.tmdl", "")
+        item_id = databases[0]["id"] if entity not in WEATHER_PROJECT_ENTITIES else _public_config_value(
+            values, "RAYFIN_PUBLIC_LAKEHOUSE_ID")
+        if not parts.get(f"entities/{entity}.tmdl") or not table:
+            return False
+        for annotation, expected in (("ONT_WorkspaceId", workspace_id), ("ONT_ItemId", item_id)):
+            actual = re.findall(r"(?m)^\s*annotation " + annotation + r" = (\S+)\s*$", table)
+            if actual != [expected]:
+                raise DeployError(f"Project ontology {entity} has mismatched {annotation}.")
+    return True
 
 
 def verify_lakehouse_connector(tenant: str) -> dict[str, int]:
@@ -2329,6 +2400,10 @@ def _deploy(args: argparse.Namespace, timings: DeploymentTimings) -> None:
         args.tenant,
     )
     validate_lakehouse_connector_apply(connector_output)
+    operational_output = run_rayfin_deployment(
+        rayfin24("up", "connector", "apply", "--name", "hydrooperations", "--json"), args.tenant,
+    )
+    validate_lakehouse_connector_apply(operational_output, "hydrooperations")
 
     timings.stage(7, "Setting up browser sign-in (redirect, permissions, and consent)")
     if client_id:

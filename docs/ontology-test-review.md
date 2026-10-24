@@ -25,7 +25,29 @@ requiring an Azure SQL deployment.
 
 No candidate fixes were written into V3, no FEATURE sources were switched, and
 no extra databases, ontologies or agents were created during this assessment.
-The FEATURE prototype/cutover boundary must be resolved before implementation.
+Those statements describe the read-only assessment. FEATURE implementation now
+extends the existing ontology rather than migrating the V3 candidate. The
+independent-store cutover is implemented and locally validated; its live
+deployment verification is recorded separately below when completed.
+
+## FEATURE implementation
+
+- Preserve the original five core entities, bindings and unknown definition parts.
+- Add five operational entities and eight weather/classification entities with
+  actual physical source names and 13 physically backed semantic relationships.
+- Support ordered compound scalar keys in the application parser and RDF export.
+- Provision `HydroOperationalStore` during either NB01 setup variant; NB11 handles
+  the explicit, verified legacy-record cutover for an existing workspace.
+- Route operational reads and approved writes through the delegated
+  `fabric-sqldatabase` connector. Keep the original database and every original row.
+- Preserve compatible custom Data Agent SQL content, deselect only the five
+  archived base tables, and verify both draft and published definitions.
+- Keep native graph materialization separate; the original core projection is not
+  replaced or reconstructed from SQL relationships.
+
+The parser compatibility finding below is the **pre-change** result. The updated
+parser accepts valid compound keys; the physical-source and relationship findings
+still prevent adopting the candidate unchanged.
 
 ## Evidence and compatibility
 

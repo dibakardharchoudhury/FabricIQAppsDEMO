@@ -12,7 +12,7 @@ import { DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, shapeWo
 
 const id = '11111111-1111-1111-1111-111111111111'
 const config = { workspace_id: id, ontology_id: id, database_id: id, eventhouse_id: id, appbackend_id: id,
-  lakehouse_id: id, publishable_key: 'pk-test',
+  lakehouse_id: id, operational_sql_database_id: id, publishable_key: 'pk-test',
   api_url: `https://${id.replaceAll('-', '')}.pbidedicated.windows.net/webapi/capacities/${id}/workloads/baas/baasservice/automatic/v1/workspaces/${id}/appbackends/${id}`,
   configuration_digest: 'a'.repeat(64) }
 const metadata = { cluster: 'https://test.z.kusto.fabric.microsoft.com', database: 'test' }
@@ -40,6 +40,7 @@ const discoveryFetch = (generation = 2, cluster = metadata.cluster) => async url
   url.includes('/ontologies/') ? { id, properties: { generation } }
     : url.includes('/kqlDatabases/') ? { id, displayName: 'test', properties: { parentEventhouseItemId: id, queryServiceUri: cluster } }
       : url.includes('/lakehouses/') ? { id, workspaceId: id, properties: { sqlEndpointProperties: { id } } }
+      : url.includes('/sqlDatabases/') ? { id, type: 'SQLDatabase', workspaceId: id }
       : { id, capacityId: id })
 
 const appBackendFetch = fetcher => async (url, options) => {
@@ -577,7 +578,7 @@ test('approved SQL submissions pin identity, check duplicates and reconcile lost
   const creationId = '22222222-2222-2222-2222-222222222222'
   function sql({ loseAck = false, failWrite = false, open = [], corrupt = false } = {}) {
     let saved, writes = 0
-    const client = { data: { WorkOrder: {
+    const client = { connectors: { hydrooperations: { WorkOrder: {
       select() {
         return { where() { return this }, first() { return this }, orderBy() { return this },
           async execute() { return saved ? [{ ...saved, ...(corrupt ? { createdByOid: creationId } : {}) }] : [] },
@@ -589,7 +590,7 @@ test('approved SQL submissions pin identity, check duplicates and reconcile lost
         saved = { ...value, instrumentId: value.instrumentId ?? null, opcuaNodeId: value.opcuaNodeId ?? null }
         if (loseAck) throw new Error('Response lost after commit')
       },
-    } } }
+    } } } }
     return { client, writes: () => writes }
   }
   const invoke = (fixture, allowCreate) => submitApprovedWorkOrder(config, draft, edits, id, creationId,
@@ -683,7 +684,7 @@ test('private row identities stay aligned after filter, projection and truncatio
 
 test('explicit runtime configuration is canonical, identity-bound and has no deployment-file dependency', async () => {
   const input = { tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id,
-    database_id: id, lakehouse_id: id, appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test' }
+    database_id: id, lakehouse_id: id, appbackend_id: id, operational_sql_database_id: id, api_url: config.api_url, publishable_key: 'pk-test' }
   const parsed = runtimeConfiguration(input)
   const reversed = Object.fromEntries(Object.entries(input).reverse())
   assert.equal(runtimeConfiguration(reversed).configuration_digest, parsed.configuration_digest)
@@ -1111,7 +1112,7 @@ test('operational catalog executes read-only SDK pages with canonical fields and
         hasNextPage: false }
     },
   }
-  const result = await collectOperationRows({ data: { WorkOrder: query } }, 'work_orders', {
+  const result = await collectOperationRows({ connectors: { hydrooperations: { WorkOrder: query } } }, 'work_orders', {
     where: [{ column: 'status', op: 'neq', value: 'Completed' }],
     columns: ['id', 'equipmentId', 'status'],
   })
@@ -1134,7 +1135,7 @@ test('live discovery verifies generation, ownership and current capacity', async
 test('discovery is memoized per configuration and bearer, coalesced, and never caches a failure', async () => {
   const runtime = {
     tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
-    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+    appbackend_id: id, operational_sql_database_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const digest = runtimeConfiguration(runtime).configuration_digest
   const originalConfig = process.env.HYDRO_FABRIC_SOURCE_CONFIG
@@ -1146,18 +1147,18 @@ test('discovery is memoized per configuration and bearer, coalesced, and never c
   const request = token => ({ action: 'discover', configuration_digest: digest, tokens: { fabric: token } })
   try {
     const [first, concurrent] = await Promise.all([handle(request('token-a')), handle(request('token-a'))])
-    assert.equal(calls, 4)
+    assert.equal(calls, 5)
     assert.deepEqual(first, concurrent)
     await handle(request('token-a'))
-    assert.equal(calls, 4)
+    assert.equal(calls, 5)
     await handle(request('token-b'))
-    assert.equal(calls, 8)
+    assert.equal(calls, 10)
     generation = 1
     await assert.rejects(handle(request('token-c')), /generation 2/)
     const afterFailure = calls
     generation = 2
     await handle(request('token-c'))
-    assert.equal(calls, afterFailure + 4)
+    assert.equal(calls, afterFailure + 5)
   } finally {
     globalThis.fetch = originalFetch
     if (originalConfig === undefined) delete process.env.HYDRO_FABRIC_SOURCE_CONFIG
@@ -1168,7 +1169,7 @@ test('discovery is memoized per configuration and bearer, coalesced, and never c
 test('serve mode answers id-tagged requests and isolates malformed input', () => {
   const runtime = {
     tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
-    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+    appbackend_id: id, operational_sql_database_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const input = [
     JSON.stringify({ id: 1, request: { action: 'work_backlog_group', question: 'open work by facility' } }),
@@ -1300,7 +1301,7 @@ test('abbreviations and short identifiers are equivalent to their long forms', (
 test('the approval action returns the committed write result after a successful or reconciled write', async () => {
   const runtime = {
     tenant_id: id, workspace_id: id, ontology_id: id, eventhouse_id: id, database_id: id, lakehouse_id: id,
-    appbackend_id: id, api_url: config.api_url, publishable_key: 'pk-test',
+    appbackend_id: id, operational_sql_database_id: id, api_url: config.api_url, publishable_key: 'pk-test',
   }
   const digest = runtimeConfiguration(runtime).configuration_digest
   const originalConfig = process.env.HYDRO_FABRIC_SOURCE_CONFIG
@@ -1540,7 +1541,7 @@ function workClient(pages) {
     after(cursor) { requested.push(cursor); return this },
     async executePaginated() { return pages[index++] },
   }
-  return { data: { WorkOrder: { select() { return query } } }, requested }
+  return { connectors: { hydrooperations: { WorkOrder: { select() { return query } } } }, requested }
 }
 const order = (id, status = 'Draft') => ({ id, equipmentId: 'T005', workOrderNumber: `WO-${id}`, status })
 

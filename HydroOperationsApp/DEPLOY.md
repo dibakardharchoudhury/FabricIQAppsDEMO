@@ -10,6 +10,35 @@ End-to-end changes and migration status:
 
 ## Faster deployment and a simpler operator path
 
+### Independent operational SQL lifecycle
+
+Both NB01 Lakehouse setup variants now create/reuse `HydroOperationalStore`, a
+workspace-owned Fabric SQLDatabase independent of the app backend. They initialize
+the five operational tables without inserting demo data. The original app-owned
+database is retained; it is not deleted or silently adopted as the new store.
+
+On the first existing-workspace app deployment, NB11 checks the selected v2 ontology
+and actual source schemas, adds source-backed operational/weather entities, copies
+all five original operational tables with exact field/ID readback, and establishes
+a write boundary on the original tables. Stale app clients receive an explicit
+"Reload the current Hydro Operations app" error rather than continuing to write the
+old store. Conflicts, custom source columns, or incomplete migration receipts stop
+deployment for explicit remediation; no records are overwritten.
+
+The SPA and Hosted Agent use the writable delegated `hydrooperations`
+`fabric-sqldatabase` connector. Lakehouse reads continue through `hydrolakehouse`;
+no Lakehouse GraphQL item is created. The canonical deployer discovers and binds
+`RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID` and applies both connectors. No extra
+routine deployment switch, Azure SQL server, or tenant-wide administrator role is
+introduced. The setup SPN needs access to the original SQL database for a cutover;
+normal users require delegated access to the selected shared SQL item.
+
+Additional native graph projection remains a separate **Manage graph → select
+eligible entities/relationships → Continue → Materialize** portal prerequisite.
+Additive ontology publication does not certify those entities as materialized or
+certify Data Agent answers. Never run workspace-wide initialization merely to
+upgrade the app in an already populated workspace.
+
 Use the existing [local launcher](../Raw/workspace-reset/README.md#easiest-start--just-launch-it-no-commands-to-type).
 Select the target tenant and workspace, click **Load signed-in subscriptions**, and choose a
 subscription belonging to that tenant. Nothing changes the active Azure subscription just

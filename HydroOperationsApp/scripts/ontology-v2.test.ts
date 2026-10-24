@@ -83,6 +83,24 @@ entity 'plant#Station''s sensors'
   assert.match(contract.warnings!.join(' '), /resource links/)
 })
 
+test('compound keys preserve declaration order and validate every member', () => {
+  const text = `entity weather
+    backingTable: weather_latest_observations
+    keyProperty: source_id
+    keyProperty: location_id
+    property source_id
+        dataType: string
+        lineageTag: provider-key
+    property location_id
+        dataType: string
+`
+  const contract = parse([tmdl('entities/weather.tmdl', text)])
+  assert.deepEqual(contract.entityTypes[0].entityIdParts, ['provider-key', 'weather.location_id'])
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('keyProperty: location_id', 'keyProperty: source_id'))]), /duplicate keyProperty member/)
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('keyProperty: location_id', 'keyProperty: absent'))]), /does not reference a declared property/)
+  assert.throws(() => parse([tmdl('entities/weather.tmdl', text.replace('property location_id\n        dataType: string', 'property location_id\n        dataType: TimeSeries<string>'))]), /scalar primitive/)
+})
+
 test('retains Any primitive timeseries and complex structured timeseries metadata without claiming evaluation', () => {
   const contract = parse([tmdl('entities/signals.tmdl', `entity signals
     property Anything

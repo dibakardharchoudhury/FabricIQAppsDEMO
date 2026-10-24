@@ -35,7 +35,7 @@ def tearDownModule():
     _STATE.cleanup()
 
 GUIDS = {name: f"{index:08x}-0000-0000-0000-{index:012x}" for index, name in enumerate(
-    ("tenant", "workspace", "ontology", "eventhouse", "database", "graphql", "appbackend", "spa"), start=1)}
+    ("tenant", "workspace", "ontology", "eventhouse", "database", "graphql", "appbackend", "spa", "operational"), start=1)}
 DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 ENDPOINT = "https://res.services.ai.azure.com/api/projects/proj"
@@ -43,6 +43,7 @@ PROJECT_ID = ("/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Cogni
 VALUES = {
     "RAYFIN_PUBLIC_EVENTHOUSE_ID": GUIDS["eventhouse"], "RAYFIN_PUBLIC_KQL_DATABASE_ID": GUIDS["database"],
     "RAYFIN_PUBLIC_LAKEHOUSE_ID": GUIDS["graphql"], "RAYFIN_PUBLIC_ITEM_ID": GUIDS["appbackend"],
+    "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": GUIDS["operational"],
     "RAYFIN_PUBLIC_API_URL": "https://" + "a" * 32 + ".pbidedicated.windows.net/x/",
     "RAYFIN_PUBLIC_PUBLISHABLE_KEY": "pk-test",
 }
@@ -174,6 +175,7 @@ class PackagingTests(unittest.TestCase):
             "HydroOperationsService/src/hydro_orchestrator/foundry_supervisor.py",
             "HydroOperationsService/skills/work-order-review/SKILL.md",
             "HydroOperationsApp/scripts/local-fabric-sources.mjs",
+            "HydroOperationsApp/src/services/operationalConnector.ts",
             "HydroOperationsApp/src/services/copilot/orchestration.ts",
             "HydroOperationsApp/src/services/copilot/agentDefinitions.ts", "HydroOperationsApp/package-lock.json",
         ):
@@ -217,7 +219,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(orchestrator["project_endpoint"], ENDPOINT)
         self.assertIs(orchestrator["production_writes_enabled"], False)
         self.assertEqual(set(fabric), {"tenant_id", "workspace_id", "ontology_id", "eventhouse_id", "database_id",
-                                       "lakehouse_id", "appbackend_id", "api_url", "publishable_key"})
+                                       "lakehouse_id", "appbackend_id", "operational_sql_database_id", "api_url", "publishable_key"})
         self.assertIs(configuration(True)[0][0]["production_writes_enabled"], True)
 
     def test_the_hosted_config_passes_the_deployers_own_verification(self):
@@ -233,6 +235,7 @@ class ConfigurationTests(unittest.TestCase):
         for key, name in (
             ("RAYFIN_PUBLIC_EVENTHOUSE_ID", "eventhouse"), ("RAYFIN_PUBLIC_KQL_DATABASE_ID", "database"),
             ("RAYFIN_PUBLIC_LAKEHOUSE_ID", "graphql"), ("RAYFIN_PUBLIC_ITEM_ID", "appbackend"),
+            ("RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID", "operational"),
         ):
             values[key] = ids[name]
         values["RAYFIN_PUBLIC_API_URL"] = "https://" + "b" * 32 + ".pbidedicated.windows.net/other/"
@@ -627,7 +630,8 @@ class BackendBootstrapTests(unittest.TestCase):
     KEYS = DEPLOY.APPBACKEND_IDENTITY_KEYS
 
     def values(self, present):
-        return {key: "x" for key in self.KEYS[:present]}, None
+        return {**{key: "x" for key in self.KEYS[:present]},
+                "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": GUIDS["operational"]}, None
 
     def test_an_existing_target_is_left_alone(self):
         with patch.object(DEPLOY, "current_rayfin_target", return_value=({key: "x" for key in self.KEYS}, None)), \
@@ -636,7 +640,7 @@ class BackendBootstrapTests(unittest.TestCase):
         up.assert_not_called()
 
     def test_a_fresh_target_gets_a_backend_without_static_hosting_before_foundry_provisioning(self):
-        states = [self.values(0), self.values(3)]
+        states = [self.values(0), self.values(0), self.values(3)]
         with patch.object(DEPLOY, "current_rayfin_target", side_effect=states), \
              patch.object(DEPLOY, "ensure_rayfin_login") as login, \
              patch.object(DEPLOY, "rayfin24", side_effect=lambda *a: ["rayfin", *a]), \
