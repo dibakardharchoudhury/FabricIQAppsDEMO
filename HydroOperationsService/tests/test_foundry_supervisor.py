@@ -256,6 +256,26 @@ class SourceTools:
 
 
 class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_three_quality_workflows_pass_full_request_admission(self):
+        base = "Which turbines had BAD telemetry quality today, and what work is already open for these?"
+        for suffix, roles in (
+            ("", ()),
+            (" Based on this data, tell me which WOs need to be created and help me with the drafts.",
+             ("work-order",)),
+            (" Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.",
+             ("rca", "work-order")),
+        ):
+            with self.subTest(roles=roles):
+                question = base + suffix
+                intent = await self.bridge.call({"action": "chat_intent", "question": question})
+                request = ChatRequest(
+                    run_id=uuid4(), source=SOURCE, question=question,
+                    deadline=self.request.deadline, **intent,
+                )
+                self.assertEqual(request.native_sources, ("data-agent",))
+                self.assertEqual(request.required_specialists, roles)
+                self.assertIn("native_claims", request.permitted_evidence_kinds)
+
     async def test_live_version_readback_includes_weather_function_contract(self):
         def read_agent(request):
             name = request.url.path.rsplit("/", 1)[-1]

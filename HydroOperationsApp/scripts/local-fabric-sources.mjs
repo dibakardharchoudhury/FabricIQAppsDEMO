@@ -80,7 +80,7 @@ export function requiredEvidenceKinds(question, carriedKinds = []) {
     if (observations) kinds.add('weather_observations')
     if (!observations || /\bforecasts?\b/i.test(text)) kinds.add('weather_forecasts')
   }
-  if (requestedNativeSources(text).length) kinds.add('native_claims')
+  if (requestedNativeSources(question).length) kinds.add('native_claims')
   if (requestsSignalQuality(question)) kinds.add('signal_quality')
   if ((!weather || /\b(?:turbine|equipment|telemetry|sensor)\b/i.test(text))
       && /\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
@@ -114,7 +114,7 @@ export function permittedEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
   if (requestsWeather(question)) for (const entity of WEATHER_ENTITIES) kinds.add(entity.key)
-  if (requestedNativeSources(text).length) kinds.add('native_claims')
+  if (requestedNativeSources(question).length) kinds.add('native_claims')
   if (/\bfacilit(?:y|ies)\b/i.test(text)) kinds.add('facilities')
   if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{1,3})\b/i.test(text)) kinds.add('equipment')
   if (/\b(?:instrument|signal identity|signal identities|available signals?)\b/i.test(text)) kinds.add('instruments')
