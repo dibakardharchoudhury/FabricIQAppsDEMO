@@ -2,8 +2,10 @@
 
 ## Current FEATURE connector deployment
 
-FEATURE runs SPA **1.0.1036 (`d676b9e`)** and Hosted Agent **v4** in
+The connector-retirement baseline ran SPA **1.0.1036 (`d676b9e`)** and Hosted Agent **v4** in
 `ai-project-hydro-foundry-884a839f3132`; Weather is `hydro-weather-agent:1`.
+Subsequent deployments and authenticated acceptance are tracked in the
+[live FEATURE verification record](../docs/ontology-test-review.md#latest-canonical-deployment-and-bounded-runtime-acceptance).
 The legacy `Hydro_STID_API` was removed after authenticated hosted Lakehouse/SQL
 source reads, with all 40 other Fabric items preserved. Post-deletion SPA connector
 reads also passed. The [deployment record](../HydroOperationsApp/DEPLOY.md#current-feature-connector-retirement-october-24-2026)
@@ -14,13 +16,24 @@ stale telemetry and the still-unaccepted compound business workflows.
 
 The three BAD-quality-today prompts documented in the
 [routing contract](../HydroOperationsApp/DEPLOY.md#supervisor-routing-and-visible-crew-identities)
-use Sparky's verified ontology-connected Data Agent once, followed only by the
+use one Sparky step against the verified ontology-connected Data Agent, followed only by the
 requested RCA and/or work-order specialists. Native evidence is preserved across
 handoffs, including when no RCA ran or RCA cited a native table instead of a
 direct `/rows` receipt. The validated native bundle is not authoritative SQL
 work-coverage attestation: fresh SQL coverage, identity checks and human approval
 remain mandatory for drafts. Native failure never silently switches to direct
 fleet retrieval. Weather remains a separate read-only specialist.
+
+Validate the structured quality/work contract across the complete native step,
+not separately against each intermediate Data Agent call. Accept exactly one
+unambiguous complete bundle; do not combine conflicting bundles or promote
+intermediate prose into evidence. Preserve all raw native receipts in the
+principal/run-scoped immutable journal before validation, including rejected
+responses, without logging their contents. Missing JSON can consume the existing
+single same-source correction budget; malformed/conflicting bundles, incomplete
+coverage and exhausted corrections still propagate. Sparky must forward the
+complete assignment and its machine-readable contract, with the exact as-of time,
+rather than substitute the original compound operator question.
 
 This describes code behavior; publication and authenticated runtime acceptance
 must be recorded separately.

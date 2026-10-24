@@ -2556,6 +2556,7 @@ class FoundrySupervisor:
             }
             active_context = context
             response: AgentResponse | None = None
+            native_results: dict[str, dict[str, object]] = {}
             for completion_attempt in range(2):
                 input_repairs.clear()
                 try:
@@ -2652,14 +2653,31 @@ class FoundrySupervisor:
                         ]
                         if not native_receipts:
                             raise SourceFailure("Native execution has no inspectable service receipt.")
+                        journal.save(f"native_response:{response.response_id}", {
+                            "source": native_source, "receipts": native_receipts,
+                        })
                         native_equipment_ids: set[str] = set()
+                        native_results = {}
                         for raw in native_receipts:
                             await self.bridge.call({
                                 "action": "validate_native_receipt", "receipt": raw, "source": native_source,
                             })
-                            native_equipment_ids.update(
-                                _native_equipment_ids(_validated_native_result(raw.get("output")))
-                            )
+                            native_result = _validated_native_result(raw.get("output"))
+                            if raw["id"] in native_results and native_results[raw["id"]] != native_result:
+                                raise SourceFailure("Native execution returned conflicting duplicate receipt IDs.")
+                            native_results[raw["id"]] = native_result
+                            native_equipment_ids.update(_native_equipment_ids(native_result))
+                        checked = await self.bridge.call({
+                            "action": "validate_quality_work_evidence",
+                            "question": request.question,
+                            "result": {"native_outputs": list(native_results.values())},
+                            "requested_at_utc": request.requested_at.isoformat(),
+                        })
+                        if checked.get("required") is True:
+                            checked_result = checked.get("result")
+                            if not isinstance(checked_result, dict):
+                                raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
+                            native_results = {native_receipts[-1]["id"]: checked_result}
                         required_native_equipment_ids = initial_equipment_selection(request)
                         if (
                             required_native_equipment_ids
@@ -2673,11 +2691,17 @@ class FoundrySupervisor:
                         source_mismatch = str(error).startswith("Native source mismatch:")
                         source_refusal = str(error).startswith("Native source refusal:")
                         identity_missing = str(error).startswith("Native identity coverage missing:")
-                        if completion_attempt == 0 and (source_mismatch or source_refusal or identity_missing):
+                        contract_missing = str(error).startswith(
+                            "Data Agent quality/work evidence requires one inspectable JSON bundle;"
+                        )
+                        if completion_attempt == 0 and (
+                            source_mismatch or source_refusal or identity_missing or contract_missing
+                        ):
                             logger.warning(
                                 "Foundry native agent returned %s; requesting one bounded same-source correction.",
                                 "the wrong connection" if source_mismatch
                                 else "a moderation/refusal payload" if source_refusal
+                                else "no inspectable quality/work JSON bundle" if contract_missing
                                 else "incomplete requested-identity coverage",
                             )
                             active_context = {
@@ -2690,9 +2714,17 @@ class FoundrySupervisor:
                                             "The prior selected-source call returned moderation/refusal text "
                                             "instead of domain evidence. "
                                             if source_refusal
+                                            else (
+                                                "The prior Data Agent result did not satisfy the machine-readable "
+                                                "quality/work contract. Pass the complete assignment verbatim to "
+                                                "the Data Agent, including requested_at_utc and all JSON fields. "
+                                                "Require its source-backed JSON object, not prose, Markdown tables "
+                                                "or an object invented by you. "
+                                                if contract_missing
                                             else "The prior selected-source result omitted the operator's resolved "
                                                  "equipment instance. Return actual instance values and relationships "
                                                  "for every requested resolved equipment ID. "
+                                            )
                                         )
                                     )
                                     + f"Call only fabriciq-{native_source}, which is the backend-selected source for "
@@ -2732,31 +2764,7 @@ class FoundrySupervisor:
             if role == "rca" and completed_report is None:
                 raise SourceFailure("Sleuth returned prose without its required grounded assessment.")
             if role == "fabric-iq":
-                found = set()
-                for message in response.messages:
-                    for content in message.contents:
-                        if content.type != "mcp_server_tool_call":
-                            continue
-                        representation = content.raw_representation
-                        if representation is None:
-                            raise SourceFailure("Native execution has no inspectable service receipt.")
-                        raw = representation.model_dump(mode="json")
-                        await self.bridge.call({"action": "validate_native_receipt",
-                                                "receipt": raw, "source": native_source})
-                        if raw["id"] in found:
-                            continue
-                        found.add(raw["id"])
-                        native_result = _validated_native_result(raw.get("output"))
-                        checked = await self.bridge.call({
-                            "action": "validate_quality_work_evidence",
-                            "question": request.question,
-                            "result": native_result,
-                            "requested_at_utc": request.requested_at.isoformat(),
-                        })
-                        checked_result = checked.get("result")
-                        if not isinstance(checked_result, dict):
-                            raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
-                        native_result = checked_result
+                for identity, native_result in native_results.items():
                         native_units, native_presentation = _native_count_chart_metadata(native_result)
                         if (
                             request.charts_requested
@@ -2787,7 +2795,7 @@ class FoundrySupervisor:
                             item.scope for item in self.answer_contract.requirements
                             if item.kind == "native_claims" and item.authority == "native"
                         } if self.answer_contract is not None else set()
-                        receipt = ToolEvidence(id=raw["id"], source=request.source, tool=f"fabriciq-{native_source}",
+                        receipt = ToolEvidence(id=identity, source=request.source, tool=f"fabriciq-{native_source}",
                                                arguments={"assignment": question}, completed_at=utc_now(),
                                                result=native_result,
                                                resolved_equipment_ids=tuple(sorted(_native_equipment_ids(native_result))),
@@ -2810,7 +2818,7 @@ class FoundrySupervisor:
                                                ),
                                                limitations=("Native connection receipt does not attest SQL/combined-source provenance.",))
                         self.evidence[receipt.id] = receipt
-                if not found:
+                if not native_results:
                     raise SourceFailure("Native specialist returned prose without a successful selected-source receipt.")
             if role == "work-order" and completed_report is None and not any(
                 item.tool == "propose_work_order" for item in self.evidence.values()

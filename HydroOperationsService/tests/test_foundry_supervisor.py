@@ -1291,6 +1291,38 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
                 "arguments": "{}", "status": "completed", "error": None,
                 "output": json.dumps(native_output),
             }, self.message("Native result.")]
+            if self.mode.startswith("native_quality_"):
+                end = self.request.requested_at
+                bundle = {
+                    "window_start_utc": end.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
+                    "window_end_utc": end.isoformat(),
+                    "affected_signals": [], "open_work_orders": [],
+                    "coverage": {
+                        "telemetry_complete": True, "work_complete": True,
+                        "affected_signal_count": 0, "open_work_order_count": 0,
+                    },
+                }
+                prose = {"response": "Telemetry source returned no current-day rows; work was also checked."}
+                first = copy.deepcopy(output[0])
+                first["output"] = json.dumps(
+                    prose if self.mode == "native_quality_multiple"
+                    or self.mode == "native_quality_missing_always"
+                    or self.mode == "native_quality_missing_once" and round_number == 0
+                    else bundle
+                )
+                output = [first, self.message("Native result.")]
+                if self.mode == "native_quality_multiple":
+                    final = {**first, "id": "native-call-2", "output": json.dumps(bundle)}
+                    output.insert(1, final)
+                elif self.mode == "native_quality_conflicting":
+                    final = {
+                        **first, "id": "native-call-2",
+                        "output": json.dumps({**bundle, "notes": "A different completed result."}),
+                    }
+                    output.insert(1, final)
+                elif self.mode == "native_quality_incomplete":
+                    bundle["coverage"]["work_complete"] = False
+                    first["output"] = json.dumps(bundle)
         else:
             raise AssertionError(name)
         incomplete = self.mode == "qa_incomplete_once" and name == "hydro-qa-agent" and round_number == 1
@@ -1825,6 +1857,68 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tools.calls, 0)
         self.assertIn("does not attest", result.limitations[0])
         self.assertEqual(next(iter(owner.evidence.values())).resolved_equipment_ids, ("TEST_T005",))
+
+    async def invoke_quality_source(self):
+        request = self.request.model_copy(update={
+            "question": "Which turbines had BAD telemetry quality today, and what work is already open for these?",
+            "native_sources": ("data-agent",),
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.tools.catalog(request))
+        owner = self.make_owner(native_binding=NativeBinding(
+            source=SOURCE, connections={"data-agent": "native-data"},
+        ))
+        await owner.invoke("fabric-iq", request.question, request, journal, self.versions, "data-agent")
+        return owner, journal
+
+    async def test_native_quality_contract_validates_complete_step_not_each_intermediate_call(self):
+        self.mode = "native_quality_multiple"
+        owner, journal = await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertEqual(list(owner.evidence), ["native-call-2"])
+        result = owner.evidence["native-call-2"].result
+        self.assertEqual(result["affected_signals"], [])
+        self.assertEqual(len(result["native_source_output"]["native_outputs"]), 2)
+        audit = journal.read("native_response:resp_hydro-fabric-iq-agent_0")
+        self.assertEqual(len(audit["receipts"]), 2)
+
+    async def test_native_quality_missing_json_gets_only_one_same_source_contract_repair(self):
+        self.mode = "native_quality_missing_once"
+        owner, journal = await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+        self.assertEqual(owner.evidence["native-call-1"].result["affected_signals"], [])
+        self.assertIn("no current-day rows", json.dumps(
+            journal.read("native_response:resp_hydro-fabric-iq-agent_0"),
+        ))
+        repair = next(
+            payload for payload in self.payloads
+            if payload.get("agent_reference", {}).get("name") == "hydro-fabric-iq-agent"
+            and "native_source_repair" in json.dumps(payload["input"])
+        )
+        self.assertIn("verbatim", json.dumps(repair["input"]))
+
+    async def test_native_quality_repeated_missing_json_fails_without_accepting_prose(self):
+        self.mode = "native_quality_missing_always"
+        with self.assertRaisesRegex(SourceFailure, "inspectable JSON bundle"):
+            await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 2)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_quality_conflicting_bundles_are_not_selected_or_combined(self):
+        self.mode = "native_quality_conflicting"
+        with self.assertRaisesRegex(SourceFailure, "inspectable JSON bundle"):
+            await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.tools.calls, 0)
+
+    async def test_native_quality_incomplete_coverage_propagates_without_format_retry(self):
+        self.mode = "native_quality_incomplete"
+        with self.assertRaisesRegex(SourceFailure, "coverage is incomplete"):
+            await self.invoke_quality_source()
+        self.assertEqual(self.calls["hydro-fabric-iq-agent"], 1)
+        self.assertEqual(self.tools.calls, 0)
 
     async def test_native_identity_enables_a_required_downstream_handoff(self):
         self.mode = "native_handoff"

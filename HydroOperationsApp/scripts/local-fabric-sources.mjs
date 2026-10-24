@@ -375,7 +375,8 @@ export function validateQualityWorkEvidence(question, result, requestedAt) {
     }
   }
   visit(result)
-  if (candidates.size !== 1) throw new Error('Data Agent quality/work evidence requires one inspectable JSON bundle; no direct-source fallback was performed.')
+  if (candidates.size > 1) throw new Error('Data Agent quality/work evidence requires one inspectable JSON bundle, not conflicting bundles.')
+  if (!candidates.size) throw new Error('Data Agent quality/work evidence requires one inspectable JSON bundle; no direct-source fallback was performed.')
   const bundle = [...candidates.values()][0]
   const signals = bundle.affected_signals
   const orders = bundle.open_work_orders
@@ -1323,7 +1324,10 @@ export async function handle(request, deps = {}) {
     return { accepted: true }
   }
   if (request.action === 'validate_quality_work_evidence') {
-    return { result: validateQualityWorkEvidence(request.question, request.result, request.requested_at_utc) }
+    return {
+      required: Boolean(qualityWorkWorkflow(request.question)),
+      result: validateQualityWorkEvidence(request.question, request.result, request.requested_at_utc),
+    }
   }
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)

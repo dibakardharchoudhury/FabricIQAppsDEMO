@@ -145,6 +145,8 @@ test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and 
   assert.deepEqual(checked.native_source_output, wrapped)
   assert.equal(checked.work_coverage_equipment_ids, undefined)
   assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).result.coverage.work_complete, true)
+  assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).required, true)
+  assert.equal((await handle({ action: 'validate_quality_work_evidence', question: 'List spare parts.', result: wrapped, requested_at_utc: clock })).required, false)
   const narrated = { content: [{ type: 'text',
     text: `Data Agent result:\n\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`\nSource notes are not part of the evidence.` }] }
   assert.deepEqual(validateQualityWorkEvidence(question, narrated, clock).affected_signals, bundle.affected_signals)
