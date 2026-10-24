@@ -1464,7 +1464,7 @@ class DeployOrderTests(unittest.TestCase):
                 api_url,
             )
 
-    def test_cors_validation_retries_until_all_three_endpoints_are_ready(self):
+    def test_cors_validation_retries_until_all_four_endpoints_are_ready(self):
         origin = "https://app.webapp.fabricapps.net"
         failed = Mock(status_code=500, headers={})
         ready = Mock(
@@ -1481,7 +1481,7 @@ class DeployOrderTests(unittest.TestCase):
             patch.object(
                 DEPLOY.requests,
                 "options",
-                side_effect=[failed, ready, ready, ready],
+                side_effect=[failed, ready, ready, ready, ready],
             ) as options,
             patch.object(
                 DEPLOY.requests,
@@ -1499,15 +1499,19 @@ class DeployOrderTests(unittest.TestCase):
                         status_code=401,
                         headers={"Access-Control-Allow-Origin": origin},
                     ),
+                    Mock(
+                        status_code=401,
+                        headers={"Access-Control-Allow-Origin": origin},
+                    ),
                 ],
             ) as post,
             patch.object(DEPLOY.time, "sleep") as sleep,
         ):
             DEPLOY.validate_appbackend_cors("https://api.test", origin, "pk-test")
 
-        self.assertEqual(options.call_count, 4)
-        self.assertEqual(post.call_count, 3)
-        self.assertTrue(post.call_args.args[0].endswith("/connectors/hydrolakehouse/graphql"))
+        self.assertEqual(options.call_count, 5)
+        self.assertEqual(post.call_count, 4)
+        self.assertTrue(post.call_args.args[0].endswith("/connectors/hydrooperations/graphql"))
         self.assertNotIn("Authorization", post.call_args.kwargs["headers"])
         sleep.assert_called_once_with(2)
 
@@ -1532,6 +1536,7 @@ class DeployOrderTests(unittest.TestCase):
                     Mock(status_code=500, headers={}),
                     Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
                     Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
                 ],
             ) as post,
             patch.object(DEPLOY.time, "sleep") as sleep,
@@ -1540,7 +1545,7 @@ class DeployOrderTests(unittest.TestCase):
                 "https://api.test", origin, "pk-test"
             )
 
-        self.assertEqual(post.call_count, 4)
+        self.assertEqual(post.call_count, 5)
         sleep.assert_called_once_with(2)
 
     def test_connector_transport_requires_an_authentication_challenge_not_a_missing_route(self):
@@ -1557,6 +1562,7 @@ class DeployOrderTests(unittest.TestCase):
                     Mock(status_code=200, headers={"Access-Control-Allow-Origin": "*"}),
                     Mock(status_code=400, headers={"Access-Control-Allow-Origin": "*"}),
                     Mock(status_code=status, headers={"Access-Control-Allow-Origin": "*"}),
+                    Mock(status_code=401, headers={"Access-Control-Allow-Origin": "*"}),
                 ]),
             ):
                 with self.assertRaisesRegex(DEPLOY.DeployError, "/connectors/hydrolakehouse/graphql"):

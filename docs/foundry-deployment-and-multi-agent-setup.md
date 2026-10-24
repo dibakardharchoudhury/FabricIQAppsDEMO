@@ -268,7 +268,8 @@ if discovery is ambiguous. Do not opt into new project creation as a substitute 
 
 Runtime configuration is generated, never edited by hand. `HYDRO_ORCHESTRATOR_CONFIG` carries `source`,
 `authorization`, `project_endpoint`, `native_binding` and `production_writes_enabled` (`source.generation` must be `2`;
-the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFIG` carries the seven item GUIDs,
+the data-agent connection must be `hydro-fabric-iq`). `HYDRO_FABRIC_SOURCE_CONFIG` carries eight identity GUIDs,
+including the independent `operational_sql_database_id`,
 `api_url` and `publishable_key` of the target. The azd environment `hydro-orchestrator` lives in the git-ignored
 `.azure/` folder of the generated target project and is created automatically from live metadata.
 `/health` and `/readiness` only report that the process awaits an invocation, not source access or agent readiness.

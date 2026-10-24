@@ -491,6 +491,9 @@ without enabling the unconfigured local validation API. It requires:
   selected connection. Supplying a binding is not live native-source acceptance.
 - `HYDRO_FABRIC_SOURCE_CONFIG`: explicit source GUIDs, the current authoritative
   AppBackend `api_url` and its public `publishable_key`. The Node bridge
+  requires the verified independent `operational_sql_database_id` and uses the
+  delegated writable `hydrooperations` connector for operational reads and approved
+  writes. The retained original app-owned database is not an operational fallback.
   canonicalizes this configuration and computes the digest. Invalid explicit
   JSON never falls back to repository deployment files. The CLI requires this
   setting; its local diagnostic file-based configuration remains unchanged.

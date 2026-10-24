@@ -1357,7 +1357,10 @@ try:
             "status": "not_requested", "reason": "Deployment bootstrap preserves operational records.",
         }
         print("Operational demo DML was not requested; existing records are unchanged.")
-except Exception as exc:  # noqa: BLE001 - best-effort seed with manual fallback
+except Exception as exc:
+    if provision_shared_store:
+        spark._jvm.org.apache.log4j.LogManager.getLogger("HydroOperationalStore").error(
+            f"Shared-store preparation failed: {type(exc).__name__}: {exc}")  # noqa: BLE001 - best-effort seed with manual fallback
     step_results["sql_seed"] = {"status": "failed", "reason": str(exc)}
     step_errors.append(exc)
     print("⚠️ SQL seeding did not complete:")
@@ -1589,7 +1592,9 @@ step_results["data_agent_sql_source"] = {
 }
 try:
     if provision_shared_store and step_errors:
-        raise RuntimeError("Shared-store preparation failed; Data Agent sources were not changed.") from step_errors[0]
+        raise RuntimeError(
+            f"Shared-store preparation failed: {step_errors[0]}; Data Agent sources were not changed."
+        ) from step_errors[0]
     agent_id, agent_policy = resolve_agent_extension_target()
     step_results["data_agent_sql_source"] = (
         extend_data_agent_sql_source(agent_id) if agent_id else agent_policy

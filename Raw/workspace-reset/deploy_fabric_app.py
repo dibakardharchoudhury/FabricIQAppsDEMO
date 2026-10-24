@@ -45,7 +45,8 @@ GUID_RE = re.compile(
 )
 TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 HOSTING_URL_RE = re.compile(r"https://[a-z0-9-]+\.webapp\.fabricapps\.net")
-APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token", "/connectors/hydrolakehouse/graphql")
+APPBACKEND_CORS_PATHS = ("/graphql", "/api/auth/v1/token", "/connectors/hydrolakehouse/graphql",
+                         "/connectors/hydrooperations/graphql")
 APPBACKEND_READINESS_DELAYS = (0, 2, 5, 10, 20)
 REQUIRED_DELEGATED = {
     "18a66f5f-dbdf-4c17-9dd7-1634712a9cbe": {"user_impersonation"},
@@ -1109,6 +1110,7 @@ def validate_appbackend_cors(
         "/graphql": {"query": "query { __typename }"},
         "/api/auth/v1/token": {},
         "/connectors/hydrolakehouse/graphql": {"query": "query { __typename }"},
+        "/connectors/hydrooperations/graphql": {"query": "query { __typename }"},
     }
     failures: list[str] = []
     for path in APPBACKEND_CORS_PATHS:
@@ -1154,7 +1156,7 @@ def validate_appbackend_cors(
                 )
                 expected_status = (
                     post_response.status_code == 401
-                    if path == "/connectors/hydrolakehouse/graphql"
+                    if path.startswith("/connectors/")
                     else post_response.status_code == 200
                     if path == "/graphql"
                     else 200 <= post_response.status_code < 500
