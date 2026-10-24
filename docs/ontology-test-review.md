@@ -430,6 +430,25 @@ Additional ontology graph eligibility remains blocked by **Unsupported
 Datasource** in the portal. These source/product prerequisites are not silently
 turned into successful data, synthetic work orders or fabricated topology.
 
+A subsequent read-only check established a concrete Weather ingestion blocker:
+`03_Pipe_Weather` failed on its October 24 **09:20, 15:20 and 21:20 UTC**
+scheduled runs in `Weather_002_fetch_area_weather`, with pipeline error **2451**
+and notebook error **`Aurora STAC search failed with HTTP 401`**. The latest
+failed pipeline job is `cc387744-15b1-4a57-aba3-f41f9e130785`.
+An earlier Runtime 2.0 credential probe also recorded HTTP 401 with **invalid
+subscription key**, not missing-key errors, for both the configured query-key
+and APIM-header authentication methods. This is not evidence that swapping the
+authentication parameter or retrying ingestion will fix the provider rejection.
+
+The operator must install a valid Aurora/MAI Weather subscription key in the
+configured Key Vault secret **`mai-weather-api-key`**, without putting it in
+notebook parameters, source code or chat. Then rerun the existing Weather pipeline
+and verify nonempty location/forecast serving tables and a successful Weather
+answer. No provider credentials were displayed, copied from another environment,
+or replaced during this check. The pipeline was not rerun with the known rejected
+credential. Full Weather acceptance remains blocked until that external
+credential prerequisite is satisfied.
+
 The last full preservation readback, after v9, again confirmed all **48** V3
 definition parts and **45** V3 item identities unchanged, all **40** original
 FEATURE items retained, and only the intended independent SQLDatabase and its
