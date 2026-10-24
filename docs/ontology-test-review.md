@@ -259,20 +259,90 @@ languages, and rejects malformed JSON or conflicting bundles. All original
 identity, UTC-window, open-status, completeness and bound checks remain.
 The actual captured fenced failure response now reaches the proper incomplete
 coverage rejection rather than being mistaken for absent JSON. All 57 bridge
-tests pass, including ambiguous/malformed/failed-coverage cases. Publication and
-authenticated acceptance of this parser correction remain pending.
+tests pass, including ambiguous/malformed/failed-coverage cases. The parser
+correction was subsequently deployed as recorded below; it did not eliminate
+intermittent absent-JSON responses.
 
 The Weather specialist was actually dispatched, but its live forecast attempt
 failed in **22.3 seconds** with upstream HTTP 429. Read-only ARM inspection
-confirmed the shared model is provisioned at **20,000 tokens/minute and 20
-requests/minute** (`DataZoneStandard`, capacity 20); no quota or capacity was
-changed. Separately, successful Lakehouse connector reads returned no weather
+confirmed the shared model was then provisioned at **20,000 tokens/minute and 20
+requests/minute** (`DataZoneStandard`, capacity 20). The later allocation change
+and Weather acceptance are recorded below. Separately, successful Lakehouse connector reads returned no weather
 locations/areas or current forecast rows. Do not claim a fresh forecast, successful
 Weather tool execution, or an ingestion repair from agent publication alone.
 
-## Evidence and compatibility
+### Latest canonical deployment and bounded runtime acceptance
 
-| Check | V3 candidate | Current FEATURE |
+Source `2ab9cd1` passed all eight canonical deployment sections from
+**21:17:58 to 21:31:29 UTC**, printing `SUCCESS` and `DEPLOYED_APP_URL`.
+The authenticated SPA reports build **1.0.1051 / 2ab9cd1**. The active Hosted
+Agent is **`hydro-orchestrator:7`**, image **`src-b1410f97e33d7a42`**.
+All 40 original SPA redirects were preserved.
+
+| Canonical deployment section | Seconds |
+|---|---:|
+| Tenant, workspace and capacity verification | 16.000 |
+| SPA resolution and redirect preservation snapshot | 13.094 |
+| Source verification, specialists, new Hosted Agent image and activation | 416.844 |
+| Tenant-scoped Rayfin authentication | 1.547 |
+| Static application build/publication | 201.921 |
+| Backend runtime/database settings and both connectors | 62.844 |
+| Browser sign-in permissions and consent verification | 55.860 |
+| Hosting, endpoint, CORS and protected transport readiness | 42.953 |
+| **Total** | **811.063 (13m 31.063s)** |
+
+Post-deployment readback again preserved all 48 V3 definition parts, all 45 V3
+item identities, all 40 original FEATURE items and the core definitions/bindings.
+FEATURE retains 44 ontology definition parts and the original five-node-type,
+four-edge-type native graph schema. No production test work orders were created
+or approved.
+
+After independent Sleuth and Weather throttling failures, only the existing
+FEATURE `gpt-5.6-sol` deployment's `DataZoneStandard` allocation was raised from
+20 to **60** using unused regional quota. ARM readback reported `Succeeded`,
+**60,000 tokens/minute / 60 requests/minute**, with regional allocation 60 of
+100. No new model, project or subscription quota request was created, and the
+older V3 account was not changed. Immediate Weather/Fixer attempts still returned
+429; the allocation change alone is not proof of a runtime repair.
+
+Azure Monitor recorded 27,198 processed prompt tokens and 1,371 generated tokens
+in the 21:43 UTC minute. A captured successful direct Data Agent result serialized
+to approximately 11 KB. These observations do not establish that oversized
+context caused throttling, so no speculative context rewrite or additional
+deployment was performed.
+
+Final authenticated, sequential acceptance used the three exact requested
+BAD-quality prompts and one Weather availability prompt:
+
+| Workflow | Observed result | Duration |
+|---|---|---:|
+| Facts: BAD quality today and existing work | Sparky and Supervisor completed; explicitly reported unavailable verified current-day evidence, not healthy turbines | About 80s |
+| Facts plus work-order drafts | Failed closed at Sparky: no inspectable quality/work JSON bundle; Fixer did not execute | About 67s |
+| Facts plus RCA and work-order drafts | Failed closed at Sparky with the same JSON-contract error; Sleuth/Fixer did not execute | About 73s |
+| Latest available Weather forecast | Weather and Supervisor completed; both location and forecast datasets returned zero rows, explicitly reported as missing data | 25.2s |
+
+Earlier v7 attempts reached Sleuth or Fixer after successful Sparky retrieval but
+failed upstream with 429. One Fixer completion also rejected its structured
+arguments before the bounded correction encountered 429. Those paths have not
+subsequently passed end to end. The latest successful Weather attempt occurred
+later than the allocation change; it does not prove throttling is permanently
+resolved or explain the earlier failures.
+
+**Overall runtime acceptance remains incomplete.** The Data Agent's structured
+response is intermittent; no validator was weakened, direct-source fallback
+added, or generated prose promoted into certified evidence. Current-day telemetry
+is unavailable (last observed timestamp `2026-10-23T21:22:22.26164Z`), Weather
+mapping/forecast tables are empty, and added graph projection remains blocked by
+the portal's Unsupported Datasource eligibility result. The empty-data checks do
+not certify nonempty BAD-quality reconciliation, RCA, draft creation, approved SQL
+writes or SQL/combined-source execution provenance.
+
+## Evidence and compatibility: pre-implementation assessment baseline
+
+The following table describes the original read-only assessment, before the
+FEATURE extension and independent-store cutover documented above.
+
+| Check | V3 candidate | FEATURE assessment baseline |
 |---|---|---|
 | Workspace | `ws-vteam-demoV3` | `ws-FabricIQAppsDemoFEATURE` |
 | Ontology | `Ontology_Test` (`6586f4b1-23d0-46b2-8ee8-2dd29255a41b`) | `RTI_Demo_Ontology_V11` (`1a5f7447-81be-4b90-ae00-e27b4aeb27b4`) |
@@ -386,7 +456,7 @@ The bounded direct SQL-schema probe could not run because the required SQL ODBC
 driver was unavailable locally. No driver was installed and no row-uniqueness or
 forecast execution claim is made.
 
-## Independent operational-store design
+## Independent operational-store design: original assessment
 
 FEATURE already has SQLDatabase `hydro-operations-ui`,
 `702f470c-ef06-4d0a-bff4-d6238fe42dd2`, independently listed beside AppBackend
@@ -420,6 +490,8 @@ Recommended target:
    the retired `Hydro_STID_API`; AppBackend/connector GraphQL transport is a
    different, legitimate surface.
 
+The following constraint applied to the original assessment; the separately
+implemented and verified FEATURE cutover is recorded above.
 The new-store cutover is a broader operation than a non-cutover FEATURE prototype.
 It requires an explicit decision about copying existing operational records and
 switching the app/agent write target; this review does not perform that operation.
@@ -444,11 +516,13 @@ switching the app/agent write target; this review does not perform that operatio
 
 ## Weather agent: correct project, not a missing deployment
 
-Live project readbacks found `hydro-weather-agent:1` alongside
+Initial live project readbacks found `hydro-weather-agent:1` alongside
 `hydro-orchestrator:4` in FEATURE project
 `ai-project-hydro-foundry-884a839f3132`, account `ai-account-yz6usfcwfov5q`,
 resource group `rg-hydro-foundry-884a839f3132`, subscription
 `dac16501-5c35-4c91-aff0-11af8de17f2e`.
+The latest deployment uses orchestrator version 7, as recorded above; Weather
+remains version 1.
 
 The screenshots match the **older** `foundryfabriciqappsdemo` project: orchestrator
 140, Sparky 16, Fixer 21, Sleuth 25 and Gauge 20, without Weather.
