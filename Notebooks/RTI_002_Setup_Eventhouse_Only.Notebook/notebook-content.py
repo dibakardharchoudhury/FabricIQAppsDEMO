@@ -510,10 +510,40 @@ import base64
 import json
 import requests
 import time
+from uuid import UUID
 
 SOURCE_NAME = settings.get("eventstream_source_name", "OPCUA_CustomEndpoint")
 STREAM_NAME = settings.get("eventstream_stream_name", "OPCUA_DefaultStream")
 DESTINATION_NAME = settings.get("eventstream_destination_name", "Eventhouse")
+
+
+def await_eventstream_operation(response, token: str, fetch_result: bool = False):
+    response.raise_for_status()
+    if response.status_code != 202:
+        return response
+    operation_id = response.headers.get("x-ms-operation-id")
+    if operation_id:
+        operation_url = f"{FABRIC_BASE_URL}/operations/{UUID(operation_id)}"
+    else:
+        operation_url = response.headers.get("Location", "")
+        if not operation_url.startswith(f"{FABRIC_BASE_URL}/operations/"):
+            raise RuntimeError("Eventstream operation returned no supported status URL.")
+    headers = {"Authorization": f"Bearer {token}", "x-ms-fabric-skill": "spark-cli"}
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        time.sleep(max(1, int(response.headers.get("Retry-After", "10"))))
+        response = requests.get(operation_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        status = response.json().get("status")
+        if status == "Succeeded":
+            if fetch_result:
+                response = requests.get(f"{operation_url}/result", headers=headers, timeout=60)
+                response.raise_for_status()
+            return response
+        if status in {"Failed", "Cancelled"}:
+            raise RuntimeError(f"Eventstream operation {status}; operation URL: {operation_url}")
+    raise TimeoutError(f"Eventstream operation did not complete within ten minutes: {operation_url}")
+
 
 def get_eventstream_by_name(workspace_id: str, name: str, token: str):
     items = fabric_get_items(workspace_id, token, "Eventstream")
@@ -584,7 +614,7 @@ def get_eventstream_definition(workspace_id: str, eventstream_id: str, token: st
     url = f"{FABRIC_BASE_URL}/workspaces/{workspace_id}/eventstreams/{eventstream_id}/getDefinition"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     resp = requests.post(url, headers=headers, json={})
-    resp.raise_for_status()
+    resp = await_eventstream_operation(resp, token, fetch_result=True)
 
     definition = resp.json()["definition"]["parts"]
     eventstream_json = None
@@ -699,7 +729,11 @@ def wait_for_fabric_lro(operation_url: str, token: str,
 
 def update_eventstream_definition(workspace_id: str, eventstream_id: str, token: str):
     evt_def, platform_part = get_eventstream_definition(workspace_id, eventstream_id, token)
+    previous = json.dumps(evt_def, sort_keys=True)
     evt_def_mut = mutate_definition_add_custom_endpoint(evt_def)
+    if json.dumps(evt_def_mut, sort_keys=True) == previous:
+        print("Eventstream definition is already current.")
+        return
 
     evt_def_json = json.dumps(evt_def_mut, separators=(",", ":"))
     evt_def_b64 = base64.b64encode(evt_def_json.encode("utf-8")).decode("ascii")

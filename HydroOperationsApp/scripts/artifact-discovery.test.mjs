@@ -169,7 +169,7 @@ test('guided setup retains its original copy and layout without migration panels
   }
 })
 
-test('Knowledge Graph page displays available bound entities while native loading is pending', async () => {
+test('Knowledge Graph page never fabricates native topology from bound tables while loading', async () => {
   const pageSource = await readFile(new URL('../src/ui-shared/pages/KnowledgeGraphPage.tsx', import.meta.url), 'utf8')
   assert.ok(pageSource.indexOf('await queryOntologyContract()') < pageSource.indexOf('loadNativeGraphSnapshot('),
     'The verified contract must be published before the native graph query begins')
@@ -217,11 +217,8 @@ test('Knowledge Graph page displays available bound entities while native loadin
     return dependencies[name]
   }, exports)
   const html = renderToStaticMarkup(createElement(exports.KnowledgeGraphPage))
-  assert.match(html, /Operational Knowledge Graph/)
-  assert.match(html, /data-testid="canvas"/)
-  assert.doesNotMatch(html, /<h1>Loading the Ontology graph<\/h1>/)
+  assert.match(html, /Loading the Ontology graph/)
+  assert.doesNotMatch(html, /data-testid="canvas"/)
   assert.doesNotMatch(html, /KQL.*SQL enrichments|Time-series bindings are metadata only/)
-  assert.equal(canvasNodes.length, 1)
-  assert.equal(canvasNodes[0].label, 'Station')
-  assert.equal(canvasNodes[0].nativeOid, undefined)
+  assert.equal(canvasNodes.length, 0)
 })

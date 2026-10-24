@@ -78,6 +78,7 @@
 #   workspace/key-vault values -> used only to enable the Weather schedule after setup succeeds.
 # lakehouseName has no Python default here because %%configure resolves it before Python runs.
 per_notebook_timeout_secs = 3600
+enable_weather_schedule = True
 workspace_id = ""
 key_vault_uri = ""
 key_vault_tenant_id_secret_name = "tenantid"
@@ -96,6 +97,7 @@ key_vault_client_secret_name = "clientsecret"
 import json
 import requests
 import notebookutils
+from notebookutils.mssparkutils.handlers.notebookHandler import RunMultipleFailedException
 from urllib.parse import quote
 
 # NB01 already ran in Stage 1 (created the lakehouse, wrote rti_demo_settings, rebound children).
@@ -123,7 +125,15 @@ setup_dag = {
     "concurrency": 4,
 }
 
-results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+try:
+    results = notebookutils.notebook.runMultiple(setup_dag, {"displayDAGViaGraphviz": True})
+except RunMultipleFailedException as error:
+    failures = []
+    for name, outcome in error.result.items():
+        if outcome.get("exception"):
+            message = str(outcome["exception"]).splitlines()[0][:500]
+            failures.append(f"{name}: {message}")
+    raise RuntimeError("Stage 2 failed: " + "; ".join(failures)) from error
 
 
 def _require_successful_dag(results_by_activity: dict) -> None:
@@ -141,6 +151,9 @@ def _require_successful_dag(results_by_activity: dict) -> None:
 
 
 def _activate_weather_schedule() -> None:
+    if not enable_weather_schedule:
+        print("Weather schedule activation is disabled for this environment.")
+        return
     required = {
         "workspace_id": workspace_id,
         "key_vault_uri": key_vault_uri,

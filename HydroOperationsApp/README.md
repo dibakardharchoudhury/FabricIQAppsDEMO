@@ -1,6 +1,6 @@
 # Hydro Operations Fabric App
 
-A React + Leaflet + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
+A React + Leaflet/MapLibre + [Rayfin](https://www.npmjs.com/package/@microsoft/rayfin-cli) single‑page app
 that runs **inside Microsoft Fabric** and gives a hydropower operations team one screen composing
 **three independent data stores** — plus an in‑browser 3D digital‑twin viewer.
 
@@ -32,6 +32,7 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
 | **Rayfin SQL (operational)** | Work orders, notifications, inspections, spare parts, 3D models | Rayfin `data` client (Data API Builder) |
+| **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
 browser by `equipmentId` / `instrumentId` / `opcuaNodeId`, so every panel shows its source. Demo

@@ -238,6 +238,22 @@ everything required.
 
 ## Run the setup pipeline and Key Vault preflight
 
+For a fresh, isolated feature workspace **without Fabric Git integration**, use
+the optional `FABRIC_FEATURE_CONFIG` mode of the existing app orchestrator.
+See [the feature-workspace runbook](../../HydroOperationsApp/DEPLOY.md#optional-isolated-feature-workspace-without-fabric-git).
+It imports local definitions with target-specific notebook references, creates
+approved dedicated prerequisites, and runs setup/seed/stream without introducing a
+second app deployment command. It does not copy source workspace data or credentials.
+Fabric setup runs before public artifact discovery and Foundry provisioning. The
+bootstrap verifies workspace Runtime 2.0 and rejects incompatible published
+Environment overrides before setup or Geo notebook execution. A confirmed terminal
+failed/cancelled map-publication job can be retried on the next explicit invocation;
+active or indeterminate jobs are resumed rather than duplicated. The final feature
+seed explicitly enables demo seeding and fails if an expected operational table is empty.
+Private-only Key Vaults use secure ARM initialization followed by the same managed
+private-endpoint preflight described below. Public network access stays disabled;
+no separate VM or Fabric Git connection is needed.
+
 `01_Pipe_Setup` chains the `RTI_*` notebooks, and nearly all of them call
 `notebookutils.credentials.getSecret(key_vault_uri, ...)` to load a service principal. **A Key
 Vault holding that principal is a hard prerequisite** — create one with three secrets whose
@@ -410,7 +426,9 @@ requests, reads, or stores their values.
 
 Provisioning also creates `03_Pipe_Weather` with its UTC schedule disabled. Stage 2 enables the
 six-hour schedule only after every setup activity, including Weather schema initialization,
-succeeds. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
+succeeds and `enable_weather_schedule` is true (the default). Set it to false for a
+feature workspace without provider credentials; the Git-free bootstrap does this
+automatically. The schedule aligns to the 00/06/12/18 UTC model runs both vendors derive from. Each run executes
 Aurora, UKMet, and then `Weather_020_area_calculations`. The final stage rebuilds area metrics
 separately for every vendor and forecast type, enforces retention, and refreshes the wide serving
 tables the app reads. Downstream activities depend on `Succeeded`, so a failed ingestion stops the
@@ -542,7 +560,7 @@ tenant and workspace selected in the sidebar:
   into a unique temporary backup, then generates and validates a fresh ignored `rayfin/.env`.
   Existing state is not deleted.
    Still in this phase, before Rayfin publishes the app, the deployer converges the **Foundry** side: the
-   Fabric IQ connections, the four specialist prompt agents, and the `hydro-orchestrator` Hosted Agent. The
+   Fabric IQ connections, the five specialist prompt agents (including weather), and the `hydro-orchestrator` Hosted Agent. The
    Hosted Agent image is built in the project's ACR only when the packaged source changed, and a new version is
    published with azd only when the live agent differs; a target with no AppBackend yet gets one created first.
    Use the form's Foundry block (or `HYDRO_FOUNDRY_PROJECT_ENDPOINT`, `HYDRO_FOUNDRY_MODEL`, `HYDRO_ACR_NAME`,

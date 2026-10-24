@@ -1,7 +1,8 @@
-import { Activity, Bot, CloudSun, Factory, Gauge, Network, Settings, Wrench } from 'lucide-react'
+import { Activity, Bot, CloudSun, Factory, Gauge, Map, Network, Settings, Wrench } from 'lucide-react'
 import { lazy, type ComponentType } from 'react'
+import { filterEnergyMapTabs, resolveVisibleTab } from '../ui-shared/appFeatures'
 
-export type V2TabId = 'overview' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
+export type V2TabId = 'overview' | 'map' | 'telemetry' | 'weather' | 'digital-twin' | 'knowledge-graph' | 'copilot' | 'maintenance' | 'administration'
 
 export type V2Tab = {
   id: V2TabId
@@ -11,8 +12,9 @@ export type V2Tab = {
   Page: ComponentType
 }
 
-export const V2_TABS: V2Tab[] = [
+const ALL_V2_TABS: V2Tab[] = [
   { id: 'overview', label: 'Overview', title: 'Overview', icon: Gauge, Page: lazy(() => import('./pages/OverviewPage').then(module => ({ default: module.OverviewPage }))) },
+  { id: 'map', label: 'Map', title: 'Operations Map', icon: Map, Page: lazy(() => import('../ui-shared/pages/OperationsMapPage').then(module => ({ default: module.OperationsMapPage }))) },
   { id: 'telemetry', label: 'Real Time Telemetry', title: 'Real Time Telemetry', icon: Activity, Page: lazy(() => import('./pages/TelemetryPage').then(module => ({ default: module.TelemetryPage }))) },
   { id: 'weather', label: 'Weather', title: 'Weather', icon: CloudSun, Page: lazy(() => import('./pages/WeatherPage').then(module => ({ default: module.WeatherPage }))) },
   { id: 'digital-twin', label: 'Digital Twin', title: 'Digital Twin', icon: Factory, Page: lazy(() => import('./pages/DigitalTwinPage').then(module => ({ default: module.DigitalTwinPage }))) },
@@ -22,8 +24,9 @@ export const V2_TABS: V2Tab[] = [
   { id: 'administration', label: 'Administration', title: 'Administration', icon: Settings, Page: lazy(() => import('./pages/AdministrationPage').then(module => ({ default: module.AdministrationPage }))) },
 ]
 
+export const V2_TABS = filterEnergyMapTabs(ALL_V2_TABS)
 export const DEFAULT_V2_TAB = V2_TABS[0]
 
 export function resolveV2Tab(value: string | null): V2Tab {
-  return V2_TABS.find(tab => tab.id === value) ?? DEFAULT_V2_TAB
+  return resolveVisibleTab(V2_TABS, value)
 }

@@ -904,6 +904,8 @@ def seed_sql_database(server: str, database: str) -> None:
         )
         for name, n in counts.fetchall():
             print(f"   • {name}: {n}")
+            if n == 0:
+                raise RuntimeError(f"Operational seed validation failed: {name} is empty.")
         counts.close()
     finally:
         connection.close()
