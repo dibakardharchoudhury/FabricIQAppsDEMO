@@ -28,7 +28,7 @@ no extra databases, ontologies or agents were created during this assessment.
 Those statements describe the read-only assessment. FEATURE implementation now
 extends the existing ontology rather than migrating the V3 candidate. The
 independent-store cutover is implemented and locally validated; its live
-deployment verification is recorded separately below when completed.
+deployment verification and remaining acceptance limits are recorded below.
 
 ## FEATURE implementation
 
@@ -54,6 +54,92 @@ new physical key column in the three composite-grain tables, verifies nonnull an
 unique identities, and rejects conflicting pre-existing key values. The producer
 notebooks preserve those keys on refresh. JSON-encoded named key members are
 SHA-256 hashed with explicit UTC/microsecond timestamp formatting.
+
+## Live FEATURE verification: October 24, 2026
+
+The canonical deployment of source `53a454c` passed all eight deployment sections
+from **19:22:03 to 19:44:42 UTC** and printed both `SUCCESS` and
+`DEPLOYED_APP_URL`:
+<https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
+
+Verified outcomes:
+
+- FEATURE's existing numeric-generation-2 ontology now has **18 entities,
+  17 semantic relationships and 44 definition parts**. The original core
+  definitions and bindings passed preservation readback. The actual Fabric
+  readback is also an unchanged/idempotent input to the revised extension builder.
+- NB11 completed on **Spark Runtime 2.0** in **353.181 seconds**, including queue
+  time. It verified every copied field/ID and SHA-256 receipt for all five tables:
+
+  | Operational table | Original rows preserved and copied |
+  |---|---:|
+  | WorkOrders | 12 |
+  | Inspections | 30 |
+  | SpareParts | 12 |
+  | Asset3DModels | 15 |
+  | MaintenanceNotifications | 6 |
+  | **Total** | **75** |
+
+- The active independent database is `HydroOperationalStore`
+  (`7972fa8c-e2cd-4c9a-bdd6-053b37293f19`). The original database and rows remain.
+  NB11 verified the stale-client write boundary before publishing the new source.
+  No demo DML or production test work orders were requested.
+- Data Agent SQL source publication passed exact draft/published readback.
+  Compatible custom content was retained.
+- Both delegated connectors were applied successfully. The orchestrator verified
+  the generated AppBackend endpoint, browser-equivalent CORS/preflights, protected
+  transport readiness and preservation of all **40 Entra SPA redirects**.
+- `hydro-orchestrator:5` is active on image `src-c1c91fbfbc71e70c`.
+  All five specialist prompt-agent definitions were verified, including
+  `hydro-weather-agent:1`, in **`ai-project-hydro-foundry-884a839f3132`**.
+  The older `foundryfabriciqappsdemo` project was not changed.
+- Final read-only checks confirmed **all 48 V3 candidate definition parts and all
+  45 V3 item identities unchanged**. All **40 original FEATURE item identities**
+  remain. The only added Fabric items are the intended independent SQLDatabase
+  and its automatically created SQL analytics endpoint.
+- The original bound native graph still exposes its queryable schema of **five
+  node types and four edge types**. This is a schema check, not a graph-instance
+  or business-answer execution certification.
+
+### Deployment timing
+
+| Canonical deployment section | Seconds |
+|---|---:|
+| Tenant, workspace and capacity verification | 18.891 |
+| SPA resolution and redirect preservation snapshot | 15.890 |
+| Source setup/cutover, specialists, new Hosted Agent image and activation | 863.531 |
+| Tenant-scoped Rayfin authentication | 1.657 |
+| Static application build/publication | 143.000 |
+| Backend runtime/database settings and both connectors | 179.125 |
+| Browser sign-in permissions and consent verification | 71.547 |
+| Hosting, endpoint, CORS and protected transport readiness | 65.046 |
+| **Total** | **1358.687 (22m 38.687s)** |
+
+This was a one-time operational-store cutover **and a new remote container build**,
+not the previously measured warm deployment. The 353.181-second NB11 job is
+included in section 3, not additional to the total. Subsequent unchanged runs
+verify the published source bindings and reuse the immutable image; another warm
+run was deliberately not performed merely to obtain a timing number. The earlier
+351.375-second warm measurement is documented in
+[DEPLOY.md](../HydroOperationsApp/DEPLOY.md#speed-changes-and-measurements).
+
+### Acceptance limits: do not report everything as runtime-certified
+
+1. Additional graph entities/relationships still need the selected ontology's
+   **Manage graph -> select eligible entities/relationships -> Continue ->
+   Materialize** portal flow. No public materialization API was invented.
+2. Hosting verification reached Fabric's protected sign-in gate, not an
+   authenticated SPA session. A read-only operational connector probe using the
+   existing Azure CLI token was rejected by the brokered token endpoint with
+   **`Delegated scope 'Item.Execute.All' is required`**. The SPA's own delegated
+   permission/consent configuration passed, but that does not add the permission
+   to Azure CLI's separate client identity. A named-scope acquisition attempt was
+   stopped when it did not complete; no CLI consent grants were changed and no
+   authentication bypass was used. Authenticated UI/connector acceptance remains
+   pending normal user sign-in.
+3. Successful source publication and an active Hosted Agent do not certify Data
+   Agent SQL/combined-source answers, execution provenance, Weather inference or
+   data freshness. No such runtime certification is claimed.
 
 ## Evidence and compatibility
 

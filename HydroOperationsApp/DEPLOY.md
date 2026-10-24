@@ -69,6 +69,14 @@ capacity can belong to a different subscription. Its authoritative assignment is
 
 ### Speed changes and measurements
 
+The independent operational-store FEATURE deployment and its exact eight-section
+timing receipt are recorded in the
+[live ontology/store verification](../docs/ontology-test-review.md#live-feature-verification-october-24-2026).
+It passed deployment in **22m 38.687s**, including a one-time verified 75-row
+cutover and a newly built Hosted Agent image. Do not compare that run directly
+with the earlier unchanged/warm deployment below. Authenticated UI acceptance and
+additional native graph materialization remain explicitly separate.
+
 The canonical deployer now prints each section's monotonic duration and outcome, followed
 by a `DEPLOY_TIMINGS=` JSON receipt with UTC start/end, total seconds, and ordered
 `steps` (`section`, `label`, `seconds`, `status`). Failure also emits the completed
