@@ -63,6 +63,7 @@ const PROMPTS: Record<CopilotEngine, string[]> = {
     'Chart average power output per station over the last 24 hours.',
     'List the most critical equipment that has an open work order.',
     'Which spare parts are at or below their reorder level?',
+    'Compare Aurora and UKMet rainfall forecasts for each station over the next 24 hours.',
   ],
 }
 

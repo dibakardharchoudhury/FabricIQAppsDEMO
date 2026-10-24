@@ -1,4 +1,4 @@
-import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, WEATHER_ENTITIES, type CatalogEntity } from './catalog.ts'
 import type { AgentVisualization } from '../assistantStream.ts'
 export { STATION_POWER_SEMANTICS } from './domainContract.ts'
 
@@ -62,14 +62,25 @@ export function shapeCatalogRows(
 const text = (value: unknown) => value instanceof Date ? value.toISOString() : String(value ?? '')
 const lower = (value: unknown) => text(value).toLowerCase()
 
+// Matches ISO-8601 dates and date-times, with or without a zone designator.
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i
+
+/** Parse an ISO timestamp, reading a zone-less value as UTC so comparisons do not depend on the browser zone. */
+function asTimestamp(value: unknown): number {
+  const raw = text(value).trim()
+  if (!ISO_TIMESTAMP.test(raw)) return Number.NaN
+  const zoned = /[T ]\d{2}:\d{2}/.test(raw) && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw.replace(' ', 'T')
+  return Date.parse(zoned)
+}
+
 function compare(left: unknown, right: unknown): number {
   if ([left, right].some(value => typeof value === 'number' && !Number.isFinite(value))) throw new QueryInputValidationError('Numeric comparisons require finite operands.')
   const leftText = text(left).trim()
   const rightText = text(right).trim()
   if (!leftText || !rightText) return Number.NaN
-  if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(leftText) && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(rightText)) {
-    const leftTime = Date.parse(leftText)
-    const rightTime = Date.parse(rightText)
+  if (ISO_TIMESTAMP.test(leftText) && ISO_TIMESTAMP.test(rightText)) {
+    const leftTime = asTimestamp(left)
+    const rightTime = asTimestamp(right)
     if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) throw new Error('Date filters require valid ISO dates or timestamps.')
     return leftTime - rightTime
   }
@@ -248,6 +259,23 @@ function qualitySummaryShape(): string {
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'query_weather',
+      description: 'Read Lakehouse weather locations, operating areas, latest vendor forecasts or observations through the read-only connector. Filter by vendor, target and UTC valid/observed time. Never blend vendors or forecast issues.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', enum: WEATHER_ENTITIES.map(entity => entity.key) },
+          where: whereSchema,
+          columns: { type: 'array', items: { type: 'string' } },
+          limit: { type: 'integer' },
+        },
+        required: ['entity'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {

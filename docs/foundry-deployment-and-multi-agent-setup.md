@@ -18,7 +18,7 @@ the model settings available in your subscription/region. No original demo tenan
 | 3 | Press **Deploy app** | `python Raw\workspace-reset\deploy_fabric_app.py --tenant <tenant> --workspace <workspace> --push-config` |
 | 4 | Wait for `SUCCESS` and `DEPLOYED_APP_URL`, then open the app and test it | same |
 
-Once the prerequisites below are satisfied, that single run does the Foundry deployment: the project (only if you opted in), connections, the four
+Once the prerequisites below are satisfied, that single run does the Foundry deployment: the project (only if you opted in), connections, the five
 prompt agents, the **Hosted Agent image build and publish**, and the final verification. Nothing needs to be run by
 hand. **It deploys into the selected Fabric workspace**, exactly as before; pick the target deliberately.
 
@@ -31,10 +31,10 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
                                                                          → grounded briefing
                                        ┌────────────── Foundry Responses ────────────────┐
                                        ▼                 ▼                  ▼             ▼
-                               hydro-qa-agent   hydro-rca-agent   hydro-work-order-agent   hydro-fabric-iq-agent
-                                  (Gauge)          (Sleuth)            (Fixer)                 (Sparky)
+                               hydro-qa-agent   hydro-rca-agent   hydro-work-order-agent   hydro-fabric-iq-agent   hydro-weather-agent
+                                  (Gauge)          (Sleuth)            (Fixer)                 (Sparky)              (Weather)
         Specialist tool calls are executed by the hosted runtime (Node source bridge) under the user's tokens:
-        STID GraphQL · Eventhouse KQL · AppBackend SQL · published Data Agent / Ontology via Foundry connections
+        STID GraphQL · Weather Lakehouse connector · Eventhouse KQL · AppBackend SQL · published Data Agent connection
 ```
 
 | Component | Foundry name | Kind | Defined in | Deployed by |
@@ -44,12 +44,13 @@ Operator ─► SPA (Fabric-hosted) ─ signed-in user's delegated tokens ─►
 | Sleuth | `hydro-rca-agent` | Prompt agent | same | Deployer |
 | Fixer | `hydro-work-order-agent` | Prompt agent | same | Deployer |
 | Sparky | `hydro-fabric-iq-agent` | Prompt agent | same | Deployer |
+| Weather | `hydro-weather-agent` | Prompt agent | same | Deployer |
 | Data Agent connection | `hydro-fabric-iq` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
 | Ontology connection | `hydro-fabric-ontology` | Project `RemoteTool` connection (user Entra token) | provisioner | Deployer |
 | Model | Selected/discovered in the target account; no fixed deployment name | Model deployment | `HYDRO_FOUNDRY_MODEL` | Existing project: must exist; opt-in creation: template provisions the specified catalog model/version/SKU/capacity |
 
 The Supervisor is the hosted runtime, **not a prompt agent**. There is no separate "Chief" prompt agent in the
-current code; earlier records that mention Chief or five agents are historical.
+current code; earlier records that describe a separate Chief prompt agent are historical.
 
 **Roles**
 

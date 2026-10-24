@@ -57,7 +57,7 @@ export function CopilotSettingsPanel() {
         <h4>Foundry Agent Service
           <button type="button" className="copilot-settings-inline" disabled={draft.projectEndpoint === defaults.projectEndpoint} onClick={() => setDraft(current => ({ ...current, projectEndpoint: FOUNDRY_ENV_DEFAULTS.projectEndpoint }))}>Restore deployed project</button>
         </h4>
-        <p>The Hosted Agent runs one deterministic Supervisor control plane that compiles evidence and presentation contracts, dispatches bounded Q&amp;A, RCA, Work Order, and Fabric IQ specialists, verifies their receipts, and certifies the final answer. Sparky exposes one published Data Agent connection; ontology-native chat is intentionally unavailable.</p>
+        <p>The Hosted Agent runs one deterministic Supervisor control plane that compiles evidence and presentation contracts, dispatches bounded Q&amp;A, RCA, Work Order, Weather, and Fabric IQ specialists, verifies their receipts, and certifies the final answer. Weather uses the read-only Lakehouse connector. Sparky exposes one published Data Agent connection; ontology-native chat is intentionally unavailable.</p>
         <div className="copilot-settings-fields">
           <label>
             <span>Project endpoint</span>

@@ -150,8 +150,8 @@ class ChatInput(Contract):
     equipment_selection: EquipmentSelection | None = None
     required_evidence_kinds: tuple[str, ...] = ()
     permitted_evidence_kinds: tuple[str, ...] = ()
-    required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
-    required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
+    required_specialists: tuple[Literal["qa", "rca", "work-order", "weather"], ...] = ()
+    required_specialist_steps: dict[Literal["qa", "rca", "work-order", "weather"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
     previous_run_id: UUID | None = None
 

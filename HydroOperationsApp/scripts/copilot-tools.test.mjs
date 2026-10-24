@@ -207,8 +207,22 @@ test('filters rows with the structured predicate', () => {
   const rows = [{ id: 'a', status: 'Open', criticality: 5 }, { id: 'b', status: 'closed', criticality: 1 }, { id: 'c', status: 'Open', criticality: 3 }]
   assert.deepEqual(applyFilter(rows, [{ column: 'status', op: 'eq', value: 'open' }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'criticality', op: 'gte', value: 3 }]).map(row => row.id), ['a', 'c'])
+  assert.deepEqual(applyFilter(rows, [{ column: 'criticality', op: 'gt', value: '2' }]).map(row => row.id), ['a', 'c'])
   assert.deepEqual(applyFilter(rows, [{ column: 'id', op: 'in', value: ['b'] }]).map(row => row.id), ['b'])
   assert.deepEqual(applyFilter(rows, [{ column: 'missing', op: 'eq', value: 'x' }]), [])
+})
+
+test('compares ISO timestamps chronologically rather than by their leading year', () => {
+  const rows = [
+    { id: 'early', valid_time_utc: '2026-10-15T06:00:00.000Z' },
+    { id: 'noon', valid_time_utc: '2026-10-15T12:00:00.000Z' },
+    { id: 'next', valid_time_utc: '2026-10-16T06:00:00.000Z' },
+  ]
+  const ids = where => applyFilter(rows, where).map(row => row.id)
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'gt', value: '2026-10-15T06:00:00Z' }]), ['noon', 'next'])
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'lte', value: '2026-10-15T12:00:00Z' }]), ['early', 'noon'])
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'gte', value: '2026-10-15T12:00' }]), ['noon', 'next'], 'zone-less times read as UTC')
+  assert.deepEqual(ids([{ column: 'valid_time_utc', op: 'lt', value: '2026-10-16' }]), ['early', 'noon'])
 })
 
 test('projection drops columns outside the requested set', () => {
@@ -356,6 +370,28 @@ test('settings default everything on and preserve stored opt-outs', () => {
   assert.equal(merged.tools.query_assets, true)
   assert.equal(merged.promptExtra, 'be terse')
   assert.deepEqual(mergeCopilotSettings(null), defaults)
+})
+
+test('weather is in the catalog, enabled by default, and narrowed by Administration', () => {
+  const defaults = defaultCopilotSettings()
+  assert.equal(defaults.tools.query_weather, true)
+  for (const key of ['weather_locations', 'weather_areas', 'weather_forecasts', 'weather_observations']) assert.equal(defaults.entities[key], true)
+  // Settings saved before weather existed still pick it up.
+  const legacy = mergeCopilotSettings({ tools: { query_assets: true }, entities: { work_orders: false } })
+  assert.equal(legacy.tools.query_weather, true)
+  assert.equal(legacy.entities.weather_forecasts, true)
+
+  const prompt = catalogPrompt(defaults)
+  assert.match(prompt, /Weather forecasts and observations \(Lakehouse, tool: query_weather\):/)
+  assert.match(prompt, /weather_forecasts \[weather_latest_forecasts\]:.*aurora.*ukmet.*Never combine vendors/)
+  assert.match(prompt, /weather_locations \[weather_locations\]:.*location_id equals facilities\.facility_id/)
+  assert.match(prompt, /pressure \(hPa, mean sea-level\)/)
+  assert.match(prompt, /cumulative_precipitation \(mm running total/)
+  assert.doesNotMatch(prompt, /geometry_geojson/)
+
+  const narrowed = catalogPrompt(mergeCopilotSettings({ entities: { weather_locations: false, weather_areas: false, weather_forecasts: false, weather_observations: false } }))
+  assert.doesNotMatch(narrowed, /query_weather/)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /weather forecasts/)
 })
 
 test('prompt tells the model to stop when it has enough data', () => {

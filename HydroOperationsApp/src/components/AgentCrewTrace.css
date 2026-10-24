@@ -12,7 +12,7 @@
 .agent-crew-heading > svg { color: var(--cp-accent); }
 .crew-size-toggle { padding: 3px 7px; border: 1px solid var(--cp-border); border-radius: 5px; background: var(--cp-bg-elevated); color: var(--cp-text); font: inherit; cursor: pointer; }
 .crew-motion-toggle { padding: 3px 5px; border: 0; background: transparent; color: var(--cp-text-muted); font: inherit; cursor: pointer; }
-.agent-crew.compact .crew-stage { grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: auto; gap: 3px; background: none; }
+.agent-crew.compact .crew-stage { grid-template-columns: repeat(6, minmax(0, 1fr)); grid-template-rows: auto; gap: 3px; background: none; }
 .agent-crew.compact .crew-station.role-supervisor { grid-column: auto; width: 100%; }
 .agent-crew.compact .crew-helper-slot { transform: scale(.5); margin: -16px -12px; grid-row: 1 / 3; }
 .agent-crew.compact .crew-station { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: 18px 15px; text-align: left; align-content: center; min-height: 43px; }
@@ -34,7 +34,7 @@
 .status-error .crew-run-status { color: var(--cp-danger); }
 .status-approval .crew-run-status { color: var(--cp-warning); }
 .status-completed .crew-run-status { color: var(--cp-success); }
-.crew-stage { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: 116px 116px; gap: 56px 8px; padding: 0 8px 8px; background: radial-gradient(ellipse at 50% 0, var(--cp-accent-soft), transparent 65%); }
+.crew-stage { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: 116px 116px; gap: 56px 8px; padding: 0 8px 8px; background: radial-gradient(ellipse at 50% 0, var(--cp-accent-soft), transparent 65%); }
 .crew-station.role-supervisor { grid-column: 1 / -1; justify-self: center; width: 120px; }
 .crew-wires { position: absolute; top: 116px; left: 8px; width: calc(100% - 16px); height: 56px; overflow: visible; pointer-events: none; }
 .crew-wire.historical { opacity: .2; }
@@ -58,6 +58,7 @@
 .role-work-order { --crew-body: #7bdd9b; --crew-shade: #36a86a; }
 .role-rca { --crew-body: #c2a0ff; --crew-shade: #9365dc; }
 .role-fabric-iq { --crew-body: #ffad80; --crew-shade: #eb8050; }
+.role-weather { --crew-body: #8adbd5; --crew-shade: #45aca6; }
 .crew-helper-slot .copilot-helper { left: 17px; bottom: 12px; animation: none; background: var(--crew-body); box-shadow: inset 0 -8px 0 var(--crew-shade), 0 3px 5px rgba(23, 50, 77, .16); }
 .crew-role-badge { position: absolute; right: 0; bottom: 8px; display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid var(--cp-border); border-radius: 50%; color: var(--cp-accent); background: var(--cp-surface); }
 .crew-job { display: flex; align-items: center; justify-content: center; gap: 3px; min-height: 18px; font-size: 10px; font-weight: 650; text-align: center; }

@@ -59,7 +59,7 @@ type PersistedSetup = { provisioned?: boolean; stidConnected?: boolean; telemetr
 
 const INITIAL_MESSAGES: Record<CopilotEngine, ChatMessage> = {
   'data-agent': { role: 'agent', text: 'Ask me about the operation — facilities, equipment, instruments, live signal quality, or work orders. I query the published Fabric Data Agent across its connected sources and answer with tables where it helps.' },
-  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, or maintenance work. The deterministic Supervisor compiles the evidence contract, dispatches bounded specialists, verifies their receipts, and presents the certified result. Q&A and RCA use direct data tools; explicit published Data Agent requests use Sparky through its single Data Agent connection. Direct ontology-native chat is unavailable. Work-order drafts require your review and approval before any SQL write.' },
+  foundry: { role: 'agent', text: 'Ask me about facilities, equipment, live telemetry, weather forecasts, or maintenance work. The deterministic Supervisor dispatches bounded Q&A, RCA, Weather and Work Order specialists and verifies their receipts. Weather uses the read-only Lakehouse connector; explicit published Data Agent requests use Sparky. Direct ontology-native chat is unavailable. Work-order drafts require your review and approval before any SQL write.' },
 }
 
 function readPersistedSetup(): PersistedSetup {

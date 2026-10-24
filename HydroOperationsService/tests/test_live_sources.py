@@ -298,11 +298,17 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
                 "facilities", "equipment", "instruments", "telemetry", "signal_quality",
                 "temperature", "station_power", "work_orders", "work_backlog", "inspections",
                 "notifications", "spare_parts", "asset_models", "native_claims",
+                "weather_locations", "weather_areas", "weather_forecasts", "weather_observations",
             },
         )
         self.assertTrue(datasets["station_power"].limitations)
         self.assertIn("grouped_by_facility_bar", datasets["station_power"].presentations)
         self.assertEqual({tool.name for tool in catalog.tools}, FabricBackendTools.supported_tools)
+        self.assertEqual(len(datasets["weather_forecasts"].identity_fields), 5)
+        weather_schema = next(tool.parameters for tool in catalog.tools if tool.name == "query_weather")
+        weather_validator = Draft202012Validator(weather_schema)
+        self.assertTrue(weather_validator.is_valid({"entity": "weather_forecasts", "columns": ["source_id", "temperature"]}))
+        self.assertFalse(weather_validator.is_valid({"entity": "weather_forecasts", "columns": ["equipmentId"]}))
         schema = next(tool.parameters for tool in catalog.tools if tool.name == "query_operations")
         validator = Draft202012Validator(schema)
         self.assertTrue(validator.is_valid({"entity": "work_orders", "columns": ["equipmentId", "status"]}))
@@ -342,6 +348,33 @@ class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
             sources.bridge.call.call_args.args[0]["tokens"],
             {"fabric": "synthetic-token-never-log", "graphql": "synthetic-token-never-log"},
         )
+        self.assertNotIn("synthetic-token", evidence.model_dump_json())
+
+    async def test_weather_read_preserves_composite_identity_units_and_delegated_tokens(self):
+        sources = reader()
+        request = self.chat(sources)
+        arguments = {"entity": "weather_forecasts"}
+        identity = ("source_id", "target_kind", "target_id", "reference_time_utc", "valid_time_utc")
+        rows = [{
+            "source_id": "aurora", "target_kind": "location", "target_id": "F001",
+            "reference_time_utc": "2026-10-23T00:00:00Z",
+            "valid_time_utc": "2026-10-23T06:00:00Z", "temperature": 8, "precipitation": 4,
+        }]
+        sources.bridge.call.return_value = {
+            "source": request.source.model_dump(mode="json"), "completed_at": utc_now().isoformat(),
+            "result": {"rows": rows, "row_count": 1, "truncated": False, "_evidence_datasets": [{
+                "kind": "weather_forecasts", "field": "rows", "authority": "direct",
+                "scope": "population", "complete": True, "identity_fields": identity,
+                "group_by": None, "role": "primary", "limitations": [],
+            }]},
+        }
+        evidence = await FabricBackendTools(sources).execute("query_weather", arguments, request)
+        self.assertEqual(evidence.datasets[0].identity_fields, identity)
+        self.assertEqual(evidence.column_units["temperature"], "degC")
+        self.assertEqual(evidence.column_units["precipitation"], "mm")
+        self.assertEqual(evidence.result["rows"], rows)
+        self.assertFalse(evidence.production_write_executed)
+        self.assertEqual(set(sources.bridge.call.call_args.args[0]["tokens"]), {"fabric", "graphql"})
         self.assertNotIn("synthetic-token", evidence.model_dump_json())
 
     async def test_complete_equipment_work_read_attests_coverage_without_claiming_filtered_reads(self):
@@ -877,6 +910,7 @@ class ContainerPackagingTests(unittest.TestCase):
     runtime_files = (
         "HydroOperationsApp/scripts/local-fabric-sources.mjs",
         "HydroOperationsApp/src/services/kustoResult.ts",
+        "HydroOperationsApp/src/services/lakehouseConnector.ts",
         *(f"HydroOperationsApp/src/services/copilot/{name}.ts" for name in (
             "query", "catalog", "domainContract", "rcaEvidence", "agentDefinitions", "answerPresentation",
             "orchestration",

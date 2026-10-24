@@ -23,7 +23,7 @@ class ClientVisualization(Contract):
 
 class ClientExecutionEvent(Contract):
     id: str
-    role: Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
+    role: Literal["supervisor", "qa", "rca", "work-order", "fabric-iq", "weather"]
     status: Literal["completed"] = "completed"
     label: str
     detail: str

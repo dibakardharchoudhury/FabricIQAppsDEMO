@@ -1,4 +1,4 @@
-import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from './catalog.ts'
 
 export const DOMAIN_CONTRACT_VERSION = 3
 
@@ -42,6 +42,13 @@ type DomainDatasetDefinition = {
 }
 
 export const DOMAIN_DATASETS = [
+  ...WEATHER_ENTITIES.map(entity => ({
+    key: entity.key, source: 'lakehouse', entity: entity.key,
+    identityFields: entity.identityColumns ?? [entity.identityColumn],
+    presentations: ['records_table', 'records_line', 'records_bar'],
+    evidenceScopes: ['population'] as const, evidenceAuthorities: ['direct'] as const,
+    limitations: ['Vendors and forecast issues are separate; forecast values are not observations.'],
+  })),
   { key: 'facilities', source: 'lakehouse', entity: 'facilities', identityFields: ['facility_id'], presentations: ['records_table'], evidenceScopes: ['population'], evidenceAuthorities: ['direct'] },
   { key: 'equipment', source: 'lakehouse', entity: 'equipment', identityFields: ['equipment_id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
   { key: 'instruments', source: 'lakehouse', entity: 'instruments', identityFields: ['instrument_id'], presentations: ['records_table'], evidenceScopes: ['population', 'focus'], evidenceAuthorities: ['direct'] },
@@ -130,6 +137,12 @@ export function describeToolEvidence(
       throw new Error('Operations tool selected an ungoverned dataset.')
     }
     return [describe(String(args.entity))]
+  }
+  if (tool === 'query_weather') {
+    if (!WEATHER_ENTITIES.some(entity => entity.key === args.entity)) {
+      throw new Error('Weather tool selected an ungoverned dataset.')
+    }
+    return [describe(String(args.entity), 'rows', { scope: 'population' })]
   }
   if (tool === 'query_work_backlog') {
     const groupBy = args.group_by === 'facility' ? 'facility_id' : 'equipment_id'

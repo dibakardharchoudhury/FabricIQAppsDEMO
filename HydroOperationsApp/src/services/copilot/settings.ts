@@ -1,11 +1,11 @@
-import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES } from './catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from './catalog.ts'
 import { ANSWER_PRESENTATION_CONTRACT, OPERATIONAL_EVIDENCE_CONTRACT } from './answerPresentation.ts'
 
 // Operator-tunable copilot configuration, edited in Administration and persisted per browser.
 // It narrows what the MODEL may reach; it is not a security boundary against the signed-in user,
 // who is always limited to their own Entra permissions by the delegated token.
 
-export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
+export const TOOL_NAMES = ['query_assets', 'query_operations', 'query_weather', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model', 'propose_work_order'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export type CopilotSettings = {
@@ -118,16 +118,16 @@ export const DEFAULT_SYSTEM_PROMPT = `${ADAPTIVE_SYSTEM_PROMPT.replace(
 )}
 
 Persistent Foundry agents:
-- The Foundry Supervisor delegates to separately provisioned Q&A, RCA, Work Order and Fabric IQ agents. Follow your registered agent instructions; never simulate another agent.
+- The deterministic Supervisor delegates to separately provisioned Q&A, RCA, Work Order, Fabric IQ and Weather agents. Follow your registered agent instructions; never simulate another agent.
 - The Work Order agent stages structured drafts only. The human reviews or edits an approval card and chooses Yes or No; never request typed confirmation or claim a SQL write succeeded from a proposal.
-- Q&A and RCA use direct tools. Fabric IQ is used only by the Fabric IQ specialist. Report actual execution failures without falling back to ungrounded answers.`
+- Q&A and RCA use direct tools. Weather reads weather forecasts and observations through the read-only Lakehouse connector, keeping vendors and issues separate. Fabric IQ is used only by the Fabric IQ specialist. Report actual execution failures without falling back to ungrounded answers.`
 
 const STORAGE_KEY = 'hydro.copilot.settings.v1'
 const SETTINGS_CHANGED_EVENT = 'hydro:copilot-settings-changed'
 
 const allEnabled = (keys: readonly string[]) => Object.fromEntries(keys.map(key => [key, true]))
 
-export const ENTITY_KEYS = [...ASSET_ENTITIES, ...OPERATIONS_ENTITIES].map(entity => entity.key)
+export const ENTITY_KEYS = [...ASSET_ENTITIES, ...OPERATIONS_ENTITIES, ...WEATHER_ENTITIES].map(entity => entity.key)
 export const KUSTO_NAMES = KUSTO_SOURCES.map(source => source.name)
 
 export function defaultCopilotSettings(): CopilotSettings {

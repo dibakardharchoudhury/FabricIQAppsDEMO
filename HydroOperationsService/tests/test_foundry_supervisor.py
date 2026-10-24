@@ -1316,6 +1316,21 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(native.scope, "population")
         self.assertTrue(any(view.authority == "reconciled" for view in plan.answer_contract.views))
 
+    async def test_weather_temperature_compiles_to_weather_without_turbine_evidence(self):
+        question = "Show the weather forecast temperature and rainfall for the next 24 hours."
+        intent = await self.bridge.call({"action": "chat_intent", "question": question})
+        request = ChatRequest.model_validate({
+            **self.request.model_dump(), **intent, "run_id": uuid4(), "question": question,
+        })
+        journal = RunJournal(self.root / str(request.run_id) / "receipts")
+        journal.save("tool_catalog", await self.bridge.call({"action": "source_contracts"}))
+        plan = await self.owner.compile_orchestration_plan(request, journal)
+        self.assertEqual([step.specialist for step in plan.steps], ["weather"])
+        self.assertEqual({item.kind for item in plan.answer_contract.requirements},
+                         {"weather_locations", "weather_forecasts"})
+        self.assertEqual(deterministic_fulfillment_route(
+            "weather_forecasts", "population"), "query_weather")
+
     async def test_incomplete_qa_completion_gets_one_bounded_evidence_only_retry(self):
         self.mode = "qa_incomplete_once"
         request = self.request.model_copy(update={

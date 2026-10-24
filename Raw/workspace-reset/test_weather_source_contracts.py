@@ -1,5 +1,7 @@
 import json
+import ast
 import unittest
+from datetime import datetime, timedelta, timezone
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -8,6 +10,59 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WeatherSourceContractTests(unittest.TestCase):
+    def test_aurora_discovers_recent_issues_without_valid_time_sorting(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        names = {"newest_stream_issue", "issue_items", "latest_complete_issue"}
+        functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in names]
+        frozen_now = datetime(2026, 10, 23, 14, tzinfo=timezone.utc)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen_now
+
+        old = frozen_now.replace(hour=12) - timedelta(hours=48)
+        recent = frozen_now.replace(hour=6)
+        newest = frozen_now.replace(hour=12)
+        items = {}
+        for issue, horizon in ((old, 240), (recent, 72), (newest, 5)):
+            for lead in range(1, horizon + 1):
+                key = f"oper_{issue:%Y%m%d%H%M}_{issue + timedelta(hours=lead):%Y%m%d%H%M}"
+                items[key] = {"id": key}
+
+        def search(_session, _endpoint, _key, params):
+            self.assertNotIn("sortby", params)
+            self.assertLessEqual(len(params["ids"].split(",")), 50)
+            return {"features": [items[key] for key in params["ids"].split(",") if key in items]}
+
+        context = {"datetime": Clock, "timedelta": timedelta, "timezone": timezone,
+                   "stream": "oper", "collection": "mai-aurora", "stac_search": search}
+        code = "from __future__ import annotations\n" + ast.unparse(ast.Module(body=functions, type_ignores=[]))
+        exec(compile(code, "aurora_issue_test", "exec"), context)
+        issue, selected = context["latest_complete_issue"](None, "unused", "unused", list(range(1, 73)))
+        self.assertEqual(issue, recent)
+        self.assertEqual(set(selected), set(range(1, 73)))
+        self.assertTrue(all(f"oper_{recent:%Y%m%d%H%M}_" in item["id"] for item in selected.values()))
+        items.clear()
+        for lead in range(1, 241):
+            key = f"oper_{old:%Y%m%d%H%M}_{old + timedelta(hours=lead):%Y%m%d%H%M}"
+            items[key] = {"id": key}
+        with self.assertRaisesRegex(RuntimeError, "No recent"):
+            context["latest_complete_issue"](None, "unused", "unused", list(range(1, 73)))
+
+    def test_aurora_raw_mirror_retains_all_canonical_function_bodies(self):
+        source = (ROOT / "Notebooks/Weather_002_fetch_area_weather.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        raw = json.loads((ROOT / "Raw/RTI_Notebooks/Weather_002_fetch_area_weather.ipynb").read_text(encoding="utf-8"))
+        mirror = "\n".join("".join(cell["source"]) for cell in raw["cells"] if cell["cell_type"] == "code")
+        functions = lambda text: {node.name: ast.dump(node) for node in ast.parse(text).body if isinstance(node, ast.FunctionDef)}
+        self.assertEqual(functions(source), functions(mirror))
+
+    def test_ukmet_forecast_pressure_is_stored_in_hpa(self):
+        source = (ROOT / "Notebooks/Weather_003_fetch_ukmet.Notebook/notebook-content.py").read_text(encoding="utf-8")
+        compile(source, "Weather_003", "exec")
+        self.assertIn('FORECAST_SCALE = {"pressure": 0.01}', source)
+        self.assertIn("value *= FORECAST_SCALE.get(variable_id, 1.0)", source)
+
     def test_packaged_workflows_require_runtime_two_without_weather_exceptions(self):
         for path in (ROOT / "Raw/RTI_Ontology_Workflow_clean.docx",
                      ROOT / "Raw/RTI_Notebooks/RTI_Ontology_Workflow_clean.docx"):

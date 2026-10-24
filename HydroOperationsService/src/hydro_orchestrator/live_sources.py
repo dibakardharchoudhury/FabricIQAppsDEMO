@@ -314,7 +314,7 @@ class FabricBackendTools:
     """Read-only shared source tools, not a hosted chat/approval provider."""
 
     snapshot_tools = frozenset(("query_signal_quality_snapshot", "query_turbine_temperature_snapshot"))
-    supported_tools = frozenset(("query_assets", "query_operations", "query_telemetry",
+    supported_tools = frozenset(("query_assets", "query_operations", "query_weather", "query_telemetry",
                                 "query_work_backlog", "query_station_power",
                                 "run_kql", "propose_work_order")) | snapshot_tools
 
@@ -376,7 +376,7 @@ class FabricBackendTools:
             raise SourceFailure("This source tool has no configured backend implementation.")
         credential, discovery = self.sources.credential, self.sources.discovery
         tokens = {"fabric": (await credential.get_token("https://api.fabric.microsoft.com/.default")).token}
-        if name in ("query_assets", "query_operations", "query_work_backlog", "query_telemetry",
+        if name in ("query_assets", "query_operations", "query_weather", "query_work_backlog", "query_telemetry",
                     "propose_work_order") or name in self.snapshot_tools:
             tokens["graphql"] = (await credential.get_token("https://analysis.windows.net/powerbi/api/.default")).token
         if name in ("query_telemetry", "query_station_power", "run_kql") or name in self.snapshot_tools:
@@ -392,6 +392,14 @@ class FabricBackendTools:
         digest = sha256(json.dumps({"name": name, "arguments": arguments}, sort_keys=True,
                                   separators=(",", ":"), allow_nan=False).encode()).hexdigest()
         column_units: dict[str, str] = {}
+        if name == "query_weather":
+            column_units = {
+                "precipitation": "mm", "cumulative_precipitation": "mm",
+                "rainfall_volume_m3": "m3", "cumulative_rainfall_volume_m3": "m3",
+                "temperature": "degC", "dew_point": "degC", "pressure": "hPa",
+                "relative_humidity": "%", "solar_radiation": "W/m2",
+                "wind_speed": "m/s", "wind_gust": "m/s", "wind_direction": "degree",
+            }
         resolved: tuple[str, ...] = ()
         work_coverage: tuple[str, ...] = ()
         limitations: tuple[str, ...] = ()

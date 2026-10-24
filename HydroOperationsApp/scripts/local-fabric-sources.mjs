@@ -2,14 +2,15 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { parseEnv } from 'node:util'
 import { pathToFileURL } from 'node:url'
-import { RayfinClient } from '@microsoft/rayfin-client'
+import { ConnectorsRayfinClient, RayfinClient } from '@microsoft/rayfin-client'
 import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric'
 import { buildTelemetryQuery, buildStationPowerQuery, stationPowerEvidence, STATION_POWER_SEMANTICS, fleetSnapshotQuery, shapeFleetSnapshot, kustoRowsToObjects, MAX_ROWS, shapeCatalogRows, TOOL_DEFINITIONS, validateFilters, validateKql } from '../src/services/copilot/query.ts'
-import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
+import { ASSET_ENTITIES, KUSTO_SOURCE_NAMES, OPERATIONS_ENTITIES, WEATHER_ENTITIES } from '../src/services/copilot/catalog.ts'
+import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
-import { AGENT_NAMES, DIRECT_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -70,9 +71,18 @@ function addNeedAssessmentKinds(question, kinds, carriedKinds) {
 export function requiredEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
+  const weather = requestsWeather(question)
+  if (weather) {
+    kinds.add('weather_locations')
+    if (/\b(?:areas?|volume)\b/i.test(text)) kinds.add('weather_areas')
+    const observations = /\b(?:observations?|observed|current weather|weather now)\b/i.test(text)
+    if (observations) kinds.add('weather_observations')
+    if (!observations || /\bforecasts?\b/i.test(text)) kinds.add('weather_forecasts')
+  }
   if (requestedNativeSources(text).length) kinds.add('native_claims')
   if (requestsSignalQuality(question)) kinds.add('signal_quality')
-  if (/\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
+  if ((!weather || /\b(?:turbine|equipment|telemetry|sensor)\b/i.test(text))
+      && /\b(?:temperature|temperatures|hot|hottest)\b/i.test(text)) kinds.add('temperature')
   if (/\b(?:station power|power output per station)\b/i.test(text)) kinds.add('station_power')
   if (/\b(?:work[\s-]*orders?|wos?|open(?: operational SQL| SQL)? work|existing work|work records?|maintenance work)\b/i.test(text)
       || /\bwork\b[^.!?;\n]{0,40}\b(?:already\s+)?open\b/i.test(text)) {
@@ -102,6 +112,7 @@ export function requiredEvidenceKinds(question, carriedKinds = []) {
 export function permittedEvidenceKinds(question, carriedKinds = []) {
   const text = positiveActionClauses(question)
   const kinds = new Set()
+  if (requestsWeather(question)) for (const entity of WEATHER_ENTITIES) kinds.add(entity.key)
   if (requestedNativeSources(text).length) kinds.add('native_claims')
   if (/\bfacilit(?:y|ies)\b/i.test(text)) kinds.add('facilities')
   if (/\b(?:assets?|equipment|turbines?|generators?|units?|T\d{1,3})\b/i.test(text)) kinds.add('equipment')
@@ -393,7 +404,8 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
     ?? (intent.required_specialists.includes('qa') ? 1 : 0))
   const finalQa = qaCount > 0 && requiresFinalQa(question)
   const initialQaCount = qaCount - (finalQa ? 1 : 0)
-  const qaGroups = partitionEvidenceKinds(directKinds, Math.max(1, initialQaCount))
+  const weatherKinds = directKinds.filter(kind => kind.startsWith('weather_'))
+  const qaGroups = partitionEvidenceKinds(directKinds.filter(kind => !kind.startsWith('weather_')), Math.max(1, initialQaCount))
   const selectedFocus = Boolean(intent.equipment_selection)
   const conditionalWork = requiresVerifiedIssueGate(question)
   const steps = []
@@ -405,6 +417,14 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
       native_source: source,
       requires_selection: false,
       requires_verified_issue: false,
+    })
+  }
+  if (intent.required_specialists.includes('weather')) {
+    steps.push({
+      specialist: 'weather',
+      question: `Read the requested ${weatherKinds.join(', ')} with the operator's UTC window and facility/area filters. Keep vendors and forecast issues separate, retain units and source timestamps, and report missing or stale coverage.`,
+      reason: 'Retrieve weather evidence through the governed read-only Lakehouse connector.',
+      native_source: null, requires_selection: false, requires_verified_issue: false,
     })
   }
   for (let index = 0; index < initialQaCount; index += 1) {
@@ -467,12 +487,12 @@ export function validatePlanRequirements(required, requiredSteps, steps, nativeS
       || Array.isArray(requiredSteps) || !Array.isArray(steps) || !Array.isArray(nativeSources)
       || typeof question !== 'string' || !Array.isArray(answerKinds) || !Array.isArray(requiredEvidenceKinds_)
       || !Array.isArray(permittedEvidenceKinds_)
-      || required.some(role => !['qa', 'rca', 'work-order'].includes(role))) {
+      || required.some(role => !['qa', 'rca', 'work-order', 'weather'].includes(role))) {
     throw new Error('Plan requirements need verified required specialists, steps and native sources.')
   }
   const roles = steps.map(step => step?.specialist).filter(role => typeof role === 'string')
   const missingSteps = Object.fromEntries(Object.entries(requiredSteps)
-    .filter(([role, count]) => !['qa', 'rca', 'work-order'].includes(role)
+    .filter(([role, count]) => !['qa', 'rca', 'work-order', 'weather'].includes(role)
       || !Number.isInteger(count) || count < 1 || count > 8
       || roles.filter(candidate => candidate === role).length < count))
   const plannedNative = new Set(steps
@@ -500,7 +520,8 @@ export function sourceToolContracts() {
     tools: TOOL_DEFINITIONS.map(({ function: definition }) => {
       const parameters = structuredClone({ ...definition.parameters, additionalProperties: false })
       const entities = definition.name === 'query_assets' ? ASSET_ENTITIES
-        : definition.name === 'query_operations' ? OPERATIONS_ENTITIES : undefined
+        : definition.name === 'query_operations' ? OPERATIONS_ENTITIES
+          : definition.name === 'query_weather' ? WEATHER_ENTITIES : undefined
       if (entities) {
         parameters.allOf = entities.map(entity => ({
           if: { properties: { entity: { const: entity.key } }, required: ['entity'] },
@@ -523,6 +544,7 @@ export function sourceToolContracts() {
     context: {
       asset_entities: structuredClone(ASSET_ENTITIES),
       operations_entities: structuredClone(OPERATIONS_ENTITIES),
+      weather_entities: structuredClone(WEATHER_ENTITIES),
       kusto_source_names: [...KUSTO_SOURCE_NAMES],
       relationships: structuredClone(DOMAIN_RELATIONSHIPS),
       semantics: structuredClone(DOMAIN_SEMANTICS),
@@ -534,8 +556,8 @@ export function sourceToolContracts() {
 
 export async function collectCatalogRows(entity, loadPage) {
   const rows = [], cursors = new Set(), identities = new Set()
-  const identityColumn = entity.identityColumn
-  if (!identityColumn || !entity.columns.some(column => column.name === identityColumn)) {
+  const identityColumns = entity.identityColumns ?? [entity.identityColumn]
+  if (!identityColumns.length || identityColumns.some(key => !key || !entity.columns.some(column => column.name === key))) {
     throw new Error('Catalog entity has no valid declared identity column.')
   }
   let cursor
@@ -545,9 +567,10 @@ export async function collectCatalogRows(entity, loadPage) {
       throw new Error('Catalog source returned an invalid page.')
     }
     for (const row of page.items) {
-      const identity = row?.[identityColumn]
+      const values = identityColumns.map(key => row?.[key] instanceof Date ? row[key].toISOString() : row?.[key])
+      const identity = JSON.stringify(values)
       if (!row || typeof row !== 'object' || Array.isArray(row)
-        || typeof identity !== 'string' || !identity.trim() || identities.has(identity)) {
+        || values.some(value => typeof value !== 'string' || !value.trim()) || identities.has(identity)) {
         throw new Error('Catalog source returned an invalid or duplicate row identity.')
       }
       identities.add(identity)
@@ -941,8 +964,9 @@ export async function collectWorkOrders(client, equipmentId) {
 }
 
 async function operationalRead(config, token, label, read) {
-  const client = new RayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
-    publishableKey: config.publishable_key, authStorage: false })
+  const client = new ConnectorsRayfinClient({ baseUrl: `${config.api_url.replace(/\/$/, '')}/`,
+    publishableKey: config.publishable_key, authStorage: false,
+    connectors: { hydrolakehouse: lakehouseConnectorConfig } })
   try {
     await signInWithEntraToken(client.auth, { entraToken: token })
     return await read(client)
@@ -963,6 +987,30 @@ export async function readOperationEntity(config, entityKey, args, token) {
   if (!entity) throw new Error('Unknown operational catalog entity.')
   validateCatalogArguments(entity, args)
   return operationalRead(config, token, entityKey, client => collectOperationRows(client, entityKey, args))
+}
+
+export async function collectWeatherRows(client, entityKey, args) {
+  const entity = WEATHER_ENTITIES.find(candidate => candidate.key === entityKey)
+  if (!entity) throw new Error('Unknown weather catalog entity.')
+  validateCatalogArguments(entity, args)
+  const connectorEntity = {
+    weather_locations: 'WeatherLocations', weather_areas: 'WeatherAreas',
+    weather_forecasts: 'WeatherLatestForecasts', weather_observations: 'WeatherLatestObservations',
+  }[entityKey]
+  const rows = await collectCatalogRows(entity, async cursor => {
+    let query = client.connectors.hydrolakehouse[connectorEntity]
+      .select(entity.columns.map(column => column.name)).first(100)
+    if (cursor) query = query.after(cursor)
+    return query.executePaginated()
+  })
+  const columns = args.columns
+    ? [...new Set([...(entity.identityColumns ?? [entity.identityColumn]), ...args.columns])]
+    : undefined
+  return { ...shapeCatalogRows(entity, rows, { ...args, columns }).result, read_completed_at_utc: new Date().toISOString() }
+}
+
+export async function readWeatherEntity(config, entityKey, args, token) {
+  return operationalRead(config, token, 'weather connector', client => collectWeatherRows(client, entityKey, args))
 }
 
 export async function readWorkBacklog(config, args, token, fetcher = fetch,
@@ -1204,7 +1252,8 @@ export async function handle(request, deps = {}) {
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)
     if (!parsed.ok) throw new Error(parsed.error)
-    const allowed = request.role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
+    const allowed = request.role === 'weather' ? WEATHER_TOOLS
+      : request.role === 'work-order' ? [...DIRECT_TOOLS, 'propose_work_order'] : DIRECT_TOOLS
     if (!allowed.includes(parsed.toolName)) throw new Error('Tool is not permitted for this specialist.')
     return parsed
   }
@@ -1256,6 +1305,9 @@ export async function handle(request, deps = {}) {
         break
       case 'query_operations':
         result = await readOperationEntity(config, args.entity, args, request.tokens.graphql)
+        break
+      case 'query_weather':
+        result = await readWeatherEntity(config, args.entity, args, request.tokens.graphql)
         break
       case 'query_telemetry':
         if (request.cluster !== metadata.cluster) throw new Error('The KQL endpoint changed.')

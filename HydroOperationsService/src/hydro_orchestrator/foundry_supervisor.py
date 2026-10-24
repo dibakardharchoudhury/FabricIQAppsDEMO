@@ -34,7 +34,7 @@ from .workflow import RequiredCheckpointStorage
 
 logger = logging.getLogger(__name__)
 _Report = TypeVar("_Report", bound=Contract)
-Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq"]
+Role = Literal["supervisor", "qa", "rca", "work-order", "fabric-iq", "weather"]
 NativeSource = Literal["data-agent"]
 FOUNDRY_SERVICE_CALL_TIMEOUT_SECONDS = 120.0
 FOUNDRY_NATIVE_CALL_TIMEOUT_SECONDS = 300.0
@@ -49,6 +49,7 @@ ROLE_SKILLS: dict[Role, tuple[str, ...]] = {
     "rca": ("root-cause-evidence", "maintenance-planning"),
     "work-order": ("maintenance-planning", "work-order-review"),
     "fabric-iq": ("source-reconciliation",),
+    "weather": ("source-reconciliation", "grounded-presentation"),
 }
 
 
@@ -415,7 +416,7 @@ class DomainDatasetDefinition(Contract):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     source: Literal["lakehouse", "sql", "eventhouse", "derived", "native"]
     entity: str = Field(min_length=1, max_length=120)
-    identity_fields: tuple[str, ...] = Field(alias="identityFields", min_length=1, max_length=4)
+    identity_fields: tuple[str, ...] = Field(alias="identityFields", min_length=1, max_length=5)
     presentations: tuple[str, ...] = Field(min_length=1, max_length=16)
     evidence_scopes: tuple[Literal["population", "focus"], ...] = Field(
         alias="evidenceScopes", min_length=1, max_length=2,
@@ -578,8 +579,8 @@ class ChatRequest(Contract):
     equipment_selection: EquipmentSelection | None = None
     required_evidence_kinds: tuple[str, ...] = ()
     permitted_evidence_kinds: tuple[str, ...] = ()
-    required_specialists: tuple[Literal["qa", "rca", "work-order"], ...] = ()
-    required_specialist_steps: dict[Literal["qa", "rca", "work-order"], int] = Field(default_factory=dict)
+    required_specialists: tuple[Literal["qa", "rca", "work-order", "weather"], ...] = ()
+    required_specialist_steps: dict[Literal["qa", "rca", "work-order", "weather"], int] = Field(default_factory=dict)
     resolved_scope: ResolvedScope | None = None
     previous_run_id: UUID | None = None
     historical_context: HistoricalContext | None = None
@@ -739,7 +740,7 @@ class EvidenceDataset(Contract):
     authority: Literal["direct", "native", "reconciled"]
     scope: Literal["population", "focus"]
     complete: bool = Field(strict=True)
-    identity_fields: tuple[str, ...] = Field(min_length=1, max_length=4)
+    identity_fields: tuple[str, ...] = Field(min_length=1, max_length=5)
     group_by: Literal["equipment_id", "facility_id"] | None = None
     role: Literal["primary", "support", "audit"] = "primary"
     limitations: tuple[str, ...] = Field(default=(), max_length=8)
@@ -1035,7 +1036,7 @@ class AgentVersion(Contract):
 
 
 class Delegation(Contract):
-    specialist: Literal["qa", "rca", "work-order", "fabric-iq"]
+    specialist: Literal["qa", "rca", "work-order", "fabric-iq", "weather"]
     question: str
     reason: str | None = None
     native_source: NativeSource | None = Field(default=None, alias="nativeSource")
@@ -1134,6 +1135,7 @@ ANALYTICAL_POPULATION_TOOLS = {
 CATALOG_DIRECT_KINDS = {
     "facilities", "equipment", "instruments", "work_orders", "inspections",
     "notifications", "spare_parts", "asset_models",
+    "weather_locations", "weather_areas", "weather_forecasts", "weather_observations",
 }
 
 
@@ -1143,6 +1145,8 @@ def deterministic_fulfillment_route(
     if scope == "population" and kind in ANALYTICAL_POPULATION_TOOLS:
         return ANALYTICAL_POPULATION_TOOLS[kind]
     if kind in CATALOG_DIRECT_KINDS:
+        if kind.startswith("weather_"):
+            return "query_weather"
         return "query_assets" if kind in {"facilities", "equipment", "instruments"} else "query_operations"
     if kind == "telemetry" and scope == "focus":
         return "query_telemetry"
@@ -1647,6 +1651,9 @@ class FoundrySupervisor:
             if requirement.kind in asset_entities:
                 name = "query_assets"
                 identity_column = "equipment_id"
+            elif requirement.kind.startswith("weather_"):
+                name = "query_weather"
+                identity_column = "location_id"
             else:
                 name = "query_operations"
                 identity_column = "equipmentId"

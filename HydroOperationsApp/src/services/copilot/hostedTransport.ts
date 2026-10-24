@@ -63,7 +63,7 @@ function visualization(value: unknown): AgentVisualization {
 function executionEvent(value: unknown): OrchestrationEvent {
   const item = record(value)
   const role = item.role
-  if ((role !== 'supervisor' && role !== 'qa' && role !== 'rca' && role !== 'work-order' && role !== 'fabric-iq')
+  if ((role !== 'supervisor' && role !== 'qa' && role !== 'rca' && role !== 'work-order' && role !== 'fabric-iq' && role !== 'weather')
     || item.status !== 'completed' || typeof item.id !== 'string' || typeof item.label !== 'string'
     || typeof item.detail !== 'string' || typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)
     || typeof item.agentName !== 'string' || !item.agentName || typeof item.responseId !== 'string' || !item.responseId) {
@@ -77,7 +77,7 @@ function streamedExecutionEvent(value: unknown): OrchestrationEvent {
   const item = record(value)
   const role = item.role
   const status = item.status
-  if ((role !== 'supervisor' && role !== 'qa' && role !== 'rca' && role !== 'work-order' && role !== 'fabric-iq')
+  if ((role !== 'supervisor' && role !== 'qa' && role !== 'rca' && role !== 'work-order' && role !== 'fabric-iq' && role !== 'weather')
     || (status !== 'queued' && status !== 'running' && status !== 'completed' && status !== 'error')
     || typeof item.id !== 'string' || !item.id || typeof item.label !== 'string'
     || typeof item.detail !== 'string' || typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)

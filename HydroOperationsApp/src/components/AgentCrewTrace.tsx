@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react'
-import { Activity, Check, ClipboardCheck, ExternalLink, GitBranch, Search, Telescope, Workflow } from 'lucide-react'
+import { Activity, Check, ClipboardCheck, CloudSun, ExternalLink, GitBranch, Search, Telescope, Workflow } from 'lucide-react'
 import type { AgentRole, OrchestrationEvent, WorkOrderProposal } from '../services/copilot/orchestration'
 import { AGENT_DISPLAY_NAMES } from '../services/copilot/orchestration'
 import { workOrderApprovals } from '../services/copilot/workOrderApproval'
@@ -13,6 +13,7 @@ const CREW = [
   { role: 'work-order', job: 'Work orders', quip: 'You approve. Then we do.', icon: ClipboardCheck },
   { role: 'rca', job: 'Root cause', quip: 'Suspicious of coincidences.', icon: Search },
   { role: 'fabric-iq', job: 'Fabric IQ', quip: 'Right plug. Right source.', icon: Workflow },
+  { role: 'weather', job: 'Weather', quip: 'Forecasts, not assumptions.', icon: CloudSun },
 ] as const
 
 // The Supervisor has no job subtitle: it is simply the Supervisor, so names never read "Supervisor - Supervisor".
@@ -81,7 +82,7 @@ export function AgentCrewTrace({ events, proposals = [], currentEventIds, pendin
       <svg className="crew-wires" viewBox="0 0 800 56" preserveAspectRatio="none" aria-hidden="true">
         {communications.map(flow => {
           const index = CREW.findIndex(member => member.role === flow.role) - 1
-          const x = 100 + index * 200
+          const x = (index + 0.5) * 800 / (CREW.length - 1)
           const path = `M400 0 C400 28 ${x} 28 ${x} 56`
           return <g key={flow.id} className={`crew-wire${currentEventIds && !currentEventIds.includes(flow.id) ? ' historical' : ''}${flow.waiting ? ' waiting' : ''}${flow.failed ? ' failed' : ''}`}>
             <path d={path} />

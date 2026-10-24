@@ -6,7 +6,7 @@ For current automated and manual-operator deployment steps, use
 [Foundry deployment and multi-agent setup](foundry-deployment-and-multi-agent-setup.md).
 
 > Current implementation: the SPA invokes the `hydro-orchestrator` Foundry Hosted Agent.
-> Its Microsoft Agent Framework runtime plans bounded serial calls to four persistent specialist
+> Its Microsoft Agent Framework runtime plans bounded serial calls to five persistent specialist
 > Prompt Agents and executes source tools through the Node bridge under the user's delegated identity.
 > This is not native A2A transport or Foundry Workflows. Only the Fabric IQ specialist uses Fabric IQ;
 > Q&A/RCA do not use the Data Agent as an intermediary. See the
@@ -17,6 +17,32 @@ For current automated and manual-operator deployment steps, use
 > The project API uses `https://ai.azure.com/user_impersonation` and Foundry User RBAC.
 > Work-order approvals are editable Yes/No cards, not model-issued writes or typed commands.
 > Shared presentation and safety tests do not certify live response parity or agent latency.
+
+## Weather specialist
+
+`hydro-weather-agent` is the fifth prompt specialist, alongside Gauge, Sleuth, Fixer and Sparky.
+The deterministic Supervisor routes weather requests to it, and retains Q&A for accompanying
+operational questions. A forecast-temperature request does not require turbine-temperature evidence.
+Its only application tools are `query_weather`, `query_assets` and `visualize_dataset`; it cannot
+stage work orders, deliver alerts or operate equipment.
+
+The hosted `query_weather` implementation reads all connector pages through the delegated,
+read-only `hydrolakehouse` Rayfin connector, not the legacy `Hydro_STID_API`. The catalog exposes
+locations, areas, latest forecasts and latest observations. Forecast identities retain vendor,
+target kind, target, issue and valid time; observations retain vendor, location and observation time.
+Keep vendors and issues separate, report UTC times, units, missing intervals and stale coverage,
+and never treat a forecast as an observed equipment fault. Location-to-facility correlation uses
+the explicit identifiers, not inferred names.
+
+PR #20's ingestion changes use the live `mai-aurora` operational collection and deterministic
+hourly IDs. Discovery probes recent six-hour issue cycles instead of sorting forecast valid times:
+an older 240-hour horizon must not hide a newer complete 72-hour issue. Incomplete issues fall back
+to an earlier complete issue; the configured freshness check still fails stale data. UKMet pressure
+is converted from Pa to hPa. All Weather Spark notebooks retain Runtime 2.0.
+
+These changes are locally tested, not a deployment or live pipeline acceptance. The current provider
+credential must be valid before ingestion can succeed. The new specialist is provisioned by the
+canonical deployment flow on the next explicitly requested deployment.
 
 ## Historical migration and browser-coordinator reference
 
@@ -87,7 +113,7 @@ which data each tool can reach.
 
 The shared chat/Battle renderer reuses the existing yellow Signal Sprint helper in a
 Supervisor-led communication diagram, with role badges: Chief (Supervisor), Gauge (Q&A), Sleuth (RCA),
-Fixer (work orders), and Sparky (Fabric IQ). The thinking game and crew share the same
+Fixer (work orders), Sparky (Fabric IQ), and Weather. The thinking game and crew share the same
 `CopilotHelper` component and existing character styles; there is no separate SVG mascot.
 Execution receipts are collapsed by default so the answer retains the screen space. Only actual running
 agents animate; unused agents remain standing by. Animations can be paused and respect
@@ -279,7 +305,7 @@ and preservation, not a passed ontology smoke test or Foundry acceptance. See
 | `src/services/copilot/responsesProtocol.ts` | Responses API request conversion and bounded completed-turn history |
 | `src/services/copilot/suggestions.ts` | Parses the follow-up options a reply offers |
 | `src/services/copilot/foundry.ts` | The agent loop, system prompt, conversation history |
-| `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid` |
+| `src/services/fabric.ts` | MSAL, token acquisition, `runKustoQuery`, `queryStid`, `queryWeatherData` |
 | `scripts/copilot-tools.test.mjs` | Unit tests for validation, tools, Responses streaming/context and suggestions |
 
 ---
@@ -559,7 +585,7 @@ permission setup step. They do not grant Entra scopes or remove human approval.
 | System prompt | The base instructions. `{{catalog}}` and `{{time}}` are substituted at call time; without `{{catalog}}` the model gets no schema. |
 | Additional instructions | Appended after the system prompt. |
 | Tools | A disabled tool is removed from the schema **and** refused by the runtime if called anyway. |
-| Lakehouse / operational tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
+| Lakehouse / operational / weather tables | Removed from the prompt and from the tool's `entity` enum; the runtime re-checks. |
 | Eventhouse tables & functions | Also narrows the `run_kql` allow-list. |
 
 > [!NOTE]
@@ -585,6 +611,10 @@ query semantics.
 | `instruments` → `silver_instruments` | Lakehouse | GraphQL |
 | `work_orders`, `inspections`, `spare_parts`, `notifications` | App SQL database | `RayfinClient` |
 | `asset_models` | App SQL database | `RayfinClient` — 3D model files per equipment |
+| `weather_locations` → `weather_locations` | Lakehouse | `hydrolakehouse` connector — one point per facility; `location_id` = `facility_id` |
+| `weather_areas` → `weather_areas` | Lakehouse | `hydrolakehouse` connector — operating areas (geometry is not exposed) |
+| `weather_forecasts` → `weather_latest_forecasts` | Lakehouse | `hydrolakehouse` connector — newest issue per vendor (`aurora`, `ukmet`), 6-hourly to 72 h, for locations and areas |
+| `weather_observations` → `weather_latest_observations` | Lakehouse | `hydrolakehouse` connector — recent observed conditions per facility |
 | `OPCUAEvents` | Eventhouse | Kusto REST |
 | `AssetMaster()`, `TelemetryEnriched(...)` | Eventhouse | Kusto REST — telemetry pre-joined to asset master via OneLake shortcuts |
 
@@ -593,12 +623,21 @@ Kusto identifiers are case-sensitive. `AssetMaster()` returns `opcua_node_id`, `
 capitalized asset columns, `value`, and `quality`. These names mirror the functions provisioned by
 `RTI_008_build_realtime_dashboard`; lowercase `station`, `turbine`, or `unit` will not resolve.
 
+Weather comes from the wide serving tables rebuilt by `Weather_020_area_calculations`, so each row
+carries every variable for one valid time. The catalog states each variable's unit (temperature
+°C, precipitation mm, pressure hPa mean sea-level, solar radiation W/m², wind m/s and degrees) and
+the vendor rules: rows are per `source_id`, vendors are never blended, and rainfall between two
+valid times is the difference of `cumulative_precipitation` values within one issue. Timestamp
+filters (`gt`/`gte`/`lt`/`lte` on `valid_time_utc`, `observed_at_utc`, …) compare chronologically;
+a value without a zone is read as UTC.
+
 ### The tools
 
 | Tool | Accepts | Guardrail |
 | --- | --- | --- |
 | `query_assets` | entity + structured predicate | No query text — **no injection surface** |
 | `query_operations` | entity + structured predicate | No query text — **no injection surface** |
+| `query_weather` | entity + structured predicate | No query text — **no injection surface** |
 | `query_telemetry` | node ids, lookback, bin, aggregation | Templated KQL; each fragment regex- or map-validated, node ids escaped |
 | `run_kql` | **model-authored KQL** | Allow-list + rejection rules below |
 | `visualize_dataset` | chart spec + inline CSV | Renders only; reaches no data |
@@ -657,6 +696,7 @@ model call it autonomously.
 | "Need admin approval" | A `.default` scope was requested instead of a named one |
 | Engine toggle missing | `RAYFIN_PUBLIC_FOUNDRY_*` unset, or the app wasn't rebuilt after setting them |
 | "Asset metadata is not connected" | STID GraphQL not yet consented — use **Connect** in the app once |
+| "Weather data is not connected" | Check delegated sign-in, the selected Lakehouse and its `hydrolakehouse` connector binding; visiting another page is not a hosted-agent prerequisite |
 | "stopped after too many tool calls" | Hit the 6-iteration cap; narrow the question |
 | "disabled in Administration" | The tool or table was switched off in **Administration → Foundry Copilot** |
 | "Not signed in to the operational database" | The Rayfin session is separate from the Entra token — use Administration step 1 |

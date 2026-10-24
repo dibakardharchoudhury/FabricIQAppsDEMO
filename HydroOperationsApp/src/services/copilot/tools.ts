@@ -1,7 +1,7 @@
 import type { AgentVisualization } from '../assistantStream.ts'
-import { queryStid, runKustoQuery, type StidData } from '../fabric.ts'
+import { queryStid, queryWeatherData, runKustoQuery, type StidData, type WeatherData } from '../fabric.ts'
 import { isRayfinConfigured, isRayfinSignedIn, listAsset3DModels, listInspections, listMaintenanceNotifications, listSpareParts, listWorkOrders, type Asset3DModelRecord } from '../rayfin.ts'
-import { ASSET_ENTITIES, OPERATIONS_ENTITIES, type CatalogEntity } from './catalog.ts'
+import { ASSET_ENTITIES, OPERATIONS_ENTITIES, WEATHER_ENTITIES, type CatalogEntity } from './catalog.ts'
 import { enabledKustoNames, isEntityEnabled, isToolEnabled, type CopilotSettings } from './settings.ts'
 import { createWorkOrderProposal, type WorkOrderProposal } from './orchestration.ts'
 import { validateWorkOrderTarget, workOrderApprovals } from './workOrderApproval.ts'
@@ -21,6 +21,7 @@ export function describeToolCall(name: string, args: ToolArguments): string {
   switch (name) {
     case 'query_assets':
     case 'query_operations':
+    case 'query_weather':
       return [args.entity ?? '?', args.where?.length ? plural(args.where.length, 'filter') : ''].filter(Boolean).join(' · ')
     case 'query_telemetry':
       return [
@@ -103,6 +104,7 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
     .filter(tool => {
       if (tool.function.name === 'query_assets') return enabledEntities(ASSET_ENTITIES).length > 0
       if (tool.function.name === 'query_operations') return enabledEntities(OPERATIONS_ENTITIES).length > 0
+      if (tool.function.name === 'query_weather') return enabledEntities(WEATHER_ENTITIES).length > 0
       if (tool.function.name === 'query_telemetry') return enabledKustoNames(settings).includes('OPCUAEvents')
       if (tool.function.name === 'query_station_power') return (['OPCUAEvents', 'AssetMaster'] as const).every(name => enabledKustoNames(settings).includes(name))
       if (tool.function.name === 'query_signal_quality_snapshot' || tool.function.name === 'query_turbine_temperature_snapshot') {
@@ -117,7 +119,8 @@ export function buildToolDefinitions(settings: CopilotSettings): ToolDefinition[
     .map(tool => {
       const entities = tool.function.name === 'query_assets' ? enabledEntities(ASSET_ENTITIES)
         : tool.function.name === 'query_operations' ? enabledEntities(OPERATIONS_ENTITIES)
-          : undefined
+          : tool.function.name === 'query_weather' ? enabledEntities(WEATHER_ENTITIES)
+            : undefined
       if (!entities) {
         if (tool.function.name !== 'run_kql') return tool
         return {
@@ -150,6 +153,7 @@ export function createToolRuntime(
   options?: { onWorkOrderProposal?: (proposal: WorkOrderProposal) => void; proposalPriority?: WorkOrderProposal['priority'] },
 ) {
   let stid: Promise<StidData | null> | undefined
+  let weather: Promise<WeatherData | null> | undefined
   const operations = new Map<string, Promise<Record<string, unknown>[]>>()
 
   const loadOperations = (key: string): Promise<Record<string, unknown>[]> => {
@@ -213,6 +217,20 @@ export function createToolRuntime(
         const entity = entityOrThrow(OPERATIONS_ENTITIES, args.entity, settings)
         validateFilters(args.where, entity.columns.map(column => column.name))
         return shape(entity, await loadOperations(entity.key), args)
+      }
+      case 'query_weather': {
+        const entity = entityOrThrow(WEATHER_ENTITIES, args.entity, settings)
+        validateFilters(args.where, entity.columns.map(column => column.name))
+        weather ??= queryWeatherData()
+        const data = await weather
+        if (!data) throw new Error('Weather data is not connected. Check the configured Lakehouse connector and sign in again.')
+        const rows = {
+          weather_locations: data.locations,
+          weather_areas: data.areas,
+          weather_forecasts: data.forecasts,
+          weather_observations: data.observations,
+        }[entity.key] as unknown as Record<string, unknown>[]
+        return shape(entity, rows, args)
       }
       case 'query_telemetry': {
         if (!enabledKustoNames(settings).includes('OPCUAEvents')) throw new Error('The OPCUAEvents table is disabled in Administration.')

@@ -97,7 +97,7 @@ rollout still requires tenant-wide administrator consent.
 Earlier migration diagnostics treated the
 [Agent Framework service](../HydroOperationsService/README.md) as a separate local/gated service.
 That is **not the current deployment contract**: the canonical engine now converges the Hosted
-Agent, four specialist prompt agents and SPA together. New hosted agents default to disabled
+Agent, five specialist prompt agents and SPA together. New hosted agents default to disabled
 production writes; existing verified boolean write policies are preserved unless explicitly overridden.
 Rayfin direct delegated exchange requires `services.auth.fabric.externalEntraExchange: true`;
 the canonical engine reapplies runtime/CORS and SQL settings on every deployment.
@@ -574,7 +574,7 @@ equipment is named the work-order specialist chooses the target from the verifie
 The **Supervisor is the hosted orchestrator** (`hydro-orchestrator`), a deterministic control plane that
 compiles the evidence contract, dispatches specialists in order, verifies their receipts, writes the grounded
 briefing and presents the answer. It is **not** a Foundry prompt agent: the former `hydro-supervisor-agent`
-planner was removed. The four specialists below are the only persistent Foundry prompt agents.
+planner was removed. The five specialists below are the only persistent Foundry prompt agents.
 Routing is derived by code from the question, so it is reproducible; each step's reason is a short
 capability explanation, not private model reasoning.
 
@@ -585,6 +585,7 @@ capability explanation, not private model reasoning.
 | Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
 | Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
 | Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit published Data Agent requests through one verified connection. It is not the default for all Fabric-hosted data, and it does not execute ontology-native chat queries. |
+| Weather | `hydro-weather-agent` | Forecasts, observations and rainfall context through the read-only `hydrolakehouse` connector, plus asset identity and visualization. Keeps vendors/issues separate; no work-order or delivery tools. |
 
 Fabric IQ exposes exactly one `fabric_iq_preview` tool labelled
 `fabriciq-data-agent`. The deployment verifies that this connection targets the

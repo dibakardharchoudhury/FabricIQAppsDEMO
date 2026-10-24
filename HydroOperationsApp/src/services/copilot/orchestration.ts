@@ -1,6 +1,6 @@
-export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq'
+export type AgentRole = 'supervisor' | 'qa' | 'work-order' | 'rca' | 'fabric-iq' | 'weather'
 export const AGENT_DISPLAY_NAMES: Record<AgentRole, string> = {
-  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky',
+  supervisor: 'Supervisor', qa: 'Gauge', 'work-order': 'Fixer', rca: 'Sleuth', 'fabric-iq': 'Sparky', weather: 'Weather',
 }
 export type OrchestrationStatus = 'queued' | 'running' | 'completed' | 'error' | 'approval'
 
@@ -286,16 +286,23 @@ export function isNotificationDraftRequest(question: string): boolean {
   return /\b(?:draft|prepare|compose|write)\b[^.!?;\n]{0,100}\b(?:notification|email|message)\b|\b(?:notification|email|message)\s+draft\b/i.test(positiveActionClauses(question))
 }
 
+export function requestsWeather(question: string): boolean {
+  return /\b(?:weather|forecasts?|rainfall|precipitation|aurora|ukmet|met office|dew point|wind gusts?)\b/i.test(positiveActionClauses(question))
+}
+
 export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
   const positive = positiveActionClauses(question)
+  const weather = requestsWeather(question)
+  const operational = /\b(?:telemetry|signals?|readings?|work[\s-]*orders?|inspections?|notifications?|spare parts?|inventory|turbines?|generators?|equipment)\b/i.test(positive)
   // A chart can only be drawn from source data, so any requested chart is a factual read whatever the measure.
   const factualRead = requiresChartOutput(question) || /\b(?:read|retrieve|inspect|list|show|return|query|check|verify|reconcile|compare|chart|plot|visualize|which|what)\b[^.!?;\n]{0,220}\b(?:telemetry|signals?|readings?|work(?:[\s-]+orders?)?|wos?|inspections?|notifications?|spare parts?|inventory|assets?|equipment|turbines?|generators?|facilit(?:y|ies)|relationships?|power|temperature|quality)\b/i.test(positive)
   const downstreamRead = requiresDirectSourceVerification(question)
     || /\busing\b[^.!?;\n]{0,100}\b(?:verified|resolved|returned|those|these)\b[^.!?;\n]{0,100}\b(?:ids?|identit(?:y|ies)|instances?|results?)\b[^.!?;\n]{0,120}\b(?:read|retrieve|inspect|query|check|verify)\b/i.test(positive)
     || /\b(?:then|also|separately|independently)\b[^.!?;\n]{0,160}\b(?:read|retrieve|inspect|query|check|verify|reconcile)\b/i.test(positive)
   const required = missingRequestedSpecialists(question, [])
-  if ((factualRead || requestsWorkOrderNeedAssessment(question)) && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
-  return (['qa', 'rca', 'work-order'] as const).filter(role => required.includes(role))
+  if ((factualRead || requestsWorkOrderNeedAssessment(question)) && (!weather || operational) && (!hasNativeRequest || downstreamRead) && !required.includes('qa')) required.push('qa')
+  if (weather && (!hasNativeRequest || downstreamRead)) required.push('weather')
+  return (['weather', 'qa', 'rca', 'work-order'] as const).filter(role => required.includes(role))
 }
 
 export function missingRequestedSpecialists(question: string, completed: readonly AgentRole[]): AgentRole[] {
@@ -339,7 +346,7 @@ export function createOrchestrationEvent(
   role: AgentRole,
   status: OrchestrationStatus,
   detail: string,
-  label = role === 'qa' ? 'Q&A Agent' : role === 'work-order' ? 'Work Order Agent' : role === 'rca' ? 'RCA Agent' : role === 'fabric-iq' ? 'Fabric IQ Agent' : 'Supervisor',
+  label = role === 'qa' ? 'Q&A Agent' : role === 'work-order' ? 'Work Order Agent' : role === 'rca' ? 'RCA Agent' : role === 'fabric-iq' ? 'Fabric IQ Agent' : role === 'weather' ? 'Weather Agent' : 'Supervisor',
 ): OrchestrationEvent {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

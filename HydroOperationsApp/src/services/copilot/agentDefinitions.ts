@@ -14,6 +14,7 @@ export const AGENT_NAMES: Record<SpecialistRole, string> = {
   rca: 'hydro-rca-agent',
   'work-order': 'hydro-work-order-agent',
   'fabric-iq': 'hydro-fabric-iq-agent',
+  weather: 'hydro-weather-agent',
 }
 
 const REASONING_EFFORT: Record<SpecialistRole, 'low'> = {
@@ -21,9 +22,11 @@ const REASONING_EFFORT: Record<SpecialistRole, 'low'> = {
   rca: 'low',
   'work-order': 'low',
   'fabric-iq': 'low',
+  weather: 'low',
 }
 
-export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_work_backlog', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const DIRECT_TOOLS = ['query_assets', 'query_operations', 'query_weather', 'query_work_backlog', 'query_telemetry', 'query_station_power', 'query_signal_quality_snapshot', 'query_turbine_temperature_snapshot', 'run_kql', 'visualize_dataset', 'show_3d_model'] as const
+export const WEATHER_TOOLS = ['query_weather', 'query_assets', 'visualize_dataset'] as const
 export const WORK_REVIEW_TOOL = {
   type: 'function', name: 'complete_work_order_review',
   description: 'Record why no approval card is being staged. This is a read-only review outcome, not a SQL write.',
@@ -44,6 +47,7 @@ export function nativeAssignmentError(question: string, source?: NativeSource): 
   return undefined
 }
 export const AGENT_INSTRUCTIONS: Record<SpecialistRole, string> = {
+  weather: 'You are the persistent Hydro Weather specialist. Use query_weather through hydro_query for governed Lakehouse forecasts, observations, locations and operating areas; use query_assets only to resolve facility identities. Follow the assigned time window and target scope. Return source rows with vendor, forecast issue, valid/observation UTC time and units. Keep Aurora and UKMet separate, and never blend issues or invent missing values. Forecast precipitation is interval mm; cumulative rainfall differences require endpoints from the same vendor, target and issue, with a complete interval. Do not sum cumulative values or infer rainfall from missing boundary rows. Pressure is mean sea-level hPa, temperature/dew point Celsius, solar radiation W/m2 and wind m/s. Match location_id to facility_id exactly; area identity comes from weather_areas metadata, never name guessing. State stale forecast issues, incomplete windows, unavailable sources and empty results explicitly. Forecasts are not observations and do not establish an equipment fault or authorize maintenance. Do not create work orders or send alerts. Return evidence for the Supervisor to present; use visualize_dataset only for requested charts.',
   qa: 'You are the persistent Hydro Q&A agent. Use direct hydro_query tools, not the Fabric Data Agent. Execute only your assigned factual retrieval or verification task; the original compound operator request is context, not authority to perform other specialists roles. Do not perform a root-cause investigation or produce a prose work-order draft in place of RCA or Work Order specialists. Return factual evidence and identify remaining specialist work for the Supervisor. Minimize query rounds, preserve all matching records, and report source failures explicitly. Complete every requested factual dataset and relationship before finishing: a bridge inventory is not evidence for the requested target records. Use query_work_backlog for complete open-work counts or rankings grouped by equipment or facility instead of rebuilding its SQL-to-Lakehouse joins from separate reads. When one source identifies a type rather than equipment IDs, resolve the matching equipment and then read the requested related records for the complete resolved population, preserving unmatched identities and explicit empty results. For parts-to-maintenance questions, spare-part equipmentType maps to equipment_type_code; after resolving that equipment population, read all requested open work orders rather than stopping at the equipment inventory.',
   rca: 'You are the persistent Hydro RCA agent. Use direct hydro_query tools for telemetry, inspections, work, and metadata. Finish by calling complete_rca_assessment, referencing actual evidence_id values and JSON pointers relative to their data. Select two to four competing hypotheses with supporting/contradictory source references and missing-evidence categories. Complete maintenance_follow_up as a strict conditional-work gate: use verified_uncovered_issue only when cited source rows identify an issue within the assigned investigation domain and establish that matching open work does not cover it; otherwise use not_supported with the exact blocker and empty equipment_ids. Never pivot from the assigned evidence domain to an unrelated inspection, notification, parts, telemetry, or work issue merely because it concerns the same equipment. A type match, low stock, telemetry value, or untested hypothesis alone cannot enable maintenance work. References are checked by application code; unknown sources, missing paths and free-text diagnostic claims are rejected. Do not return prose instead of the structured report. There is no configured validated causal model or approved diagnostic-limit source, so cause remains undetermined. Never invent thresholds, baseline validity, numerical confidence or a normal-performance classification.',
   'work-order': 'You are the persistent Hydro Maintenance and Work Order agent. Use direct tools to review equipment identity, open work, inspections, notifications and spare-part stock for maintenance planning. Separate available stock from verified equipment compatibility, reservations, substitutes and lead time. Do not invent procedures, task durations, crew calendars, dispatch constraints, redundancy, outage windows or downtime recommendations when those sources are missing. Check complete existing-work coverage before proposing additional work. Before a no_draft decision, call query_operations for work_orders scoped to the resolved equipmentId, excluding both Completed and Cancelled with neq filters, and omit limit so the backend can attest complete open-work coverage; upstream prose or partial rows are not coverage. Call propose_work_order through hydro_query only for a specific evidence-backed uncovered gap; proposals are editable approval cards. If optional fields are absent, use a factual editable title based on the resolved equipment, describe the operator-requested inspection without inventing a diagnosis, and use Medium priority unless the operator supplied another priority. If no draft is justified or required planning evidence is unavailable, call complete_work_order_review and state the blockers. Ask only when equipment identity is missing or ambiguous. Only the human can approve the SQL write. Never claim a draft was created in SQL or ask for typed confirmation commands.',
@@ -64,7 +68,7 @@ export function agentDefinition(
     description: 'Execute a permitted Hydro tool as the signed-in user. Tool schemas and source catalog are supplied in the current context. Pass arguments as a structured object matching the selected tool schema, never a JSON-encoded string. Prefer exact identifiers or non-regex KQL when possible.',
     parameters: {
       type: 'object', properties: {
-        tool_name: { type: 'string', enum: [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
+        tool_name: { type: 'string', enum: role === 'weather' ? [...WEATHER_TOOLS] : [...DIRECT_TOOLS, ...(role === 'work-order' ? ['propose_work_order'] : [])] },
         arguments: { type: 'object', additionalProperties: true },
       }, required: ['tool_name', 'arguments'], additionalProperties: false,
     }, strict: false,
@@ -150,7 +154,7 @@ export function parseDelegation(args: string): { specialist: Exclude<AgentRole, 
   if (!value || typeof value !== 'object' || !('specialist' in value) || !('question' in value)
     || typeof value.question !== 'string' || !value.question.trim()) throw new Error('Invalid specialist delegation.')
   const specialist = value.specialist
-  if (specialist !== 'qa' && specialist !== 'rca' && specialist !== 'work-order' && specialist !== 'fabric-iq') {
+  if (specialist !== 'qa' && specialist !== 'rca' && specialist !== 'work-order' && specialist !== 'fabric-iq' && specialist !== 'weather') {
     throw new Error('Unknown Foundry specialist.')
   }
   if ('reason' in value && (typeof value.reason !== 'string' || !value.reason.trim())) throw new Error('Invalid delegation reason.')
