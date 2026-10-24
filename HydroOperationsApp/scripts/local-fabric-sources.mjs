@@ -10,7 +10,7 @@ import { lakehouseConnectorConfig } from '../src/services/lakehouseConnector.ts'
 import { describeToolEvidence, DOMAIN_CONTRACT_VERSION, DOMAIN_DATASETS, DOMAIN_RELATIONSHIPS, DOMAIN_SEMANTICS, shapeWorkBacklog } from '../src/services/copilot/domainContract.ts'
 import { parseRcaAssessment, RCA_REPORT_TOOL, RcaEvidenceError } from '../src/services/copilot/rcaEvidence.ts'
 import { AGENT_NAMES, DIRECT_TOOLS, WEATHER_TOOLS, agentDefinition, parseDelegation, parseHydroQuery, parseWorkOrderReview, requestedNativeSources, verifyNativeReceipt, WORK_REVIEW_TOOL } from '../src/services/copilot/agentDefinitions.ts'
-import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
+import { createWorkOrderProposal, equipmentSelectionForRequest, missingRequestedSpecialists, positiveActionClauses, qualityWorkWorkflow, refersToPriorData, requestedLookback, requestedQualityStates, requestedRankLimit, requestedWorkBacklogGroup, requestsSignalQuality, requestsWeather, requestsWorkOrderNeedAssessment, requiredIndependentQaSteps, requiredSpecialists, requiresChartOutput, workOrderPriorityForRequest } from '../src/services/copilot/orchestration.ts'
 import { parseKustoPayload } from '../src/services/kustoResult.ts'
 export { parseKustoPayload } from '../src/services/kustoResult.ts'
 
@@ -69,6 +69,7 @@ function addNeedAssessmentKinds(question, kinds, carriedKinds) {
 }
 
 export function requiredEvidenceKinds(question, carriedKinds = []) {
+  if (qualityWorkWorkflow(question)) return ['native_claims']
   const text = positiveActionClauses(question)
   const kinds = new Set()
   const weather = requestsWeather(question)
@@ -333,11 +334,81 @@ export function compileAnswerContract(question, chartsRequested, requiredKinds, 
 
 function sourceClause(question, source) {
   if (source !== 'data-agent') throw new Error('Sparky supports only the published Fabric Data Agent.')
+  if (qualityWorkWorkflow(question)) {
+    return 'Ask the published Fabric Data Agent bound to the selected generation-2 ontology which turbines had any BAD telemetry quality from midnight UTC today through requested_at_utc supplied in the context, and what work is already open for those same turbines. Use the ontology static and time-series bindings and the attached operational SQL source. Had BAD means any BAD sample in that window, not only signals whose latest sample is BAD. Return a JSON object with window_start_utc, window_end_utc, affected_signals, open_work_orders, and coverage. Each affected_signals row must include canonical equipment_id, opcua_node_id, bad_sample_count, first_bad_utc and last_bad_utc; include turbine tag and instrument_id when available. Each open_work_orders row must include equipment_id, work_order_number and status, plus title, priority and signal ID when available; exclude Completed and Cancelled work. coverage must include telemetry_complete and work_complete booleans plus affected_signal_count and open_work_order_count matching the complete returned arrays. Preserve affected turbines with no open work. Empty arrays are valid only after successful complete reads; never turn an unavailable source into zero rows or invent completeness. Use the exact requested_at_utc as window_end_utc. Report actual read times and source references when available; do not invent provenance or identifiers. Keep this delegation read-only: do not do RCA, recommend unrelated maintenance, or create/draft work orders. If source access, binding, identity stitching or coverage fails, report that failure instead of substituting another source.'
+  }
   return positiveActionClauses(question)
     .split(/(?<=[.!?;\n])/)
     .map(value => value.trim())
     .find(value => /\bdata[\s-]+agent\b/i.test(value))
     ?? 'Use the requested published Fabric Data Agent.'
+}
+
+export function validateQualityWorkEvidence(question, result, requestedAt) {
+  if (!qualityWorkWorkflow(question)) return result
+  const candidates = new Map()
+  const visit = value => {
+    if (value && typeof value === 'object') {
+      if (!Array.isArray(value) && 'affected_signals' in value && 'open_work_orders' in value) {
+        candidates.set(JSON.stringify(value), value)
+      } else {
+        for (const child of Object.values(value)) visit(child)
+      }
+    } else if (typeof value === 'string') {
+      const text = value.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1')
+      let parsed
+      try { parsed = JSON.parse(text) } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        return
+      }
+      if (parsed && typeof parsed === 'object') visit(parsed)
+    }
+  }
+  visit(result)
+  if (candidates.size !== 1) throw new Error('Data Agent quality/work evidence requires one inspectable JSON bundle; no direct-source fallback was performed.')
+  const bundle = [...candidates.values()][0]
+  const signals = bundle.affected_signals
+  const orders = bundle.open_work_orders
+  const coverage = bundle.coverage
+  const end = Date.parse(requestedAt)
+  const start = new Date(end)
+  start.setUTCHours(0, 0, 0, 0)
+  if (!Number.isFinite(end) || Date.parse(bundle.window_start_utc) !== start.getTime()
+      || Date.parse(bundle.window_end_utc) !== end) {
+    throw new Error('Data Agent quality/work evidence does not match the requested UTC day and as-of time.')
+  }
+  if (!Array.isArray(signals) || !Array.isArray(orders) || signals.length > 500 || orders.length > 500
+      || coverage?.telemetry_complete !== true || coverage?.work_complete !== true
+      || coverage.affected_signal_count !== signals.length || coverage.open_work_order_count !== orders.length) {
+    throw new Error('Data Agent quality/work coverage is incomplete, unbounded or inconsistent; missing data cannot be reported as zero.')
+  }
+  const identifier = value => typeof value === 'string' && Boolean(value.trim()) && value.length <= 200
+  const equipment = new Set()
+  const signalKeys = new Set()
+  for (const row of signals) {
+    const first = Date.parse(row?.first_bad_utc)
+    const last = Date.parse(row?.last_bad_utc)
+    if (!identifier(row?.equipment_id) || !identifier(row?.opcua_node_id)
+        || !Number.isSafeInteger(row?.bad_sample_count) || row.bad_sample_count < 1
+        || !Number.isFinite(first) || !Number.isFinite(last)
+        || first < start.getTime() || last > end || first > last) {
+      throw new Error('Data Agent BAD-quality rows require canonical IDs, positive sample counts and timestamps within the requested window.')
+    }
+    const key = JSON.stringify([row.equipment_id, row.opcua_node_id])
+    if (signalKeys.has(key)) throw new Error('Data Agent BAD-quality evidence contains duplicate equipment/signal rows.')
+    signalKeys.add(key)
+    equipment.add(row.equipment_id)
+  }
+  const orderKeys = new Set()
+  for (const row of orders) {
+    if (!equipment.has(row?.equipment_id) || !identifier(row?.work_order_number)
+        || !identifier(row?.status) || ['completed', 'cancelled', 'canceled'].includes(row.status.trim().toLowerCase())
+        || orderKeys.has(row.work_order_number)) {
+      throw new Error('Data Agent open work must have unique order IDs, open statuses and an affected equipment ID.')
+    }
+    orderKeys.add(row.work_order_number)
+  }
+  return { ...bundle, native_source_output: result }
 }
 
 function requiresFinalQa(question) {
@@ -373,6 +444,7 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
       || typeof intent.charts_requested !== 'boolean') {
     throw new Error('Orchestration compilation requires one governed chat intent.')
   }
+  const qualityWorkflow = qualityWorkWorkflow(question)
   const requiredKinds = [...intent.required_evidence_kinds]
   if (intent.native_sources.length && !requiredKinds.includes('native_claims')) {
     requiredKinds.push('native_claims')
@@ -413,7 +485,9 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
     steps.push({
       specialist: 'fabric-iq',
       question: sourceClause(question, source),
-      reason: `Read only the operator-requested ${source} facts using the bound native source.`,
+      reason: qualityWorkflow
+        ? 'Retrieve the shared BAD-quality and existing-work evidence once through the ontology-connected Data Agent.'
+        : `Read only the operator-requested ${source} facts using the bound native source.`,
       native_source: source,
       requires_selection: false,
       requires_verified_issue: false,
@@ -453,7 +527,9 @@ export function compileOrchestrationPlan(question, intent = chatIntent(question)
   if (intent.required_specialists.includes('work-order')) {
     steps.push({
       specialist: 'work-order',
-      question: conditionalWork
+      question: qualityWorkflow
+        ? 'Reuse the supplied Data Agent evidence for all affected canonical equipment IDs, and the RCA report when requested. Do not rerun fleet-wide telemetry retrieval or choose unrelated equipment. Check current complete open-work coverage in operational SQL for each candidate, matching equipment and signal/scope where available; Data Agent output alone does not certify SQL coverage. BAD telemetry quality is not proof of a physical equipment fault. Review whether a signal-quality investigation is justified and already covered; stage editable diagnostic/inspection drafts only for evidenced uncovered needs, with no invented physical repair or confirmed root cause. Return no_draft with covering work and reasons when appropriate. Do not execute production writes; every staged draft requires human approval.'
+        : conditionalWork
         ? 'Review verified work coverage and stage an editable draft only for a verified uncovered equipment issue.'
         : (initialQaCount > 0 || intent.evidence_carried === true) && !NAMED_EQUIPMENT.test(positiveActionClauses(question))
           ? 'The operator named no equipment, so choose the target from the supplied verified evidence: the highest-priority equipment with a verified concern and no open work plausibly covering it. Confirm its identity and complete open-work coverage, then prepare the requested editable draft for it. If every affected equipment is already covered, conclude no_draft and name the covering work.'
@@ -1248,6 +1324,9 @@ export async function handle(request, deps = {}) {
   if (request.action === 'validate_native_receipt') {
     if (!verifyNativeReceipt(request.receipt, request.source)) throw new Error('Native execution receipt is missing.')
     return { accepted: true }
+  }
+  if (request.action === 'validate_quality_work_evidence') {
+    return { result: validateQualityWorkEvidence(request.question, request.result, request.requested_at_utc) }
   }
   if (request.action === 'validate_hydro_query') {
     const parsed = parseHydroQuery(request.report)

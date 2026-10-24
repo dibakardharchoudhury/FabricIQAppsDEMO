@@ -1745,10 +1745,10 @@ class FoundrySupervisor:
     def model_evidence(self, role: Role, targeted: bool = False) -> list[dict[str, object]]:
         if role != "work-order" and not targeted:
             return [item.receipt() for item in self.evidence.values()]
-        if (role == "work-order" and not targeted and self.carried_ids
+        if (role == "work-order" and not targeted
+                and (self.carried_ids or any(item.tool == "fabriciq-data-agent" for item in self.evidence.values()))
                 and not any(item.role == "rca" for item in self.specialists)):
-            # No RCA narrowed the focus, and the verified dataset this draft is based on was carried in: the
-            # specialist needs all of it to choose its target, not a projection around an unknown focus.
+            # Without RCA narrowing, preserve the carried/native bundle rather than projecting around no target.
             return [item.receipt() for item in self.evidence.values()]
 
         referenced_rows: dict[str, set[str]] = {}
@@ -1763,6 +1763,8 @@ class FoundrySupervisor:
                         segments = path.split("/")
                         if len(segments) >= 3 and segments[1] == "rows" and segments[2].isascii() and segments[2].isdecimal():
                             referenced_rows.setdefault(evidence_id, set()).add(f"/rows/{segments[2]}")
+                        elif (receipt := self.evidence.get(evidence_id)) is not None and receipt.tool == "fabriciq-data-agent":
+                            referenced_rows.setdefault(evidence_id, set()).add(path)
                     for child in value.values():
                         collect(child)
                 elif isinstance(value, list):
@@ -1776,6 +1778,8 @@ class FoundrySupervisor:
             receipt = self.evidence.get(evidence_id)
             if receipt is None:
                 continue
+            if receipt.tool == "fabriciq-data-agent":
+                target_equipment_ids.update(receipt.resolved_equipment_ids)
             for path in paths:
                 identity = receipt.row_identities.get(path, {})
                 for key in ("equipment_id", "equipmentId"):
@@ -1798,7 +1802,9 @@ class FoundrySupervisor:
                 if type(value) in (str, int, float, bool) or value is None
             }
             rows = receipt.result.get("rows")
-            if isinstance(rows, list):
+            if receipt.tool == "fabriciq-data-agent" and (metadata_match or receipt.id in referenced_rows):
+                result = dict(receipt.result)
+            elif isinstance(rows, list):
                 selected_rows = [
                     row for index, row in enumerate(rows) if f"/rows/{index}" in relevant_paths
                 ]
@@ -2399,6 +2405,7 @@ class FoundrySupervisor:
             })
         context = {
             "assignment": question, "operator_question": request.question,
+            "requested_at_utc": request.requested_at.isoformat(),
             "historical_context": (request.historical_context.model_dump(mode="json")
                                    if request.historical_context else None),
             "historical_context_policy": "Historical display is only conversational context, not current evidence. "
@@ -2738,6 +2745,16 @@ class FoundrySupervisor:
                             continue
                         found.add(raw["id"])
                         native_result = _validated_native_result(raw.get("output"))
+                        checked = await self.bridge.call({
+                            "action": "validate_quality_work_evidence",
+                            "question": request.question,
+                            "result": native_result,
+                            "requested_at_utc": request.requested_at.isoformat(),
+                        })
+                        checked_result = checked.get("result")
+                        if not isinstance(checked_result, dict):
+                            raise SourceFailure("Native quality/work validation returned an invalid evidence bundle.")
+                        native_result = checked_result
                         native_units, native_presentation = _native_count_chart_metadata(native_result)
                         if (
                             request.charts_requested

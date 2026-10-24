@@ -1,5 +1,20 @@
 # Hydro durable orchestration: local and hosted validation milestones
 
+## Scoped Data Agent quality/work workflows
+
+The three BAD-quality-today prompts documented in the
+[routing contract](../HydroOperationsApp/DEPLOY.md#supervisor-routing-and-visible-crew-identities)
+use Sparky's verified ontology-connected Data Agent once, followed only by the
+requested RCA and/or work-order specialists. Native evidence is preserved across
+handoffs, including when no RCA ran or RCA cited a native table instead of a
+direct `/rows` receipt. The validated native bundle is not authoritative SQL
+work-coverage attestation: fresh SQL coverage, identity checks and human approval
+remain mandatory for drafts. Native failure never silently switches to direct
+fleet retrieval. Weather remains a separate read-only specialist.
+
+This describes code behavior; publication and authenticated runtime acceptance
+must be recorded separately.
+
 For the full October 7-8 implementation history, agent roles, hosted/local
 distinction and production gates, see the
 [Foundry and multi-agent implementation record](../docs/foundry-multi-agent-implementation.md).

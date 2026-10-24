@@ -584,7 +584,7 @@ capability explanation, not private model reasoning.
 | Gauge - Q&A | `hydro-qa-agent` | Ordinary factual questions about telemetry, assets, SQL work/inspections/parts. Uses direct tools, not the Data Agent. |
 | Fixer - Work Orders | `hydro-work-order-agent` | Explicit requests to prepare, propose, draft or create new work. Resolves identity, checks existing work, stages editable proposals. No model-accessible SQL write. |
 | Sleuth - Root Cause | `hydro-rca-agent` | Investigations and diagnosis using direct evidence; separates facts, hypotheses, confidence and gaps. |
-| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit published Data Agent requests through one verified connection. It is not the default for all Fabric-hosted data, and it does not execute ontology-native chat queries. |
+| Sparky - Fabric IQ | `hydro-fabric-iq-agent` | Explicit published Data Agent requests and the three scoped BAD-quality workflows below, through one verified connection. It is not the default for all Fabric-hosted data, and it does not execute ontology-native chat queries. |
 | Weather | `hydro-weather-agent` | Forecasts, observations and rainfall context through the read-only `hydrolakehouse` connector, plus asset identity and visualization. Keeps vendors/issues separate; no work-order or delivery tools. |
 
 Fabric IQ exposes exactly one `fabric_iq_preview` tool labelled
@@ -596,8 +596,33 @@ graph, and their independent readiness checks remain separate platform capabilit
 
 Precedence and boundaries:
 
+The following three operator prompts use a single shared, request-scoped Data Agent
+read instead of a duplicate fleet-wide Gauge read (case, whitespace and punctuation
+are normalized; other prompts retain their existing routes):
+
+| Prompt | Specialist sequence |
+|---|---|
+| Which turbines had BAD telemetry quality today, and what work is already open for these? | Sparky |
+| Same complete question, followed by: Based on this data, tell me which WOs need to be created and help me with the drafts. | Sparky -> Fixer |
+| Same complete question, followed by: Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts. | Sparky -> Sleuth -> Fixer |
+
+For these three prompts, **had BAD** means any BAD sample between midnight UTC and
+the run's supplied UTC as-of time, not only a latest sample that is still BAD.
+The Data Agent returns a bounded JSON bundle with affected signals, open work and
+explicit coverage counts/flags. IDs, sample counts, timestamps, open-work membership
+and reported completeness are validated before downstream use. Missing, malformed
+or incomplete native output fails explicitly; it does not trigger a hidden direct
+retrieval fallback. Successful native execution still does **not** attest SQL or
+combined-source provenance. Fixer must check fresh complete operational SQL coverage
+and verified identity before staging any editable, human-approved draft. BAD quality
+does not prove a physical fault or a confirmed root cause. Sleuth retains bounded
+targeted evidence enrichment; weather is not invoked unless requested.
+
+These are implementation contracts, not a claim that an updated hosted version or
+the weather agent has been published or passed live acceptance.
+
 - HOT/BAD plus *existing* open work is one Q&A task, not new-work authorization.
-  HOT uses latest raw temperature readings; BAD selects latest per signal before
+  Outside the three scoped workflows above, HOT uses latest raw temperature readings; BAD selects latest per signal before
   literal quality filtering. Canonical snapshot tools join all equipment-level open
   work and identify exact same-signal matches. `today` means midnight UTC to query time;
   no readings in the requested window is not proof of healthy equipment.

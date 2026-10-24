@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseRayfinYaml } from '@microsoft/rayfin-tools-common/_internal/config'
-import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements } from './local-fabric-sources.mjs'
+import { analyticalEvidencePlan, attachInstrumentUnits, chatFollowUp, chatIntent, collectCatalogRows, collectOperationRows, collectWorkOrders, compileAnswerContract, compileOrchestrationPlan, configuration, discover, governedToolResult, handle, parseKustoPayload, permittedEvidenceKinds, readAssetEntity, readFleetSnapshot, readStationPower, readTelemetry, readTelemetryQuery, requestJson, requiredEvidenceKinds, resolveIdentityScope, runtimeConfiguration, sourceToolContracts, stageWorkOrder, submitApprovedWorkOrder, validatePlanRequirements, validateQualityWorkEvidence } from './local-fabric-sources.mjs'
 import { requestsWorkOrderNeedAssessment, refersToPriorData } from '../src/services/copilot/orchestration.ts'
 import { fleetSnapshotQuery, shapeFleetSnapshot, shapeCatalogRows, TOOL_DEFINITIONS } from '../src/services/copilot/query.ts'
 import { ASSET_ENTITIES, OPERATIONS_ENTITIES } from '../src/services/copilot/catalog.ts'
@@ -51,6 +51,82 @@ test('every direct tool result carries governed evidence descriptors at the Node
     role: 'primary',
     limitations: [],
   }])
+})
+
+test('three scoped BAD-quality workflows share one Data Agent read and only requested specialists', () => {
+  const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
+  const cases = [
+    [base, []],
+    [`${base} Based on this data, tell me which WOs need to be created and help me with the drafts.`, ['work-order']],
+    [`${base} Based on this data, do a RCA and tell me which WOs need to be created and help me with the drafts.`, ['rca', 'work-order']],
+  ]
+  for (const [question, specialists] of cases) {
+    const intent = chatIntent(question)
+    assert.deepEqual(intent.native_sources, ['data-agent'])
+    assert.deepEqual(intent.required_specialists, specialists)
+    assert.deepEqual(intent.required_evidence_kinds, ['native_claims'])
+    const plan = compileOrchestrationPlan(question, intent)
+    assert.deepEqual(plan.steps.map(step => step.specialist), ['fabric-iq', ...specialists])
+    assert.equal(plan.steps.filter(step => step.native_source === 'data-agent').length, 1)
+    assert.match(plan.steps[0].question, /any BAD/i)
+    assert.match(plan.steps[0].question, /midnight UTC/)
+    assert.match(plan.steps[0].question, /requested_at_utc/)
+    assert.match(plan.steps[0].question, /equipment_id/)
+    assert.match(plan.steps[0].question, /Completed.*Cancelled/)
+    assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence), ['native_claims_population_native'])
+    assert.deepEqual(analyticalEvidencePlan(question, intent.required_evidence_kinds), [])
+    if (specialists.includes('work-order')) {
+      assert.match(plan.steps.at(-1).question, /all affected/i)
+      assert.match(plan.steps.at(-1).question, /SQL/)
+      assert.match(plan.steps.at(-1).question, /BAD.*not.*physical/i)
+    }
+  }
+  assert.deepEqual(chatIntent(base.toUpperCase().replaceAll(' ', '  ')).native_sources, ['data-agent'])
+  for (const question of [
+    base.replace('today', 'yesterday'),
+    base.replace('BAD', 'UNCERTAIN'),
+    `${base} Independently verify against direct sources.`,
+    'Show the weather forecast.',
+  ]) assert.deepEqual(chatIntent(question).native_sources, [], question)
+})
+
+test('scoped Data Agent evidence validates IDs, UTC bounds, complete arrays and open work without certifying SQL provenance', async () => {
+  const question = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
+  const clock = '2026-10-24T12:00:00Z'
+  const bundle = {
+    window_start_utc: '2026-10-24T00:00:00Z', window_end_utc: clock,
+    affected_signals: [{ equipment_id: 'EQUIP_RTI_T005', opcua_node_id: node,
+      bad_sample_count: 2, first_bad_utc: '2026-10-24T01:00:00Z', last_bad_utc: '2026-10-24T02:00:00Z' }],
+    open_work_orders: [{ equipment_id: 'EQUIP_RTI_T005', work_order_number: 'WO-1', status: 'Open' }],
+    coverage: { telemetry_complete: true, work_complete: true, affected_signal_count: 1, open_work_order_count: 1 },
+  }
+  const wrapped = { documents: [{ content: `\`\`\`json\n${JSON.stringify(bundle)}\n\`\`\`` }] }
+  const checked = validateQualityWorkEvidence(question, wrapped, clock)
+  assert.deepEqual(checked.affected_signals, bundle.affected_signals)
+  assert.deepEqual(checked.native_source_output, wrapped)
+  assert.equal(checked.work_coverage_equipment_ids, undefined)
+  assert.equal((await handle({ action: 'validate_quality_work_evidence', question, result: wrapped, requested_at_utc: clock })).result.coverage.work_complete, true)
+  for (const mutate of [
+    value => { value.coverage.work_complete = false },
+    value => { value.coverage.affected_signal_count = 0 },
+    value => { value.window_start_utc = '2026-10-23T00:00:00Z' },
+    value => { value.window_end_utc = '2026-10-24T13:00:00Z' },
+    value => { value.affected_signals[0].equipment_id = '' },
+    value => { value.affected_signals[0].bad_sample_count = 0 },
+    value => { value.affected_signals[0].last_bad_utc = '2026-10-25T00:00:00Z' },
+    value => { value.open_work_orders[0].status = 'Cancelled' },
+    value => { value.open_work_orders[0].equipment_id = 'UNRELATED' },
+    value => { value.affected_signals.push(value.affected_signals[0]); value.coverage.affected_signal_count = 2 },
+  ]) {
+    const invalid = structuredClone(bundle)
+    mutate(invalid)
+    assert.throws(() => validateQualityWorkEvidence(question, invalid, clock), /Data Agent/)
+  }
+  assert.throws(() => validateQualityWorkEvidence(question, { response: 'No data available.' }, clock), /inspectable JSON bundle/)
+  const zero = { ...bundle, affected_signals: [], open_work_orders: [],
+    coverage: { telemetry_complete: true, work_complete: true, affected_signal_count: 0, open_work_order_count: 0 } }
+  assert.deepEqual(validateQualityWorkEvidence(question, zero, clock).affected_signals, [])
+  assert.equal(validateQualityWorkEvidence('List spare parts.', wrapped, clock), wrapped)
 })
 
 test('backend intent reuses canonical chart, native and human-priority semantics without source access', () => {

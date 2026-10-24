@@ -815,6 +815,42 @@ class FoundrySupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private", signature)
 
+    def test_fixer_without_rca_reuses_the_complete_native_evidence_bundle(self):
+        receipt = ToolEvidence(
+            id="native-quality-work", source=SOURCE, tool="fabriciq-data-agent", arguments={},
+            completed_at=utc_now(),
+            result={"affected_signals": [{"equipment_id": "TEST_T005", "quality": "BAD"}]},
+            resolved_equipment_ids=("TEST_T005",),
+            limitations=("Native receipt does not attest combined-source provenance.",),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        self.assertEqual(self.owner.model_evidence("work-order"), [receipt.receipt()])
+        self.assertEqual(receipt.work_coverage_equipment_ids, ())
+
+    def test_fixer_after_rca_retains_native_table_references_without_fabricating_sql_coverage(self):
+        receipt = ToolEvidence(
+            id="native-quality-work", source=SOURCE, tool="fabriciq-data-agent", arguments={},
+            completed_at=utc_now(),
+            result={"affected_signals": [{"equipment_id": "TEST_T005", "quality": "BAD"}]},
+            resolved_equipment_ids=("TEST_T005",),
+        )
+        self.owner.evidence[receipt.id] = receipt
+        self.owner.specialists.append(SpecialistResult(
+            role="rca", agent_name="hydro-rca-agent", version="12", response_id="response-1",
+            duration_ms=10, model_round_count=1, input_digest="0" * 64, text="",
+            report={"observations": [{"evidence_id": receipt.id, "path": "/affected_signals/0"}]},
+        ))
+        projected = self.owner.model_evidence("work-order")
+        self.assertEqual(len(projected), 1)
+        self.assertEqual(projected[0]["result"], receipt.result)
+        self.assertEqual(projected[0]["work_coverage_equipment_ids"], ())
+        self.owner.selected_equipment_ids = {"TEST_T005"}
+        self.assertEqual(self.owner.root_cause_scope(
+            ChatRequest(run_id=uuid4(), source=SOURCE, question="Investigate the reported BAD quality.",
+                        requested_at=utc_now(), deadline=utc_now() + timedelta(minutes=5)),
+            RunJournal(self.root / "native-scope"),
+        )["equipment_ids"], ["TEST_T005"])
+
     def test_fixer_model_context_projects_referenced_equipment_without_mutating_audit_evidence(self):
         rows = [
             {"equipment_id": "TEST_T005", "quality": "BAD", "payload": "x" * 1000},

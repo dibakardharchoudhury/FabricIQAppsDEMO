@@ -1,5 +1,5 @@
 import { ANSWER_PRESENTATION_CONTRACT } from './answerPresentation.ts'
-import { positiveActionClauses, type AgentRole } from './orchestration.ts'
+import { positiveActionClauses, qualityWorkWorkflow, type AgentRole } from './orchestration.ts'
 import {
   OPERATIONAL_EVIDENCE_CONTRACT,
 } from './domainContract.ts'
@@ -114,6 +114,7 @@ export function parseHydroQuery(raw: string):
 }
 
 export function requestedNativeSources(question: string): NativeSource[] {
+  if (qualityWorkWorkflow(question)) return ['data-agent']
   const positive = positiveActionClauses(question)
   const action = '\\b(?:use|ask|query|consult|retrieve|read|compare|request|list|resolve)\\b[^.!?;\\n]{0,180}\\b'
   if (new RegExp(`${action}ontology\\b`, 'i').test(positive)) {
@@ -125,6 +126,7 @@ export function requestedNativeSources(question: string): NativeSource[] {
 export function nativeSourceError(question: string, source: unknown, priorUserQuestions: readonly string[] = []): string | undefined {
   if (source === 'ontology') return 'Direct ontology-native chat execution is disabled. Use the published Data Agent or governed direct sources.'
   if (source !== 'data-agent') return 'fabric-iq requires native_source data-agent. Sparky has one published Data Agent tool.'
+  if (qualityWorkWorkflow(question)) return undefined
   const requestedContext = [question, ...[...priorUserQuestions].reverse()]
     .find(text => /\b(?:data[\s-]+agent|ontology|fabric[\s-]+iq)\b/i.test(text))
   if (!requestedContext) return 'The operator has not requested the published Data Agent or Fabric IQ in this conversation. Use Gauge for ordinary inventory, telemetry, SQL work and charts; do not add an unnecessary native delegation.'

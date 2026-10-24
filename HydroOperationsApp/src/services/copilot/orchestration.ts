@@ -290,7 +290,22 @@ export function requestsWeather(question: string): boolean {
   return /\b(?:weather|forecasts?|rainfall|precipitation|aurora|ukmet|met office|dew point|wind gusts?)\b/i.test(positiveActionClauses(question))
 }
 
+export function qualityWorkWorkflow(question: string): 'facts' | 'drafts' | 'rca-drafts' | undefined {
+  const normalize = (value: string) => value.toLowerCase().replace(/[.,?!]/g, ' ').replace(/\s+/g, ' ').trim()
+  const base = 'Which turbines had BAD telemetry quality today, and what work is already open for these?'
+  const suffix = 'tell me which WOs need to be created and help me with the drafts.'
+  const normalized = normalize(question)
+  if (normalized === normalize(base)) return 'facts'
+  if (normalized === normalize(`${base} Based on this data, ${suffix}`)) return 'drafts'
+  if (normalized === normalize(`${base} Based on this data, do a RCA and ${suffix}`)) return 'rca-drafts'
+  return undefined
+}
+
 export function requiredSpecialists(question: string, hasNativeRequest = false): AgentRole[] {
+  const qualityWorkflow = qualityWorkWorkflow(question)
+  if (qualityWorkflow) {
+    return qualityWorkflow === 'facts' ? [] : qualityWorkflow === 'drafts' ? ['work-order'] : ['rca', 'work-order']
+  }
   const positive = positiveActionClauses(question)
   const weather = requestsWeather(question)
   const operational = /\b(?:telemetry|signals?|readings?|work[\s-]*orders?|inspections?|notifications?|spare parts?|inventory|turbines?|generators?|equipment)\b/i.test(positive)
