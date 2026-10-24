@@ -271,7 +271,7 @@ and Weather acceptance are recorded below. Separately, successful Lakehouse conn
 locations/areas or current forecast rows. Do not claim a fresh forecast, successful
 Weather tool execution, or an ingestion repair from agent publication alone.
 
-### Latest canonical deployment and bounded runtime acceptance
+### Structured-JSON baseline deployment and acceptance (Hosted Agent 7)
 
 Source `2ab9cd1` passed all eight canonical deployment sections from
 **21:17:58 to 21:31:29 UTC**, printing `SUCCESS` and `DEPLOYED_APP_URL`.
@@ -323,8 +323,8 @@ BAD-quality prompts and one Weather availability prompt:
 
 Earlier v7 attempts reached Sleuth or Fixer after successful Sparky retrieval but
 failed upstream with 429. One Fixer completion also rejected its structured
-arguments before the bounded correction encountered 429. Those paths have not
-subsequently passed end to end. The latest successful Weather attempt occurred
+arguments before the bounded correction encountered 429. At this baseline, those paths had not yet
+passed end to end. The latest successful Weather attempt occurred
 later than the allocation change; it does not prove throttling is permanently
 resolved or explain the earlier failures.
 
@@ -336,6 +336,106 @@ mapping/forecast tables are empty, and added graph projection remains blocked by
 the portal's Unsupported Datasource eligibility result. The empty-data checks do
 not certify nonempty BAD-quality reconciliation, RCA, draft creation, approved SQL
 writes or SQL/combined-source execution provenance.
+
+### Native evidence and work-review follow-up (Hosted Agents 8 and 9)
+
+Source `513c1f5` deployed Hosted Agent **8** from **22:03:58 to 22:17:24
+UTC**. Source `236ca91` deployed Hosted Agent **9** from **22:30:07 to
+22:44:55 UTC**. Both canonical deployments passed all eight sections.
+
+The fixes preserve rejected raw native receipts before validation, validate the
+complete MCP step rather than each intermediate receipt, and forward the complete
+compiled assignment to the Data Agent. Missing JSON and incomplete coverage share
+the existing **one** same-source correction budget; conflicting, malformed,
+inconsistent or unbounded evidence still fails closed. There is no direct-source
+fallback. The incomplete-coverage correction requests an exact UTC predicate and
+a scalar telemetry count without `by`, preserving a count row for empty input.
+Missing current telemetry or canonical identity now explicitly leads to
+`needs_clarification`, not an unsupported `no_draft` coverage claim.
+
+The v9 authenticated draft and RCA/draft workflows finished in **130/99 seconds**;
+Weather finished in **26.4 seconds**. Facts still failed after **125 seconds**.
+Downloading that run's two immutable native responses established the remaining
+parser defect: both contained JSON followed by Fabric's generated-file footer.
+The first also explicitly reported incomplete coverage and contradictory
+requested-window count/freshness; the second contained a complete zero-row
+bundle. The parser incorrectly classified both as absent JSON.
+
+### Latest canonical deployment and authenticated acceptance (Hosted Agent 10)
+
+Source **`489de40`** deployed from **22:55:47 to 23:07:05 UTC** in
+**677.343 seconds (11m 17.343s)**, printing `SUCCESS` and `DEPLOYED_APP_URL`.
+The authenticated browser loaded **1.0.1055 / 489de40**. The active Hosted
+Agent is **`hydro-orchestrator:10`**, image **`src-247959b77642fffb`**.
+Sparky remains version 2, Fixer version 3, and Weather version 1.
+
+The JSON adapter now removes only the exact Fabric transport suffix
+`File(s) result_N.json ... were generated as a result of the query.` before
+parsing a complete JSON value. It does not extract evidence from arbitrary
+surrounding prose. The original response and footer remain in the audit.
+Replaying the actual rejected receipts verifies that the incomplete first
+response still fails coverage validation and the complete retry now passes.
+All **57** bridge tests, app typecheck and environment validation passed.
+The preceding service fixes also passed focused native/review Python tests
+and pyright with zero errors or warnings.
+
+| Canonical deployment section | v8 seconds | v9 seconds | v10 seconds |
+|---|---:|---:|---:|
+| Tenant, workspace and capacity verification | 19.250 | 17.734 | 14.922 |
+| SPA resolution and redirect preservation snapshot | 15.000 | 12.985 | 12.093 |
+| Source verification, specialists, new Hosted Agent image and activation | 425.359 | 421.562 | 424.188 |
+| Tenant-scoped Rayfin authentication | 1.641 | 2.578 | 1.406 |
+| Static application build/publication | 164.047 | 142.594 | 67.656 |
+| Backend runtime/database settings and both connectors | 82.093 | 186.360 | 57.735 |
+| Browser sign-in permissions and consent verification | 55.813 | 58.156 | 58.859 |
+| Hosting, endpoint, CORS and protected transport readiness | 42.953 | 45.265 | 40.484 |
+| **Total** | **806.156** | **887.234** | **677.343** |
+
+The final deployment reused locked dependencies, target Rayfin state and the
+verified published SQL source, without NB11 or demo DML. All **40** original SPA
+redirects remain registered. New immutable Hosted Agent builds/activation account
+for the largest section; source-unchanged deployments can reuse the verified
+image instead. The latest observed total is 23.7% below v9, but remote build and
+Fabric backend timings vary; this is not a guaranteed speedup or a five-minute
+fresh-deployment promise. The earlier source-unchanged deployment took 501.671
+seconds. Neither fast path skips backend/CORS/readiness validation.
+
+The final sequential authenticated checks used the three exact requested prompts
+and a Weather availability prompt. Durations below are the application's
+reported elapsed times, excluding browser-tool deferred-result handling.
+
+| Workflow | Latest observed result | UI elapsed |
+|---|---|---:|
+| BAD quality today and existing work | Sparky and Supervisor finished; no affected turbines could be verified from the empty current evidence | 2m 10s |
+| Facts plus work-order drafts | Sparky, Fixer and Supervisor finished; `needs_clarification`, no unsupported work order or draft | 1m 16s |
+| Facts plus RCA and drafts | Sparky, Sleuth, Fixer and Supervisor finished; no evidence-backed turbine-level RCA or draft | 1m 23s |
+| Latest available Weather forecast | Weather and Supervisor finished; location and forecast datasets explicitly returned zero rows | 24.6s |
+
+**All four tested routes now finish on the latest deployment; full operational
+data readiness remains incomplete.** Empty native claims do not identify affected
+turbines, establish healthy telemetry or prove that equipment has no open work.
+The responses retain the SQL/combined-source provenance limitation and label
+specialist-only freshness notes as unverified rather than promoting prose to
+evidence. No physical cause, nonempty reconciliation, staged diagnostic draft or
+approved SQL-write execution is certified by this empty-data acceptance.
+No production work order was created or approved. No HTTP 429 occurred in this
+final batch; that does not establish permanent freedom from throttling.
+
+Current-day telemetry remains absent in the source checks, with last observed
+timestamp **2026-10-23T21:22:22.26164Z**. Weather mappings and forecasts remain
+empty; publishing Weather is not an ingestion repair. The captured failed native
+responses also carry output-moderation error annotations; the transport parser
+fix neither repairs nor establishes the cause of that product-side annotation.
+Additional ontology graph eligibility remains blocked by **Unsupported
+Datasource** in the portal. These source/product prerequisites are not silently
+turned into successful data, synthetic work orders or fabricated topology.
+
+The last full preservation readback, after v9, again confirmed all **48** V3
+definition parts and **45** V3 item identities unchanged, all **40** original
+FEATURE items retained, and only the intended independent SQLDatabase and its
+automatic SQL endpoint added. FEATURE still has **44** ontology definition parts;
+the original native graph schema remains five node types/four edge types.
+The final footer-only app deployment does not alter that ontology or copy data.
 
 ## Evidence and compatibility: pre-implementation assessment baseline
 
@@ -521,7 +621,7 @@ Initial live project readbacks found `hydro-weather-agent:1` alongside
 `ai-project-hydro-foundry-884a839f3132`, account `ai-account-yz6usfcwfov5q`,
 resource group `rg-hydro-foundry-884a839f3132`, subscription
 `dac16501-5c35-4c91-aff0-11af8de17f2e`.
-The latest deployment uses orchestrator version 7, as recorded above; Weather
+The latest deployment uses orchestrator version 10, as recorded above; Weather
 remains version 1.
 
 The screenshots match the **older** `foundryfabriciqappsdemo` project: orchestrator
@@ -532,8 +632,8 @@ then open its Agents list. See the
 for navigation. Do not publish into the older project merely to change the
 screenshots or alter a protected workspace's runtime.
 
-Agent publication was verified; Weather inference and fresh provider data are
-separate acceptance checks, not certified by this review.
+Agent publication and authenticated Weather connector execution were verified.
+Fresh provider data remains unavailable; see the latest acceptance table above.
 
 ## Preservation verification
 
