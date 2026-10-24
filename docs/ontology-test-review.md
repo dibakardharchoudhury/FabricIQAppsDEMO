@@ -121,8 +121,8 @@ Verified outcomes:
 This was a one-time operational-store cutover **and a new remote container build**,
 not the previously measured warm deployment. The 353.181-second NB11 job is
 included in section 3, not additional to the total. Subsequent unchanged runs
-verify the published source bindings and reuse the immutable image; another warm
-run was deliberately not performed merely to obtain a timing number. The earlier
+verify the published source bindings and reuse the immutable image. The later
+cold-graph UI fix required a warm deployment, recorded below. The earlier
 351.375-second warm measurement is documented in
 [DEPLOY.md](../HydroOperationsApp/DEPLOY.md#speed-changes-and-measurements).
 
@@ -193,8 +193,54 @@ must not be presented as healthy current telemetry. These are observed responses
 not execution-provenance attestation. The deployed Weather prompt agent completed
 a role-only inference check; that does not certify weather freshness or tool
 execution. Extended graph materialization remains blocked by portal eligibility.
-The completed full deployment above was not repeated merely to test this
-metadata-only repair; its helper was exercised directly against the live API.
+The metadata helper was exercised directly against the live API; the later
+canonical deployment also published the cold-graph UI deadline fix.
+
+### Follow-up: cold-graph deployment and Data Agent request contract
+
+The canonical deployment of `a6b0b76` completed from **20:37:23 to 20:45:45 UTC**
+in **501.671 seconds (8m 21.671s)**. It reused the verified operational SQL source
+without NB11 or demo DML, and printed `SUCCESS` and `DEPLOYED_APP_URL`.
+
+| Canonical deployment section | Seconds |
+|---|---:|
+| Tenant, workspace and capacity verification | 15.750 |
+| SPA resolution and redirect preservation snapshot | 15.875 |
+| Target/source verification and agent convergence | 163.718 |
+| Tenant-scoped Rayfin authentication | 1.516 |
+| Static application build/publication | 132.156 |
+| Backend runtime/database settings and both connectors | 71.875 |
+| Browser sign-in permissions and consent verification | 55.813 |
+| Hosting, endpoint, CORS and protected transport readiness | 44.968 |
+| **Total** | **501.671** |
+
+All 40 original SPA redirects remained registered. The authenticated browser
+loaded build `a6b0b76`; deployment checks themselves still do not certify agent
+execution.
+
+An authenticated facts workflow reached Sparky but failed closed with HTTP 500.
+Logs from the **FEATURE** Hosted Agent session showed a transient native HTTP 500,
+one bounded retry, and rejection of a response without the required inspectable
+quality/work JSON bundle. The pre-question HTTP 422 was the deliberately invalid
+empty-body cold-start warm-up, not a specialist execution.
+
+Read-only diagnostics reproduced a Data Agent response describing an ontology
+traversal stitch failure. That generated description alone does not establish
+that supported SQL/KQL execution failed. The scoped request now explicitly uses
+the ontology's associated source-native SQL/KQL tools, not ontology traversal;
+retains one Data Agent delegation; requests only one JSON object; and checks
+Lakehouse and SQL availability even when no BAD identifiers are returned.
+Freshness is requested separately from the current-day BAD aggregate.
+
+The exact revised compiled request returned a bundle in **45.6 seconds** that
+passed the **unchanged** evidence validator: empty affected/work arrays, 90 active
+signal mappings, 10 open work orders in the source availability aggregate, and
+latest telemetry `2026-10-23T21:22:22.26164Z`. Its requested-window total field was
+null and explicitly disclosed as a limitation. The source-wide open-work count is
+not a count of work against affected turbines; no healthy-current-telemetry or
+execution-provenance claim follows from this result. All **57** focused bridge
+tests passed. Hosted deployment and all three authenticated workflow checks for
+this request change remain pending.
 
 ## Evidence and compatibility
 

@@ -106,6 +106,12 @@ test('three scoped BAD-quality workflows share one Data Agent read and only requ
     assert.match(plan.steps[0].question, /requested_at_utc/)
     assert.match(plan.steps[0].question, /equipment_id/)
     assert.match(plan.steps[0].question, /Completed.*Cancelled/)
+    assert.match(plan.steps[0].question, /source-native SQL.*associated Lakehouse/)
+    assert.match(plan.steps[0].question, /KQL.*associated Eventhouse/)
+    assert.match(plan.steps[0].question, /Do not invoke ontology traversal/)
+    assert.match(plan.steps[0].question, /Even when no BAD identifiers.*static-mapping count.*open-work count/)
+    assert.match(plan.steps[0].question, /Return only one JSON object, without surrounding prose/)
+    assert.match(plan.steps[0].question, /distinguish no BAD samples from absent or stale telemetry/)
     assert.deepEqual(plan.answer_contract.requirements.map(item => item.evidence), ['native_claims_population_native'])
     assert.deepEqual(analyticalEvidencePlan(question, intent.required_evidence_kinds), [])
     if (specialists.includes('work-order')) {
