@@ -570,7 +570,7 @@ export type System = {
 
 const ONTOLOGY_CONTRACT_TTL_MS = 15 * 60_000
 const ontologyContractCache = createOntologyCache<OntologyContract>(ONTOLOGY_CONTRACT_TTL_MS)
-const ontologyGraphCache = createOntologyCache<OntologyGraph>(ONTOLOGY_CONTRACT_TTL_MS)
+const ontologyGraphCache = createOntologyCache<OntologyGraph>(5 * 60_000)
 const configuredGraphBindingValue = import.meta.env.VITE_RAYFIN_ONTOLOGY_GRAPH_BINDING as string | undefined
 
 async function withCurrentConfig<T>(load: (config: ResolvedConfig | null) => Promise<T>): Promise<T> {

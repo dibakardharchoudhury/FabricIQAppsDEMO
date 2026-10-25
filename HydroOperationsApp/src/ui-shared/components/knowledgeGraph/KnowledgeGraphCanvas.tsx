@@ -84,7 +84,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
             'background-blacken': -0.04, 'background-image': 'data(icon)', 'background-fit': 'none',
             'background-width': '44%', 'background-height': '44%',
             'border-color': 'data(ring)', 'border-width': 3, label: 'data(label)', color: color('--cp-text'),
-            'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 650,
+            'font-family': 'Inter, Segoe UI, Aptos, sans-serif', 'font-size': 10.5, 'font-weight': 600, 'min-zoomed-font-size': 7,
             'text-valign': 'bottom', 'text-margin-y': 11, 'text-wrap': 'wrap', 'text-max-width': '118px',
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '4px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
@@ -95,56 +95,34 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         },
         { selector: 'node:selected, node.focus-selected', style: { 'border-width': 4, 'border-color': 'data(ring)', 'underlay-opacity': 0.32, 'underlay-padding': 18, 'z-index': 20 } },
         { selector: 'node:active', style: { 'overlay-color': 'data(ring)', 'overlay-opacity': 0.12, 'overlay-padding': 8 } },
-        { selector: 'node.status-pulse', style: { 'underlay-opacity': 0.28, 'underlay-padding': 14 } },
         { selector: 'node.focus-neighbor', style: { 'underlay-opacity': 0.18, 'underlay-padding': 10 } },
         { selector: '.focus-dimmed', style: { opacity: 0.16, 'text-opacity': 0.12 } },
         {
           selector: 'edge',
           style: {
-            width: 1.9, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
+            width: 1.1, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
             'curve-style': 'bezier', 'control-point-step-size': 44, label: 'data(label)', color: color('--cp-text-muted'),
-            'font-size': 7.5, 'font-weight': 650, opacity: 0.58, 'text-opacity': 0.15,
+            'font-size': 7.5, 'font-weight': 600, 'min-zoomed-font-size': 6, opacity: 0.58, 'text-opacity': 0.15,
             'text-background-color': color('--kg-label-bg'), 'text-background-opacity': 0.94, 'text-background-padding': '3px',
             'text-background-shape': 'roundrectangle', 'text-border-color': color('--kg-label-border'), 'text-border-width': 1,
-            'text-rotation': 'autorotate', 'arrow-scale': 0.9,
+            'text-rotation': 'autorotate', 'arrow-scale': 0.75,
             'transition-property': 'opacity, width, text-opacity', 'transition-duration': 220,
           },
         },
-        { selector: 'edge.focus-neighbor, edge:selected', style: { width: 2.8, opacity: 0.94, 'text-opacity': 1, 'z-index': 10 } },
-        { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [7, 5] } },
+        { selector: 'edge.focus-neighbor, edge:selected', style: { width: 1.6, opacity: 0.85, 'text-opacity': 1, 'z-index': 10 } },
+        { selector: 'edge[type = "has-signal"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [4, 7] } },
         {
           selector: 'edge[flow = 1]',
           style: {
-            width: 3.2, opacity: 0.92, 'line-color': 'data(flowColor)', 'target-arrow-color': 'data(flowColor)',
-            'line-style': 'dashed', 'line-dash-pattern': [10, 12], 'arrow-scale': 1.05, 'z-index': 8,
+            width: 1.5, opacity: 0.76, 'line-color': 'data(flowColor)', 'target-arrow-color': 'data(flowColor)',
+            'line-style': 'dashed', 'line-dash-pattern': [4, 8], 'arrow-scale': 0.75, 'z-index': 8,
           },
         },
       ],
     })
     graph.on('tap', 'node', event => handleNodeSelect(event.target.id()))
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    let animationFrame: number | undefined
-    let visible = true
-    let previousFrame = 0
-    let offset = 0
-    const animate = (time: number) => {
-      if (visible && time - previousFrame >= 34) {
-        previousFrame = time
-        offset = (offset + 1.35) % 44
-        graph.edges('[flow = 1]').style('line-dash-offset', -offset)
-        graph.nodes('[status = "crit"]').toggleClass('status-pulse', Math.floor(time / 900) % 2 === 0)
-      }
-      animationFrame = window.requestAnimationFrame(animate)
-    }
-    const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(entries => {
-      visible = entries[0]?.isIntersecting ?? true
-    })
-    observer?.observe(containerRef.current)
-    if (!reducedMotion) animationFrame = window.requestAnimationFrame(animate)
     controllerRef.current = graph
     return () => {
-      observer?.disconnect()
-      if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame)
       graph.nodes().forEach(node => { positionCache.set(node.id(), node.position()) })
       controllerRef.current = null
       initializedRef.current = false
@@ -178,6 +156,7 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
     ]
     const nextIds = new Set(elements.map(element => String(element.data.id)))
     const wasInitialized = initializedRef.current
+    let needsLayout = false
     graph.batch(() => {
       graph.nodes().forEach(node => { positionCacheRef.current.set(node.id(), node.position()) })
       graph.elements().filter(element => !nextIds.has(element.id())).remove()
@@ -191,28 +170,68 @@ export function KnowledgeGraphCanvas({ nodes, edges, selectedId, layout, theme, 
         const added = graph.add(element)
         const position = positionCacheRef.current.get(id)
         if (position && added.isNode()) added.position(position)
+        else if (added.isNode()) needsLayout = true
       }
     })
     applyGraphFocus(graph, selectedId)
-    if (!wasInitialized && graph.nodes().nonempty()) {
+    if ((!wasInitialized || needsLayout) && graph.nodes().nonempty()) {
       initializedRef.current = true
       previousLayoutRef.current = layout
       graph.layout(layoutOptions(layout)).run()
     }
-  }, [controllerRef, edges, layout, nodes, selectedId])
+  }, [controllerRef, edges, layout, nodes, selectedId, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph || !initializedRef.current || previousLayoutRef.current === layout) return
     previousLayoutRef.current = layout
     graph.layout(layoutOptions(layout)).run()
-  }, [controllerRef, layout])
+  }, [controllerRef, layout, theme])
 
   useEffect(() => {
     const graph = controllerRef.current
     if (!graph) return
     applyGraphFocus(graph, selectedId, true)
-  }, [controllerRef, selectedId])
+  }, [controllerRef, selectedId, theme])
+
+  useEffect(() => {
+    const graph = controllerRef.current
+    if (!graph || !containerRef.current || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const animated = graph.edges().length > 150
+      ? graph.$('node.focus-selected').closedNeighborhood().edges('[flow = 1]')
+      : graph.edges('[flow = 1]')
+    if (animated.empty()) return
+    let frame: number | undefined
+    let visible = true
+    let previous = 0
+    let offset = 0
+    const animate = (time: number) => {
+      if (previous && time - previous >= 32) {
+        offset = (offset + Math.min(time - previous, 100) * 0.016) % 12
+        animated.style('line-dash-offset', -offset)
+        previous = time
+      } else if (!previous) previous = time
+      frame = window.requestAnimationFrame(animate)
+    }
+    const updateVisibility = () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
+      frame = undefined
+      previous = 0
+      if (visible && !document.hidden) frame = window.requestAnimationFrame(animate)
+    }
+    const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(entries => {
+      visible = entries[0]?.isIntersecting ?? true
+      updateVisibility()
+    })
+    observer?.observe(containerRef.current)
+    document.addEventListener('visibilitychange', updateVisibility)
+    updateVisibility()
+    return () => {
+      observer?.disconnect()
+      document.removeEventListener('visibilitychange', updateVisibility)
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
+    }
+  }, [controllerRef, edges, nodes, selectedId, theme])
 
   return <div ref={containerRef} className="kg-canvas" role="application" aria-label="Interactive operational knowledge graph" />
 }

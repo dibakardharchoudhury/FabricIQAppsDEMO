@@ -15,7 +15,7 @@ telemetry moving from a reading-bearing instrument through equipment, system, an
 relationships. Maintenance and other SQL overlays are never treated as telemetry paths.
 
 Solid arrows are governed relationships without a telemetry-path highlight. Static dashed arrows
-are governed signal bindings; they do not mean that a relationship is broken. Thicker moving
+are governed signal bindings; they do not mean that a relationship is broken. Fine moving
 dashes identify topology carrying a loaded reading toward its governed context. Their color follows
 the source node's health. A loaded stale reading still produces a telemetry-bearing path, so
 freshness must be read from the telemetry status and timestamps rather than inferred from dashing.
@@ -23,7 +23,12 @@ freshness must be read from the telemetry status and timestamps rather than infe
 The graph intentionally provides only the 2D Cytoscape presentation. Removing the optional WebGL
 mode avoids Three.js startup, download, GPU, animation-loop, and memory costs while preserving the
 hierarchy, semantic-network, and concentric layouts. Reduced-motion preferences disable animated
-telemetry flow.
+telemetry flow. Telemetry strokes are 1.5 px with a short 4/8 dash pattern and
+time-based, gentle motion. Views over 150 edges animate only the selected
+neighborhood; other relationships remain visible and static. Off-screen/hidden
+views stop their animation loop. Labels disappear below a readable zoom size
+instead of crowding the overview. Expanding a scope lays out newly added nodes
+rather than leaving them stacked at the origin, and theme changes retain the graph.
 
 The graph is not a replacement for the Fabric IQ Ontology, Real-Time Dashboard, or SQL system of
 record. It is an application view that composes those governed sources and preserves their
@@ -92,12 +97,24 @@ for a focused initial graph; use the portal's Ineligible tooltip for each additi
 Do not assume all operational SQL or weather entities are eligible merely because the ontology
 can query them. Large historical facts need not be materialized for every ontology/agent question.
 
-The native graph read measured on FEATURE on October 25 returned 201 nodes / 198 edges, no isolated
+The earlier native graph read measured on FEATURE on October 25 returned 201 nodes / 198 edges, no isolated
 nodes, and three components of 67 nodes each (one per facility). These are legitimate independent
 facility trees, not missing cross-facility relationships. The two parallel native queries took
 51.344 / 54.891 seconds inside Fabric. The app already coalesces reads and caches only in memory;
-metadata/schema reads now also run concurrently, and manual graph refresh refreshes the ontology
-contract. These source changes do not establish a measured reduction in Fabric's cold-query time.
+metadata/schema reads also run concurrently, and manual graph refresh refreshes the ontology
+contract. The subsequent optimization uses one bounded `UNION ALL` query for nodes
+and relationships, preserving isolated nodes and independent node/edge overflow
+checks. Live reads of the same 201-node / 198-edge graph measured **6.043–7.819 seconds**
+including metadata/schema, with **one query submission** (3.477–4.060 seconds).
+The in-memory warm lookup measured **0.025–0.026 ms**, with no additional network request.
+These are observations, not a controlled cold-capacity benchmark or a guaranteed
+Fabric response time.
+
+A browser-only synthetic scaling check expanded the actual canvas to **500 nodes
+and 499 edges in 462 ms**, with 500 distinct positions. Only 51 edges in the
+selected neighborhood animated; reduced motion disabled animation, and a theme
+switch retained all 500 nodes. Synthetic rendering is not native source execution
+evidence, and the 201/198 read is not a large-production-graph benchmark.
 
 Official references:
 
@@ -172,9 +189,15 @@ warnings, truncation, malformed responses, dangling edges, or limits exceeding *
 4,000 edges** fail closed; a partial result is never presented as a complete graph.
 
 For page-load performance, Cytoscape is route-lazy and
-single-flight requests prevent duplicate calls. Discovery's parsed ontology contract is reused,
-avoiding a second definition download on first graph load. Contract and graph caches retain the
-original 15-minute lifetime; the five-minute native poll explicitly refreshes graph instances only.
+single-flight requests prevent duplicate calls. Once the shared provider has a
+verified ontology contract, it starts one non-blocking native graph prefetch,
+independent of STID connectivity. Opening the graph reuses that request/result
+rather than starting the cold read at navigation. A failed prefetch is logged;
+opening the page retries and displays any source error, never a fabricated graph.
+Discovery's parsed ontology contract is reused, avoiding a second definition
+download on first graph load. The contract TTL is 15 minutes; native topology has
+a five-minute in-memory TTL matching its visible-page poll. Manual Refresh
+bypasses both caches. Nothing is persisted across a full SPA/browser reload.
 Workspace discovery changes restart obsolete reads instead of displaying a cache-revision error.
 Native graph retries are independent of Lakehouse/STID connectivity.
 The page defaults to a selected-asset projection;

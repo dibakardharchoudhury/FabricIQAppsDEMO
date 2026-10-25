@@ -52,10 +52,12 @@ export function telemetryFlowEdgeIds(nodes: KnowledgeNode[], edges: KnowledgeEdg
   const outgoing = new Map<string, KnowledgeEdge[]>()
   for (const edge of edges) {
     if (!topologyEdges.has(edge.type)) continue
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge])
+    const group = outgoing.get(edge.source)
+    if (group) group.push(edge)
+    else outgoing.set(edge.source, [edge])
   }
-  while (queue.length) {
-    const nodeId = queue.shift()!
+  for (let index = 0; index < queue.length; index++) {
+    const nodeId = queue[index]
     for (const edge of outgoing.get(nodeId) ?? []) {
       flowing.add(edge.id)
       if (visited.has(edge.target)) continue

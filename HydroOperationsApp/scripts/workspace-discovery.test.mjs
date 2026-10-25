@@ -74,7 +74,8 @@ function graphService(onRequest = async () => undefined) {
       if (url.includes('/executeQuery')) return Response.json({
         status: { code: '00000' }, result: { kind: 'TABLE', data:
           JSON.parse(init.body).query.startsWith('MATCH (n)') ? [{
-            node: JSON.stringify({ oid: 'f1', labels: ['facilities'], properties: { facility_id: 'F1' } }),
+            kind: 'node', element: JSON.stringify({ oid: 'f1', labels: ['facilities'], properties: { facility_id: 'F1' } }),
+            source: '', target: '',
           }] : [],
         },
       })
@@ -194,7 +195,7 @@ test('graph loading reuses one definition and coalesces concurrent native reques
   assert.deepEqual(graphs[0], graphs[1])
   assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
   assert.equal(requests.filter(url => url.endsWith('/items')).length, 0, 'Explicit graph lineage must bypass workspace discovery')
-  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 1)
   const coldRequests = requests.length
   await service.queryOntologyGraph()
   await service.queryOntologyContract()
@@ -242,12 +243,23 @@ test('workspace refresh does not invalidate a same-ontology contract request in 
   assert.equal(current.id, topology.ontologyId)
 })
 
-test('periodic native refresh bypasses only graph cache, not the valid ontology definition', async () => {
+test('manual refresh verifies the current ontology definition and performs one native query', async () => {
   const { service, requests } = graphService()
   await service.queryOntologyGraph()
   await service.queryOntologyGraph(true)
-  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 1)
-  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 4)
+  assert.equal(requests.filter(url => url.endsWith('/getDefinition')).length, 2)
+  assert.equal(requests.filter(url => url.includes('/executeQuery')).length, 2)
+})
+
+test('a prefetched native graph is reused immediately when the graph page opens', async () => {
+  const { service, requests } = graphService()
+  await service.queryOntologyContract()
+  await service.queryOntologyGraph()
+  const warmedRequests = requests.length
+  const graph = await service.queryOntologyGraph()
+  assert.equal(graph.nodes.length, 1)
+  assert.equal(requests.length, warmedRequests)
+  assert.match(hydroDataHookSource, /void queryOntologyGraph\(\)\.catch/)
 })
 
 test('native failures are propagated and a later read retries instead of returning stale graph data', async () => {

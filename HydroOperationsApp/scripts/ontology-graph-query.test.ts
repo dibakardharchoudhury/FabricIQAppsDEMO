@@ -33,13 +33,17 @@ const facility = element('f1', ['facilities'], { facility_id: 'F1' })
 const system = element('s1', ['plant#systems'], { system_id: 'S1' })
 const nodeRows = [{ node: facility }, { node: system }]
 const edgeRows = [{ source: system, target: facility, relationship: element('r1', ['plant#systems_in_facilities']) }]
+const topologyRows = [
+  ...nodeRows.map(row => ({ kind: 'node', element: row.node, source: '', target: '' })),
+  ...edgeRows.map(row => ({ kind: 'edge', element: row.relationship, source: row.source, target: row.target })),
+]
 const table = (data: object[], nextPage?: string) => ({ status: { code: '00000' }, result: { kind: 'TABLE', data, ...(nextPage ? { nextPage } : {}) } })
 const endpoint = `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphModels/${graphModelId}/executeQuery?beta=true`
 
 test('independent graph metadata and schema reads start concurrently', async () => {
   let releaseMetadata: (() => void) | undefined
   const metadataReady = new Promise<void>(resolve => { releaseMetadata = resolve })
-  const graph = await queryBoundOntologyGraph(binding, ontology, async (url, init) => {
+  const graph = await queryBoundOntologyGraph(binding, ontology, async url => {
     if (url.endsWith(graphModelId)) {
       await metadataReady
       return Response.json({ id: graphModelId, type: 'GraphModel', displayName: 'Verified graph' })
@@ -48,7 +52,7 @@ test('independent graph metadata and schema reads start concurrently', async () 
       releaseMetadata!()
       return Response.json(schema)
     }
-    return Response.json(table(JSON.parse(String(init?.body)).query.includes('MATCH (n)') ? nodeRows : edgeRows))
+    return Response.json(table(topologyRows))
   })
   assert.equal(graph.nodes.length, 2)
   assert.equal(graph.edges.length, 1)
@@ -132,9 +136,11 @@ test('bound query validates graph metadata/schema, reads native nodes/edges and 
     if (url.endsWith(graphModelId)) return Response.json({ id: graphModelId, type: 'GraphModel', displayName: 'Verified graph' })
     if (url.includes('getQueryableGraphType')) return Response.json(schema)
     const query = JSON.parse(String(init?.body)).query as string
-    return Response.json(table(query.includes('AS `node`') ? nodeRows : edgeRows))
+    assert.match(query, /UNION ALL/)
+    return Response.json(table(topologyRows))
   })
-  assert.equal(calls.length, 4)
+  assert.equal(calls.length, 3)
+  assert.equal(calls.filter(url => url.includes('/executeQuery')).length, 1)
   assert.equal(graph.ontologyId, ontologyId)
   assert.equal(graph.nodes.length, 2)
   assert.equal(graph.nodes[1].entityTypeId, 'system-type')
@@ -142,6 +148,39 @@ test('bound query validates graph metadata/schema, reads native nodes/edges and 
   assert.equal(graph.edges[0].sourceOid, 's1')
   assert.equal(graph.edges[0].targetOid, 'f1')
   assert.ok(calls.every(url => url.includes(`/workspaces/${workspaceId}/graphModels/${graphModelId}`)))
+})
+
+test('combined topology preserves isolated nodes and fails closed on unknown rows or per-kind overflow', async () => {
+  const read = (rows: object[]) => queryBoundOntologyGraph(binding, ontology, async url => {
+    if (url.endsWith(graphModelId)) return Response.json({ id: graphModelId, type: 'GraphModel', displayName: 'Verified graph' })
+    if (url.includes('getQueryableGraphType')) return Response.json(schema)
+    return Response.json(table(rows))
+  })
+  const isolated = await read(topologyRows.slice(0, 2))
+  assert.equal(isolated.nodes.length, 2)
+  assert.equal(isolated.edges.length, 0)
+  await assert.rejects(read([{ kind: 'unknown' }]), /unknown topology row/)
+  await assert.rejects(read(Array.from({ length: 2001 }, () => topologyRows[0])), /2000-node/)
+  await assert.rejects(read(Array.from({ length: 4001 }, () => topologyRows[2])), /4000-edge/)
+})
+
+test('one combined read accepts the full 2000-node and 4000-edge budgets together', async () => {
+  const systems = Array.from({ length: 1999 }, (_, index) =>
+    element(`system-${index}`, ['plant#systems'], { system_id: `S${index}` }))
+  const rows = [
+    ...[facility, ...systems].map(item => ({ kind: 'node', element: item, source: '', target: '' })),
+    ...Array.from({ length: 4000 }, (_, index) => ({
+      kind: 'edge', element: element(`edge-${index}`, ['plant#systems_in_facilities']),
+      source: systems[index % systems.length], target: facility,
+    })),
+  ]
+  const graph = await queryBoundOntologyGraph(binding, ontology, async url => {
+    if (url.endsWith(graphModelId)) return Response.json({ id: graphModelId, type: 'GraphModel', displayName: 'Verified graph' })
+    if (url.includes('getQueryableGraphType')) return Response.json(schema)
+    return Response.json(table(rows))
+  })
+  assert.equal(graph.nodes.length, 2000)
+  assert.equal(graph.edges.length, 4000)
 })
 
 test('wrong graph metadata and ontology identities fail before graph execution', async () => {

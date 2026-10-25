@@ -46,6 +46,13 @@ export function parseGraphBinding(value: string | undefined, workspaceId: string
 
 type GraphReader = (url: string, init?: RequestInit) => Promise<Response>
 
+// Retain both overflow sentinels before enforcing the per-kind visualization budgets.
+export const NATIVE_GRAPH_QUERY = `MATCH (n)
+RETURN 'node' AS \`kind\`, TO_JSON_STRING(n) AS \`element\`, '' AS \`source\`, '' AS \`target\` LIMIT 2001
+UNION ALL
+MATCH (source)-[\`relationship\`]->(target)
+RETURN 'edge' AS \`kind\`, TO_JSON_STRING(\`relationship\`) AS \`element\`, TO_JSON_STRING(source) AS \`source\`, TO_JSON_STRING(target) AS \`target\` LIMIT 6002`
+
 async function jsonResponse(response: Response, operation: string): Promise<unknown> {
   if (response.status === 204) throw new Error(`${operation} is not ready (204 No Content). Materialize and refresh the selected ontology's graph in Fabric before querying.`)
   if (!response.ok) throw new Error(`${operation} failed (${response.status}). Verify Fabric permissions and graph materialization/refresh readiness.`)
@@ -166,10 +173,17 @@ export async function queryBoundOntologyGraph(
   }
   const schema = resolveGraphSchema(queryableSchema, ontology, binding)
   const endpoint = `${base}/executeQuery?beta=true`
-  const [nodes, edges] = await Promise.all([
-    executeGraphRows(endpoint, 'MATCH (n) RETURN TO_JSON_STRING(n) AS `node` LIMIT 2001', request, 2000),
-    executeGraphRows(endpoint, 'MATCH (source)-[`relationship`]->(target) RETURN TO_JSON_STRING(source) AS `source`, TO_JSON_STRING(`relationship`) AS `relationship`, TO_JSON_STRING(target) AS `target` LIMIT 4001', request, 4000),
-  ])
+  const rows = await executeGraphRows(endpoint, NATIVE_GRAPH_QUERY, request, 6002)
+  if (rows.some(row => row.kind !== 'node' && row.kind !== 'edge')) {
+    throw new Error('Graph query returned an unknown topology row type. Incomplete topology will not be displayed.')
+  }
+  const nodes = rows.filter(row => row.kind === 'node').map(row => ({ node: row.element }))
+  const edges = rows.filter(row => row.kind === 'edge').map(row => ({
+    source: row.source, relationship: row.element, target: row.target,
+  }))
+  if (nodes.length > 2000 || edges.length > 4000) {
+    throw new Error('Ontology graph exceeds the 2000-node / 4000-edge visualization limit. Use a smaller projection; partial topology will not be displayed.')
+  }
   const graph = parseOntologyGraph(binding.graphModelId, metadata.displayName, nodes, edges)
   for (const node of graph.nodes) {
     const types = schema.nodes.filter(type => type.labels.every(label => node.labels.includes(label)))
