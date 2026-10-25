@@ -1,6 +1,35 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Deployed
+> **Status:** Validation blocked
+
+## Current SQL rollout validation (October 25, 2026)
+
+This section supersedes the historical validation below for the pending SQL
+lifecycle app rollout. Keep the existing FEATURE tenant/workspace/capacity,
+SPA, and Foundry project. No replacement SQL database or retirement was
+authorized; preserve the existing database identity and immutable name.
+
+- `npm run validate-env`: passed again.
+- `npm run build`: passed, including TypeScript compilation and Vite build
+  (34.60 seconds). This local compilation used Node 26.12.1; the canonical
+  deployment orchestrator must still resolve Node 24 for its production build.
+  Existing mixed-import and bundle-size warnings are nonblocking.
+- Source is unchanged since the 69 focused SQL/deployment/setup tests passed;
+  no broad suite was rerun.
+- Static role verification: this continuation adds no IaC, Azure resources,
+  identities, or role assignments. Existing target selection remains unchanged.
+- Read-only Azure CLI account check verified the selected tenant. A subsequent
+  read-only lookup of the existing SPA failed with the exact Entra challenge
+  `InteractionRequired / TokenCreatedWithOutdatedPolicies`.
+- Interactive sign-in and a replacement SQL migration were offered through the
+  user-input tool; the user was unavailable. No credentials, cache manipulation,
+  alternate registration, or consent workaround can substitute for that sign-in.
+- No deployment command was rerun after the failed authentication prerequisite.
+  Rayfin deployment state and the hosted application were not changed.
+
+Validation is **not** complete. Do not mark this plan Validated or claim the
+updated app was deployed. Resume the canonical deployment only after fresh
+Microsoft sign-in and completion of the validation/deployment workflow.
 
 ## Current approved deployment-optimization validation (October 24, 2026)
 

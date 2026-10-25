@@ -762,3 +762,13 @@ no new app deployment success receipt: the prior live app remains, and the
 updated app source is pushed but not redeployed. Weather provider authentication
 and the previously recorded runtime-acceptance limits remain unresolved.
 The protected V3 workspace was not modified.
+
+The subsequent continuation compiled the current app successfully
+(`npm run build`, Vite 34.60 seconds; local Node 26.12.1). This does not replace
+the canonical deployer's Node 24 production build. A bounded, noninteractive
+lookup of the existing SPA confirmed the exact Entra failure:
+`InteractionRequired / TokenCreatedWithOutdatedPolicies`. Interactive sign-in
+cannot be completed unattended. The user-input tool reported the user
+unavailable for both sign-in and replacement-migration approval, so no new
+SQL database, deletion, or deployment workaround was attempted. The deployment
+plan remains validation-blocked; the hosted app is unchanged.
