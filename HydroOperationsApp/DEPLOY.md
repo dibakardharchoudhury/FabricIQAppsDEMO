@@ -71,7 +71,7 @@ source path is reused by item identity, preserving custom instructions, selectio
 and tables. Naming, folder placement and source publication require readback.
 Unrelated name collisions or duplicate matching sources fail rather than being adopted.
 NB11 and the reference SQL use insert-only MERGEs: existing records are not reset.
-NB11 verifies every pre-existing field/ID and minimum demo counts before committing
+NB11 verifies every pre-existing ID and known operational field and minimum demo counts before committing
 one transaction, and persists a count/hash receipt. Failed preservation rolls back.
 
 On the first existing-workspace app deployment, NB11 checks the selected v2 ontology
@@ -1337,6 +1337,13 @@ every target needs its own ontology-managed graph and matching explicit binding 
   changes. Final Entra checks use the same bounded recovery after deployment; persistent rejection
   then fails validation with guidance to upgrade the CLI or review Conditional Access. See Microsoft's
   [Azure CLI sign-in guidance](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+  Successful CLI sign-in alone does not prove Microsoft Graph access; verify the existing
+  SPA before continuing. A resource-specific CAE recovery must use the actual resource
+  claims challenge, not fabricated claims or weaker tenant policies. A tenant-only login
+  can leave a placeholder default account whose ID is the tenant ID, not an Azure
+  subscription. Refresh subscription discovery and select the existing Foundry subscription,
+  or use the already-supported `HYDRO_AZURE_SUBSCRIPTION_ID` selection. Verify its tenant
+  and Enabled state; never create a different project to work around that placeholder.
 - **Two Entra identities** — a **pre-provisioned notebook SPN** (secret in Key Vault, used by the pipelines) and a delegated **app SPA** (no secret, used by the browser). See [Identities and permissions](#identities-and-permissions).
 - **Fabric tenant settings** (Admin, one‑time): *Service principals can use Fabric APIs* and *Copilot / AI* enabled — needed by `Pipe_Setup` and the Data Agent ([root README](../README.md)).
 - **Email alerts:** the Outlook email activity needs a mailbox-backed OAuth2 connection, not a notebook service-principal connection. RTI_010 retains Operations Agent, playbook/actions, Teams, and `Pipe_SendEmailAlert` provisioning against v2. Create the mailbox connection and configure destinations as described in the [root README](../README.md); verify actual delivery separately.

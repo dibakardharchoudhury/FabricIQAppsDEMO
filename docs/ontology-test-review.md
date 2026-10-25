@@ -772,3 +772,56 @@ cannot be completed unattended. The user-input tool reported the user
 unavailable for both sign-in and replacement-migration approval, so no new
 SQL database, deletion, or deployment workaround was attempted. The deployment
 plan remains validation-blocked; the hosted app is unchanged.
+
+### Authentication recovered and FEATURE app redeployed
+
+The user subsequently returned and requested interactive authentication. The
+target-tenant sign-in completed. Initial Microsoft Graph requests still rejected
+tokens, including claims-aware attempts; a later direct Graph probe and Azure CLI
+lookup both passed. The existing SPA was verified in the correct tenant. No
+Conditional Access policy, directory grant, app registration, or vault network
+setting was changed. Individual scope/broker changes are not proven to be the
+cause of recovery.
+
+Tenant-only sign-in left a placeholder default account with the tenant ID as its
+subscription ID. A deployment attempt stopped during Foundry discovery with
+`SubscriptionNotFound`, before creating another project. Refreshing subscription
+discovery and selecting the verified existing Foundry subscription restored the
+intended context. The successful run reused the existing FEATURE project and all
+five specialist agents, including `hydro-weather-agent:1`; Hosted coordinator image
+`src-247959b77642fffb` was already current and was not republished.
+
+The canonical deployment of feature source `853e7e8` completed on October 25,
+2026, from 09:59:55 to 10:09:27 UTC, with both `SUCCESS` and `DEPLOYED_APP_URL`.
+The app is published at
+`https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net`.
+
+| Section | Seconds |
+| --- | ---: |
+| Tenant/workspace/capacity | 14.766 |
+| SPA discovery and redirect baseline | 15.359 |
+| Configuration and existing-agent verification | 135.391 |
+| Rayfin authentication | 1.687 |
+| App build and static publishing | 155.844 |
+| Redirect configuration and backend runtime reapplication | 109.922 |
+| Browser live-auth setup | 72.875 |
+| Hosting, endpoint and sign-in readiness | 66.250 |
+| **Total** | **572.094 (9m 32s)** |
+
+The deployer reused the verified published SQL source without running NB11 or
+demo DML again. Runtime/CORS, DAB/SQL and both connectors were reapplied; all 40
+existing SPA redirects and the delegated permission contract were verified.
+Required preflights returned 200. GraphQL POST returned 200; unauthenticated token
+POST returned 400, and both protected connector POSTs returned 401 as expected.
+Those protected responses prove transport readiness, not successful source queries.
+
+Hosting was verified as the identity-matched private sign-in gate, not an
+authenticated app shell. A separate browser reload reached the same gate; automated
+sign-in-button interaction timed out. No authenticated operational-data, Lakehouse,
+agent-answer, work-order-write or alert-delivery acceptance is claimed.
+
+This successful deployment supersedes the earlier app sign-in blocker. SQL folder
+placement and immutable existing identity/name remain as recorded above; no
+replacement database or deletion was authorized. The AppBackend-managed child
+remains retained. Weather provider authentication and the separate runtime
+acceptance limits are still unresolved. V3 was not modified.

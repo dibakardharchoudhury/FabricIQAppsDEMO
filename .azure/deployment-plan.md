@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validated
+> **Status:** Deployed
 
 ## Current SQL rollout validation (October 25, 2026)
 
@@ -55,6 +55,36 @@ Pre-deployment validation is complete. Execute only the canonical deployment
 command recorded below; its own Node 24 build, live-auth preservation,
 capacity, runtime/CORS, SQL/connector and POST-readiness checks remain mandatory.
 A successful authentication check is not a deployment success receipt.
+
+### Verified canonical redeployment receipt
+
+The canonical command completed successfully on October 25, 2026,
+09:59:55-10:09:27 UTC, in 572.094 seconds (9 minutes 32 seconds), from
+feature source `853e7e8`. It printed both `SUCCESS` and
+`DEPLOYED_APP_URL=https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net`.
+
+The tenant-only Graph sign-in had left a placeholder default account whose ID
+was the tenant ID. Before the successful run, subscription discovery was
+refreshed and the existing Foundry subscription
+`dac16501-5c35-4c91-aff0-11af8de17f2e` was selected after verifying its tenant
+and Enabled state. No new project, resource, or grant was created.
+
+- All five existing prompt agents were verified, including `hydro-weather-agent:1`.
+  Hosted `hydro-orchestrator` retained current image `src-247959b77642fffb`.
+- The verified published SQL source was reused; no NB11 rerun or demo DML occurred.
+- AppBackend runtime/CORS, SQL configuration and both connectors were reapplied.
+- All 40 existing SPA redirects and the configured delegated scopes were verified.
+- Required browser preflights passed. `/graphql` POST returned 200; the
+  unauthenticated token/connector POSTs returned their expected protected
+  validation responses, not successful data-query results.
+- Hosting was verified as the identity-matched protected sign-in gate. A separate
+  browser reload also reached that gate; automated sign-in-button interaction
+  timed out. Authenticated app data access and agent execution were not certified.
+- Existing SQL identity/name and the AppBackend-managed child were retained.
+  No replacement migration or database deletion was authorized. V3 was unchanged.
+
+This supersedes the earlier authentication-blocked deployment status, not the
+separately documented Weather provider or business-runtime acceptance limits.
 
 ## Current approved deployment-optimization validation (October 24, 2026)
 
