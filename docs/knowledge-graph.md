@@ -110,11 +110,19 @@ The in-memory warm lookup measured **0.025–0.026 ms**, with no additional netw
 These are observations, not a controlled cold-capacity benchmark or a guaranteed
 Fabric response time.
 
-A browser-only synthetic scaling check expanded the actual canvas to **500 nodes
-and 499 edges in 462 ms**, with 500 distinct positions. Only 51 edges in the
+A browser-only synthetic scaling check applied a **500-node / 499-edge scope
+update in 462 ms**; after layout settled, all 500 positions were distinct. Only 51 edges in the
 selected neighborhood animated; reduced motion disabled animation, and a theme
 switch retained all 500 nodes. Synthetic rendering is not native source execution
 evidence, and the 201/198 read is not a large-production-graph benchmark.
+
+The optimization is committed as `b921a37`. Its app-only publication attempt
+stopped at tenant SPA verification on October 25, before Rayfin state changed:
+Continuous Access Evaluation still rejected Azure CLI after a clean tenant
+sign-in. These measurements validate the revised native reader and local canvas,
+**not publication of the revised hosted UI**. Resume the canonical app-only
+deployment after the authentication prerequisite is resolved; do not bypass the
+SPA verification or change tenant access policies to force a deployment.
 
 Official references:
 
