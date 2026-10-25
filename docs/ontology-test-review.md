@@ -39,9 +39,10 @@ deployment verification and remaining acceptance limits are recorded below.
   `ontology_key`; emit exactly one TMDL `keyProperty`. Preserve all natural members,
   including observation time and forecast reference/valid time.
 - Provision independent operational SQL during either NB01 setup variant;
-  fresh items now use `RTI_Demo_SQLDatabase_<suffix>`. FEATURE retains its existing
-  immutable `HydroOperationalStore` identity. NB11 handles the explicit, verified
-  legacy-record cutover for an existing workspace.
+  fresh items now use `RTI_Demo_SQLDatabase_<suffix>`. FEATURE now uses
+  `RTI_Demo_SQLDatabase_V11` in `RTI_DEMO_V11`; the immutable
+  `HydroOperationalStore` is retained as a write-blocked archive. NB11 handles
+  the explicit, verified legacy-record cutover for an existing workspace.
 - Route operational reads and approved writes through the delegated
   `fabric-sqldatabase` connector. Keep the original database and every original row.
 - Preserve compatible custom Data Agent SQL content, deselect only the five
@@ -1007,3 +1008,71 @@ Final publication sections:
   untouched. The earlier authenticated-app, Weather provider HTTP 401,
   dedicated map-chat and agent execution/delivery limits remain unresolved;
   this review does not certify them.
+
+## October 25: canonical SQL naming cutover completed
+
+This supersedes the earlier approval-unavailable/legacy-active statements above.
+Source changes `cedb097` and `fe6ded4` completed the non-destructive replacement
+and dependent GraphQL source reconciliation in FEATURE only.
+
+- Active operational SQL is now **`RTI_Demo_SQLDatabase_V11`**
+  (`9b3dfea4-0934-4122-aaa4-1d7f17a183bd`) in **`RTI_DEMO_V11`**.
+  Exact field/ID comparisons and per-table SHA-256 receipts verified all **75**
+  records. The former `HydroOperationalStore`
+  (`7972fa8c-e2cd-4c9a-bdd6-053b37293f19`) remains a write-blocked archive with
+  an explicit replacement marker, not a second active operational store.
+  The platform-managed AppBackend child SQL is retained separately; it is not
+  the operational source and was not deleted.
+- Rebound only the operational expression/source metadata in the existing
+  generation-2 ontology. Preserved core bindings, native graph and unknown parts.
+  Published both NB01 variants and NB11 with live dependency metadata preserved;
+  executed **only NB11**, without reseeding. Its successful run took
+  **333.921 seconds** (12:17:49.999527 / 12:23:23.920071 UTC).
+  New Data Agent SQL selections passed draft/published readback; the archived
+  base tables were deselected and compatible custom content retained.
+- Standalone Foundry setup reused the existing project and image
+  `src-247959b77642fffb`, activating coordinator **version 11** against the new
+  source identity. It completed in **327.891 seconds**
+  (12:23:42.781092 / 12:29:10.664296 UTC). No new project was created.
+- The first app attempt failed after **429.250 seconds** because Fabric's
+  retained GraphQL definition still exposed the archived SQL's five node types.
+  This was a SQL API attachment conflict, not native graph materialization.
+  The deployer now handles that exact duplicate-node failure by removing only
+  the archived managed projections, verifying readback, attaching their unchanged
+  projections to the verified replacement and verifying again. It backs up the
+  definition and preserves custom objects, mappings, unrelated sources and parts.
+  Other failures still propagate.
+- The canonical app-only retry completed **12:49:06.249643 /
+  13:00:59.928798 UTC**, **713.672 seconds**, emitting `SUCCESS` and
+  `DEPLOYED_APP_URL`. This includes the one-time attachment repair; it is not a
+  claimed deployment speedup. Both connectors applied successfully, all **40**
+  SPA redirects were preserved, and endpoint/CORS/preflight/POST checks passed.
+
+| App publication section | Seconds |
+|---|---:|
+| Tenant/workspace/capacity checks | 19.750 |
+| SPA discovery and redirect preservation | 17.406 |
+| Configuration and read-only prepared-service checks | 149.078 |
+| Rayfin authentication | 1.391 |
+| Static build/publication, existing backend reused | 191.031 |
+| Runtime/connectors, SQL attachment repair and redirect configuration | 192.391 |
+| Browser sign-in setup, permissions and consent | 81.640 |
+| Hosting, endpoint and CORS readiness | 60.985 |
+
+After deployment, actual delegated connector reads against the new SQL returned
+**12 work orders, 6 notifications, 30 inspections, 12 spare parts and 15 asset
+models**. No writes were performed. The verification client required both
+`GraphQLApi.Execute.All` and `Item.Execute.All`; a single-scope diagnostic failed
+at token exchange and was not treated as a data-source failure.
+
+The GeoContext Lakehouse and its SQL endpoint remain verified in `RTI_DEMO_V11`.
+The local workflow keeps source setup and Foundry preparation separate from
+final app publication; this cutover did not rerun core ingestion or rebuild the
+native graph. V3 was not changed.
+
+App: <https://brisk-ford-6c2fad844b-swedencentral.webapp.fabricapps.net>.
+These checks verify publication and operational connector execution, not
+authenticated browser UX, agent inference, approved writes or Teams/email
+delivery. The separately recorded Weather provider HTTP 401, dedicated Map Data
+Agent prerequisite and expanded graph portal-eligibility limits are not resolved
+by this naming cutover.
