@@ -220,7 +220,6 @@ class HostedSourceBootstrapTests(unittest.TestCase):
     def test_missing_published_sql_bootstraps_without_demo_dml_then_verifies_readback(self):
         DEPLOY.ensure_hosted_source_prerequisites("tenant", self.workspace)
         self.assertEqual(self.post.call_args.kwargs["json"], {"parameters": [
-            {"name": "sql_db_item_name", "value": "HydroOperationalStore", "type": "Text"},
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
             {"name": "provision_shared_store", "value": True, "type": "Boolean"},
             {"name": "legacy_sql_db_item_id", "value": self.legacy, "type": "Text"},
@@ -1776,6 +1775,18 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             return DEPLOY.resolve_public_artifact_config(
                 self.workspace, self.tenant, self.config if configured is None else configured
             )
+
+    def test_named_shared_store_is_discovered_without_the_legacy_display_name(self):
+        from operational_store_support import OPERATIONAL_STORE_DESCRIPTION
+        item_id = "7972fa8c-e2cd-4c9a-bdd6-053b37293f19"
+        self.items.append({
+            "id": item_id, "type": "SQLDatabase", "displayName": "RTI_Demo_SQLDatabase_V3",
+        })
+        self.details[item_id] = {"id": item_id, "description": OPERATIONAL_STORE_DESCRIPTION}
+        self.assertEqual(self.resolve()["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"], item_id)
+        self.details[item_id]["description"] = "Unrelated item"
+        with self.assertRaisesRegex(DEPLOY.DeployError, "ownership"):
+            self.resolve()
 
     def test_connector_uses_live_sql_endpoint_not_lakehouse_or_stale_override(self):
         self.config["RAYFIN_PUBLIC_LAKEHOUSE_SQL_ENDPOINT_ID"] = "old-endpoint"

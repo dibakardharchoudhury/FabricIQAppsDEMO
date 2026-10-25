@@ -1,8 +1,12 @@
 import base64
+import ast
+import contextlib
 import copy
+import io
 import json
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import operational_store_support as support
 from ontology_notebook_support import _verify_definition
@@ -10,6 +14,158 @@ from ontology_notebook_support import _verify_definition
 
 def part(path, text):
     return {"path": path, "payload": base64.b64encode(text.encode()).decode(), "payloadType": "InlineBase64"}
+
+
+class OperationalItemLifecycleTests(unittest.TestCase):
+    def prepare(self, existing=True, owned=True, move_succeeds=True):
+        self.item = {
+            "id": "operational-sql", "workspaceId": "workspace", "type": "SQLDatabase",
+            "displayName": support.OPERATIONAL_STORE_NAME, "folderId": None,
+            "description": support.OPERATIONAL_STORE_DESCRIPTION if owned else "Unrelated database",
+            "properties": {"serverFqdn": "authoritative.database.fabric.microsoft.com",
+                           "databaseName": "unchanged-physical-database"},
+        }
+        self.calls = []
+        def request(method, path, payload=None):
+            self.calls.append((method, path, payload))
+            body = self.item
+            status = 200
+            if method == "GET" and path == "workspaces/workspace/items":
+                body = {"value": [copy.deepcopy(self.item)] if existing else []}
+            elif method == "GET" and path.startswith("workspaces/workspace/items?rootFolderId="):
+                body = {"value": [copy.deepcopy(self.item)] if self.item["folderId"] == "demo-folder" else []}
+            elif method == "POST" and path == "workspaces/workspace/sqlDatabases":
+                self.item.update(payload)
+                status = 201
+            elif method == "PATCH":
+                self.item.update(payload)
+            elif method == "POST" and path.endswith("/move"):
+                if move_succeeds:
+                    self.item["folderId"] = payload["targetFolderId"]
+            return Mock(status_code=status, json=lambda: copy.deepcopy(body))
+        return request
+
+    def test_marked_legacy_item_keeps_its_immutable_name_and_moves_without_recreation(self):
+        item = support.ensure_operational_item(
+            self.prepare(), "workspace", env_suffix="V11", folder_id="demo-folder")
+        self.assertEqual(item["id"], "operational-sql")
+        self.assertEqual(item["displayName"], "HydroOperationalStore")
+        self.assertEqual(item["folderId"], "demo-folder")
+        self.assertEqual(item["properties"]["databaseName"], "unchanged-physical-database")
+        self.assertIn(("GET", "workspaces/workspace/items?rootFolderId=demo-folder&recursive=false", None),
+                      self.calls)
+        self.assertFalse(any(method == "POST" and path.endswith("/sqlDatabases")
+                             for method, path, _ in self.calls))
+        self.assertFalse(any(method == "PATCH" for method, _, _ in self.calls))
+
+    def test_fresh_setup_creates_named_item_and_moves_it_into_the_demo_folder(self):
+        item = support.ensure_operational_item(
+            self.prepare(existing=False), "workspace", env_suffix="V12", folder_id="demo-folder")
+        self.assertEqual(item["displayName"], "RTI_Demo_SQLDatabase_V12")
+        self.assertIn(("POST", "workspaces/workspace/sqlDatabases", {
+            "displayName": "RTI_Demo_SQLDatabase_V12",
+            "description": support.OPERATIONAL_STORE_DESCRIPTION}), self.calls)
+        self.assertEqual(item["folderId"], "demo-folder")
+
+    def test_unrelated_legacy_name_is_not_adopted(self):
+        with self.assertRaisesRegex(RuntimeError, "unrelated"):
+            support.ensure_operational_item(
+                self.prepare(owned=False), "workspace", env_suffix="V11", folder_id="demo-folder")
+        self.assertTrue(all(method == "GET" for method, _, _ in self.calls))
+
+    def test_failed_folder_readback_is_not_reported_as_success(self):
+        with self.assertRaisesRegex(RuntimeError, "folder readback"):
+            support.ensure_operational_item(
+                self.prepare(move_succeeds=False), "workspace", env_suffix="V11", folder_id="demo-folder")
+
+    def test_names_require_an_explicit_safe_suffix(self):
+        self.assertEqual(support.operational_store_name("V11"), "RTI_Demo_SQLDatabase_V11")
+        for suffix in ("", None, "../V11", "V11;drop", "_V11"):
+            with self.subTest(suffix=suffix), self.assertRaises(RuntimeError):
+                support.operational_store_name(suffix)
+        self.assertTrue(support.is_operational_store_name("RTI_Demo_SQLDatabase_V11"))
+        self.assertFalse(support.is_operational_store_name("hydro-operations-ui"))
+
+    def test_sql_source_path_survives_display_name_changes(self):
+        path = "Files/Config/draft/HydroOperationalStore/datasource.json"
+        source = {"type": "sql_database", "artifactId": "sql", "workspaceId": "workspace",
+                  "custom": "preserve"}
+        parts = [part(path, json.dumps(source))]
+        self.assertEqual(support.operational_source_path(
+            parts, "workspace", "sql", "Files/Config/draft/new-name/datasource.json"), path)
+        self.assertEqual(json.loads(base64.b64decode(parts[0]["payload"])), source)
+
+    def test_duplicate_sql_sources_and_conflicting_workspace_are_rejected(self):
+        source = {"type": "sql_database", "artifactId": "sql", "workspaceId": "other"}
+        paths = [f"Files/Config/draft/{name}/datasource.json" for name in ("old", "new")]
+        with self.assertRaisesRegex(RuntimeError, "workspace identity"):
+            support.operational_source_path([part(paths[0], json.dumps(source))], "workspace", "sql", paths[1])
+        source["workspaceId"] = "workspace"
+        with self.assertRaisesRegex(RuntimeError, "Multiple"):
+            support.operational_source_path(
+                [part(path, json.dumps(source)) for path in paths], "workspace", "sql", paths[1])
+
+    def test_seed_only_inserts_and_matches_the_sql_reference(self):
+        root = Path(__file__).resolve().parents[2]
+        notebook = root / "Notebooks" / "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py"
+        assignment = next(node for node in ast.parse(notebook.read_text(encoding="utf-8")).body
+                          if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == "SEED_SQL"
+                                  for target in node.targets))
+        seed = ast.literal_eval(assignment.value)
+        reference = (root / "HydroOperationsApp" / "sql" / "seed-operational-data.sql").read_text(encoding="utf-8")
+        standalone_body = reference[reference.index("SET NOCOUNT ON;"):].partition("COMMIT TRANSACTION;")[0]
+        self.assertEqual(seed.strip(), standalone_body.replace("BEGIN TRANSACTION;\n", "", 1).strip())
+        self.assertEqual(seed.count("WHEN NOT MATCHED THEN INSERT"), 5)
+        self.assertNotIn("WHEN MATCHED", seed)
+
+    def test_seed_checks_existing_records_before_commit(self):
+        connection = Mock()
+        connection.cursor.return_value.fetchmany.side_effect = (
+            [[("existing", "original")]] * 5 + [
+                [("existing", "original")] + [(f"new-{i}", "demo") for i in range(support.OPERATIONAL_DEMO_COUNTS[table] - 1)]
+                for table in support.OPERATIONAL_COLUMNS])
+        receipt = support.seed_operational_records(connection, "INSERT MISSING DEMO ROWS")
+        self.assertTrue(receipt["existing_records_preserved"])
+        self.assertEqual(receipt["tables"]["WorkOrders"], {"before": 1, "after": 12})
+        connection.commit.assert_called_once()
+        connection.rollback.assert_not_called()
+
+    def test_seed_rolls_back_if_an_existing_field_changes(self):
+        connection = Mock()
+        connection.cursor.return_value.fetchmany.side_effect = (
+            [[("existing", "original")]] * 5 + [[("existing", "modified")]] * 5)
+        with self.assertRaisesRegex(RuntimeError, "changed existing WorkOrders"):
+            support.seed_operational_records(connection, "UNEXPECTED MUTATION")
+        connection.commit.assert_not_called()
+        connection.rollback.assert_called_once()
+
+    def test_fresh_notebook_initializes_and_seeds_without_a_legacy_database(self):
+        root = Path(__file__).resolve().parents[2]
+        notebook = root / "Notebooks" / "RTI_011_seed_sql_wire_graphql_agent.Notebook" / "notebook-content.py"
+        preparation = next(node for node in ast.parse(notebook.read_text(encoding="utf-8")).body
+                           if isinstance(node, ast.Try) and any(
+                               isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                               and call.func.id == "ensure_operational_item" for call in ast.walk(node)))
+        namespace = {
+            "provision_shared_store": True, "seed_demo_data": True, "env_suffix": "V11",
+            "sql_db_item_name": support.operational_store_name("V11"), "legacy_sql_db_item_id": "",
+            "project_ontology_item_id": "ontology", "workspace_id": "workspace", "get_sql_token": Mock(),
+            "ensure_operational_item": Mock(return_value={
+                "id": "sql", "displayName": support.operational_store_name("V11")}),
+            "first_setting": Mock(return_value="folder"), "OPERATIONAL_STORE_NAME": support.OPERATIONAL_STORE_NAME,
+            "operational_store_name": support.operational_store_name, "operational_connection": Mock(),
+            "initialize_operational_schema": Mock(), "extend_selected_project_ontology": Mock(return_value={}),
+            "resolve_sql_database": Mock(return_value=("sql", "server", "physical-database")),
+            "operational_item": Mock(), "copy_operational_records": Mock(), "seed_sql_database": Mock(),
+            "step_results": {}, "step_errors": [], "json": json,
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(ast.Module(body=[preparation], type_ignores=[]), str(notebook), "exec"), namespace)
+        self.assertEqual(namespace["step_errors"], [])
+        namespace["operational_item"].assert_not_called()
+        namespace["copy_operational_records"].assert_not_called()
+        namespace["seed_sql_database"].assert_called_once_with("server", "physical-database")
 
 
 class ProjectExtensionTests(unittest.TestCase):

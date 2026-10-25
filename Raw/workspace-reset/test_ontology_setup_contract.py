@@ -79,6 +79,13 @@ class OntologySetupContractTests(unittest.TestCase):
         for name in ("NB09_dataagent", "NB10_opsagent"):
             self.assertTrue(activities[name]["args"]["useRootDefaultLakehouse"])
         self.assertEqual(activities["NBW01_weather"]["dependencies"], [])
+        self.assertEqual(
+            activities["NB11_operations"]["dependencies"],
+            ["NB09_dataagent", "NB10_opsagent", "NBW01_weather"],
+        )
+        self.assertTrue(activities["NB11_operations"]["args"]["seed_demo_data"])
+        self.assertTrue(activities["NB11_operations"]["args"]["provision_shared_store"])
+        self.assertTrue(activities["NB11_operations"]["args"]["useRootDefaultLakehouse"])
         self.assertGreater(namespace["setup_dag"]["concurrency"], 1)
 
     def test_graph_definition_update_observes_automatic_refresh_without_duplicate_submit(self):

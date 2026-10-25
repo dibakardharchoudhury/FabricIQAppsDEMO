@@ -89,7 +89,8 @@ def synchronize_operational_support(root=ROOT, check=False):
     support_notebooks = ("RTI_001_create_lakehouse_SelfContained", "RTI_001_create_lakehouse_shortcut",
                          "RTI_011_seed_sql_wire_graphql_agent")
     for name in (*support_notebooks, "RTI_003_ingest_transform_medallion",
-                 "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations"):
+                 "RTI_003_ingest_transform_medallion_SelfContained", "Weather_020_area_calculations",
+                 "RTI_Orchestrator_Setup"):
         canonical = root / "Notebooks" / (name + ".Notebook") / "notebook-content.py"
         raw = root / "Raw/RTI_Notebooks" / (name + ".ipynb")
         sections = canonical.read_text(encoding="utf-8").split(CELL)

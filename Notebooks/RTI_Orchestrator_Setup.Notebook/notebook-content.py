@@ -20,14 +20,15 @@
 # # RTI Demo – Setup Orchestrator (Stage 2 of 2)
 # 
 # **Stage 1** (`RTI_001_create_lakehouse_shortcut`) runs first as its own pipeline activity: it
-# creates the lakehouse, writes `rti_demo_settings`, and rebinds every child notebook's default
+# creates the Lakehouse and independent operational SQL in the demo folder, writes
+# `rti_demo_settings`, and rebinds every child notebook's default
 # lakehouse. **Stage 2 is this notebook**, launched by `Pipe_Setup` only after Stage 1 succeeds.
 # 
 # The `%%configure` cell below attaches the (now-existing) lakehouse to THIS session, so the single
 # `runMultiple` session has a real default lakehouse. Every child inherits it, so their relative
 # `spark.read.table(...)` / `saveAsTable(...)` calls resolve — no per-notebook attach, no ABFS rewrite.
 # 
-# - Runs **NB02–NB06, NB08–NB10** and **Weather_001** in one Spark session (VNet cold start paid once); independent
+# - Runs **NB02–NB06, NB08–NB11** and **Weather_001** in one Spark session (VNet cold start paid once); independent
 #   branches run in parallel per the DAG.
 # - **NB01 already ran in Stage 1** and is not in this DAG.
 # - **Streaming (NB07) is excluded** — run it on demand from the `Pipe_Stream` pipeline.
@@ -44,12 +45,13 @@
 # limitation; other semantic errors and inconclusive results fail. NB10 restores the
 # full playbook, Teams/action and email
 # pipeline with definition readback. Both reject v1 and propagate actual API failures.
-# NB11 runs separately after app/SQL provisioning; SQL seed and GraphQL setup are
-# independent of Data Agent availability. The Knowledge Graph uses native
+# NB11 runs after NB09, NB10 and Weather_001: it inserts missing operational demo rows
+# and verifies additive ontology/SQL source publication before app deployment.
+# App-only redeployment does not reseed operational records. The Knowledge Graph uses native
 # ontology-managed graph instances, enriched by KQL and operational SQL.
 # Materialize through Manage graph and configure the verified graph binding.
-# NB09 and NB10 run sequentially because both MERGE capability status into the
-# same Delta settings table; unrelated setup branches remain parallel.
+# NB09 and NB10 are independent branches. NB11 waits for both before changing
+# ontology/Data Agent definitions; unrelated setup branches remain parallel.
 
 # CELL ********************
 
@@ -120,6 +122,7 @@ setup_dag = {
         {"name": "NB09_dataagent",  "path": "RTI_009_build_data_agent",                      "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NB10_opsagent",   "path": "RTI_010_build_operations_agent",                "dependencies": ["NB06_tsbind"],                      "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
         {"name": "NBW01_weather",   "path": "Weather_001_create_lakehouse",                    "dependencies": [],                                   "args": _lh, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
+        {"name": "NB11_operations", "path": "RTI_011_seed_sql_wire_graphql_agent", "dependencies": ["NB09_dataagent", "NB10_opsagent", "NBW01_weather"], "args": {**_lh, "seed_demo_data": True, "provision_shared_store": True}, "timeoutPerCellInSeconds": per_notebook_timeout_secs},
     ],
     "timeoutInSeconds": 7200,
     "concurrency": 4,

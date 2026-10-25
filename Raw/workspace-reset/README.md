@@ -18,9 +18,15 @@ See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
 
 Two ways to run everything:
 
-Both NB01 Lakehouse setup variants also provision `HydroOperationalStore` as an
-independent Fabric SQLDatabase and initialize its operational schema without demo
-records. On an existing workspace, the app deployer's NB11 bootstrap performs an
+Both NB01 Lakehouse setup variants provision `RTI_Demo_SQLDatabase_<env_suffix>` as an
+independent Fabric SQLDatabase in `RTI_DEMO_<env_suffix>`, alongside the Lakehouse
+and Eventhouse. Stage 2 automatically runs NB11 after both agents and Weather_001
+to insert missing demo rows and publish the SQL Data Agent source. Neither creation
+nor seeding depends on an app-owned database. Existing marked `HydroOperationalStore`
+items are moved without changing identity; child SQL endpoints move with them.
+Fabric SQLDatabase names cannot be changed (`SQLDatabaseDisplayNameCannotBeChanged`).
+Existing items keep their immutable name; replacement requires an approved migration.
+Seed reruns preserve existing values. On an existing workspace, the app deployer's NB11 bootstrap performs an
 explicit, field-verified copy/cutover from the retained app-owned database, preserves
 custom Data Agent content and applies the writable `hydrooperations` connector.
 Do not rerun full setup or Git import to perform this upgrade. See the

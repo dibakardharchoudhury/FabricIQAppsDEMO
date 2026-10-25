@@ -910,6 +910,43 @@ import time
 
 OPERATIONAL_STORE_NAME = "HydroOperationalStore"
 OPERATIONAL_STORE_DESCRIPTION = "Hydro shared operational store; lifecycle independent of AppBackend."
+OPERATIONAL_DEMO_COUNTS = {
+    "WorkOrders": 12, "MaintenanceNotifications": 6, "Inspections": 30,
+    "SpareParts": 12, "Asset3DModels": 15,
+}
+
+
+def operational_store_name(env_suffix):
+    if not isinstance(env_suffix, str) or not re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", env_suffix):
+        raise RuntimeError("Operational SQL requires the explicit setup environment suffix.")
+    return f"RTI_Demo_SQLDatabase_{env_suffix}"
+
+
+def is_operational_store_name(name):
+    return name == OPERATIONAL_STORE_NAME or (
+        isinstance(name, str) and re.fullmatch(r"RTI_Demo_SQLDatabase_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", name) is not None
+    )
+
+
+def operational_source_path(parts, workspace_id, item_id, preferred_path):
+    sources = {
+        part["path"]: json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+        for part in parts
+        if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json")
+    }
+    matching = [path for path, source in sources.items()
+                if source.get("type") == "sql_database" and source.get("artifactId") == item_id]
+    if len(matching) > 1:
+        raise RuntimeError("Multiple Data Agent SQL sources reference the same operational item.")
+    if matching:
+        path = matching[0]
+        if sources[path].get("workspaceId") != workspace_id:
+            raise RuntimeError("Existing operational SQL source has a conflicting workspace identity.")
+        return path
+    if preferred_path in sources:
+        raise RuntimeError("The preferred operational SQL source path belongs to another source.")
+    return preferred_path
+
 OPERATIONAL_COLUMNS = {
     "WorkOrders": {
         "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
@@ -1208,9 +1245,14 @@ def operational_item(request, workspace, item_id):
     return item
 
 
-def ensure_operational_item(request, workspace):
-    url = f"workspaces/{workspace}/items"
-    candidates = []
+def _operational_inventory(request, workspace, folder_id=None):
+    from urllib.parse import quote
+
+    base = f"workspaces/{workspace}/items"
+    if folder_id is not None:
+        base += f"?rootFolderId={quote(folder_id, safe='')}&recursive=false"
+    url = base
+    items = []
     visited = set()
     while url:
         if url in visited or len(visited) >= 20:
@@ -1219,50 +1261,77 @@ def ensure_operational_item(request, workspace):
         response = request("GET", url)
         response.raise_for_status()
         page = response.json()
-        candidates.extend(item for item in page["value"]
-                          if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME)
-        url = page.get("continuationUri")
-        if url:
-            prefix = "https://api.fabric.microsoft.com/v1/"
-            if not url.startswith(prefix):
-                raise RuntimeError("Unexpected SQL inventory continuation host.")
-            url = url[len(prefix):]
-        elif page.get("continuationToken"):
-            raise RuntimeError("SQL inventory returned an unsupported continuation without its URI.")
+        items.extend(page["value"])
+        if page.get("continuationToken"):
+            separator = "&" if "?" in base else "?"
+            url = base + separator + "continuationToken=" + quote(page["continuationToken"], safe="")
+        else:
+            url = page.get("continuationUri")
+            if url:
+                prefix = "https://api.fabric.microsoft.com/v1/"
+                if not url.startswith(prefix + f"workspaces/{workspace}/items?"):
+                    raise RuntimeError("Unexpected SQL inventory continuation workspace or host.")
+                url = url[len(prefix):]
+    return items
+
+
+def ensure_operational_item(request, workspace, env_suffix, folder_id):
+    wanted_name = operational_store_name(env_suffix)
+    if not isinstance(folder_id, str) or not folder_id.strip():
+        raise RuntimeError("Operational SQL requires the explicit setup folder identity.")
+    candidates = [item for item in _operational_inventory(request, workspace)
+                  if item["type"] == "SQLDatabase"
+                  and item["displayName"] in (wanted_name, OPERATIONAL_STORE_NAME)]
     if len(candidates) > 1:
         raise RuntimeError("Multiple shared operational stores match the explicit setup name.")
+    expected_name = candidates[0]["displayName"] if candidates else wanted_name
     if candidates:
         item = operational_item(request, workspace, candidates[0]["id"])
         if item.get("description") != OPERATIONAL_STORE_DESCRIPTION:
             raise RuntimeError("The shared SQL name is already used by an unrelated item; refusing to adopt it.")
-        return item
-    response = request("POST", f"workspaces/{workspace}/sqlDatabases", {
-        "displayName": OPERATIONAL_STORE_NAME, "description": OPERATIONAL_STORE_DESCRIPTION,
-    })
-    response.raise_for_status()
-    if response.status_code == 202:
-        location = response.headers.get("Location", "")
-        match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
-        if not match:
-            raise RuntimeError("SQL creation returned an unexpected operation location.")
-        deadline = time.monotonic() + 300
-        while time.monotonic() < deadline:
-            operation = request("GET", match[1])
-            operation.raise_for_status()
-            status = operation.json()["status"]
-            if status == "Succeeded":
-                response = request("GET", match[1] + "/result")
-                response.raise_for_status()
-                break
-            if status in ("Failed", "Cancelled"):
-                raise RuntimeError(f"Shared operational SQL creation failed: {operation.text}")
-            time.sleep(3)
-        else:
-            raise RuntimeError("Shared operational SQL creation exceeded five minutes; inspect the existing operation.")
-    item_id = response.json().get("id")
-    if not item_id:
-        raise RuntimeError("Shared operational SQL creation did not return an item identity.")
-    return operational_item(request, workspace, item_id)
+    else:
+        response = request("POST", f"workspaces/{workspace}/sqlDatabases", {
+            "displayName": wanted_name, "description": OPERATIONAL_STORE_DESCRIPTION,
+        })
+        response.raise_for_status()
+        if response.status_code == 202:
+            location = response.headers.get("Location", "")
+            match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
+            if not match:
+                raise RuntimeError("SQL creation returned an unexpected operation location.")
+            deadline = time.monotonic() + 300
+            while time.monotonic() < deadline:
+                operation = request("GET", match[1])
+                operation.raise_for_status()
+                status = operation.json()["status"]
+                if status == "Succeeded":
+                    response = request("GET", match[1] + "/result")
+                    response.raise_for_status()
+                    break
+                if status in ("Failed", "Cancelled"):
+                    raise RuntimeError(f"Shared operational SQL creation failed: {operation.text}")
+                time.sleep(3)
+            else:
+                raise RuntimeError("Shared operational SQL creation exceeded five minutes; inspect the existing operation.")
+        item_id = response.json().get("id")
+        if not item_id:
+            raise RuntimeError("Shared operational SQL creation did not return an item identity.")
+        item = operational_item(request, workspace, item_id)
+    item_path = f"workspaces/{workspace}/items/{item['id']}"
+    if item["displayName"] != wanted_name:
+        print(
+            f"Fabric SQLDatabase names are immutable. Retaining {item['displayName']!r} "
+            f"({item['id']}); {wanted_name!r} requires an explicitly approved replacement migration.")
+    if not candidates or candidates[0].get("folderId") != folder_id:
+        response = request("POST", item_path + "/move", {"targetFolderId": folder_id})
+        response.raise_for_status()
+    folder_items = _operational_inventory(request, workspace, folder_id)
+    if not any(value["id"] == item["id"] and value.get("folderId") == folder_id for value in folder_items):
+        raise RuntimeError("Shared operational SQL folder readback did not match setup.")
+    verified = operational_item(request, workspace, item["id"])
+    if verified.get("displayName") != expected_name or verified.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise RuntimeError("Shared operational SQL naming/ownership readback did not match setup.")
+    return verified
 
 
 def operational_connection(item, sql_token):
@@ -1303,6 +1372,52 @@ def initialize_operational_schema(connection):
     connection.commit()
 
 
+def _operational_projection(columns):
+    return ",".join(
+        f"CONVERT(nvarchar(33),[{column}],126) AS [{column}]" if kind.lower().startswith("datetime2")
+        else f"[{column}]" for column, kind in columns.items())
+
+
+def seed_operational_records(connection, seed_sql):
+    """Apply unwrapped seed DML, verifying existing fields before committing."""
+    connection.autocommit = False
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SET XACT_ABORT ON; SET LOCK_TIMEOUT 30000")
+        def snapshot():
+            result = {}
+            for table, columns in OPERATIONAL_COLUMNS.items():
+                cursor.execute(
+                    f"SELECT {_operational_projection(columns)} FROM dbo.[{table}] "
+                    "WITH (TABLOCKX,HOLDLOCK) ORDER BY id")
+                result[table] = [tuple(row) for row in cursor.fetchmany(100_001)]
+                if len(result[table]) > 100_000:
+                    raise RuntimeError("Seed preservation readback exceeds 100,000 rows; use an explicit data migration.")
+            return result
+        before = snapshot()
+        cursor.execute(seed_sql)
+        after = snapshot()
+        for table, rows in before.items():
+            indexed = {str(row[0]): row for row in after[table]}
+            if any(indexed.get(str(row[0])) != row for row in rows):
+                raise RuntimeError(f"Seed changed existing {table} fields or identities; transaction rolled back.")
+            if len(after[table]) < OPERATIONAL_DEMO_COUNTS[table]:
+                raise RuntimeError(f"Seed left {table} below its demo population; transaction rolled back.")
+        receipt = {
+            "existing_records_preserved": True,
+            "existing_record_sha256": hashlib.sha256(
+                json.dumps(before, sort_keys=True, default=str).encode("utf-8")).hexdigest(),
+            "tables": {table: {"before": len(before[table]), "after": len(after[table])} for table in before},
+        }
+        connection.commit()
+        return receipt
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
 def copy_operational_records(source, target, source_id, target_id):
     """Copy under legacy table locks, verify every field, then fail closed on old writes."""
     if source_id == target_id:
@@ -1335,9 +1450,7 @@ def copy_operational_records(source, target, source_id, target_id):
                 raise RuntimeError(f"Legacy {table} has a different column set; explicit migration is required to preserve custom data.")
             selection = ",".join(f"[{column}]" for column in columns)
             # ODBC/Python datetime loses datetime2's seventh fractional digit.
-            projection = ",".join(
-                f"CONVERT(nvarchar(33),[{column}],126) AS [{column}]" if kind.lower().startswith("datetime2")
-                else f"[{column}]" for column, kind in columns.items())
+            projection = _operational_projection(columns)
             source_cursor.execute(f"SELECT {projection} FROM dbo.[{table}] WITH (TABLOCKX,HOLDLOCK) ORDER BY id")
             rows = [tuple(row) for row in source_cursor.fetchmany(100_001)]
             if len(rows) > 100_000:
@@ -1502,7 +1615,8 @@ def shared_sql_request(method, path, payload=None):
     )
 
 
-operational_store = ensure_operational_item(shared_sql_request, workspace_id)
+operational_store = ensure_operational_item(
+    shared_sql_request, workspace_id, env_suffix=env_suffix, folder_id=target_folder_id)
 operational_sql_connection = operational_connection(
     operational_store, lambda: get_spn_access_token("https://database.windows.net/.default"))
 try:
@@ -1561,7 +1675,7 @@ settings_rows = build_rti_demo_settings_rows(
         # Only genuinely runtime-derived IDs belong here; all config-time params live in the base dict.
         "lakehouse_id": lakehouse_id,
         "operational_sql_db_id": operational_store["id"],
-        "operational_sql_db_name": OPERATIONAL_STORE_NAME,
+        "operational_sql_db_name": operational_store["displayName"],
         "target_folder_id": target_folder_id,
     }
 )

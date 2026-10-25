@@ -1439,8 +1439,9 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
         "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
     }
-    from operational_store_support import OPERATIONAL_STORE_NAME, OPERATIONAL_STORE_DESCRIPTION
-    stores = [item for item in items if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME]
+    from operational_store_support import is_operational_store_name, OPERATIONAL_STORE_DESCRIPTION
+    stores = [item for item in items
+              if item["type"] == "SQLDatabase" and is_operational_store_name(item["displayName"])]
     if len(stores) > 1:
         raise DeployError("Multiple shared operational stores match the explicit setup name.")
     if stores:
@@ -2041,8 +2042,6 @@ def ensure_appbackend_identity(tenant: str, workspace_id: str) -> None:
 
 
 def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
-    from operational_store_support import OPERATIONAL_STORE_NAME
-
     values, _ = current_rayfin_target()
     notebook_id = _public_config_value(values, "RAYFIN_PUBLIC_POSTSEED_NOTEBOOK_ID")
     backend_id = _public_config_value(values, "RAYFIN_PUBLIC_ITEM_ID")
@@ -2053,7 +2052,7 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     backend = fabric_get(f"workspaces/{workspace_id}/items/{backend_id}", headers)
     if backend.get("id") != backend_id or backend.get("type") != "AppBackend" or not backend.get("displayName"):
         raise DeployError("Cannot resolve this AppBackend's explicit operational SQL target.")
-    if _published_operational_source_ready(workspace_id, values, OPERATIONAL_STORE_NAME, headers, required=False):
+    if _published_operational_source_ready(workspace_id, values, "", headers, required=False):
         bind_operational_store_env(workspace_id, headers)
         print("Verified published Data Agent SQL source; no NB11 execution or demo DML needed.", flush=True)
         return
@@ -2108,7 +2107,6 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
     response = requests.post(
         f"{FABRIC_BASE}/workspaces/{workspace_id}/notebooks/{notebook_id}/jobs/execute/instances?beta=false",
         headers=headers, json={"parameters": [
-            {"name": "sql_db_item_name", "value": OPERATIONAL_STORE_NAME, "type": "Text"},
             {"name": "seed_demo_data", "value": False, "type": "Boolean"},
             {"name": "provision_shared_store", "value": True, "type": "Boolean"},
             {"name": "legacy_sql_db_item_id", "value": legacy[0]["id"], "type": "Text"},
@@ -2138,16 +2136,16 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
         time.sleep(4)
     else:
         raise DeployError(f"NB11 bootstrap exceeded 15 minutes. Inspect the existing job before retrying: {location}")
-    if not _published_operational_source_ready(workspace_id, values, OPERATIONAL_STORE_NAME, headers):
+    if not _published_operational_source_ready(workspace_id, values, "", headers):
         raise DeployError("NB11 completed but its operational SQL source publication could not be verified.")
     bind_operational_store_env(workspace_id, headers)
     print("Verified operational SQL source publication before Foundry provisioning.", flush=True)
 
 
 def bind_operational_store_env(workspace_id, headers) -> None:
-    from operational_store_support import OPERATIONAL_STORE_NAME, OPERATIONAL_STORE_DESCRIPTION
+    from operational_store_support import is_operational_store_name, OPERATIONAL_STORE_DESCRIPTION
     stores = [item for item in _workspace_artifacts(workspace_id, headers)
-              if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME]
+              if item["type"] == "SQLDatabase" and is_operational_store_name(item["displayName"])]
     if len(stores) != 1:
         raise DeployError("The shared operational SQL Database could not be resolved exactly.")
     item = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)
@@ -2160,6 +2158,7 @@ def bind_operational_store_env(workspace_id, headers) -> None:
 
 
 def _published_operational_source_ready(workspace_id, values, sql_name, headers, *, required=True) -> bool:
+    from operational_store_support import is_operational_store_name
     from provision_foundry_agents import (
         published_sql_source_ready, read_data_agent_definition, verify_published_identity,
     )
@@ -2171,7 +2170,12 @@ def _published_operational_source_ready(workspace_id, values, sql_name, headers,
             or ontology["properties"]["generation"] != 2:
         raise DeployError("Data Agent SQL publication requires a verified numeric generation-2 Ontology.")
     items = _workspace_artifacts(workspace_id, headers)
-    databases = [item for item in items if item["type"] == "SQLDatabase" and item["displayName"] == sql_name]
+    configured_sql_id = _public_config_value(values, "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID")
+    databases = [
+        item for item in items if item["type"] == "SQLDatabase"
+        and (item["displayName"] == sql_name or is_operational_store_name(item["displayName"]))
+        and (not configured_sql_id or item["id"] == configured_sql_id)
+    ]
     if not databases and not required:
         return False
     if len(databases) != 1:

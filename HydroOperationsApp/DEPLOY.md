@@ -51,10 +51,28 @@ and [Foundry agent deployment guide](../docs/foundry-deployment-and-multi-agent-
 
 ### Independent operational SQL lifecycle
 
-Both NB01 Lakehouse setup variants now create/reuse `HydroOperationalStore`, a
-workspace-owned Fabric SQLDatabase independent of the app backend. They initialize
-the five operational tables without inserting demo data. The original app-owned
-database is retained; it is not deleted or silently adopted as the new store.
+Both NB01 Lakehouse setup variants create/reuse `RTI_Demo_SQLDatabase_<env_suffix>`
+in the same `RTI_DEMO_<env_suffix>` workspace folder as the Lakehouse and Eventhouse.
+This workspace-owned Fabric SQLDatabase is independent of AppBackend. NB01 initializes
+its five operational tables. Stage 2 automatically runs NB11 after both agents and
+Weather_001, inserts missing demo records, verifies the additive v2 ontology bindings,
+and publishes the SQL source to the Data Agent. Fresh setup needs no existing app
+or legacy SQL database. The app's **Seed & provision** action uses the same saved
+SQL identity/settings; it does not hardcode a database name.
+
+For an existing marked `HydroOperationalStore`, provisioning moves the same item
+and preserves its ID and name. Fabric explicitly rejects renames with
+`SQLDatabaseDisplayNameCannotBeChanged`. Matching the new name on an existing target
+requires a separately approved replacement/copy/rebind/retirement migration; setup
+never creates an extra database or drops an existing one to disguise this limitation.
+TDS connection details are read from the service, never guessed from display names.
+Fabric moves the SQL analytics endpoint with its parent. The existing Data Agent
+source path is reused by item identity, preserving custom instructions, selections
+and tables. Naming, folder placement and source publication require readback.
+Unrelated name collisions or duplicate matching sources fail rather than being adopted.
+NB11 and the reference SQL use insert-only MERGEs: existing records are not reset.
+NB11 verifies every pre-existing field/ID and minimum demo counts before committing
+one transaction, and persists a count/hash receipt. Failed preservation rolls back.
 
 On the first existing-workspace app deployment, NB11 checks the selected v2 ontology
 and actual source schemas, adds source-backed operational/weather entities, copies
@@ -89,7 +107,9 @@ existing-database replacement option in that creation flow. An independent
 operational store does not imply that this platform child is safely detachable.
 Keep the child and its preserved rows until a supported platform retirement path
 is verified; do not delete it or disable runtime services speculatively. Only
-`HydroOperationalStore` is the app's active operational read/write target.
+the independent setup-selected SQL item is the app's active operational read/write
+target (`RTI_Demo_SQLDatabase_<env_suffix>` on fresh setups; the retained immutable
+`HydroOperationalStore` on the existing FEATURE target).
 
 Additional native graph projection remains a separate **Manage graph → select
 eligible entities/relationships → Continue → Materialize** portal prerequisite.

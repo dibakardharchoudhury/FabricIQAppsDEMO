@@ -25,14 +25,18 @@
 
 # # 11 — Prepare shared operational SQL and publish its Data Agent source
 # 
-# This notebook uses the independent `HydroOperationalStore` provisioned alongside the Lakehouse.
+# This notebook uses `RTI_Demo_SQLDatabase_<env_suffix>`, provisioned by NB01 alongside
+# the Lakehouse in `RTI_DEMO_<env_suffix>`. Stage 2 runs it automatically after both agents
+# and Weather_001, avoiding concurrent ontology publication.
+# Existing marked stores retain their immutable name and ID; replacement needs explicit approval.
 # The canonical deployer calls it with `seed_demo_data=False`; an existing-workspace cutover
 # copies/verifies original rows, preserves the original database, and blocks stale legacy writes.
 # It verifies additive v2 ontology bindings before establishing that write boundary.
-# The web app's explicit **Seed & provision** action retains the default demo-data MERGE behavior.
+# Setup and the web app's **Seed & provision** action insert missing demo records only.
+# Existing operational values and compatible custom Data Agent content are preserved.
 # 
 # 1. **Prepare** — initialize the shared schema and perform the explicitly identified legacy
-#    cutover when requested. Optional demo seeding runs only for the explicit app action.
+#    cutover only when an explicit legacy SQL item ID is supplied. Fresh setup needs no app SQL.
 # 2. **Data Agent** — adds the operational SQL Database to the live agent and
 #    **republishes**, preserving existing sources and custom settings. This step is
 #    independent of NB09 runtime evidence; shared-store preparation failures prevent source switching.
@@ -50,11 +54,10 @@
 
 # PARAMETERS CELL ********************
 
-# Required per-run target.
-# The calling webapp must supply its own Rayfin SQL Database name.
+# Blank overrides use the authoritative setup settings, never an AppBackend SQL name.
 sql_db_item_name = ""
 seed_demo_data = True
-provision_shared_store = False
+provision_shared_store = True
 legacy_sql_db_item_id = ""
 project_ontology_item_id = ""
 
@@ -106,16 +109,16 @@ def first_setting(*names, required: bool = False, default: str = None):
 
 workspace_id = first_setting("workspace_id", required=True)
 
-# The Rayfin app publishes its operational store as a Fabric SQL Database item.
-# OLD CODE sql_db_item_name = first_setting("operational_sql_db_name", "rayfin_app_name", default="hydro-operations")
-
-sql_db_item_name = str(sql_db_item_name or "").strip()
-
-if not sql_db_item_name:
-    raise RuntimeError(
-        "sql_db_item_name was not supplied. "
-        "RTI_011 refuses to guess which Rayfin SQL Database to seed."
-    )
+env_suffix = first_setting("env_suffix", required=True)
+configured_sql_name = first_setting("operational_sql_db_name", required=True)
+sql_db_item_name = str(
+    sql_db_item_name or configured_sql_name
+).strip()
+if sql_db_item_name == "HydroOperationalStore":
+    sql_db_item_name = configured_sql_name
+project_ontology_item_id = str(
+    project_ontology_item_id or first_setting("ontology_id", "ontology_item_id", default="")
+).strip()
 
 # Published Data Agent created by RTI_009.
 data_agent_name = first_setting("data_agent_name", default=None)
@@ -285,7 +288,6 @@ SQL_DS_INSTRUCTIONS = (
 SEED_SQL = r"""
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
-BEGIN TRANSACTION;
 
 DECLARE @ActorOid nvarchar(200) = '$(ActorOid)';
 IF @ActorOid = '$' + '(ActorOid)' OR NULLIF(@ActorOid, '') IS NULL
@@ -307,7 +309,6 @@ USING (VALUES
     ('10000000-0000-0000-0000-000000000012','WO-2867','EQUIP_RTI_T012','INST_T012_POWER_OUTPUT','ns=2;s=T012.power_output','Efficiency test after overhaul','Post-overhaul efficiency verification test.','High','Draft',NULL,@ActorOid,'2026-07-31T15:00:00','2026-08-12T12:00:00')
 ) AS source(id,workOrderNumber,equipmentId,instrumentId,opcuaNodeId,title,description,priority,status,assignedToOid,createdByOid,createdAt,dueAt)
 ON target.workOrderNumber = source.workOrderNumber
-WHEN MATCHED THEN UPDATE SET title=source.title, description=source.description, priority=source.priority, status=source.status, assignedToOid=source.assignedToOid, dueAt=source.dueAt
 WHEN NOT MATCHED THEN INSERT (id,workOrderNumber,equipmentId,instrumentId,opcuaNodeId,title,description,priority,status,assignedToOid,createdByOid,createdAt,dueAt)
 VALUES (source.id,source.workOrderNumber,source.equipmentId,source.instrumentId,source.opcuaNodeId,source.title,source.description,source.priority,source.status,source.assignedToOid,source.createdByOid,source.createdAt,source.dueAt);
 
@@ -321,7 +322,6 @@ USING (VALUES
     ('20000000-0000-0000-0000-000000000006','EQUIP_RTI_T013','ns=2;s=T013.vibration_a','Vibration advisory on guide bearing','Critical','Open',@ActorOid,'2026-07-30T13:55:00')
 ) AS source(id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt)
 ON target.id = source.id
-WHEN MATCHED THEN UPDATE SET summary=source.summary,severity=source.severity,status=source.status
 WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,summary,severity,status,reportedByOid,reportedAt)
 VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.summary,source.severity,source.status,source.reportedByOid,source.reportedAt);
 
@@ -359,7 +359,6 @@ USING (VALUES
     ('60000000-0000-0000-0000-000000000030','EQUIP_RTI_T015',NULL,'LUBRICATION','PASS','Oil level and quality within specification.',@ActorOid,'2026-07-26T09:00:00','2026-10-15T09:00:00')
 ) AS source(id,equipmentId,opcuaNodeId,inspectionType,result,findings,inspectorOid,inspectedAt,nextDueAt)
 ON target.id = source.id
-WHEN MATCHED THEN UPDATE SET inspectionType=source.inspectionType,result=source.result,findings=source.findings,inspectedAt=source.inspectedAt,nextDueAt=source.nextDueAt
 WHEN NOT MATCHED THEN INSERT (id,equipmentId,opcuaNodeId,inspectionType,result,findings,inspectorOid,inspectedAt,nextDueAt)
 VALUES (source.id,source.equipmentId,source.opcuaNodeId,source.inspectionType,source.result,source.findings,source.inspectorOid,source.inspectedAt,source.nextDueAt);
 
@@ -379,7 +378,6 @@ USING (VALUES
     ('70000000-0000-0000-0000-000000000012','SP-ELE-5003','Field cabling loom','ELECTRICAL','TURB',14,6,'Store B-21',180.0,'2026-07-20')
 ) AS source(id,partNumber,name,category,equipmentType,quantityOnHand,reorderLevel,storageLocation,unitCostUsd,lastRestockedAt)
 ON target.partNumber = source.partNumber
-WHEN MATCHED THEN UPDATE SET name=source.name,category=source.category,quantityOnHand=source.quantityOnHand,reorderLevel=source.reorderLevel,storageLocation=source.storageLocation,unitCostUsd=source.unitCostUsd,lastRestockedAt=source.lastRestockedAt
 WHEN NOT MATCHED THEN INSERT (id,partNumber,name,category,equipmentType,quantityOnHand,reorderLevel,storageLocation,unitCostUsd,lastRestockedAt)
 VALUES (source.id,source.partNumber,source.name,source.category,source.equipmentType,source.quantityOnHand,source.reorderLevel,source.storageLocation,source.unitCostUsd,source.lastRestockedAt);
 
@@ -402,11 +400,9 @@ USING (VALUES
     ('80000000-0000-0000-0000-000000000015','EQUIP_RTI_T015','Hitachi Energy RTI-Turbine-E twin (T015)','GLB','https://static.poly.pizza/e6b02958-8f16-423e-8322-036b5379ef0b.glb',NULL,0.02,'v1.15',@ActorOid,'2026-07-10T12:00:00')
 ) AS source(id,equipmentId,modelName,format,modelUrl,thumbnailUrl,fileSizeMb,version,updatedByOid,updatedAt)
 ON target.id = source.id
-WHEN MATCHED THEN UPDATE SET modelName=source.modelName,format=source.format,modelUrl=source.modelUrl,fileSizeMb=source.fileSizeMb,version=source.version,updatedAt=source.updatedAt
 WHEN NOT MATCHED THEN INSERT (id,equipmentId,modelName,format,modelUrl,thumbnailUrl,fileSizeMb,version,updatedByOid,updatedAt)
 VALUES (source.id,source.equipmentId,source.modelName,source.format,source.modelUrl,source.thumbnailUrl,source.fileSizeMb,source.version,source.updatedByOid,source.updatedAt);
 
-COMMIT TRANSACTION;
 """
 
 
@@ -665,6 +661,43 @@ import time
 
 OPERATIONAL_STORE_NAME = "HydroOperationalStore"
 OPERATIONAL_STORE_DESCRIPTION = "Hydro shared operational store; lifecycle independent of AppBackend."
+OPERATIONAL_DEMO_COUNTS = {
+    "WorkOrders": 12, "MaintenanceNotifications": 6, "Inspections": 30,
+    "SpareParts": 12, "Asset3DModels": 15,
+}
+
+
+def operational_store_name(env_suffix):
+    if not isinstance(env_suffix, str) or not re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", env_suffix):
+        raise RuntimeError("Operational SQL requires the explicit setup environment suffix.")
+    return f"RTI_Demo_SQLDatabase_{env_suffix}"
+
+
+def is_operational_store_name(name):
+    return name == OPERATIONAL_STORE_NAME or (
+        isinstance(name, str) and re.fullmatch(r"RTI_Demo_SQLDatabase_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", name) is not None
+    )
+
+
+def operational_source_path(parts, workspace_id, item_id, preferred_path):
+    sources = {
+        part["path"]: json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+        for part in parts
+        if part["path"].startswith("Files/Config/draft/") and part["path"].endswith("/datasource.json")
+    }
+    matching = [path for path, source in sources.items()
+                if source.get("type") == "sql_database" and source.get("artifactId") == item_id]
+    if len(matching) > 1:
+        raise RuntimeError("Multiple Data Agent SQL sources reference the same operational item.")
+    if matching:
+        path = matching[0]
+        if sources[path].get("workspaceId") != workspace_id:
+            raise RuntimeError("Existing operational SQL source has a conflicting workspace identity.")
+        return path
+    if preferred_path in sources:
+        raise RuntimeError("The preferred operational SQL source path belongs to another source.")
+    return preferred_path
+
 OPERATIONAL_COLUMNS = {
     "WorkOrders": {
         "id": "uniqueidentifier NOT NULL DEFAULT NEWID() PRIMARY KEY",
@@ -963,9 +996,14 @@ def operational_item(request, workspace, item_id):
     return item
 
 
-def ensure_operational_item(request, workspace):
-    url = f"workspaces/{workspace}/items"
-    candidates = []
+def _operational_inventory(request, workspace, folder_id=None):
+    from urllib.parse import quote
+
+    base = f"workspaces/{workspace}/items"
+    if folder_id is not None:
+        base += f"?rootFolderId={quote(folder_id, safe='')}&recursive=false"
+    url = base
+    items = []
     visited = set()
     while url:
         if url in visited or len(visited) >= 20:
@@ -974,50 +1012,77 @@ def ensure_operational_item(request, workspace):
         response = request("GET", url)
         response.raise_for_status()
         page = response.json()
-        candidates.extend(item for item in page["value"]
-                          if item["type"] == "SQLDatabase" and item["displayName"] == OPERATIONAL_STORE_NAME)
-        url = page.get("continuationUri")
-        if url:
-            prefix = "https://api.fabric.microsoft.com/v1/"
-            if not url.startswith(prefix):
-                raise RuntimeError("Unexpected SQL inventory continuation host.")
-            url = url[len(prefix):]
-        elif page.get("continuationToken"):
-            raise RuntimeError("SQL inventory returned an unsupported continuation without its URI.")
+        items.extend(page["value"])
+        if page.get("continuationToken"):
+            separator = "&" if "?" in base else "?"
+            url = base + separator + "continuationToken=" + quote(page["continuationToken"], safe="")
+        else:
+            url = page.get("continuationUri")
+            if url:
+                prefix = "https://api.fabric.microsoft.com/v1/"
+                if not url.startswith(prefix + f"workspaces/{workspace}/items?"):
+                    raise RuntimeError("Unexpected SQL inventory continuation workspace or host.")
+                url = url[len(prefix):]
+    return items
+
+
+def ensure_operational_item(request, workspace, env_suffix, folder_id):
+    wanted_name = operational_store_name(env_suffix)
+    if not isinstance(folder_id, str) or not folder_id.strip():
+        raise RuntimeError("Operational SQL requires the explicit setup folder identity.")
+    candidates = [item for item in _operational_inventory(request, workspace)
+                  if item["type"] == "SQLDatabase"
+                  and item["displayName"] in (wanted_name, OPERATIONAL_STORE_NAME)]
     if len(candidates) > 1:
         raise RuntimeError("Multiple shared operational stores match the explicit setup name.")
+    expected_name = candidates[0]["displayName"] if candidates else wanted_name
     if candidates:
         item = operational_item(request, workspace, candidates[0]["id"])
         if item.get("description") != OPERATIONAL_STORE_DESCRIPTION:
             raise RuntimeError("The shared SQL name is already used by an unrelated item; refusing to adopt it.")
-        return item
-    response = request("POST", f"workspaces/{workspace}/sqlDatabases", {
-        "displayName": OPERATIONAL_STORE_NAME, "description": OPERATIONAL_STORE_DESCRIPTION,
-    })
-    response.raise_for_status()
-    if response.status_code == 202:
-        location = response.headers.get("Location", "")
-        match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
-        if not match:
-            raise RuntimeError("SQL creation returned an unexpected operation location.")
-        deadline = time.monotonic() + 300
-        while time.monotonic() < deadline:
-            operation = request("GET", match[1])
-            operation.raise_for_status()
-            status = operation.json()["status"]
-            if status == "Succeeded":
-                response = request("GET", match[1] + "/result")
-                response.raise_for_status()
-                break
-            if status in ("Failed", "Cancelled"):
-                raise RuntimeError(f"Shared operational SQL creation failed: {operation.text}")
-            time.sleep(3)
-        else:
-            raise RuntimeError("Shared operational SQL creation exceeded five minutes; inspect the existing operation.")
-    item_id = response.json().get("id")
-    if not item_id:
-        raise RuntimeError("Shared operational SQL creation did not return an item identity.")
-    return operational_item(request, workspace, item_id)
+    else:
+        response = request("POST", f"workspaces/{workspace}/sqlDatabases", {
+            "displayName": wanted_name, "description": OPERATIONAL_STORE_DESCRIPTION,
+        })
+        response.raise_for_status()
+        if response.status_code == 202:
+            location = response.headers.get("Location", "")
+            match = re.fullmatch(r"https://api\.fabric\.microsoft\.com/v1/(operations/[0-9a-fA-F-]{36})", location)
+            if not match:
+                raise RuntimeError("SQL creation returned an unexpected operation location.")
+            deadline = time.monotonic() + 300
+            while time.monotonic() < deadline:
+                operation = request("GET", match[1])
+                operation.raise_for_status()
+                status = operation.json()["status"]
+                if status == "Succeeded":
+                    response = request("GET", match[1] + "/result")
+                    response.raise_for_status()
+                    break
+                if status in ("Failed", "Cancelled"):
+                    raise RuntimeError(f"Shared operational SQL creation failed: {operation.text}")
+                time.sleep(3)
+            else:
+                raise RuntimeError("Shared operational SQL creation exceeded five minutes; inspect the existing operation.")
+        item_id = response.json().get("id")
+        if not item_id:
+            raise RuntimeError("Shared operational SQL creation did not return an item identity.")
+        item = operational_item(request, workspace, item_id)
+    item_path = f"workspaces/{workspace}/items/{item['id']}"
+    if item["displayName"] != wanted_name:
+        print(
+            f"Fabric SQLDatabase names are immutable. Retaining {item['displayName']!r} "
+            f"({item['id']}); {wanted_name!r} requires an explicitly approved replacement migration.")
+    if not candidates or candidates[0].get("folderId") != folder_id:
+        response = request("POST", item_path + "/move", {"targetFolderId": folder_id})
+        response.raise_for_status()
+    folder_items = _operational_inventory(request, workspace, folder_id)
+    if not any(value["id"] == item["id"] and value.get("folderId") == folder_id for value in folder_items):
+        raise RuntimeError("Shared operational SQL folder readback did not match setup.")
+    verified = operational_item(request, workspace, item["id"])
+    if verified.get("displayName") != expected_name or verified.get("description") != OPERATIONAL_STORE_DESCRIPTION:
+        raise RuntimeError("Shared operational SQL naming/ownership readback did not match setup.")
+    return verified
 
 
 def operational_connection(item, sql_token):
@@ -1058,6 +1123,52 @@ def initialize_operational_schema(connection):
     connection.commit()
 
 
+def _operational_projection(columns):
+    return ",".join(
+        f"CONVERT(nvarchar(33),[{column}],126) AS [{column}]" if kind.lower().startswith("datetime2")
+        else f"[{column}]" for column, kind in columns.items())
+
+
+def seed_operational_records(connection, seed_sql):
+    """Apply unwrapped seed DML, verifying existing fields before committing."""
+    connection.autocommit = False
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SET XACT_ABORT ON; SET LOCK_TIMEOUT 30000")
+        def snapshot():
+            result = {}
+            for table, columns in OPERATIONAL_COLUMNS.items():
+                cursor.execute(
+                    f"SELECT {_operational_projection(columns)} FROM dbo.[{table}] "
+                    "WITH (TABLOCKX,HOLDLOCK) ORDER BY id")
+                result[table] = [tuple(row) for row in cursor.fetchmany(100_001)]
+                if len(result[table]) > 100_000:
+                    raise RuntimeError("Seed preservation readback exceeds 100,000 rows; use an explicit data migration.")
+            return result
+        before = snapshot()
+        cursor.execute(seed_sql)
+        after = snapshot()
+        for table, rows in before.items():
+            indexed = {str(row[0]): row for row in after[table]}
+            if any(indexed.get(str(row[0])) != row for row in rows):
+                raise RuntimeError(f"Seed changed existing {table} fields or identities; transaction rolled back.")
+            if len(after[table]) < OPERATIONAL_DEMO_COUNTS[table]:
+                raise RuntimeError(f"Seed left {table} below its demo population; transaction rolled back.")
+        receipt = {
+            "existing_records_preserved": True,
+            "existing_record_sha256": hashlib.sha256(
+                json.dumps(before, sort_keys=True, default=str).encode("utf-8")).hexdigest(),
+            "tables": {table: {"before": len(before[table]), "after": len(after[table])} for table in before},
+        }
+        connection.commit()
+        return receipt
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
 def copy_operational_records(source, target, source_id, target_id):
     """Copy under legacy table locks, verify every field, then fail closed on old writes."""
     if source_id == target_id:
@@ -1090,9 +1201,7 @@ def copy_operational_records(source, target, source_id, target_id):
                 raise RuntimeError(f"Legacy {table} has a different column set; explicit migration is required to preserve custom data.")
             selection = ",".join(f"[{column}]" for column in columns)
             # ODBC/Python datetime loses datetime2's seventh fractional digit.
-            projection = ",".join(
-                f"CONVERT(nvarchar(33),[{column}],126) AS [{column}]" if kind.lower().startswith("datetime2")
-                else f"[{column}]" for column, kind in columns.items())
+            projection = _operational_projection(columns)
             source_cursor.execute(f"SELECT {projection} FROM dbo.[{table}] WITH (TABLOCKX,HOLDLOCK) ORDER BY id")
             rows = [tuple(row) for row in source_cursor.fetchmany(100_001)]
             if len(rows) > 100_000:
@@ -1269,9 +1378,7 @@ def resolve_sql_database() -> tuple:
         server = server or cs_server
         database = database or cs_database
 
-    database = database or sql_db_item_name
-
-    if not server:
+    if not server or not database:
         raise RuntimeError(
             f"Could not resolve the connection information for SQL Database "
             f"'{sql_db_item_name}'."
@@ -1316,8 +1423,8 @@ def fetch_sql_table_schema(server: str, database: str, tables: list) -> dict:
         connection.close()
 
 
-def seed_sql_database(server: str, database: str) -> None:
-    """Run the embedded idempotent MERGE seed against the SQL DB using an SPN token."""
+def seed_sql_database(server: str, database: str) -> dict:
+    """Insert missing demo rows and verify existing records in one SQL transaction."""
     import pyodbc  # available in the Fabric Spark runtime
 
     token = get_sql_token()
@@ -1331,23 +1438,10 @@ def seed_sql_database(server: str, database: str) -> None:
         "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60"
     )
     connection = pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
-    connection.autocommit = True  # the batch manages its own BEGIN/COMMIT TRANSACTION
     try:
-        cursor = connection.cursor()
-        cursor.execute(SEED_SQL.replace("$(ActorOid)", seed_actor_oid))
-        cursor.close()
-        # Report row counts.
-        counts = connection.cursor()
-        counts.execute(
-            "SELECT 'WorkOrders', COUNT(*) FROM dbo.WorkOrders "
-            "UNION ALL SELECT 'MaintenanceNotifications', COUNT(*) FROM dbo.MaintenanceNotifications "
-            "UNION ALL SELECT 'Inspections', COUNT(*) FROM dbo.Inspections "
-            "UNION ALL SELECT 'SpareParts', COUNT(*) FROM dbo.SpareParts "
-            "UNION ALL SELECT 'Asset3DModels', COUNT(*) FROM dbo.Asset3DModels"
-        )
-        for name, n in counts.fetchall():
-            print(f"   • {name}: {n}")
-        counts.close()
+        receipt = seed_operational_records(connection, SEED_SQL.replace("$(ActorOid)", seed_actor_oid))
+        print("OPERATIONAL_SEED_RECEIPT=" + json.dumps(receipt, sort_keys=True))
+        return receipt
     finally:
         connection.close()
 
@@ -1456,26 +1550,43 @@ sql_server = sql_database = None
 print("\n=== STEP A — Seed the operational SQL Database ===")
 try:
     if provision_shared_store:
-        if sql_db_item_name != OPERATIONAL_STORE_NAME:
+        if sql_db_item_name not in (operational_store_name(env_suffix), OPERATIONAL_STORE_NAME):
             raise RuntimeError("Shared-store provisioning requires its explicit canonical SQL item name.")
-        if not isinstance(legacy_sql_db_item_id, str) or not re.fullmatch(
-                r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", legacy_sql_db_item_id):
-            raise RuntimeError("Shared-store migration requires the verified legacy SQL item ID.")
+        if legacy_sql_db_item_id and (
+            not isinstance(legacy_sql_db_item_id, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", legacy_sql_db_item_id)
+        ):
+            raise RuntimeError("Legacy migration requires a valid explicit SQL item ID.")
         def shared_sql_request(method, path, payload=None):
             return api_request(method, f"{FABRIC_API_BASE}/v1/{path}", data=payload)
-        shared_store = ensure_operational_item(shared_sql_request, workspace_id)
-        legacy_store = operational_item(shared_sql_request, workspace_id, legacy_sql_db_item_id)
+        shared_store = ensure_operational_item(
+            shared_sql_request, workspace_id, env_suffix=env_suffix,
+            folder_id=first_setting("target_folder_id", required=True))
+        if shared_store["displayName"] != sql_db_item_name:
+            raise RuntimeError(
+                "The requested SQL name differs from the existing immutable item. "
+                "Use its verified setup name or explicitly plan a replacement migration.")
+        migration_receipt = {"target_item_id": shared_store["id"], "migration": "not_requested"}
         target_connection = operational_connection(shared_store, get_sql_token)
         try:
             initialize_operational_schema(target_connection)
             sql_db_item_id, sql_server, sql_database = resolve_sql_database()
+            if not project_ontology_item_id:
+                ontology_item = find_item_by_name(
+                    first_setting("ontology_name", "fabric_ontology_name", required=True),
+                    item_type="Ontology")
+                if not ontology_item:
+                    raise RuntimeError("The setup-selected Ontology was not found; refusing another target.")
+                project_ontology_item_id = ontology_item["id"]
             step_results["project_ontology"] = extend_selected_project_ontology()
-            source_connection = operational_connection(legacy_store, get_sql_token)
-            try:
-                migration_receipt = copy_operational_records(
-                    source_connection, target_connection, legacy_sql_db_item_id, shared_store["id"])
-            finally:
-                source_connection.close()
+            if legacy_sql_db_item_id:
+                legacy_store = operational_item(shared_sql_request, workspace_id, legacy_sql_db_item_id)
+                source_connection = operational_connection(legacy_store, get_sql_token)
+                try:
+                    migration_receipt = copy_operational_records(
+                        source_connection, target_connection, legacy_sql_db_item_id, shared_store["id"])
+                finally:
+                    source_connection.close()
         finally:
             target_connection.close()
         step_results["operational_store"] = {"status": "verified", **migration_receipt}
@@ -1484,9 +1595,9 @@ try:
     print(f"✅ Resolved SQL Database: {sql_db_item_name} (id={sql_db_item_id})")
     print(f"   Server: {sql_server}  DB: {sql_database}")
     if seed_demo_data:
-        seed_sql_database(sql_server, sql_database)
-        step_results["sql_seed"] = {"status": "completed", "reason": ""}
-        print("✅ Operational seed applied (idempotent).")
+        seed_receipt = seed_sql_database(sql_server, sql_database)
+        step_results["sql_seed"] = {"status": "completed", "reason": "", "receipt": seed_receipt}
+        print("✅ Missing operational demo records inserted; existing records preserved.")
     else:
         step_results["sql_seed"] = {
             "status": "not_requested", "reason": "Deployment bootstrap preserves operational records.",
@@ -1612,6 +1723,10 @@ def build_stage_obj(existing: dict) -> dict:
     stage = dict(existing)
     stage["$schema"] = STAGE_CONFIG_SCHEMA_URL
     instructions = stage.get("aiInstructions") or ""
+    instructions = instructions.replace(
+        OPERATIONAL_INSTRUCTIONS.replace(sql_db_item_name, OPERATIONAL_STORE_NAME),
+        OPERATIONAL_INSTRUCTIONS,
+    )
     if OPERATIONAL_INSTRUCTIONS_MARKER not in instructions:
         instructions += OPERATIONAL_INSTRUCTIONS
     if ASSET_RESOLUTION_INSTRUCTIONS_MARKER not in instructions:
@@ -1621,7 +1736,7 @@ def build_stage_obj(existing: dict) -> dict:
 
 
 def extend_data_agent_sql_source(agent_id: str) -> dict:
-    global sql_db_item_id, sql_server, sql_database
+    global sql_db_item_id, sql_server, sql_database, SQL_DATASOURCE_PATH
     definition = get_item_definition(agent_id)
     parts = definition_parts(definition, allow_empty=True)
     if not sql_db_item_id:
@@ -1646,8 +1761,8 @@ def extend_data_agent_sql_source(agent_id: str) -> dict:
     filled = sum(1 for t, _ in SQL_TABLES if schema_map.get(t))
     print(f"✅ Enumerated columns for {filled}/{len(SQL_TABLES)} operational table(s)")
 
-    # Use only the datasource path belonging to the requested SQL Database.
-    # Never reuse another app's sql_database datasource.
+    SQL_DATASOURCE_PATH = operational_source_path(
+        parts, workspace_id, sql_db_item_id, SQL_DATASOURCE_PATH)
     sql_part_path = SQL_DATASOURCE_PATH
 
     existing_ds = next(
@@ -1752,10 +1867,12 @@ persist = {}
 if provision_shared_store:
     persist["operational_sql_db_id"] = sql_db_item_id
     persist["operational_sql_db_name"] = sql_db_item_name
-    persist["operational_sql_migration_receipt"] = json.dumps(migration_receipt, sort_keys=True)
+    if legacy_sql_db_item_id:
+        persist["operational_sql_migration_receipt"] = json.dumps(migration_receipt, sort_keys=True)
 
 if seed_demo_data:
     persist["operational_sql_seed_status"] = step_results["sql_seed"]["status"]
+    persist["operational_sql_seed_receipt"] = json.dumps(step_results["sql_seed"]["receipt"], sort_keys=True)
 
 if persist:
     from delta.tables import DeltaTable

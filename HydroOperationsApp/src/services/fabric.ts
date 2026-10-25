@@ -921,13 +921,6 @@ export const runPostSeedNotebook = createSingleFlight(async (onStatus?: JobProgr
       // RTI_011 writes shared Delta tables. Reattach to any active instance rather than
       // starting a competing run, even if that run originated outside this browser tab.
       reuseActive: true,
-      parameters: [
-        {
-          name: 'sql_db_item_name',
-          value: 'HydroOperationalStore',
-          type: 'Text',
-        },
-      ],
     },
   )
   // Refresh the Data Agent source publication after the explicit seed operation.

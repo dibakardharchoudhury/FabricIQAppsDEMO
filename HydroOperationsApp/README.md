@@ -31,7 +31,7 @@ that runs **inside Microsoft Fabric** and gives a hydropower operations team one
 |---|---|---|
 | **Lakehouse (STID/weather)** | Engineering master data and weather serving tables | Read-only delegated Rayfin `hydrolakehouse` connector (`fabric-sqlanalytics`) |
 | **Eventhouse (telemetry)** | `OPCUAEvents(event_time, opcua_node_id, value, quality)` | KQL query |
-| **Independent Fabric SQL (`HydroOperationalStore`)** | Work orders, notifications, inspections, spare parts, 3D models | Writable delegated Rayfin `hydrooperations` connector (`fabric-sqldatabase`) |
+| **Independent Fabric SQL (`RTI_Demo_SQLDatabase_<env_suffix>`)** | Work orders, notifications, inspections, spare parts, 3D models | Writable delegated Rayfin `hydrooperations` connector (`fabric-sqldatabase`) |
 | **GeoContext Lakehouse (optional)** | Imported public energy features and source-health snapshots | Bounded Eventhouse queries over `HydroGeoFeatures` / `HydroGeoStatus` Delta external tables |
 
 The stores are **never merged server‑side** — the app queries each independently and joins in the
@@ -59,10 +59,11 @@ The live connector/KQL requests still determine whether those sources exist and 
 queryable: missing, deleted, or failed sources clear the corresponding UI data rather than displaying
 a persisted snapshot.
 
-The separate Fabric GraphQL API provisioned by NB11 remains for the hosted crew's independent
-direct-source verification and compatibility; the SPA's STID/weather reads no longer depend on it.
-This migration does not change SQL operational models, Data Agent sources, Eventhouse telemetry,
-or ontology-owned native graph topology. The connector reads SQL-visible tables, not OneLake files,
+NB11 does not provision a separate GraphQL API. SPA and hosted reads use the source-bound
+Lakehouse and independent SQL connectors; `Hydro_STID_API` is retired.
+The retained AppBackend-managed SQL/GraphQL children are not the active operational store.
+This does not change Eventhouse telemetry or ontology-owned native graph topology.
+The connector reads SQL-visible tables, not OneLake files,
 and is unrelated to ontology generation. See [Rayfin connectors](https://microsoft.github.io/rayfin/docs/guide/cli/connectors/).
 
 The initial HTML stays small and references browser-compressible, cacheable application JavaScript
@@ -326,7 +327,7 @@ and LRO responses), plus `node --import tsx --test scripts/artifact-discovery.te
       TMDL/connector│   KQL   │       │  hydrooperations connector
                      ▼         ▼       ▼
       ┌────────────────┐ ┌──────────┐ ┌───────────────────────────┐
-      │Ontology v2 +   │ │Eventhouse│ │  HydroOperationalStore    │
+      │Ontology v2 +   │ │Eventhouse│ │ RTI_Demo_SQLDatabase_*    │
       │Lakehouse rows  │ │OPCUAEvents│ │  WorkOrders, Inspections, │
       └────────────────┘ └──────────┘ │  SpareParts, Asset3DModels│
         built by RTI_001…010          │  MaintenanceNotifications │
@@ -398,10 +399,16 @@ STID Lakehouse row, so cross‑store joins always land.
 - **STID master data** (3 facilities / 15 turbines / 90 instruments) is seeded into the Lakehouse by
   `RTI_001` when `Pipe_Setup` runs.
 - **Existing operational data** (12 work orders, 6 notifications, 30 inspections, 12 spare parts,
-  15 3D models) was copied into `HydroOperationalStore` with exact field/ID verification.
-  Fresh shared-store initialization and normal app deployment do not insert demo rows.
-  Explicit demo seeding is a separate operator action; the reference SQL is
+  15 3D models) was copied into the independent store with exact field/ID verification.
+  NB01 provisions `RTI_Demo_SQLDatabase_<env_suffix>` inside `RTI_DEMO_<env_suffix>`;
+  setup Stage 2 automatically runs NB11 to insert missing demo rows and publish the
+  SQL Data Agent source. Existing values are never overwritten. Normal app deployment
+  does not reseed. **Seed & provision** can explicitly repeat the insert-only operation;
+  the reference SQL is
   [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql).
+  Fabric rejects renaming existing SQL databases: FEATURE retains `HydroOperationalStore`
+  and its ID, moved into `RTI_DEMO_V11`. A replacement requires explicit approval;
+  see the [SQL lifecycle contract](DEPLOY.md#independent-operational-sql-lifecycle).
 
 ## Local development
 
