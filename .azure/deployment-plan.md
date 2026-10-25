@@ -1,6 +1,6 @@
 # Feature workspace infrastructure deployment
 
-> **Status:** Validation blocked
+> **Status:** Validated
 
 ## Current SQL rollout validation (October 25, 2026)
 
@@ -27,9 +27,34 @@ authorized; preserve the existing database identity and immutable name.
 - No deployment command was rerun after the failed authentication prerequisite.
   Rayfin deployment state and the hosted application were not changed.
 
-Validation is **not** complete. Do not mark this plan Validated or claim the
-updated app was deployed. Resume the canonical deployment only after fresh
-Microsoft sign-in and completion of the validation/deployment workflow.
+### Authentication recovery and current validation proof
+
+The user returned and explicitly requested a fresh authentication request.
+The tenant-scoped interactive login completed as the existing target-tenant
+user. Initial Graph requests continued to return the CAE challenge. Subsequent
+authentication used the actual Graph `WWW-Authenticate` claims challenge,
+including a supported browser-flow attempt; no policy, grant, or registration
+was changed. Graph later returned HTTP 200. Do not attribute recovery solely to
+the scope spelling or broker selection: the final successful probe did not
+require another login, so those individual causes are not established.
+
+Final read-only checks using the refreshed tenant cache passed:
+
+- Azure CLI `ad app show` verified the existing
+  `Hydro Operations Fabric Client`, client ID
+  `3ccdb72d-6c81-4459-b9fd-d9293c242555`, in the target tenant.
+- Fabric workspace GET verified `ws-FabricIQAppsDemoFEATURE` and its unchanged
+  assigned capacity `0f4dac6b-ad68-483d-8027-3d8bf9655d53`.
+- `npm run validate-env` passed again immediately before deployment.
+- The previously recorded compilation and focused tests remain applicable;
+  no application source changed during authentication recovery.
+- The azure-validate workflow completed proof/error resolution and authorized
+  updating status only after these checks passed.
+
+Pre-deployment validation is complete. Execute only the canonical deployment
+command recorded below; its own Node 24 build, live-auth preservation,
+capacity, runtime/CORS, SQL/connector and POST-readiness checks remain mandatory.
+A successful authentication check is not a deployment success receipt.
 
 ## Current approved deployment-optimization validation (October 24, 2026)
 
