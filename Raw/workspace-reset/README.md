@@ -16,6 +16,13 @@ established. Do not infer ownership from names, a sole graph, or structure, or p
 graph deployment. The graph canvas/tree/scopes use native topology, not GraphQL/STID fabrication.
 See [native graph prerequisites and validation](../../docs/knowledge-graph.md).
 
+NB04/NB06 and NB11 apply the shared, source-independent semantic catalog: entity/property
+descriptions, synonyms, usage/query guidance, and scoped TMDL business rules. Existing operator
+metadata, bindings, and unknown parts survive reruns; readback verifies descriptions as well as
+structural settings. Rules ground consumers but do not enforce database constraints or certify
+agent execution. NB06 now only discovers graph ownership: it does not rewrite a portal-selected
+graph, force the five-type projection, or run refresh/GQL jobs as part of ontology binding.
+
 Two ways to run everything:
 
 Both NB01 Lakehouse setup variants provision `RTI_Demo_SQLDatabase_<env_suffix>` as an

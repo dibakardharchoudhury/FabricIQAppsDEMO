@@ -88,30 +88,22 @@ class OntologySetupContractTests(unittest.TestCase):
         self.assertTrue(activities["NB11_operations"]["args"]["useRootDefaultLakehouse"])
         self.assertGreater(namespace["setup_dag"]["concurrency"], 1)
 
-    def test_graph_definition_update_observes_automatic_refresh_without_duplicate_submit(self):
-        tree = ast.parse(source("RTI_006_TimeSeriesBinding_RTI_signal"))
-        branch = next(
-            node for node in tree.body
-            if isinstance(node, ast.If)
-            and isinstance(node.test, ast.Name)
-            and node.test.id == "graph_changed"
-        )
-        changed_calls = [
-            node.func.id for node in ast.walk(ast.Module(body=branch.body, type_ignores=[]))
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        ]
-        unchanged_calls = [
-            node.func.id for node in ast.walk(ast.Module(body=branch.orelse, type_ignores=[]))
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        ]
-        self.assertIn("_wait_for_automatic_graph_refresh", changed_calls)
-        self.assertNotIn("_refresh_graph", changed_calls)
-        self.assertIn("_refresh_graph", unchanged_calls)
-        refresh = next(
-            node for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "_refresh_graph"
-        )
-        self.assertIn("JobInstanceStatusDeduped", ast.unparse(refresh))
+    def test_graph_materialization_is_a_separate_portal_prerequisite(self):
+        cell = code_cells(source("RTI_006_TimeSeriesBinding_RTI_signal"))[-1]
+        self.assertIn("_select_attached_graph_model", cell)
+        self.assertIn("portal-prerequisite", cell)
+        self.assertIn("configured-not-runtime-verified", cell)
+        self.assertIn('"GraphIndex"', cell)
+        self.assertIn('"CascadeDelete"', cell)
+        for forbidden in ("_refresh_graph", "_update_graph_definition", "_verify_graph_runtime",
+                          "_ensure_complete_static_graph_projection", "/graphModels/"):
+            self.assertNotIn(forbidden, cell)
+        calls = [node for node in ast.walk(ast.parse(cell))
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "api_request"]
+        self.assertTrue(calls)
+        self.assertTrue(all(isinstance(call.args[0], ast.Constant) and call.args[0].value == "GET"
+                            for call in calls))
 
     def test_rebinding_replaces_all_foreign_lakehouse_references(self):
         for name in SETUP_NAMES:

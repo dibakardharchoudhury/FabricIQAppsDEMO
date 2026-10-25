@@ -156,12 +156,15 @@ export async function queryBoundOntologyGraph(
   requireV2Generation(ontology.generation)
   if (binding.ontologyId.toLowerCase() !== ontology.id.toLowerCase()) throw new Error('Graph binding does not match the live ontology contract.')
   const base = `https://api.fabric.microsoft.com/v1/workspaces/${encodeURIComponent(binding.workspaceId)}/graphModels/${encodeURIComponent(binding.graphModelId)}`
-  const metadata = await jsonResponse(await request(base), 'GraphModel metadata')
+  const [metadata, queryableSchema] = await Promise.all([
+    request(base).then(response => jsonResponse(response, 'GraphModel metadata')),
+    request(`${base}/getQueryableGraphType?beta=true`).then(response => jsonResponse(response, 'Queryable graph schema')),
+  ])
   if (!isRecord(metadata) || typeof metadata.id !== 'string' || metadata.id.toLowerCase() !== binding.graphModelId.toLowerCase()
     || metadata.type !== 'GraphModel' || typeof metadata.displayName !== 'string') {
     throw new Error('GraphModel metadata does not match the explicitly configured graph identity.')
   }
-  const schema = resolveGraphSchema(await jsonResponse(await request(`${base}/getQueryableGraphType?beta=true`), 'Queryable graph schema'), ontology, binding)
+  const schema = resolveGraphSchema(queryableSchema, ontology, binding)
   const endpoint = `${base}/executeQuery?beta=true`
   const [nodes, edges] = await Promise.all([
     executeGraphRows(endpoint, 'MATCH (n) RETURN TO_JSON_STRING(n) AS `node` LIMIT 2001', request, 2000),

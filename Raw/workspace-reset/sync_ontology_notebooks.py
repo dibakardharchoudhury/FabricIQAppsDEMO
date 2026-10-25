@@ -77,8 +77,11 @@ def synchronize(root=ROOT, check=False):
 def synchronize_operational_support(root=ROOT, check=False):
     support = (root / "Raw/workspace-reset/operational_store_support.py").read_text(encoding="utf-8").strip()
     ontology_support = (root / "Raw/workspace-reset/ontology_notebook_support.py").read_text(encoding="utf-8")
-    shared_names = {"_normal_text", "_decode_part", "_parts_by_path", "_identifier_parts",
-                    "_structural_lines", "_json_contains", "_verify_definition"}
+    shared_names = {"_normal_text", "_decode_part", "_encode_part", "_parts_by_path", "_identifier_parts",
+                    "_local_name", "_quote_name", "_object_spans", "_append_model_ref",
+                    "_structural_lines", "_json_contains", "_verify_definition", "_project_semantics",
+                    "_semantic_description", "_enrich_semantic_block", "_project_business_rules",
+                    "_enrich_project_semantics", "_verify_semantic_descriptions"}
     helpers = [ast.get_source_segment(ontology_support, node) for node in ast.parse(ontology_support).body
                if isinstance(node, ast.FunctionDef) and node.name in shared_names]
     if len(helpers) != len(shared_names):

@@ -342,6 +342,1310 @@ def _parts_by_path(parts):
     return result
 
 
+def _project_semantics():
+    """Portable semantic catalog; contains no workspace identities or bindings."""
+    return {'Asset3DModel': {'annotations': {'domain': 'asset',
+                                      'modelRole': 'attachment',
+                                      'preferredUsage': '3D model lookup and asset documentation',
+                                      'queryHint': 'Use Asset3DModel when the question is about 3D model files, '
+                                                   'versions, or previews tied to equipment.'},
+                      'description': '3D model assets and renderings attached to hydro equipment. Use this '
+                                     'entity for model assets, previews, and file metadata tied back to '
+                                     'equipment.',
+                      'properties': {'equipmentId': {'annotations': {},
+                                                     'description': 'Canonical physical equipment identifier '
+                                                                    'referencing equipment.equipment_id.',
+                                                     'synonyms': ['equipment id', 'equipment identifier']},
+                                     'fileSizeMb': {'annotations': {},
+                                                    'description': 'File size in megabytes.',
+                                                    'synonyms': ['file size', 'size mb']},
+                                     'format': {'annotations': {},
+                                                'description': 'File format of the model.',
+                                                'synonyms': ['file format', 'model format']},
+                                     'id': {'annotations': {},
+                                            'description': 'Unique identifier for the 3D model record.',
+                                            'synonyms': ['model id', 'asset model id']},
+                                     'modelName': {'annotations': {},
+                                                   'description': 'Display name of the 3D model.',
+                                                   'synonyms': ['name', 'model title', 'asset model name']},
+                                     'modelUrl': {'annotations': {},
+                                                  'description': 'URL to the model file.',
+                                                  'synonyms': ['model link', 'model location', 'file url']},
+                                     'thumbnailUrl': {'annotations': {},
+                                                      'description': 'URL to the model thumbnail.',
+                                                      'synonyms': ['thumbnail link', 'preview image']},
+                                     'updatedAt': {'annotations': {},
+                                                   'description': 'Last update timestamp.',
+                                                   'synonyms': ['updated at', 'last updated']},
+                                     'updatedByOid': {'annotations': {},
+                                                      'description': 'Object identifier of the user who last '
+                                                                     'updated the model.',
+                                                      'synonyms': ['updated by', 'updated by oid', 'editor oid']},
+                                     'version': {'annotations': {},
+                                                 'description': 'Model version label.',
+                                                 'synonyms': ['revision', 'release', 'version label']}},
+                      'synonyms': ['3D Model',
+                                   'Equipment Model',
+                                   'Digital Twin Model',
+                                   'Model Asset',
+                                   'Asset Rendering']},
+     'Inspection': {'annotations': {'domain': 'maintenance',
+                                    'modelRole': 'operational fact',
+                                    'preferredUsage': 'inspection history and compliance review',
+                                    'queryHint': 'Use Inspection for inspection activity, findings, and due '
+                                                 'dates.'},
+                    'description': 'equipment inspection records and outcomes. Use this entity for inspection '
+                                   'history, findings, and schedule tracking.',
+                    'properties': {'equipmentId': {'annotations': {},
+                                                   'description': 'Canonical physical equipment identifier '
+                                                                  'referencing equipment.equipment_id.',
+                                                   'synonyms': ['equipment id', 'equipment identifier']},
+                                   'findings': {'annotations': {},
+                                                'description': 'Free-text inspection findings.',
+                                                'synonyms': ['findings', 'notes']},
+                                   'id': {'annotations': {},
+                                          'description': 'Unique identifier for the inspection record.',
+                                          'synonyms': ['inspection id', 'record id']},
+                                   'inspectedAt': {'annotations': {},
+                                                   'description': 'Timestamp when the inspection occurred.',
+                                                   'synonyms': ['inspection time', 'inspected at']},
+                                   'inspectionType': {'annotations': {},
+                                                      'description': 'Type or category of inspection.',
+                                                      'synonyms': ['type', 'inspection category']},
+                                   'inspectorOid': {'annotations': {},
+                                                    'description': 'Object identifier of the inspector.',
+                                                    'synonyms': ['inspector', 'inspector oid']},
+                                   'nextDueAt': {'annotations': {},
+                                                 'description': 'Scheduled next inspection due time.',
+                                                 'synonyms': ['next due', 'due at']},
+                                   'opcuaNodeId': {'annotations': {},
+                                                   'description': 'Optional canonical OPC UA signal identifier; '
+                                                                  'join to signal_master.opcua_node_id when '
+                                                                  'present.',
+                                                   'synonyms': ['opc ua node id', 'node id']},
+                                   'result': {'annotations': {},
+                                              'description': 'Inspection outcome.',
+                                              'synonyms': ['outcome', 'status']}},
+                    'synonyms': ['Inspection Record',
+                                 'Asset Inspection',
+                                 'Maintenance Inspection',
+                                 'Checkup',
+                                 'Inspection History']},
+     'InstrumentClassification': {'annotations': {'domain': 'asset',
+                                                  'modelRole': 'fact',
+                                                  'preferredUsage': 'signal inventory and system-level signal '
+                                                                    'summary',
+                                                  'queryHint': 'Use InstrumentClassification for counts of '
+                                                               'signal types by system, not raw instrument '
+                                                               'rows.'},
+                                  'description': 'Aggregated count of signals by system and signal type. Use '
+                                                 'this as the summarized signal inventory for a system.',
+                                  'properties': {'ontology_key': {'annotations': {},
+                                                                  'description': 'Verified SHA-256 identity of '
+                                                                                 'the complete natural-key '
+                                                                                 'tuple, with UTC timestamps '
+                                                                                 'encoded before hashing. It is '
+                                                                                 'not a measurement.',
+                                                                  'synonyms': ['ontology key']},
+                                                 'signal_count': {'annotations': {},
+                                                                  'description': 'Count of signals of this type '
+                                                                                 'for the system.',
+                                                                  'synonyms': ['signal count',
+                                                                               'count of signals']},
+                                                 'signal_type': {'annotations': {},
+                                                                 'description': 'Canonical signal category used '
+                                                                                'for signal inventory and '
+                                                                                'classification, not a telemetry '
+                                                                                'sample value.',
+                                                                 'synonyms': ['signal type', 'measurement type']},
+                                                 'system_id': {'annotations': {},
+                                                               'description': 'Canonical system identifier '
+                                                                              'linking the record to its plant '
+                                                                              'subsystem.',
+                                                               'synonyms': ['system id']}},
+                                  'synonyms': ['Signal Classification',
+                                               'Instrument Signal Count',
+                                               'System Signal Summary',
+                                               'Classification Fact',
+                                               'Signal Inventory Summary']},
+     'MaintenanceNotification': {'annotations': {'domain': 'maintenance',
+                                                 'modelRole': 'operational fact',
+                                                 'preferredUsage': 'alert tracking and maintenance triage',
+                                                 'queryHint': 'Use MaintenanceNotification for alerts, severity, '
+                                                              'status, and reporting details.'},
+                                 'description': 'Maintenance alerts and notifications raised for equipment or '
+                                                'OPC UA signals. Use this entity for alert tracking, severity, '
+                                                'status, and reporter context.',
+                                 'properties': {'equipmentId': {'annotations': {},
+                                                                'description': 'Canonical physical equipment '
+                                                                               'identifier referencing '
+                                                                               'equipment.equipment_id.',
+                                                                'synonyms': ['equipment id',
+                                                                             'equipment identifier']},
+                                                'id': {'annotations': {},
+                                                       'description': 'Unique identifier for the notification.',
+                                                       'synonyms': ['notification id', 'alert id']},
+                                                'opcuaNodeId': {'annotations': {},
+                                                                'description': 'Optional canonical OPC UA signal '
+                                                                               'identifier; join to '
+                                                                               'signal_master.opcua_node_id when '
+                                                                               'present.',
+                                                                'synonyms': ['opc ua node id', 'node id']},
+                                                'reportedAt': {'annotations': {},
+                                                               'description': 'Timestamp when the notification '
+                                                                              'was reported.',
+                                                               'synonyms': ['reported time', 'report time']},
+                                                'reportedByOid': {'annotations': {},
+                                                                  'description': 'Object identifier of the '
+                                                                                 'reporter.',
+                                                                  'synonyms': ['reported by', 'reporter oid']},
+                                                'severity': {'annotations': {},
+                                                             'description': 'Severity level assigned to the '
+                                                                            'notification.',
+                                                             'synonyms': ['priority', 'severity level']},
+                                                'status': {'annotations': {},
+                                                           'description': 'Lifecycle or operating status '
+                                                                          "recorded by this entity's source; not "
+                                                                          'automatically inferred from telemetry '
+                                                                          'quality.',
+                                                           'synonyms': ['state', 'notification status']},
+                                                'summary': {'annotations': {},
+                                                            'description': 'Short notification summary.',
+                                                            'synonyms': ['summary', 'message']}},
+                                 'synonyms': ['Maintenance Alert',
+                                              'Alert',
+                                              'Notification',
+                                              'Maintenance Notice',
+                                              'Maintenance Alert Record']},
+     'SparePart': {'annotations': {'domain': 'maintenance',
+                                   'modelRole': 'inventory',
+                                   'preferredUsage': 'stock availability, replenishment, and part compatibility',
+                                   'queryHint': 'Use the bound operational SQL inventory. Do not infer an '
+                                                'equipment foreign key from an equipment-type label.'},
+                   'description': 'Inventory of spare parts and stock levels bound to the independent '
+                                  'operational SQL database. equipmentType describes compatibility, not '
+                                  'ownership by a particular equipment_id.',
+                   'properties': {'category': {'annotations': {},
+                                               'description': 'Spare part category.',
+                                               'synonyms': ['type', 'part category']},
+                                  'equipmentType': {'annotations': {},
+                                                    'description': 'equipment type this part supports.',
+                                                    'synonyms': ['equipment type', 'asset type']},
+                                  'id': {'annotations': {},
+                                         'description': 'Unique identifier for the spare part record.',
+                                         'synonyms': ['id']},
+                                  'lastRestockedAt': {'annotations': {},
+                                                      'description': 'Timestamp when the part was last '
+                                                                     'restocked.',
+                                                      'synonyms': ['last restock time', 'restocked at']},
+                                  'name': {'annotations': {},
+                                           'description': 'Spare part name.',
+                                           'synonyms': ['name']},
+                                  'partNumber': {'annotations': {},
+                                                 'description': 'Manufacturer or catalog part number.',
+                                                 'synonyms': ['part no', 'catalog number']},
+                                  'quantityOnHand': {'annotations': {},
+                                                     'description': 'Available quantity in stock.',
+                                                     'synonyms': ['on hand', 'quantity']},
+                                  'reorderLevel': {'annotations': {},
+                                                   'description': 'Threshold at which reorder is needed.',
+                                                   'synonyms': ['reorder threshold', 'reorder point']},
+                                  'storageLocation': {'annotations': {},
+                                                      'description': 'Storage location of the spare part.',
+                                                      'synonyms': ['warehouse location', 'bin location']},
+                                  'unitCostUsd': {'annotations': {},
+                                                  'description': 'Unit cost in U.S. dollars.',
+                                                  'synonyms': ['unit cost', 'cost usd']}},
+                   'synonyms': ['Spare Part', 'Part', 'Inventory Item', 'Replacement Part']},
+     'WeatherArea': {'annotations': {'modelRole': 'dimension',
+                                     'preferredUsage': 'spatial lookup and area grouping',
+                                     'queryHint': 'Use WeatherArea to group or target area-based weather '
+                                                  'summaries.'},
+                     'description': 'Reusable spatial weather region, typically facility-centric or '
+                                    'analysis-centric. Use as the lookup dimension for areal weather queries and '
+                                    'forecast summarization.',
+                     'properties': {'area_id': {'annotations': {},
+                                                'description': 'Unique identifier for the weather area.',
+                                                'synonyms': ['area id']},
+                                    'area_name': {'annotations': {},
+                                                  'description': 'Display name of the weather area.',
+                                                  'synonyms': ['area name']},
+                                    'crs': {'annotations': {},
+                                            'description': 'Coordinate reference system used by the geometry.',
+                                            'synonyms': ['spatial reference', 'coordinate system']},
+                                    'geometry_geojson': {'annotations': {},
+                                                         'description': 'GeoJSON geometry describing the area '
+                                                                        'boundary.',
+                                                         'synonyms': ['geometry geojson']},
+                                    'metadata_json': {'annotations': {},
+                                                      'description': 'Additional area metadata encoded as JSON.',
+                                                      'synonyms': ['metadata json']},
+                                    'updated_at_utc': {'annotations': {},
+                                                       'description': 'Last update timestamp for the area '
+                                                                      'definition.',
+                                                       'synonyms': ['updated at utc']}},
+                     'synonyms': ['Weather Zone',
+                                  'Catchment Area',
+                                  'Area of Interest',
+                                  'Radius Area',
+                                  'Weather Region']},
+     'WeatherAreaMetric': {'annotations': {'grain': 'one row per area-variable-source-run-valid time',
+                                           'modelRole': 'fact',
+                                           'preferredUsage': 'area rollup and coverage analysis',
+                                           'queryHint': 'Use WeatherAreaMetric for area-based rollups and '
+                                                        'coverage-weighted values.'},
+                           'description': 'Computed area-level weather summary fact for facility-centered '
+                                          'weather areas. Use this entity for areal rollups, coverage metrics, '
+                                          'and area-weighted time-series analysis.',
+                           'properties': {'aggregation_method': {'annotations': {},
+                                                                 'description': 'Method used to compute the '
+                                                                                'metric.',
+                                                                 'synonyms': ['aggregation method',
+                                                                              'calculation method']},
+                                          'area_coverage_fraction': {'annotations': {},
+                                                                     'description': 'Fraction of the area '
+                                                                                    'covered by contributing '
+                                                                                    'cells.',
+                                                                     'synonyms': ['area coverage fraction']},
+                                          'area_id': {'annotations': {},
+                                                      'description': 'Weather area identifier for the metric.',
+                                                      'synonyms': ['area identifier']},
+                                          'area_weighted_value': {'annotations': {},
+                                                                  'description': 'Area-weighted value for the '
+                                                                                 'metric.',
+                                                                  'synonyms': ['area weighted value']},
+                                          'calculated_at_utc': {'annotations': {},
+                                                                'description': 'Timestamp when the metric was '
+                                                                               'calculated.',
+                                                                'synonyms': ['calculated at utc']},
+                                          'contributing_cell_count': {'annotations': {},
+                                                                      'description': 'Number of contributing '
+                                                                                     'cells.',
+                                                                      'synonyms': ['contributing cells',
+                                                                                   'cell count']},
+                                          'cumulative_rainfall_volume_m3': {'annotations': {},
+                                                                            'description': 'Cumulative rainfall '
+                                                                                           'volume in cubic '
+                                                                                           'meters.',
+                                                                            'synonyms': ['cumulative rainfall '
+                                                                                         'volume m3']},
+                                          'cumulative_value': {'annotations': {},
+                                                               'description': 'Cumulative value for the metric.',
+                                                               'synonyms': ['cumulative value']},
+                                          'data_kind': {'annotations': {},
+                                                        'description': 'Kind of area metric data, such as '
+                                                                       'observation or forecast.',
+                                                        'synonyms': ['data kind', 'record kind']},
+                                          'forecast_type': {'annotations': {},
+                                                            'description': 'Forecast classification or scenario '
+                                                                           'type.',
+                                                            'synonyms': ['forecast type', 'scenario type']},
+                                          'interval_hours': {'annotations': {},
+                                                             'description': 'Forecast interval length in hours.',
+                                                             'synonyms': ['interval hours']},
+                                          'lead_hours': {'annotations': {},
+                                                         'description': 'Forecast lead time in hours.',
+                                                         'synonyms': ['lead hours']},
+                                          'rainfall_volume_m3': {'annotations': {},
+                                                                 'description': 'Rainfall volume in cubic '
+                                                                                'meters.',
+                                                                 'synonyms': ['rainfall volume m3']},
+                                          'reference_time_utc': {'annotations': {},
+                                                                 'description': 'Reference time associated with '
+                                                                                'the forecast or rollup.',
+                                                                 'synonyms': ['reference time utc']},
+                                          'run_id': {'annotations': {},
+                                                     'description': 'Ingestion or calculation run identifier.',
+                                                     'synonyms': ['run id', 'calculation run id']},
+                                          'source_id': {'annotations': {},
+                                                        'description': 'Weather source used for the metric.',
+                                                        'synonyms': ['source identifier']},
+                                          'source_item_id': {'annotations': {},
+                                                             'description': 'Source record or batch identifier '
+                                                                            'for the calculated area metric.',
+                                                             'synonyms': ['source record id',
+                                                                          'provider item id']},
+                                          'unit': {'annotations': {},
+                                                   'description': 'Measurement unit of the metric.',
+                                                   'synonyms': ['measurement unit']},
+                                          'valid_time_utc': {'annotations': {},
+                                                             'description': 'Valid time for the area metric.',
+                                                             'synonyms': ['valid time utc']},
+                                          'variable_id': {'annotations': {},
+                                                          'description': 'Meteorological variable associated '
+                                                                         'with the metric.',
+                                                          'synonyms': ['variable identifier']}},
+                           'synonyms': ['Area Weather Metric',
+                                        'Areal Weather Summary',
+                                        'Area Forecast Metric',
+                                        'Area Summary',
+                                        'Area Weather Fact']},
+     'WeatherForecast': {'annotations': {'grain': 'one row per source-variable-location-valid time and forecast '
+                                                  'horizon',
+                                         'modelRole': 'fact',
+                                         'preferredUsage': 'forecast trend and comparison',
+                                         'queryHint': 'Use WeatherForecast for forecast history; group by '
+                                                      'location, variable, lead hours, and valid time.'},
+                         'description': 'Canonical historical weather forecast fact at '
+                                        'source-variable-location-time grain. Use this entity for forecast trend '
+                                        'analysis, horizon comparisons, and scenario evaluation.',
+                         'properties': {'ensemble_member': {'annotations': {},
+                                                            'description': 'Forecast ensemble member identifier.',
+                                                            'synonyms': ['ensemble member']},
+                                        'ingested_at_utc': {'annotations': {},
+                                                            'description': 'Ingested at utc recorded by the '
+                                                                           'bound WeatherForecast source.',
+                                                            'synonyms': ['ingested at utc']},
+                                        'interval_hours': {'annotations': {},
+                                                           'description': 'Forecast interval length in hours.',
+                                                           'synonyms': ['interval hours']},
+                                        'latitude': {'annotations': {},
+                                                     'description': 'Latitude for the forecast location.',
+                                                     'synonyms': ['latitude']},
+                                        'lead_hours': {'annotations': {},
+                                                       'description': 'Forecast lead time in hours.',
+                                                       'synonyms': ['forecast horizon hours']},
+                                        'location_id': {'annotations': {},
+                                                        'description': 'Location or facility identifier '
+                                                                       'associated with the forecast.',
+                                                        'synonyms': ['location id']},
+                                        'longitude': {'annotations': {},
+                                                      'description': 'Longitude for the forecast location.',
+                                                      'synonyms': ['longitude']},
+                                        'reference_time_utc': {'annotations': {},
+                                                               'description': 'Model or reference time for the '
+                                                                              'forecast.',
+                                                               'synonyms': ['reference time utc']},
+                                        'run_id': {'annotations': {},
+                                                   'description': 'Ingestion run identifier for the forecast.',
+                                                   'synonyms': ['run id', 'load run id']},
+                                        'source_id': {'annotations': {},
+                                                      'description': 'Weather source that produced the forecast.',
+                                                      'synonyms': ['source id']},
+                                        'source_item_id': {'annotations': {},
+                                                           'description': 'Source record identifier for the '
+                                                                          'forecast.',
+                                                           'synonyms': ['source record id', 'provider item id']},
+                                        'unit': {'annotations': {},
+                                                 'description': 'Unit of the forecasted value.',
+                                                 'synonyms': ['measurement unit']},
+                                        'valid_time_utc': {'annotations': {},
+                                                           'description': 'Valid time of the forecasted value.',
+                                                           'synonyms': ['valid time']},
+                                        'value': {'annotations': {},
+                                                  'description': 'Forecasted measurement value.',
+                                                  'synonyms': ['forecast value', 'predicted value']},
+                                        'variable_id': {'annotations': {},
+                                                        'description': 'Meteorological variable forecasted by '
+                                                                       'the record.',
+                                                        'synonyms': ['variable id']}},
+                         'synonyms': ['Forecast Weather',
+                                      'Weather Prediction',
+                                      'Forecast Fact',
+                                      'Weather Outlook',
+                                      'Forecast History']},
+     'WeatherIngestionRun': {'annotations': {'modelRole': 'operational fact',
+                                             'preferredUsage': 'pipeline monitoring',
+                                             'queryHint': 'Use WeatherIngestionRun to inspect run status, row '
+                                                          'counts, and errors.'},
+                             'description': 'Operational load and ingestion run record for weather sources and '
+                                            'derived facts. Use as the operational trace for load status, '
+                                            'counts, and errors.',
+                             'properties': {'completed_at_utc': {'annotations': {},
+                                                                 'description': 'Run completion timestamp.',
+                                                                 'synonyms': ['completed at utc']},
+                                            'data_kind': {'annotations': {},
+                                                          'description': 'Type of weather data processed in the '
+                                                                         'run.',
+                                                          'synonyms': ['data kind', 'record kind']},
+                                            'error_message': {'annotations': {},
+                                                              'description': 'Error text when the run fails.',
+                                                              'synonyms': ['error message']},
+                                            'reference_time_utc': {'annotations': {},
+                                                                   'description': 'Reference time associated '
+                                                                                  'with the ingested data.',
+                                                                   'synonyms': ['reference time utc']},
+                                            'row_count': {'annotations': {},
+                                                          'description': 'Number of rows processed by the run.',
+                                                          'synonyms': ['row count']},
+                                            'run_id': {'annotations': {},
+                                                       'description': 'Unique identifier for the ingestion run.',
+                                                       'synonyms': ['run id']},
+                                            'source_id': {'annotations': {},
+                                                          'description': 'Weather source processed by the run.',
+                                                          'synonyms': ['source id']},
+                                            'source_item_id': {'annotations': {},
+                                                               'description': 'Source record or batch identifier '
+                                                                              'associated with the run.',
+                                                               'synonyms': ['source item id',
+                                                                            'provider item id']},
+                                            'started_at_utc': {'annotations': {},
+                                                               'description': 'Run start timestamp.',
+                                                               'synonyms': ['started at utc']},
+                                            'status': {'annotations': {},
+                                                       'description': 'Lifecycle or operating status recorded by '
+                                                                      "this entity's source; not automatically "
+                                                                      'inferred from telemetry quality.',
+                                                       'synonyms': ['state']}},
+                             'synonyms': ['Ingestion Job',
+                                          'Load Run',
+                                          'Pipeline Run',
+                                          'Import Run',
+                                          'Weather Load Run']},
+     'WeatherLatestForecast': {'annotations': {'modelRole': 'snapshot',
+                                               'preferredUsage': 'current-state shortcut',
+                                               'queryHint': 'Use only for the latest forecast state and '
+                                                            'distinguish target_kind location from area. '
+                                                            'Historical forecasts and area rollups require their '
+                                                            'authorized history sources.',
+                                               'snapshotOf': 'WeatherForecast'},
+                               'description': 'Snapshot helper for the latest forecast state by target and '
+                                              'source. Use this only for current-state reads; use '
+                                              'WeatherForecast and WeatherAreaMetric for history and rollups.',
+                               'properties': {'calculated_at_utc': {'annotations': {},
+                                                                    'description': 'Timestamp when the latest '
+                                                                                   'forecast snapshot was '
+                                                                                   'calculated.',
+                                                                    'synonyms': ['calculated at utc']},
+                                              'cumulative_precipitation': {'annotations': {},
+                                                                           'description': 'Latest forecast '
+                                                                                          'cumulative '
+                                                                                          'precipitation.',
+                                                                           'synonyms': ['cumulative '
+                                                                                        'precipitation']},
+                                              'cumulative_rainfall_volume_m3': {'annotations': {},
+                                                                                'description': 'Latest forecast '
+                                                                                               'cumulative '
+                                                                                               'rainfall volume '
+                                                                                               'in cubic meters.',
+                                                                                'synonyms': ['cumulative '
+                                                                                             'rainfall volume '
+                                                                                             'm3']},
+                                              'dew_point': {'annotations': {},
+                                                            'description': 'Latest forecast dew point.',
+                                                            'synonyms': ['dew point']},
+                                              'lead_hours': {'annotations': {},
+                                                             'description': 'Forecast lead time in hours.',
+                                                             'synonyms': ['lead hours']},
+                                              'ontology_key': {'annotations': {},
+                                                               'description': 'Verified SHA-256 identity of the '
+                                                                              'complete natural-key tuple, with '
+                                                                              'UTC timestamps encoded before '
+                                                                              'hashing. It is not a measurement.',
+                                                               'synonyms': ['ontology key']},
+                                              'precipitation': {'annotations': {},
+                                                                'description': 'Latest forecast precipitation.',
+                                                                'synonyms': ['precipitation']},
+                                              'precipitation_interval_hours': {'annotations': {},
+                                                                               'description': 'Duration in hours '
+                                                                                              'represented by '
+                                                                                              'this '
+                                                                                              'precipitation '
+                                                                                              'forecast value.',
+                                                                               'synonyms': ['precipitation '
+                                                                                            'interval hours']},
+                                              'pressure': {'annotations': {},
+                                                           'description': 'Latest forecast pressure.',
+                                                           'synonyms': ['pressure']},
+                                              'rainfall_volume_m3': {'annotations': {},
+                                                                     'description': 'Latest forecast rainfall '
+                                                                                    'volume in cubic meters.',
+                                                                     'synonyms': ['rainfall volume m3']},
+                                              'reference_time_utc': {'annotations': {},
+                                                                     'description': 'Reference time for the '
+                                                                                    'latest forecast.',
+                                                                     'synonyms': ['reference time utc']},
+                                              'relative_humidity': {'annotations': {},
+                                                                    'description': 'Latest forecast relative '
+                                                                                   'humidity.',
+                                                                    'synonyms': ['relative humidity']},
+                                              'solar_radiation': {'annotations': {},
+                                                                  'description': 'Latest forecast solar '
+                                                                                 'radiation.',
+                                                                  'synonyms': ['solar radiation']},
+                                              'source_id': {'annotations': {},
+                                                            'description': 'Weather source for the latest '
+                                                                           'forecast.',
+                                                            'synonyms': ['source id']},
+                                              'source_item_id': {'annotations': {},
+                                                                 'description': 'Source item id recorded by the '
+                                                                                'bound WeatherLatestForecast '
+                                                                                'source.',
+                                                                 'synonyms': ['source record id',
+                                                                              'provider item id']},
+                                              'target_id': {'annotations': {},
+                                                            'description': 'Identifier in the namespace selected '
+                                                                           'by target_kind, not an unconditional '
+                                                                           'facility or area foreign key.',
+                                                            'synonyms': ['target identifier',
+                                                                         'area id / location id']},
+                                              'target_kind': {'annotations': {},
+                                                              'description': 'Forecast target discriminator: '
+                                                                             'point location or spatial area. '
+                                                                             'Interpret target_id in this '
+                                                                             'context.',
+                                                              'synonyms': ['target type', 'destination type']},
+                                              'temperature': {'annotations': {},
+                                                              'description': 'Latest forecast temperature.',
+                                                              'synonyms': ['temperature']},
+                                              'valid_time_utc': {'annotations': {},
+                                                                 'description': 'Valid time for the latest '
+                                                                                'forecasted value.',
+                                                                 'synonyms': ['valid time utc']},
+                                              'wind_direction': {'annotations': {},
+                                                                 'description': 'Latest forecast wind direction.',
+                                                                 'synonyms': ['wind direction']},
+                                              'wind_gust': {'annotations': {},
+                                                            'description': 'Latest forecast wind gust.',
+                                                            'synonyms': ['wind gust']},
+                                              'wind_speed': {'annotations': {},
+                                                             'description': 'Latest forecast wind speed.',
+                                                             'synonyms': ['wind speed']}},
+                               'synonyms': ['Latest Forecast',
+                                            'Current Forecast',
+                                            'Forecast Snapshot',
+                                            'Weather Outlook Snapshot',
+                                            'Latest Forecast Snapshot']},
+     'WeatherLatestObservation': {'annotations': {'modelRole': 'snapshot',
+                                                  'preferredUsage': 'current-state shortcut',
+                                                  'queryHint': 'Use only for the latest observation state. '
+                                                               'Historical trends require the authorized '
+                                                               'weather_observations history source.',
+                                                  'snapshotOf': 'WeatherObservation'},
+                                  'description': 'Snapshot helper for the latest weather observation state by '
+                                                 'source and location. Use this only for current-state reads; '
+                                                 'use WeatherObservation for history and trends.',
+                                  'properties': {'calculated_at_utc': {'annotations': {},
+                                                                       'description': 'Timestamp when the latest '
+                                                                                      'snapshot was calculated.',
+                                                                       'synonyms': ['calculated at utc']},
+                                                 'dew_point': {'annotations': {},
+                                                               'description': 'Latest observed dew point.',
+                                                               'synonyms': ['dew point']},
+                                                 'location_id': {'annotations': {},
+                                                                 'description': 'Canonical registered weather '
+                                                                                'point identifier; do not infer '
+                                                                                'a facility association without '
+                                                                                'a verified mapping.',
+                                                                 'synonyms': ['location id']},
+                                                 'observed_at_utc': {'annotations': {},
+                                                                     'description': 'Timestamp of the latest '
+                                                                                    'observed reading.',
+                                                                     'synonyms': ['observed at utc']},
+                                                 'ontology_key': {'annotations': {},
+                                                                  'description': 'Verified SHA-256 identity of '
+                                                                                 'the complete natural-key '
+                                                                                 'tuple, with UTC timestamps '
+                                                                                 'encoded before hashing. It is '
+                                                                                 'not a measurement.',
+                                                                  'synonyms': ['ontology key']},
+                                                 'precipitation': {'annotations': {},
+                                                                   'description': 'Latest observed '
+                                                                                  'precipitation.',
+                                                                   'synonyms': ['precipitation']},
+                                                 'pressure': {'annotations': {},
+                                                              'description': 'Latest observed pressure.',
+                                                              'synonyms': ['pressure']},
+                                                 'relative_humidity': {'annotations': {},
+                                                                       'description': 'Latest observed relative '
+                                                                                      'humidity.',
+                                                                       'synonyms': ['relative humidity']},
+                                                 'solar_radiation': {'annotations': {},
+                                                                     'description': 'Latest observed solar '
+                                                                                    'radiation.',
+                                                                     'synonyms': ['solar radiation']},
+                                                 'source_id': {'annotations': {},
+                                                               'description': 'Weather source for the latest '
+                                                                              'observation.',
+                                                               'synonyms': ['source id']},
+                                                 'temperature': {'annotations': {},
+                                                                 'description': 'Latest observed temperature.',
+                                                                 'synonyms': ['temperature']},
+                                                 'wind_direction': {'annotations': {},
+                                                                    'description': 'Latest observed wind '
+                                                                                   'direction.',
+                                                                    'synonyms': ['wind direction']},
+                                                 'wind_gust': {'annotations': {},
+                                                               'description': 'Latest observed wind gust.',
+                                                               'synonyms': ['wind gust']},
+                                                 'wind_speed': {'annotations': {},
+                                                                'description': 'Latest observed wind speed.',
+                                                                'synonyms': ['wind speed']}},
+                                  'synonyms': ['Current Weather',
+                                               'Latest Weather Reading',
+                                               'Weather Snapshot',
+                                               'Current Observation',
+                                               'Latest Observation Snapshot']},
+     'WeatherLocation': {'annotations': {'domain': 'weather',
+                                         'modelRole': 'dimension',
+                                         'preferredUsage': 'point geography and weather location identity'},
+                         'description': 'Registered point weather location with geographic coordinates. This is '
+                                        'a location lookup, not an observation or a guarantee of an available '
+                                        'provider feed.',
+                         'properties': {'elevation_m': {'annotations': {},
+                                                        'description': 'Elevation m recorded by the bound '
+                                                                       'WeatherLocation source.',
+                                                        'synonyms': ['elevation m']},
+                                        'latitude': {'annotations': {},
+                                                     'description': 'Latitude recorded by the bound '
+                                                                    'WeatherLocation source.',
+                                                     'synonyms': ['latitude']},
+                                        'location_id': {'annotations': {},
+                                                        'description': 'Canonical registered weather point '
+                                                                       'identifier; do not infer a facility '
+                                                                       'association without a verified mapping.',
+                                                        'synonyms': ['location id']},
+                                        'location_name': {'annotations': {},
+                                                          'description': 'Location name recorded by the bound '
+                                                                         'WeatherLocation source.',
+                                                          'synonyms': ['location name']},
+                                        'longitude': {'annotations': {},
+                                                      'description': 'Longitude recorded by the bound '
+                                                                     'WeatherLocation source.',
+                                                      'synonyms': ['longitude']},
+                                        'metadata_json': {'annotations': {},
+                                                          'description': 'Metadata json recorded by the bound '
+                                                                         'WeatherLocation source.',
+                                                          'synonyms': ['metadata json']},
+                                        'updated_at_utc': {'annotations': {},
+                                                           'description': 'Updated at utc recorded by the bound '
+                                                                          'WeatherLocation source.',
+                                                           'synonyms': ['updated at utc']}},
+                         'synonyms': ['Weather Location',
+                                      'Weather Station Location',
+                                      'Forecast Point',
+                                      'Observation Location']},
+     'WeatherObservation': {'annotations': {'grain': 'one row per source-variable-location-observation time',
+                                            'modelRole': 'fact',
+                                            'preferredUsage': 'historical trend and aggregation',
+                                            'queryHint': 'Use WeatherObservation for measured weather history; '
+                                                         'aggregate by location and variable before '
+                                                         'summarizing.'},
+                            'description': 'Canonical historical weather observation fact at '
+                                           'source-variable-location-time grain. Use this entity for trend '
+                                           'analysis, anomaly detection, and time-series comparisons.',
+                            'properties': {'ingested_at_utc': {'annotations': {},
+                                                               'description': 'Ingested at utc recorded by the '
+                                                                              'bound WeatherObservation source.',
+                                                               'synonyms': ['ingested at utc']},
+                                           'latitude': {'annotations': {},
+                                                        'description': 'Latitude for the observation location.',
+                                                        'synonyms': ['latitude']},
+                                           'location_id': {'annotations': {},
+                                                           'description': 'Location or facility identifier '
+                                                                          'associated with the observation.',
+                                                           'synonyms': ['location id']},
+                                           'longitude': {'annotations': {},
+                                                         'description': 'Longitude for the observation location.',
+                                                         'synonyms': ['longitude']},
+                                           'observed_at_utc': {'annotations': {},
+                                                               'description': 'Time when the observation was '
+                                                                              'recorded.',
+                                                               'synonyms': ['observation time', 'observed at']},
+                                           'quality': {'annotations': {},
+                                                       'description': 'Quality flag for the observation.',
+                                                       'synonyms': ['data quality', 'quality flag']},
+                                           'run_id': {'annotations': {},
+                                                      'description': 'Ingestion run identifier for the '
+                                                                     'observation.',
+                                                      'synonyms': ['run id', 'load run id']},
+                                           'source_id': {'annotations': {},
+                                                         'description': 'Weather source that produced the '
+                                                                        'observation.',
+                                                         'synonyms': ['source id']},
+                                           'source_item_id': {'annotations': {},
+                                                              'description': 'Source record identifier for the '
+                                                                             'observation.',
+                                                              'synonyms': ['source record id',
+                                                                           'provider item id']},
+                                           'unit': {'annotations': {},
+                                                    'description': 'Unit of the observed value.',
+                                                    'synonyms': ['measurement unit']},
+                                           'value': {'annotations': {},
+                                                     'description': 'Observed measurement value.',
+                                                     'synonyms': ['observation value', 'measured value']},
+                                           'variable_id': {'annotations': {},
+                                                           'description': 'Meteorological variable measured by '
+                                                                          'the observation.',
+                                                           'synonyms': ['variable id']}},
+                            'synonyms': ['Observed Weather',
+                                         'Weather Reading',
+                                         'Observation Fact',
+                                         'Weather Sample',
+                                         'Observation History']},
+     'WeatherSource': {'annotations': {'modelRole': 'dimension',
+                                       'preferredUsage': 'lookup and provenance',
+                                       'queryHint': 'Use WeatherSource for source metadata and filtering, not '
+                                                    'for weather measurements.'},
+                       'description': 'Canonical catalog of weather providers and feed metadata. Use as the '
+                                      'lookup dimension for source identity, provenance, licensing, and provider '
+                                      'status.',
+                       'properties': {'active': {'annotations': {},
+                                                 'description': 'Whether the source is currently active.',
+                                                 'synonyms': ['enabled', 'active']},
+                                      'endpoint': {'annotations': {},
+                                                   'description': 'Source endpoint or feed location.',
+                                                   'synonyms': ['endpoint']},
+                                      'license': {'annotations': {},
+                                                  'description': 'License or usage terms for the weather feed.',
+                                                  'synonyms': ['license']},
+                                      'provider': {'annotations': {},
+                                                   'description': 'Provider organization or vendor name.',
+                                                   'synonyms': ['vendor', 'provider name']},
+                                      'source_id': {'annotations': {},
+                                                    'description': 'Unique identifier for the weather source.',
+                                                    'synonyms': ['source id', 'provider id']},
+                                      'source_name': {'annotations': {},
+                                                      'description': 'Display name of the weather source.',
+                                                      'synonyms': ['source name', 'provider name']},
+                                      'source_type': {'annotations': {},
+                                                      'description': 'Type of weather source, such as forecast '
+                                                                     'or observation feed.',
+                                                      'synonyms': ['source type', 'feed type']},
+                                      'updated_at_utc': {'annotations': {},
+                                                         'description': 'Last update timestamp for the source '
+                                                                        'metadata.',
+                                                         'synonyms': ['updated at utc']}},
+                       'synonyms': ['Weather Feed',
+                                    'Weather Provider',
+                                    'Forecast Source',
+                                    'Observation Source',
+                                    'Provider Catalog',
+                                    'Feed Catalog']},
+     'WeatherVariable': {'annotations': {'modelRole': 'dimension',
+                                         'preferredUsage': 'lookup and semantic normalization',
+                                         'queryHint': 'Use WeatherVariable to decode variable IDs, canonical '
+                                                      'units, and aggregation intent.'},
+                         'description': 'Canonical catalog of standardized meteorological variables, units, and '
+                                        'aggregation semantics. Use as the lookup dimension for weather '
+                                        'measurements and forecast variables.',
+                         'properties': {'aggregation_kind': {'annotations': {},
+                                                             'description': 'Preferred aggregation semantics for '
+                                                                            'the variable.',
+                                                             'synonyms': ['aggregation kind', 'rollup kind']},
+                                        'canonical_name': {'annotations': {},
+                                                           'description': 'Canonical variable name used in the '
+                                                                          'IQ layer.',
+                                                           'synonyms': ['canonical name', 'standard name']},
+                                        'canonical_unit': {'annotations': {},
+                                                           'description': 'Canonical measurement unit for the '
+                                                                          'variable.',
+                                                           'synonyms': ['unit', 'canonical unit']},
+                                        'description': {'annotations': {},
+                                                        'description': 'Human-readable variable definition.',
+                                                        'synonyms': ['description']},
+                                        'updated_at_utc': {'annotations': {},
+                                                           'description': 'Last update timestamp for the '
+                                                                          'variable metadata.',
+                                                           'synonyms': ['updated at utc']},
+                                        'variable_id': {'annotations': {},
+                                                        'description': 'Unique identifier for the meteorological '
+                                                                       'variable.',
+                                                        'synonyms': ['variable id', 'metric id']}},
+                         'synonyms': ['Weather Metric',
+                                      'Weather Measure',
+                                      'Meteorological Variable',
+                                      'Weather Parameter',
+                                      'Variable Catalog']},
+     'WorkOrder': {'annotations': {'domain': 'maintenance',
+                                   'modelRole': 'operational fact',
+                                   'preferredUsage': 'work management and task lifecycle',
+                                   'queryHint': 'Use WorkOrder for task status, scheduling, assignment, and '
+                                                'equipment or instrument targeting.'},
+                   'description': 'Operational work orders raised for hydro equipment and instrumentation. Use '
+                                  'this entity for the lifecycle of maintenance tasks and dispatch work.',
+                   'properties': {'assignedToOid': {'annotations': {},
+                                                    'description': 'Object identifier of the assigned user, when '
+                                                                   'present.',
+                                                    'synonyms': ['assigned to', 'assignee oid']},
+                                  'completedAt': {'annotations': {},
+                                                  'description': 'Timestamp when the work order was completed.',
+                                                  'synonyms': ['completion time', 'completed at']},
+                                  'createdAt': {'annotations': {},
+                                                'description': 'Timestamp when the work order was created.',
+                                                'synonyms': ['created time', 'created at']},
+                                  'createdByOid': {'annotations': {},
+                                                   'description': 'Object identifier of the creator.',
+                                                   'synonyms': ['created by', 'creator oid']},
+                                  'description': {'annotations': {},
+                                                  'description': 'Work order description.',
+                                                  'synonyms': ['description']},
+                                  'dueAt': {'annotations': {},
+                                            'description': 'Due timestamp for the work order.',
+                                            'synonyms': ['due time', 'deadline']},
+                                  'equipmentId': {'annotations': {},
+                                                  'description': 'Canonical physical equipment identifier '
+                                                                 'referencing equipment.equipment_id.',
+                                                  'synonyms': ['equipment id', 'equipment identifier']},
+                                  'id': {'annotations': {},
+                                         'description': 'Unique identifier for the work order.',
+                                         'synonyms': ['id']},
+                                  'instrumentId': {'annotations': {},
+                                                   'description': 'Optional physical instrument identifier '
+                                                                  'referencing instruments.instrument_id.',
+                                                   'synonyms': ['instrument id', 'instrument identifier']},
+                                  'opcuaNodeId': {'annotations': {},
+                                                  'description': 'Optional canonical OPC UA signal identifier; '
+                                                                 'join to signal_master.opcua_node_id when '
+                                                                 'present.',
+                                                  'synonyms': ['opc ua node id', 'node id']},
+                                  'priority': {'annotations': {},
+                                               'description': 'Work order priority.',
+                                               'synonyms': ['urgency', 'priority level']},
+                                  'status': {'annotations': {},
+                                             'description': 'Lifecycle or operating status recorded by this '
+                                                            "entity's source; not automatically inferred from "
+                                                            'telemetry quality.',
+                                             'synonyms': ['state', 'work order status']},
+                                  'title': {'annotations': {},
+                                            'description': 'Short title of the work order.',
+                                            'synonyms': ['title']},
+                                  'workOrderNumber': {'annotations': {},
+                                                      'description': 'Business work order number.',
+                                                      'synonyms': ['work order no', 'order number']}},
+                   'synonyms': ['Work Order', 'Maintenance Work Order', 'Job', 'Task', 'Work Request']},
+     'equipment': {'annotations': {'agentGuide': 'Canonical equipment entity. Prefer this over signal_master '
+                                                 'when the question is about the physical machine or asset '
+                                                 'record.',
+                                   'modelRole': 'equipment registry',
+                                   'preferredUsage': 'equipment identity, maintenance targeting, and inventory',
+                                   'queryHint': 'Use equipment for physical asset identity and status. Use '
+                                                'signal_master for signal identity and telemetry.'},
+                   'description': 'Hydro equipment registry attached to facilities and systems. Use this entity '
+                                  'for physical equipment identity, status, manufacturer, model, and maintenance '
+                                  'targeting. Do not use it as the signal master.',
+                   'properties': {'criticality': {'annotations': {},
+                                                  'description': 'Recorded equipment criticality used to '
+                                                                 'prioritize maintenance; not an inferred '
+                                                                 'telemetry severity.',
+                                                  'synonyms': ['criticality']},
+                                  'equipment_id': {'annotations': {},
+                                                   'description': 'Canonical physical equipment identifier. Use '
+                                                                  'it to reconcile affected signals with '
+                                                                  'operational records.',
+                                                   'synonyms': ['equipment id', 'asset id']},
+                                  'equipment_type_code': {'annotations': {},
+                                                          'description': 'Controlled equipment-class code; '
+                                                                         'distinguish this code from its '
+                                                                         'human-readable type name.',
+                                                          'synonyms': ['type code', 'asset class code']},
+                                  'equipment_type_name': {'annotations': {},
+                                                          'description': 'Human-readable equipment '
+                                                                         'classification, not a unique physical '
+                                                                         'equipment identifier.',
+                                                          'synonyms': ['type name', 'asset class name']},
+                                  'facility_id': {'annotations': {},
+                                                  'description': 'Canonical facility identifier linking the '
+                                                                 'record to its hydro site or plant.',
+                                                  'synonyms': ['facility identifier', 'plant id']},
+                                  'install_date': {'annotations': {},
+                                                   'description': 'Recorded installation date of the physical '
+                                                                  'equipment.',
+                                                   'synonyms': ['installation date', 'commission date']},
+                                  'is_active': {'annotations': {},
+                                                'description': 'Whether the registry record is active. This is '
+                                                               'not a measurement of current health or telemetry '
+                                                               'freshness.',
+                                                'synonyms': ['active', 'enabled']},
+                                  'manufacturer': {'annotations': {},
+                                                   'description': 'Manufacturer recorded for the physical '
+                                                                  'equipment.',
+                                                   'synonyms': ['manufacturer']},
+                                  'model': {'annotations': {},
+                                            'description': 'Manufacturer model designation of the physical '
+                                                           'equipment, not a 3D attachment.',
+                                            'synonyms': ['equipment model']},
+                                  'status': {'annotations': {},
+                                             'description': 'Lifecycle or operating status recorded by this '
+                                                            "entity's source; not automatically inferred from "
+                                                            'telemetry quality.',
+                                             'synonyms': ['equipment status', 'asset status']},
+                                  'system_id': {'annotations': {},
+                                                'description': 'Canonical system identifier linking the record '
+                                                               'to its plant subsystem.',
+                                                'synonyms': ['system identifier', 'unit id']},
+                                  'tag': {'annotations': {},
+                                          'description': 'Engineering tag recorded by the source; retain '
+                                                         'canonical identifiers for joins rather than relying on '
+                                                         'tag text.',
+                                          'synonyms': ['equipment tag', 'asset tag']}},
+                   'synonyms': ['Equipment', 'Machine', 'Turbine Equipment', 'Unit Equipment']},
+     'facilities': {'annotations': {'domain': 'asset',
+                                    'modelRole': 'dimension',
+                                    'preferredUsage': 'site lookup and geographic context',
+                                    'queryHint': 'Use facilities when grouping or filtering by plant/site, and '
+                                                 'when joining equipment, systems, or weather location context.'},
+                    'description': 'Hydro generation facility master data. Site and plant identity, geography, '
+                                   'and asset hierarchy. WeatherLocation is a separate source-bound entity; do '
+                                   'not assume a weather location exists for every facility.',
+                    'properties': {'commissioned_date': {'annotations': {},
+                                                         'description': 'Commissioning date or date label for '
+                                                                        'the facility.',
+                                                         'synonyms': ['commissioned date', 'commission date']},
+                                   'country': {'annotations': {},
+                                               'description': 'Country where the facility is located.',
+                                               'synonyms': ['country', 'nation']},
+                                   'elevation_m': {'annotations': {},
+                                                   'description': 'Elevation in meters for the weather location.',
+                                                   'synonyms': ['elevation', 'elevation meters']},
+                                   'facility_id': {'annotations': {},
+                                                   'description': 'Canonical facility identifier linking the '
+                                                                  'record to its hydro site or plant.',
+                                                   'synonyms': ['facility id', 'site id', 'plant id']},
+                                   'facility_name': {'annotations': {},
+                                                     'description': 'Display name of the facility.',
+                                                     'synonyms': ['facility name', 'site name', 'plant name']},
+                                   'lat': {'annotations': {},
+                                           'description': 'Facility latitude in decimal degrees.',
+                                           'synonyms': ['latitude']},
+                                   'latitude': {'annotations': {},
+                                                'description': 'Latitude for the facility or weather location.',
+                                                'synonyms': ['lat', 'latitude']},
+                                   'location_id': {'annotations': {},
+                                                   'description': 'Weather location identifier associated with '
+                                                                  'the facility, when present.',
+                                                   'synonyms': ['location id']},
+                                   'location_name': {'annotations': {},
+                                                     'description': 'Weather location display name associated '
+                                                                    'with the facility, when present.',
+                                                     'synonyms': ['location name']},
+                                   'lon': {'annotations': {},
+                                           'description': 'Facility longitude in decimal degrees.',
+                                           'synonyms': ['longitude']},
+                                   'longitude': {'annotations': {},
+                                                 'description': 'Longitude for the facility or weather location.',
+                                                 'synonyms': ['lon', 'longitude']},
+                                   'metadata_json': {'annotations': {},
+                                                     'description': 'Additional facility or location metadata '
+                                                                    'encoded as JSON.',
+                                                     'synonyms': ['metadata', 'json metadata']},
+                                   'type': {'annotations': {},
+                                            'description': 'facilities type or operating class.',
+                                            'synonyms': ['facility type', 'plant type']},
+                                   'updated_at_utc': {'annotations': {},
+                                                      'description': 'Last update timestamp for the facility or '
+                                                                     'weather location record.',
+                                                      'synonyms': ['updated at', 'last updated']}},
+                    'synonyms': ['Plant', 'Power Station', 'Hydro Plant', 'Hydropower Facility', 'Site']},
+     'instruments': {'annotations': {'domain': 'asset',
+                                     'modelRole': 'instrument registry',
+                                     'preferredUsage': 'instrument inventory and physical equipment hierarchy',
+                                     'queryHint': 'Use instruments for physical instrumentation and '
+                                                  'instrument_id joins. Use signal_master for OPC UA telemetry.'},
+                     'description': 'Physical instrument registry attached to equipment, systems, and '
+                                    'facilities. Use signal_master for canonical signal identity and telemetry '
+                                    'history.',
+                     'properties': {'equipment_id': {'annotations': {},
+                                                     'description': 'Canonical physical equipment identifier. '
+                                                                    'Use it to reconcile affected signals with '
+                                                                    'operational records.',
+                                                     'synonyms': ['equipment id', 'asset id']},
+                                    'event_time': {'annotations': {},
+                                                   'description': 'Timestamp of the telemetry sample. Preserve '
+                                                                  "this sample's alignment with value and "
+                                                                  'quality and state the time zone.',
+                                                   'synonyms': ['event timestamp', 'sample time']},
+                                    'facility_id': {'annotations': {},
+                                                    'description': 'Canonical facility identifier linking the '
+                                                                   'record to its hydro site or plant.',
+                                                    'synonyms': ['facility id', 'plant id']},
+                                    'instrument_id': {'annotations': {},
+                                                      'description': 'Physical instrument identifier used for '
+                                                                     'the signal-to-instrument relationship.',
+                                                      'synonyms': ['signal id', 'point id', 'tag id']},
+                                    'instrument_type': {'annotations': {},
+                                                        'description': 'Recorded physical instrumentation '
+                                                                       'classification; use signal_type for the '
+                                                                       'canonical signal category.',
+                                                        'synonyms': ['signal type', 'instrument class']},
+                                    'is_active': {'annotations': {},
+                                                  'description': 'Whether the registry record is active. This is '
+                                                                 'not a measurement of current health or '
+                                                                 'telemetry freshness.',
+                                                  'synonyms': ['active', 'enabled']},
+                                    'opcua_node_id': {'annotations': {},
+                                                      'description': 'Canonical OPC UA signal identifier shared '
+                                                                     'by the static registry and telemetry event '
+                                                                     'source.',
+                                                      'synonyms': ['OPC UA node', 'node id', 'OPC node']},
+                                    'quality': {'annotations': {},
+                                                'description': 'Quality of the same telemetry sample as '
+                                                               'event_time and value. A BAD sample is not proof '
+                                                               'of a mechanical fault.',
+                                                'synonyms': ['data quality', 'quality flag']},
+                                    'signal_type': {'annotations': {},
+                                                    'description': 'Canonical signal category used for signal '
+                                                                   'inventory and classification, not a '
+                                                                   'telemetry sample value.',
+                                                    'synonyms': ['signal class', 'measurement type']},
+                                    'system_id': {'annotations': {},
+                                                  'description': 'Canonical system identifier linking the record '
+                                                                 'to its plant subsystem.',
+                                                  'synonyms': ['system id', 'unit id']},
+                                    'tag': {'annotations': {},
+                                            'description': 'Engineering tag recorded by the source; retain '
+                                                           'canonical identifiers for joins rather than relying '
+                                                           'on tag text.',
+                                            'synonyms': ['asset tag', 'signal tag', 'point tag']},
+                                    'unit': {'annotations': {},
+                                             'description': 'Engineering unit of the signal or measurement. '
+                                                            'Interpret values in this unit and do not silently '
+                                                            'mix incompatible units.',
+                                             'synonyms': ['measurement unit']},
+                                    'value': {'annotations': {},
+                                              'description': 'Historical telemetry value for this signal and '
+                                                             'event_time, interpreted using its canonical unit.',
+                                              'synonyms': ['signal value', 'sample value', 'telemetry value']}},
+                     'synonyms': ['Instrument',
+                                  'Physical Instrument',
+                                  'Equipment Instrument',
+                                  'Sensor Registry']},
+     'signal_master': {'annotations': {'agentGuide': 'Canonical signal master entity. Prefer this over equipment '
+                                                     'when the question is about OPC UA points, tags, units, '
+                                                     'telemetry, or signal classification.',
+                                       'modelRole': 'signal master',
+                                       'preferredUsage': 'signal inventory, point lookup, and telemetry history',
+                                       'queryHint': 'Use signal_master for signal identity and historical '
+                                                    'telemetry. BAD today means any BAD sample in the stated '
+                                                    'time window, not only the latest sample. Reconcile work '
+                                                    'orders by equipment_id and opcua_node_id.'},
+                       'description': 'Canonical OPC UA signal registry keyed by opcua_node_id. Static Lakehouse '
+                                      'identity and equipment context are stitched to Eventhouse telemetry by '
+                                      'that same identifier. event_time, value, and quality are aligned '
+                                      'time-series properties, not independent latest scalar values.',
+                       'properties': {'equipment_id': {'annotations': {},
+                                                       'description': 'Canonical physical equipment identifier. '
+                                                                      'Use it to reconcile affected signals with '
+                                                                      'operational records.',
+                                                       'synonyms': ['equipment id', 'asset id']},
+                                      'event_time': {'annotations': {},
+                                                     'description': 'Timestamp of the telemetry sample. Preserve '
+                                                                    "this sample's alignment with value and "
+                                                                    'quality and state the time zone.',
+                                                     'synonyms': ['event timestamp', 'sample time']},
+                                      'facility_id': {'annotations': {},
+                                                      'description': 'Canonical facility identifier linking the '
+                                                                     'record to its hydro site or plant.',
+                                                      'synonyms': ['facility id', 'plant id']},
+                                      'instrument_id': {'annotations': {},
+                                                        'description': 'Physical instrument identifier used for '
+                                                                       'the signal-to-instrument relationship.',
+                                                        'synonyms': ['signal id', 'point id', 'tag id']},
+                                      'instrument_type': {'annotations': {},
+                                                          'description': 'Recorded physical instrumentation '
+                                                                         'classification; use signal_type for '
+                                                                         'the canonical signal category.',
+                                                          'synonyms': ['signal type', 'instrument class']},
+                                      'is_active': {'annotations': {},
+                                                    'description': 'Whether the registry record is active. This '
+                                                                   'is not a measurement of current health or '
+                                                                   'telemetry freshness.',
+                                                    'synonyms': ['active', 'enabled']},
+                                      'opcua_node_id': {'annotations': {},
+                                                        'description': 'Canonical OPC UA signal identifier '
+                                                                       'shared by the static registry and '
+                                                                       'telemetry event source.',
+                                                        'synonyms': ['OPC UA node', 'node id', 'OPC node']},
+                                      'quality': {'annotations': {},
+                                                  'description': 'Quality of the same telemetry sample as '
+                                                                 'event_time and value. A BAD sample is not '
+                                                                 'proof of a mechanical fault.',
+                                                  'synonyms': ['data quality', 'quality flag']},
+                                      'signal_type': {'annotations': {},
+                                                      'description': 'Canonical signal category used for signal '
+                                                                     'inventory and classification, not a '
+                                                                     'telemetry sample value.',
+                                                      'synonyms': ['signal class', 'measurement type']},
+                                      'system_id': {'annotations': {},
+                                                    'description': 'Canonical system identifier linking the '
+                                                                   'record to its plant subsystem.',
+                                                    'synonyms': ['system id', 'unit id']},
+                                      'tag': {'annotations': {},
+                                              'description': 'Engineering tag recorded by the source; retain '
+                                                             'canonical identifiers for joins rather than '
+                                                             'relying on tag text.',
+                                              'synonyms': ['asset tag', 'signal tag', 'point tag']},
+                                      'unit': {'annotations': {},
+                                               'description': 'Engineering unit of the signal or measurement. '
+                                                              'Interpret values in this unit and do not silently '
+                                                              'mix incompatible units.',
+                                               'synonyms': ['measurement unit']},
+                                      'value': {'annotations': {},
+                                                'description': 'Historical telemetry value for this signal and '
+                                                               'event_time, interpreted using its canonical '
+                                                               'unit.',
+                                                'synonyms': ['signal value', 'sample value', 'telemetry value']}},
+                       'synonyms': ['Signal Master', 'Signal Registry', 'Tag', 'Signal', 'Sensor', 'Point']},
+     'systems': {'annotations': {'domain': 'asset',
+                                 'modelRole': 'dimension',
+                                 'preferredUsage': 'system grouping and asset hierarchy',
+                                 'queryHint': 'Use systems when aggregating equipment or instruments by '
+                                              'subsystem or plant.'},
+                 'description': 'Operational systems belonging to hydro facilities, such as turbine or plant '
+                                'subsystems. Use this entity as the system-level grouping above equipment and '
+                                'instruments.',
+                 'properties': {'facility_id': {'annotations': {},
+                                                'description': 'Canonical facility identifier linking the record '
+                                                               'to its hydro site or plant.',
+                                                'synonyms': ['facility id', 'plant id']},
+                                'oag_rds_system_code': {'annotations': {},
+                                                        'description': 'Operational or external code for the '
+                                                                       'system.',
+                                                        'synonyms': ['system code',
+                                                                     'RDS code',
+                                                                     'external system code']},
+                                'system_id': {'annotations': {},
+                                              'description': 'Canonical system identifier linking the record to '
+                                                             'its plant subsystem.',
+                                              'synonyms': ['system id', 'unit id']},
+                                'system_name': {'annotations': {},
+                                                'description': 'Display name of the system.',
+                                                'synonyms': ['system name', 'unit name']}},
+                 'synonyms': ['Turbine System', 'Asset System', 'Production System', 'Unit', 'Subsystem']}}
+
+
+def _semantic_description(text, start, indent):
+    lines = text[:start].splitlines()
+    description = []
+    while lines and lines[-1].startswith(indent + "///"):
+        description.append(lines.pop()[len(indent) + 3:].strip())
+    return " ".join(reversed(description)).strip()
+
+
+def _enrich_semantic_block(block, metadata, indent):
+    child = indent + "\t"
+    additions = []
+    synonyms = {
+        value.strip("'").replace("''", "'").casefold()
+        for value in re.findall(r"(?m)^" + re.escape(child) + r"synonym (.+?)[ \t]*$", block)
+    }
+    for synonym in metadata.get("synonyms", []):
+        if synonym.casefold() not in synonyms:
+            additions.append(child + "synonym " + _quote_name(synonym))
+            synonyms.add(synonym.casefold())
+    annotations = set(re.findall(
+        r"(?m)^" + re.escape(child) + r"annotation ([A-Za-z_][A-Za-z_0-9]*)[ \t]*=", block))
+    for key, value in metadata.get("annotations", {}).items():
+        if key not in annotations:
+            if "\n" in value or "\r" in value:
+                raise RuntimeError(f"Multiline semantic annotation {key} needs explicit TMDL authoring.")
+            additions.append(f"{child}annotation {key} = {value}")
+    if not additions:
+        return block
+    lines = block.splitlines(keepends=True)
+    trailing = []
+    while lines and (not lines[-1].strip() or lines[-1].startswith(indent + "///")):
+        trailing.append(lines.pop())
+    return "".join(lines).rstrip() + "\n\n" + "\n".join(additions) + "\n" + "".join(reversed(trailing))
+
+
+def _project_business_rules():
+    return [
+        ("Hydro_AnyBadSampleInWindow",
+         "BAD telemetry analysis must include any BAD-quality sample in the requested time window, "
+         "not only each signal's latest sample. State the evaluated time window and time zone.",
+         {"signal_master": ("opcua_node_id", "event_time", "quality")}),
+        ("Hydro_AlignedTelemetryHistory",
+         "Join static signal identity and telemetry by the same canonical opcua_node_id. "
+         "Keep event_time, value, and quality aligned to the same historical event; "
+         "never combine independently selected latest values into a fictitious sample.",
+         {"signal_master": ("opcua_node_id", "event_time", "value", "quality")}),
+        ("Hydro_NoDuplicateMaintenance",
+         "Reconcile affected signals with physical equipment and existing work orders by canonical "
+         "equipment_id and opcua_node_id. Before proposing a new work order, identify existing "
+         "open work covering the same issue and avoid duplicate maintenance.",
+         {"signal_master": ("equipment_id", "opcua_node_id"),
+          "WorkOrder": ("equipmentId", "opcuaNodeId", "status")}),
+        ("Hydro_EvidenceBeforeRootCause",
+         "BAD telemetry quality indicates an evidence-quality problem, not proof of mechanical failure. "
+         "Separate observations, root-cause hypotheses, supporting evidence, and missing evidence. "
+         "Do not present a hypothesis as a confirmed root cause.",
+         {"signal_master": ("quality", "event_time", "value"), "equipment": ("equipment_id",)}),
+        ("Hydro_OperatorApprovedWorkOrders",
+         "Work-order recommendations are drafts. Do not create, modify, assign, or close operational "
+         "records without the operator's explicit approval and successful authorized execution. "
+         "Configuration or publication success is not evidence that a write or delivery occurred.",
+         {"WorkOrder": ("title", "description", "status", "equipmentId")}),
+        ("Hydro_WeatherEvidenceLimits",
+         "Latest weather snapshots are for current-state questions, not historical trends. "
+         "Report source, location or area, timestamp, units, and forecast horizon. "
+         "Missing weather or failed ingestion is unavailable evidence, not zero weather or proof "
+         "of causation for equipment faults.",
+         {"WeatherLatestObservation": ("source_id", "location_id", "observed_at_utc"),
+          "WeatherLatestForecast": ("source_id", "target_kind", "target_id", "valid_time_utc")}),
+    ]
+
+
+def _enrich_project_semantics(parts):
+    result = _parts_by_path(parts)
+    catalog = _project_semantics()
+    present = {}
+    for name, metadata in catalog.items():
+        path = f"entities/{name}.tmdl"
+        if path not in result:
+            continue
+        text = _decode_part(result[path])
+        entities = _object_spans(text, "entity", 0)
+        if len(entities) != 1 or entities[0][0] != name:
+            raise RuntimeError(f"Semantic metadata cannot change ambiguous entity identity in {path}.")
+        properties = _object_spans(text, "property", 4)
+        present[name] = {item[0] for item in properties}
+        for prop, start, end, block in reversed(properties):
+            spec = metadata.get("properties", {}).get(prop)
+            if not spec:
+                continue
+            replacement = _enrich_semantic_block(block, spec, "\t")
+            if spec.get("description") and not _semantic_description(text, start, "\t"):
+                replacement = "\t/// " + spec["description"] + "\n" + replacement
+            text = text[:start] + replacement + text[end:]
+        entity = _object_spans(text, "entity", 0)[0]
+        replacement = _enrich_semantic_block(entity[3], metadata, "")
+        if metadata.get("description") and not _semantic_description(text, entity[1], ""):
+            replacement = "/// " + metadata["description"] + "\n" + replacement
+        text = text[:entity[1]] + replacement + text[entity[2]:]
+        if text != _decode_part(result[path]):
+            result[path] = _encode_part(path, text)
+    if "model.tmdl" not in result:
+        raise RuntimeError("Project semantics require the existing TMDL model.")
+    model = _decode_part(result["model.tmdl"])
+    for name, statement, references in _project_business_rules():
+        if not set(references).issubset(present):
+            continue
+        rule = [f"rule {name}", f"\tstatement: {statement}"]
+        for entity, properties in references.items():
+            if not set(properties).issubset(present[entity]):
+                raise RuntimeError(f"Business rule {name} references missing properties of {entity}.")
+            rule.extend(("", f"\truleReferencedEntity {entity}", "\t\tpropertyScope: specific", ""))
+            rule.extend(f"\t\truleReferencedProperty {prop}" for prop in properties)
+        path = f"rules/{name}.tmdl"
+        wanted = "\n".join(rule) + "\n"
+        if path in result:
+            if _structural_lines(wanted) - _structural_lines(_decode_part(result[path])):
+                raise RuntimeError(f"Existing project business rule {name} conflicts; preserve and review it explicitly.")
+        else:
+            result[path] = _encode_part(path, wanted)
+        model = _append_model_ref(model, "rule", name)
+    if model != _decode_part(result["model.tmdl"]):
+        result["model.tmdl"] = _encode_part("model.tmdl", model)
+    return list(result.values())
+
+
+def _verify_semantic_descriptions(expected, actual):
+    retained = _parts_by_path(actual)
+    managed = {f"entities/{name}.tmdl" for name in _project_semantics()}
+    for path, part in _parts_by_path(expected).items():
+        if path not in managed:
+            continue
+        before, after = _decode_part(part), _decode_part(retained[path])
+        for kind, depth, indent in (("entity", 0, ""), ("property", 4, "\t")):
+            objects = {name: start for name, start, _, _ in _object_spans(after, kind, depth)}
+            for name, start, _, _ in _object_spans(before, kind, depth):
+                description = _semantic_description(before, start, indent)
+                if description and (name not in objects
+                                    or _semantic_description(after, objects[name], indent) != description):
+                    raise RuntimeError(f"Fabric did not retain the description of {path}:{name}.")
+
+
 def _identifier_parts(value):
     tokens = re.findall(r"'(?:[^']|'')*'|[^.\s]+", value.strip())
     if ".".join(tokens) != value.strip():
@@ -573,7 +1877,7 @@ def _structural_lines(text):
         prefix = line[:len(line) - len(line.lstrip(" \t"))]
         depth = len(prefix.expandtabs(4))
         statement = line.strip()
-        match = re.match(r"(ref (?:entity|table|namespace)|entity|table|column|property|entityRelationship|relationship) (.+)$", statement)
+        match = re.match(r"(ref (?:entity|table|namespace|rule)|entity|table|column|property|entityRelationship|relationship|synonym|rule|ruleReferencedEntity|ruleReferencedProperty|ruleReferencedRelationship) (.+)$", statement)
         if match:
             statement = match[1] + " " + ".".join(_identifier_parts(match[2]))
         else:
@@ -616,6 +1920,7 @@ def _verify_definition(expected, actual):
                 raise RuntimeError(f"Fabric did not retain submitted JSON in {path}")
         elif before != after:
             raise RuntimeError(f"Fabric changed unmanaged part {path}")
+    _verify_semantic_descriptions(expected, actual)
 
 
 def _select_attached_graph_model(ontology_id, workspace_id, lineage, workspace_items):
@@ -1218,7 +2523,7 @@ def _merge_gen2_structure(live_parts, desired_parts):
                     live = _append_model_ref(live, match[1], _local_name(match[2]))
         if live != _decode_part(result[path]):
             result[path] = _encode_part(path, live)
-    return list(result.values())
+    return _enrich_project_semantics(list(result.values()))
 
 
 

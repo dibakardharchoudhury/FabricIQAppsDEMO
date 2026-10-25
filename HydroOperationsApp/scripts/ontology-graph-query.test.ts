@@ -36,6 +36,24 @@ const edgeRows = [{ source: system, target: facility, relationship: element('r1'
 const table = (data: object[], nextPage?: string) => ({ status: { code: '00000' }, result: { kind: 'TABLE', data, ...(nextPage ? { nextPage } : {}) } })
 const endpoint = `https://api.fabric.microsoft.com/v1/workspaces/${workspaceId}/graphModels/${graphModelId}/executeQuery?beta=true`
 
+test('independent graph metadata and schema reads start concurrently', async () => {
+  let releaseMetadata: (() => void) | undefined
+  const metadataReady = new Promise<void>(resolve => { releaseMetadata = resolve })
+  const graph = await queryBoundOntologyGraph(binding, ontology, async (url, init) => {
+    if (url.endsWith(graphModelId)) {
+      await metadataReady
+      return Response.json({ id: graphModelId, type: 'GraphModel', displayName: 'Verified graph' })
+    }
+    if (url.includes('getQueryableGraphType')) {
+      releaseMetadata!()
+      return Response.json(schema)
+    }
+    return Response.json(table(JSON.parse(String(init?.body)).query.includes('MATCH (n)') ? nodeRows : edgeRows))
+  })
+  assert.equal(graph.nodes.length, 2)
+  assert.equal(graph.edges.length, 1)
+})
+
 test('native graph requires explicit workspace/ontology/graph binding, never name guessing', () => {
   assert.deepEqual(parseGraphBinding(JSON.stringify(binding), workspaceId, ontologyId), { ...binding, nodeTypes: undefined, edgeTypes: undefined })
   for (const input of [undefined, '', 'invalid', '{}', JSON.stringify({ ...binding, graphModelId: 'not-a-guid' })]) {
@@ -127,12 +145,13 @@ test('bound query validates graph metadata/schema, reads native nodes/edges and 
 })
 
 test('wrong graph metadata and ontology identities fail before graph execution', async () => {
-  let calls = 0
-  const request = async () => { calls++; return Response.json({ id: ontologyId, type: 'GraphModel', displayName: 'Wrong' }) }
+  const calls: Array<RequestInit | undefined> = []
+  const request = async (_url: string, init?: RequestInit) => { calls.push(init); return Response.json({ id: ontologyId, type: 'GraphModel', displayName: 'Wrong' }) }
   await assert.rejects(queryBoundOntologyGraph({ ...binding, ontologyId: graphModelId }, ontology, request), /does not match/)
-  assert.equal(calls, 0)
+  assert.equal(calls.length, 0)
   await assert.rejects(queryBoundOntologyGraph(binding, ontology, request), /does not match/)
-  assert.equal(calls, 1)
+  assert.equal(calls.length, 2)
+  assert.ok(calls.every(init => !init?.method || init.method === 'GET'))
 })
 
 test('visualization limits accept exactly 2000 nodes or 4000 edges and reject one extra row', async () => {

@@ -825,3 +825,87 @@ placement and immutable existing identity/name remain as recorded above; no
 replacement database or deletion was authorized. The AppBackend-managed child
 remains retained. Weather provider authentication and the separate runtime
 acceptance limits are still unresolved. V3 was not modified.
+
+## October 25: verified semantic repair and native graph diagnosis
+
+This is a fresh comparison of the complete live generation-2 definitions, not a reuse of the
+earlier binding-only assessment. V3 `Ontology_Test` was read only. FEATURE's existing ontology
+identity, keys, physical source bindings, telemetry stitch, unknown parts, and graph scope were
+preserved.
+
+| Semantic surface | V3 reference | FEATURE before | FEATURE verified after |
+| --- | ---: | ---: | ---: |
+| Entity types | 19 | 18 | 18 |
+| Description lines | 199 | 0 | 189 |
+| Synonyms | 373 | 0 | 372 |
+| Semantic annotations | 71 | 0 | 67 |
+| Exported scoped business rules | 0 | 0 | 6 |
+
+All **171 existing FEATURE properties** and all 18 entities now have descriptions. Counts are
+not intended to match the reference: FEATURE has different canonical grains and source bindings.
+The reference's richer semantics are useful, but it should not replace the working ontology
+wholesale. Its combined `Instrument` semantics were adapted into the distinct physical
+`instruments` registry and `signal_master` telemetry entity keyed by `opcua_node_id`.
+Facility text no longer assumes a weather location is embedded in the facility binding.
+Spare-part text no longer incorrectly labels FEATURE's SQL-backed inventory as unbound.
+
+Six explicitly scoped rules cover any-BAD-sample windows, aligned historical telemetry, duplicate
+maintenance prevention, evidence-qualified RCA, operator-approved work-order writes, and weather
+evidence limitations. They use Microsoft's documented `statement`, `ruleReferencedEntity`,
+`propertyScope: specific`, and `ruleReferencedProperty` syntax. These are natural-language
+guardrails, not database constraints or runtime-execution certification.
+
+The final semantic-only update was verified by live generation-2 readback at
+**2026-10-25 10:50:54 UTC**. Every original part/setting and new description/rule was checked;
+the resulting definition is idempotent. Initial TMDL validation rejected metadata child objects
+placed before scalar settings; the producer now appends them correctly, with a regression test.
+No rejected validation response was treated as a successful deployment.
+
+### Graph scope, eligibility, and loading
+
+A bounded native read returned **201 nodes / 198 edges**, no isolated nodes, and **three
+67-node components**, one per facility. Those separate facility trees are legitimate topology.
+The existing queryable graph has five node types and four relationship types; its complete
+queryable schema was unchanged after semantic/rule publication.
+
+Microsoft documents keys, supported Delta/mirrored sources, binding, and a single backing table
+as graph eligibility requirements. The multi-backing static/Eventhouse signal entity should
+not be made eligible by removing its working telemetry stitch. Use the selected ontology's
+**Manage graph -> select eligible entities/relationships -> Continue -> Materialize** flow;
+prefer the four static asset types and three hierarchy relationships for a smaller initial scope.
+The portal worker failed to load in this browser session, so no Ineligible tooltip or new scope
+selection was claimed as verified, and no portal-owned graph was rewritten through another API.
+
+NB06 previously forced a five-type projection and graph refresh/GQL jobs. That phase is now
+read-only authoritative ownership discovery, recording `portal-prerequisite` or
+`configured-not-runtime-verified`. It no longer overwrites a portal selection or couples
+ontology/required-agent setup to graph refresh. Ontology-backed Data Agent questions do not
+universally require materialization; the app's native canvas/tree/scopes do.
+
+Native node/edge query times were **51.344 / 54.891 seconds** in parallel. This locates the measured
+delay inside Fabric rather than proving a rendering problem. The app source now loads independent
+metadata/schema concurrently and refreshes its ontology contract on manual graph refresh.
+Existing identity-keyed in-memory caching/coalescing and failure invalidation remain intact.
+No persistent analytical cache, synthetic edge, or GraphQL/STID topology fallback was added.
+No reduction in Fabric's cold-query latency is claimed from these source changes.
+
+### Verification and remaining boundaries
+
+- Seven focused Python cases, eleven native-graph cases, app TypeScript checking, and notebook
+  mirror compilation/synchronization checks passed; no full suite, build, app redeploy, or Spark
+  setup/seed rerun was performed.
+- The live FEATURE ontology is repaired. Notebook/app producer changes are committed source,
+  not a claim that hosted app code or live notebook definitions were redeployed.
+- FEATURE still exposes latest-weather snapshots, not the candidate's three separate long-history
+  fact entities. Their physical schemas were inspected, but adding a new physical-key migration
+  was not folded into this metadata-only repair. The live weather-location table was empty.
+  Provider readiness, historical weather answers, cross-source answers, writes, and delivery
+  remain separate runtime acceptance work.
+- V3 was not changed. The existing healthy native graph was retained, not rematerialized merely
+  to change its node count.
+
+Official references:
+
+- [New ontology TMDL definition, including rule parts and the complete rule example](https://learn.microsoft.com/en-us/rest/api/fabric/articles/item-management/definitions/ontology-definition)
+- [Ontology graph purpose, optional materialization, and eligibility limitations](https://learn.microsoft.com/en-us/fabric/iq/ontology/how-to-use-ontology-graph)
+- [Natural-language business rules and linked concepts](https://learn.microsoft.com/en-us/fabric/iq/ontology/how-to-use-rules)

@@ -1198,22 +1198,21 @@ This acceptance record does not authorize a new import, reset, deployment, or al
 ### Native graph materialization
 
 Graph sources require keys and Delta/mirrored bindings. No published ontology-owned
-projection/materialization REST endpoint is established. On October 2, 2026, a clean deployment
-verified that a fresh generation-2 Ontology exposes an attached service-owned GraphModel child.
-`RTI_006` followed the authoritative Ontology-to-GraphIndex lineage, authored the complete static
-five-entity/four-relationship GraphModel definition, verified readback, observed successful
-automatic refresh, and verified the Operations Agent GQL selector. If that attached child or its
-authoritative lineage is unavailable, setup fails; use **Manage graph → select eligible entities and
-relationships → Continue → Materialize** as the explicit operator fallback.
+projection/materialization REST endpoint is established. Use **Manage graph → select eligible
+entities and relationships → Continue → Materialize** in the selected ontology. NB06 now preserves
+that selection and reads only authoritative graph ownership; it does not rewrite GraphModel scope,
+submit refresh jobs, or claim graph runtime verification. Missing materialization is a separate
+portal prerequisite, not an ontology-binding failure. Ontology-backed Data Agent execution does not
+universally require a materialized graph; this app's native canvas/tree/scopes do.
 
 **Historical product behavior (2026-09-30):** the portal-authored full five-entity projection failed with HTTP 400
 `ModelValidationError` / `InvalidPropertyType`, reporting `INVALID` for the TimeSeries properties
 `event_time`, `value`, and `quality`. Selecting the native **facilities, systems, equipment, and
 instruments** subgraph plus its **three hierarchy relationships** in Manage graph successfully
 materialized **111 nodes / 108 edges**. Keep the original **five-entity / four-relationship ontology
-and its TimeSeries properties intact**. The automated definition avoids that historical validation
-failure by excluding only those three Eventhouse-bound properties from static GraphModel mappings;
-it does not delete the Ontology properties or fabricate GraphQL topology.
+and its TimeSeries properties intact**. Current Microsoft guidance additionally excludes
+multiple-backing-table entities from eligibility. Do not strip the telemetry stitch, force all
+types into a graph definition, or fabricate GraphQL/STID topology to bypass eligibility.
 
 Before building the app, the canonical deployment orchestrator resolves the selected generation-2
 ontology's authoritative downstream `CascadeDelete` relation to its same-workspace `GraphIndex`,

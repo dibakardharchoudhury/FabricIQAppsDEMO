@@ -646,7 +646,7 @@ export async function queryOntologyContract(force = false): Promise<OntologyCont
 }
 
 async function readBoundOntologyGraph(binding: ReturnType<typeof parseGraphBinding>, force: boolean): Promise<OntologyGraph | null> {
-  const ontology = await queryOntologyContract()
+  const ontology = await queryOntologyContract(force)
   if (!ontology || ontology.id.toLowerCase() !== binding.ontologyId.toLowerCase()) {
     throw new Error('Ontology selection changed during graph loading. Refresh discovery.')
   }

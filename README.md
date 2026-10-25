@@ -27,17 +27,22 @@ Generation 2 uses TMDL entity definitions, Direct Lake backing tables, physical 
 and Eventhouse time-series backing configurations. Definition updates preserve unrelated live
 parts and existing bindings; incompatible changes must be resolved explicitly rather than silently
 rebuilding a populated ontology. The application reads generation-2 TMDL contracts only.
+The shared semantic catalog adds entity/property descriptions, synonyms, and usage/query guidance;
+scoped business rules use documented `rules/{name}.tmdl` parts and `ref rule` model references.
+Operator metadata is preserved. Rules guide consumers; they are not enforced SQL constraints or
+evidence that an agent executed an action.
 Graph materialization is optional in the Fabric generation-2 experience but required for the app's
-native graph canvas, tree, scopes, and Ontology Operations Agent GQL selectors. Fabric exposes no
-ontology-owned materialization operation. A fresh generation-2 Ontology currently exposes an
-attached service-owned GraphModel child; `RTI_006_TimeSeriesBinding_RTI_signal` discovers that child
-through authoritative lineage and uses the GraphModel definition API to build the complete static
-five-entity/four-relationship projection. It excludes only the three Eventhouse time-series
-properties, preserves unknown definition parts, verifies persisted readback, observes the automatic
-refresh, verifies queryable schema, and executes the Operations Agent's GQL selector. If the attached
-child or authoritative lineage is absent, setup fails explicitly and the supported portal
-**Manage graph → select eligible entities/relationships → Continue → Materialize** flow remains the
-operator fallback. The canonical deployment orchestrator then generates the explicit
+native graph canvas, tree, and scopes. Ontology-backed Data Agent execution does not universally
+require materialization. No published ontology-owned materialization REST operation is established.
+Use **Manage graph → select eligible entities/relationships → Continue → Materialize** in the selected
+ontology. A key, a supported Delta/mirrored source, and a single backing table are graph eligibility
+requirements; do not remove the working `signal_master` Eventhouse stitch to make it eligible.
+Prefer the four static asset types and their three hierarchy relationships for a focused initial
+projection. `RTI_006_TimeSeriesBinding_RTI_signal` verifies ontology bindings and semantic metadata,
+then reads authoritative graph lineage without rewriting scope, submitting refresh jobs, or claiming
+graph runtime verification. Missing materialization is recorded as a separate portal prerequisite;
+ambiguous ownership and real binding/API failures still propagate.
+The canonical deployment orchestrator then generates the explicit
 `RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING` JSON (`workspaceId`, `ontologyId`, `graphModelId`).
 An operator may supply the same verified binding as a fallback when lineage is unavailable.
 Ownership is never inferred from names, a sole graph, or sampled structure.
@@ -170,7 +175,7 @@ The setup/stream/weather pipelines are **not** versioned. RTI_010 retains creati
 | **RTI_003_ingest_transform_medallion_SelfContained** | Bronze → Silver → Gold transforms; builds `silver_signal_master`. | ✅ |
 | **RTI_004_build_ontology_mapping_rti_structured** | Creates/verifies Ontology v2 TMDL (5 entities, 4 semantic relationships) + time‑series properties; preserves existing bindings on safe reruns. | ✅ |
 | **RTI_005_entity_DataBinding_rti_structured** | Direct Lake backing tables, scalar-property bindings, and physical joins referenced by semantic relationships. | ✅ |
-| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including standalone `event_time`; repairs and refreshes the attached static GraphModel projection and verifies the Operations Agent GQL selector. | ✅ |
+| **RTI_006_TimeSeriesBinding_RTI_signal** | Binds `OPCUAEvents` telemetry to `signal_master`, including standalone `event_time`; enriches semantics/rules and reads graph ownership without changing portal-selected materialization scope. | ✅ |
 | **RTI_007_generate_and_ingest_OPCUA_Stream** | On‑demand OPC UA telemetry generator (run via `Pipe_Stream`). | — |
 | **RTI_008_build_realtime_dashboard** | Two‑page Real‑Time Dashboard over `OPCUAEvents`: *Hydro Telemetry* (Station/Turbine filters, one chart per sensor group) + *OPC UA Telemetry*. Deploys from a definition file; shortcuts the silver tables into the Eventhouse so filters come from data. | ✅ |
 | **RTI_009_build_data_agent** | Provisions the Data Agent with matching live v2 source/readback, then performs bounded real MCP facility-record validation; only the exact temporary unsupported-Ontology-v2 product response is non-fatal. | ✅ |

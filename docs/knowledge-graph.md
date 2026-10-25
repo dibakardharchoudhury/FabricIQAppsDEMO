@@ -57,12 +57,13 @@ The authoritative semantic asset is built before the app runs:
 2. `RTI_005_entity_DataBinding_rti_structured` adds static Lakehouse data bindings and relationship
    contextualizations.
 3. `RTI_006_TimeSeriesBinding_RTI_signal` binds Eventhouse `OPCUAEvents` observations to
-   `signal_master`, then repairs, refreshes, and verifies the attached static GraphModel projection.
-4. `RTI_009_build_data_agent` attempts to publish the verified v2 Ontology as a Data Agent source
-   by default. `auto` also attempts provisioning; only `disabled` opts out. Required failures propagate.
-5. `RTI_011_seed_sql_wire_graphql_agent` creates the app-facing GraphQL API and adds Rayfin SQL as
-   another Data Agent source unless explicitly disabled. Missing/ineligible required agents and
-   source-extension failures fail the job even if SQL/GraphQL writes already succeeded.
+   `signal_master`, enriches semantic metadata/rules, and reads graph lineage without changing scope.
+4. `RTI_009_build_data_agent` always provisions the verified v2 Ontology-backed Data Agent. It reports
+   only the exact documented temporary unsupported-Ontology response after verified v2 publication;
+   other failures propagate. There are no agent-mode flags.
+5. `RTI_011_seed_sql_wire_graphql_agent` prepares independent operational SQL, enriches the additive
+   operational/weather ontology entities, and always attempts its Data Agent SQL-source extension.
+   It preserves compatible custom content and does not recreate `Hydro_STID_API`.
 
 The governed semantic path is:
 
@@ -74,25 +75,29 @@ signal_master -> instruments -> equipment -> systems -> facilities
 a legacy parser or used as agent sources. Graph materialization is required for canvas, tree and
 scopes; missing native topology is not replaced with Ontology-bound STID entities.
 
-Fabric does not document an ontology-owned REST materialization endpoint. A fresh generation-2
-Ontology currently exposes an attached service-owned GraphModel child. The final phase of `RTI_006`
-uses that authoritative relation and is automated and idempotent. If the relation is unavailable,
-setup fails explicitly; **Manage graph → select eligible entities and relationships → Continue →
-Materialize** remains the operator fallback. Never substitute an independently created look-alike.
+Fabric does not establish a published ontology-owned REST materialization endpoint.
+**Manage graph → select eligible entities and relationships → Continue → Materialize** is a portal
+prerequisite, not an automation fallback. Never substitute an independently created look-alike.
+NB06 reads the exact downstream `CascadeDelete` Ontology-to-`GraphIndex` relation, cross-checks the
+workspace `GraphModel`, and records configuration separately from runtime readiness. No graph is
+selected by name, graph count, or structural similarity. A missing graph does not invalidate a
+successfully bound ontology or prevent required agent provisioning; the app's native topology
+remains unavailable until its separate materialization/binding prerequisite is satisfied.
 
-1. Require live Ontology generation 2 and follow the exact downstream
-   `CascadeDelete` Ontology-to-`GraphIndex` relation cross-checked against the workspace
-   `GraphModel` identity.
-2. Round-trip the complete GraphModel definition and preserve unknown parts.
-3. Add or repair all five Delta-backed static nodes and all four governed relationships.
-4. Exclude only `event_time`, `value`, and `quality` from GraphModel property mappings; those remain
-   Ontology time-series properties backed by Eventhouse.
-5. Update and read back the same attached GraphModel, run the public `refreshGraph` job while
-   honoring `Retry-After`, verify queryable node/edge types, and execute the exact static GQL selector
-   used by the Operations Agent.
+Graph eligibility requires a key, a bound supported Delta/mirrored source, and a single backing
+table. Multiple-backing-table entities, such as the static-plus-Eventhouse `signal_master`, are
+ineligible under the documented limitation. Preserve that stitch for telemetry execution. Select
+`facilities`, `systems`, `equipment`, and `instruments` plus their three hierarchy relationships
+for a focused initial graph; use the portal's Ineligible tooltip for each additional type.
+Do not assume all operational SQL or weather entities are eligible merely because the ontology
+can query them. Large historical facts need not be materialized for every ontology/agent question.
 
-Missing or ambiguous lineage, a conflicting source, failed readback, refresh, or GQL result fails
-NB06 and therefore setup. No graph is selected by name, graph count, or structural similarity.
+The native graph read measured on FEATURE on October 25 returned 201 nodes / 198 edges, no isolated
+nodes, and three components of 67 nodes each (one per facility). These are legitimate independent
+facility trees, not missing cross-facility relationships. The two parallel native queries took
+51.344 / 54.891 seconds inside Fabric. The app already coalesces reads and caches only in memory;
+metadata/schema reads now also run concurrently, and manual graph refresh refreshes the ontology
+contract. These source changes do not establish a measured reduction in Fabric's cold-query time.
 
 Official references:
 
@@ -647,4 +652,5 @@ another workspace reset or import.
 - [`Notebooks/RTI_005_entity_DataBinding_rti_structured.Notebook/notebook-content.py`](../Notebooks/RTI_005_entity_DataBinding_rti_structured.Notebook/notebook-content.py):
   static bindings and relationship contextualizations.
 - [`Notebooks/RTI_006_TimeSeriesBinding_RTI_signal.Notebook/notebook-content.py`](../Notebooks/RTI_006_TimeSeriesBinding_RTI_signal.Notebook/notebook-content.py):
-  Eventhouse time-series binding plus attached static GraphModel repair, refresh, and GQL verification.
+  Eventhouse time-series binding, semantic enrichment, and read-only graph ownership discovery;
+  materialization remains a separate portal prerequisite.
