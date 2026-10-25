@@ -409,8 +409,10 @@ STID Lakehouse row, so cross‑store joins always land.
   does not reseed. **Seed & provision** can explicitly repeat the insert-only operation;
   the reference SQL is
   [`sql/seed-operational-data.sql`](sql/seed-operational-data.sql).
-  Fabric rejects renaming existing SQL databases: FEATURE retains `HydroOperationalStore`
-  and its ID, moved into `RTI_DEMO_V11`. A replacement requires explicit approval;
+  Fabric rejects renaming existing SQL databases: FEATURE uses the verified replacement
+  `RTI_Demo_SQLDatabase_V11` in `RTI_DEMO_V11`, retaining `HydroOperationalStore`
+  as a write-blocked archive. Active-source discovery excludes only an archive whose
+  marker identifies that exact replacement;
   see the [SQL lifecycle contract](DEPLOY.md#independent-operational-sql-lifecycle).
 
 ## Local development

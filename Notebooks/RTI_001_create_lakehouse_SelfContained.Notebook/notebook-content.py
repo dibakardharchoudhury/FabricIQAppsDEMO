@@ -657,6 +657,7 @@ import time
 
 OPERATIONAL_STORE_NAME = "HydroOperationalStore"
 OPERATIONAL_STORE_DESCRIPTION = "Hydro shared operational store; lifecycle independent of AppBackend."
+OPERATIONAL_ARCHIVE_PREFIX = "Hydro archived operational store; verified replacement "
 OPERATIONAL_DEMO_COUNTS = {
     "WorkOrders": 12, "MaintenanceNotifications": 6, "Inspections": 30,
     "SpareParts": 12, "Asset3DModels": 15,
@@ -673,6 +674,22 @@ def is_operational_store_name(name):
     return name == OPERATIONAL_STORE_NAME or (
         isinstance(name, str) and re.fullmatch(r"RTI_Demo_SQLDatabase_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*", name) is not None
     )
+
+
+def active_operational_items(items):
+    candidates = [item for item in items if item.get("type") == "SQLDatabase"
+                  and is_operational_store_name(item.get("displayName"))]
+    active, archived = [], []
+    for item in candidates:
+        match = re.fullmatch(re.escape(OPERATIONAL_ARCHIVE_PREFIX) + r"([0-9a-fA-F-]{36})\.",
+                             item.get("description") or "")
+        if match:
+            archived.append(match[1].lower())
+        else:
+            active.append(item)
+    if archived and (len(active) != 1 or any(target != active[0]["id"].lower() for target in archived)):
+        raise RuntimeError("Archived operational SQL does not identify one available active replacement.")
+    return active
 
 
 def operational_source_path(parts, workspace_id, item_id, preferred_path):
@@ -979,6 +996,37 @@ def project_ontology_extension(parts, workspace, lakehouse, database, weather_co
     return list(by_path.values())
 
 
+def rebind_project_operational_source(parts, workspace, lakehouse, source, target):
+    """Rebind only the verified operational expression after an explicit SQL copy."""
+    if source.get("id") == target.get("id"):
+        raise RuntimeError("Operational source replacement requires different SQL identities.")
+    indexed = {part["path"]: part for part in parts}
+    if len(indexed) != len(parts) or "expressions.tmdl" not in indexed:
+        raise RuntimeError("Operational source replacement requires unambiguous ontology parts.")
+    text = base64.b64decode(indexed["expressions.tmdl"]["payload"]).decode("utf-8").replace("\r\n", "\n")
+    pattern = r"(?ms)^expression HydroProjectOperations =\n.*?(?=^expression |\Z)"
+    blocks = list(re.finditer(pattern, text))
+    if len(blocks) != 1:
+        raise RuntimeError("Operational source replacement requires exactly one project SQL expression.")
+    block = blocks[0][0]
+    old_url = f"https://onelake.dfs.fabric.microsoft.com/{workspace['id']}/{source['id']}"
+    new_url = f"https://onelake.dfs.fabric.microsoft.com/{workspace['id']}/{target['id']}"
+    if new_url in block:
+        return project_ontology_source_metadata(parts, workspace, lakehouse, target)
+    project_ontology_source_metadata(parts, workspace, lakehouse, source)
+    if block.count(old_url) != 1:
+        raise RuntimeError("Existing operational ontology source identity must be verified before replacement.")
+    replacement = block.replace(old_url, new_url)
+    replacement = re.sub(r"(?m)^(\tannotation ONT_ItemId = ).+$",
+                         lambda match: match[1] + target["id"], replacement)
+    replacement = re.sub(r"(?m)^(\tannotation ONT_PinnedAtUtc = ).+$",
+                         lambda match: match[1] + time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), replacement)
+    updated = text[:blocks[0].start()] + replacement + text[blocks[0].end():]
+    result = [{**part, "payload": base64.b64encode(updated.encode()).decode()}
+              if part["path"] == "expressions.tmdl" else part for part in parts]
+    return project_ontology_source_metadata(result, workspace, lakehouse, target)
+
+
 def operational_item(request, workspace, item_id):
     response = request("GET", f"workspaces/{workspace}/sqlDatabases/{item_id}")
     response.raise_for_status()
@@ -1026,9 +1074,10 @@ def ensure_operational_item(request, workspace, env_suffix, folder_id):
     wanted_name = operational_store_name(env_suffix)
     if not isinstance(folder_id, str) or not folder_id.strip():
         raise RuntimeError("Operational SQL requires the explicit setup folder identity.")
-    candidates = [item for item in _operational_inventory(request, workspace)
-                  if item["type"] == "SQLDatabase"
-                  and item["displayName"] in (wanted_name, OPERATIONAL_STORE_NAME)]
+    candidates = active_operational_items([
+        item for item in _operational_inventory(request, workspace)
+        if item.get("displayName") in (wanted_name, OPERATIONAL_STORE_NAME)
+    ])
     if len(candidates) > 1:
         raise RuntimeError("Multiple shared operational stores match the explicit setup name.")
     expected_name = candidates[0]["displayName"] if candidates else wanted_name

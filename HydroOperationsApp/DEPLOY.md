@@ -194,13 +194,17 @@ Fresh core setup creates `RTI_Demo_SQLDatabase_<suffix>` in
 owns additive seed/source publication. The app uses the independent
 `hydrooperations` connector, not its retained backend child database.
 
-Existing `HydroOperationalStore` is an immutable legacy display name:
+Existing `HydroOperationalStore` has an immutable legacy display name:
 Fabric rejects rename with `SQLDatabaseDisplayNameCannotBeChanged`.
-It is moved into the setup folder without changing identity. Matching a new name
-requires an explicitly approved replacement, verified copy, source/ontology/
-connector/agent rebinding and retirement plan. Never silently create a duplicate
-or delete either database. AppBackend's retained child database/GraphQL item is
-platform-managed; removing it is not a safe operational-store cleanup.
+It can remain in the setup folder without changing identity. Matching a new name
+requires a controlled replacement, exact verified copy, source/ontology/
+connector/agent rebinding and a retained read-only archive. The setup/deployer
+excludes a managed archive only when its marker identifies the exact available
+active replacement; ambiguous or incomplete cutovers fail. Never silently create
+a duplicate or delete either database. FEATURE's completed naming cutover is in
+the [deployment record](../docs/ontology-test-review.md). AppBackend's retained
+child database/GraphQL item is platform-managed; removing it is not a safe
+operational-store cleanup.
 
 ## Redeploying to a different tenant, workspace, or region
 

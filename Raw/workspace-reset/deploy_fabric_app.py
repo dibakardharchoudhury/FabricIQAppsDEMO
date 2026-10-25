@@ -1439,9 +1439,8 @@ def resolve_public_artifact_config(
         "RAYFIN_PUBLIC_ONTOLOGY_GRAPH_BINDING": "",
         "RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID": "",
     }
-    from operational_store_support import is_operational_store_name, OPERATIONAL_STORE_DESCRIPTION
-    stores = [item for item in items
-              if item["type"] == "SQLDatabase" and is_operational_store_name(item["displayName"])]
+    from operational_store_support import active_operational_items, OPERATIONAL_STORE_DESCRIPTION
+    stores = active_operational_items(items)
     if len(stores) > 1:
         raise DeployError("Multiple shared operational stores match the explicit setup name.")
     if stores:
@@ -2149,9 +2148,8 @@ def ensure_hosted_source_prerequisites(tenant: str, workspace_id: str) -> None:
 
 
 def bind_operational_store_env(workspace_id, headers) -> None:
-    from operational_store_support import is_operational_store_name, OPERATIONAL_STORE_DESCRIPTION
-    stores = [item for item in _workspace_artifacts(workspace_id, headers)
-              if item["type"] == "SQLDatabase" and is_operational_store_name(item["displayName"])]
+    from operational_store_support import active_operational_items, OPERATIONAL_STORE_DESCRIPTION
+    stores = active_operational_items(_workspace_artifacts(workspace_id, headers))
     if len(stores) != 1:
         raise DeployError("The shared operational SQL Database could not be resolved exactly.")
     item = fabric_get(f"workspaces/{workspace_id}/sqlDatabases/{stores[0]['id']}", headers)

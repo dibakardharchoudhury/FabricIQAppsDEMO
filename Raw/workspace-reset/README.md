@@ -35,7 +35,9 @@ to insert missing demo rows and publish the SQL Data Agent source. Neither creat
 nor seeding depends on an app-owned database. Existing marked `HydroOperationalStore`
 items are moved without changing identity; child SQL endpoints move with them.
 Fabric SQLDatabase names cannot be changed (`SQLDatabaseDisplayNameCannotBeChanged`).
-Existing items keep their immutable name; replacement requires an approved migration.
+Existing items keep their immutable name unless a controlled, field-verified replacement
+migration is performed. A retained write-blocked archive identifies its exact replacement
+and is excluded from active-source discovery only while that replacement is available.
 Seed reruns preserve existing values. On an existing workspace, the app deployer's NB11 bootstrap performs an
 explicit, field-verified copy/cutover from the retained app-owned database, preserves
 custom Data Agent content and applies the writable `hydrooperations` connector.

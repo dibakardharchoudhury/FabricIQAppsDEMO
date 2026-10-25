@@ -1826,6 +1826,18 @@ class WorkspaceArtifactConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(DEPLOY.DeployError, "SQL analytics endpoint"):
                 self.resolve()
 
+    def test_verified_archive_does_not_ambigously_select_the_previous_operational_store(self):
+        from operational_store_support import OPERATIONAL_ARCHIVE_PREFIX, OPERATIONAL_STORE_DESCRIPTION
+        target_id = "9b3dfea4-0934-4122-aaa4-1d7f17a183bd"
+        self.items.extend([
+            {"id": "original", "type": "SQLDatabase", "displayName": "HydroOperationalStore",
+             "description": OPERATIONAL_ARCHIVE_PREFIX + target_id + "."},
+            {"id": target_id, "type": "SQLDatabase", "displayName": "RTI_Demo_SQLDatabase_V3",
+             "description": OPERATIONAL_STORE_DESCRIPTION},
+        ])
+        self.details[target_id] = {"id": target_id, "description": OPERATIONAL_STORE_DESCRIPTION}
+        self.assertEqual(self.resolve()["RAYFIN_PUBLIC_OPERATIONAL_SQL_DATABASE_ID"], target_id)
+
     def test_reused_state_rebinds_stale_v6_public_config_before_build(self):
         with tempfile.TemporaryDirectory() as directory:
             rayfin_dir = Path(directory)

@@ -95,6 +95,20 @@ class OperationalItemLifecycleTests(unittest.TestCase):
             parts, "workspace", "sql", "Files/Config/draft/new-name/datasource.json"), path)
         self.assertEqual(json.loads(base64.b64decode(parts[0]["payload"])), source)
 
+    def test_archived_sql_is_excluded_only_for_its_exact_available_replacement(self):
+        target = {"id": "11111111-2222-4333-8444-555555555555", "type": "SQLDatabase",
+                  "displayName": "RTI_Demo_SQLDatabase_V11", "description": support.OPERATIONAL_STORE_DESCRIPTION}
+        archived = {"id": "original", "type": "SQLDatabase", "displayName": "HydroOperationalStore",
+                    "description": support.OPERATIONAL_ARCHIVE_PREFIX + target["id"] + "."}
+        self.assertEqual(support.active_operational_items([archived, target]), [target])
+        with self.assertRaisesRegex(RuntimeError, "active replacement"):
+            support.active_operational_items([archived])
+        with self.assertRaisesRegex(RuntimeError, "active replacement"):
+            support.active_operational_items([archived, {**target, "id": "other"}])
+        self.assertEqual(support.active_operational_items([
+            {**archived, "description": support.OPERATIONAL_STORE_DESCRIPTION}, target
+        ]), [{**archived, "description": support.OPERATIONAL_STORE_DESCRIPTION}, target])
+
     def test_duplicate_sql_sources_and_conflicting_workspace_are_rejected(self):
         source = {"type": "sql_database", "artifactId": "sql", "workspaceId": "other"}
         paths = [f"Files/Config/draft/{name}/datasource.json" for name in ("old", "new")]
@@ -278,6 +292,31 @@ class ProjectExtensionTests(unittest.TestCase):
         self.assertEqual(expression.count("annotation ONT_PinnedAtUtc ="), 3)
         with patch.object(support.time, "strftime", side_effect=AssertionError("A rerun must preserve source pin timestamps")):
             self.assertEqual(after, self.source_metadata(after))
+
+    def test_explicit_operational_rebinding_preserves_all_other_parts_and_is_idempotent(self):
+        before = self.source_metadata(self.extend())
+        workspace = {"id": "workspace", "displayName": "Workspace"}
+        lakehouse = {"id": "lakehouse", "type": "Lakehouse", "displayName": "Lakehouse",
+                     "properties": {"sqlEndpointProperties": {"connectionString": "lakehouse.example"}}}
+        source = {"id": "sql", "type": "SQLDatabase", "displayName": "Operations",
+                  "properties": {"serverFqdn": "sql.example", "databaseName": "Operations-sql"}}
+        target = {**source, "id": "new-sql", "displayName": "RTI_Demo_SQLDatabase_V11",
+                  "properties": {"serverFqdn": "new.example", "databaseName": "new-database"}}
+        after = support.rebind_project_operational_source(before, workspace, lakehouse, source, target)
+        for old, new in zip(before, after):
+            if old["path"] != "expressions.tmdl":
+                self.assertEqual(old, new)
+        old_text = base64.b64decode(next(p for p in before if p["path"] == "expressions.tmdl")["payload"]).decode()
+        new_text = base64.b64decode(next(p for p in after if p["path"] == "expressions.tmdl")["payload"]).decode()
+        self.assertIn("/workspace/new-sql", new_text)
+        self.assertIn("annotation ONT_ItemId = new-sql", new_text)
+        self.assertIn("annotation ONT_SqlEndpoint = new.example", new_text)
+        self.assertEqual(old_text.split("expression HydroProjectLakehouse")[1],
+                         new_text.split("expression HydroProjectLakehouse")[1])
+        self.assertEqual(after, support.rebind_project_operational_source(after, workspace, lakehouse, source, target))
+        with self.assertRaisesRegex(RuntimeError, "authoritative source identity"):
+            support.rebind_project_operational_source(before, workspace, lakehouse,
+                                                      {**source, "id": "foreign"}, target)
 
     def test_source_metadata_rejects_conflicting_identity_and_preserves_unknown_annotations(self):
         pinned = self.source_metadata(self.extend())
